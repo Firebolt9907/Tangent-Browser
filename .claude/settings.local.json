@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew :app:help --quiet --stacktrace)",
+      "Bash(./gradlew :app:compileDebugKotlin)",
+      "Bash(./gradlew assembleDebug)",
+      "Bash(xargs -I {} unzip -p {} mozilla/components/browser/engine/gecko/GeckoEngineView.class)",
+      "Bash(./gradlew :app:compileDebugKotlin -q)",
+      "Read(//private/tmp/gecko_inspect/**)",
+      "Bash(javap -c -p mozilla/components/browser/engine/gecko/GeckoEngineView.class)",
+      "Bash(./gradlew :app:assembleDebug)",
+      "Bash(./gradlew :app:test --tests \"com.firebolt9907.luminabrowser.UrlNormalizationTest\")",
+      "Bash(./gradlew :app:testDebugUnitTest --tests \"com.firebolt9907.luminabrowser.UrlNormalizationTest\")",
+      "Bash(./gradlew :app:compileDebugKotlin --stacktrace)"
+    ]
+  }
+}

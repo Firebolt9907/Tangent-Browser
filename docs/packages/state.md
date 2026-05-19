@@ -1,0 +1,71 @@
+# `state/` — Tabs, bar state, snapshots, prefs
+
+Everything reactive that the UI reads. No Compose imports in this package — it's pure Kotlin + coroutines + `mozilla-components`.
+
+## Files
+
+### `TabRepository.kt`
+Interface. Five operations (`selectTab`, `selectAdjacent`, `loadUrl`, `addTab`, `removeTab`) plus two observable flows (`tabs`, `selectedTabId`). Implemented by `GeckoTabRepository` in production and `MockTabRepository` for Compose previews.
+
+### `LuminaTab.kt`
+`data class LuminaTab(id, url, title)` — the UI-facing projection. `title` falls back to `compactHost(url)` when the page hasn't set one.
+
+### `GeckoTabRepository.kt`
+The real implementation. Owns:
+
+- `tabs: StateFlow<List<LuminaTab>>` — derived from `BrowserState.tabs` via `toLuminaTabs()`.
+- `selectedTabId: StateFlow<String?>` — mirrors `BrowserState.selectedTabId`.
+- `previousSelectedTabId` — tracked manually so `dismissBlankTabAndReturn()` knows where to return to when the user backs out of a freshly-created blank tab.
+- `seedIfEmpty(tabs)` — called once by `LuminaBrowserComponents.init`.
+- `dismissBlankTabAndReturn()` — back-handler hook in `LuminaRoot`. No-op unless the current tab is `about:blank` *and* there's a known previous tab still in the store.
+
+Three top-level utilities live here because everything URL-related goes through them:
+
+- `normalizeUrl(input)` — empty → `about:blank`; explicit scheme → pass through; host-like (`apple.com`, `localhost`, `localhost:3000`) → prepend `https://`; everything else → Google search.
+- `compactHost(url)` — `Uri.host` with `www.` stripped; falls back to the input if parsing yields nothing.
+- `BrowserState.toLuminaTabs()` (private extension) — projection used by the state-flow subscription.
+
+### `MockTabRepository.kt`
+In-memory implementation used by `@Preview` composables. Singleton via `companion object instance`. Useful for testing layout changes to `SafariBar` without spinning up Gecko.
+
+### `LuminaViewModel.kt`
+`AndroidViewModel`. Combines `repo.tabs`, `repo.selectedTabId`, an internal `mode: BarMode` flow, and an internal `editingText: String` flow into a single `BarUiState` exposed as `state: StateFlow<BarUiState>`.
+
+Exposes intent functions for the bar:
+
+- `onUrlTap()` — switch to `Editing` mode, seed text from current URL.
+- `onEditingTextChange(text)`, `onEditingSubmit()`, `onEditingCancel()`.
+- `onSwitchTab(direction)` — `+1` next, `-1` previous.
+- `dismissBlankTabAndReturn()` — delegates to the repo cast.
+- `onCreateTabFromEdge()` — used by the swipe-past-last-tab gesture; opens `about:blank` and immediately switches to `Editing` mode.
+
+Note: `LuminaRoot` reads `BrowserState` *directly* from the components graph, not through the ViewModel. The ViewModel only powers the bottom bar.
+
+### `BarUiState.kt`
+`data class BarUiState(displayUrl, tabCount, mode, editingText, compactDisplayUrl, pageUrl)` + `enum BarMode { Expanded, Compact, Editing }`.
+
+`displayUrl` is the compact host; `pageUrl` is the full URL kept around so editing-mode can seed the text field with the real thing.
+
+### `TabSnapshotCache.kt`
+Bitmap LRU (default 16 entries) backed by JPEG files in `cacheDir/tab_snapshots`. Thread-safe via `@Synchronized`.
+
+- `get(id, url)` — non-blocking. Memory hit returns synchronously; miss schedules a background disk decode and returns `null`. Negative results are remembered to avoid repeated scheduling.
+- `put(id, bitmap, url)` — stores in memory immediately, writes JPEG (quality 84) on `Dispatchers.IO`, bumps `version` so Compose recomposes.
+- `remove(id, url)` — evicts memory + disk; flagged as a known miss.
+- `version: StateFlow<Int>` — collected by `LuminaRoot` so fresh captures appear during drag without waiting for unrelated state changes.
+
+Disk keys use the page URL when available (`v2:https://...`) and fall back to `v2:tab:{id}` for URL-less pages. The `v2:` prefix ignores old cache files written before URL-timing was tightened.
+
+`pruneDisk()` is throttled to once every 5 s.
+
+### `SitePreferencesStore.kt`
+`SharedPreferences`-backed, keyed by host. Returns `SitePreferences(topPaddingFix, zoomFactor)`; `zoomFactor` is clamped to `[0.5, 2.0]`. Emits the changed host on `updates: SharedFlow<String>` so `LuminaRoot` can react to inactive-tab changes too.
+
+`hostFromUrl(url)` is a convenience that yields `""` for `about:blank` / empty / non-host URLs — letting callers treat "no host" as "no prefs".
+
+## When to touch this package
+
+- New tab operation → add to `TabRepository`, implement in both impls.
+- New URL normalization rule → `normalizeUrl()`. Test against `apple.com`, `localhost:3000`, multi-word search input.
+- New per-site preference → add a field to `SitePreferences`, persist in `SitePreferencesStore`, wire UI in `ui/chrome/AaSheet.kt` and consumers in `ui/LuminaRoot.kt` / `ui/content/ContentHost.kt`.
+- New snapshot capture site → call `cache.put(id, bitmap, url)`; the version flow handles propagation.

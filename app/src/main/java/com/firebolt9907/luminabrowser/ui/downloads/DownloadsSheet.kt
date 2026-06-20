@@ -46,7 +46,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -84,9 +86,11 @@ fun DownloadsSheet(
     var showClearConfirm by remember { mutableStateOf(false) }
 
     // Initial load + poll while anything is still in flight so progress updates live.
+    // queryDownloads runs a DownloadManager content-provider query + cursor walk, so keep it off
+    // the main thread to avoid jank/ANR during the 1.2s polling loop.
     LaunchedEffect(Unit) {
         while (true) {
-            downloads = queryDownloads(context)
+            downloads = withContext(Dispatchers.IO) { queryDownloads(context) }
             if (downloads.none { it.isActive }) break
             delay(1200)
         }

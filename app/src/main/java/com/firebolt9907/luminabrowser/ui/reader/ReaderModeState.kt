@@ -3,6 +3,7 @@ package com.firebolt9907.luminabrowser.ui.reader
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 data class ReaderArticle(
     val title: String,
@@ -45,51 +46,38 @@ class ReaderManager {
     fun getArticle(tabId: String): ReaderArticle? = _tabArticles.value[tabId]
 
     fun setReaderActive(tabId: String, active: Boolean) {
-        val current = _activeReaderTabs.value.toMutableSet()
-        if (active) {
-            if (isReaderEligible(tabId)) {
-                current.add(tabId)
+        // update {} is atomic (compare-and-set); this state is touched from both Gecko delegate
+        // callbacks and Compose, so a read-then-set could otherwise lose a concurrent write.
+        _activeReaderTabs.update { current ->
+            when {
+                active && isReaderEligible(tabId) -> current + tabId
+                active -> current
+                else -> current - tabId
             }
-        } else {
-            current.remove(tabId)
         }
-        _activeReaderTabs.value = current
     }
 
     private val _pendingActivationTabs = MutableStateFlow<Set<String>>(emptySet())
     val pendingActivationTabs: StateFlow<Set<String>> = _pendingActivationTabs.asStateFlow()
 
     fun requestReaderActivation(tabId: String) {
-        _pendingActivationTabs.value = _pendingActivationTabs.value + tabId
+        _pendingActivationTabs.update { it + tabId }
     }
 
     fun setReaderEligible(tabId: String, article: ReaderArticle) {
-        val currentEligible = _eligibleReaderTabs.value.toMutableSet()
-        currentEligible.add(tabId)
-        _eligibleReaderTabs.value = currentEligible
-
-        val currentArticles = _tabArticles.value.toMutableMap()
-        currentArticles[tabId] = article
-        _tabArticles.value = currentArticles
+        _eligibleReaderTabs.update { it + tabId }
+        _tabArticles.update { it + (tabId to article) }
 
         if (_pendingActivationTabs.value.contains(tabId)) {
-            _pendingActivationTabs.value = _pendingActivationTabs.value - tabId
-            _activeReaderTabs.value = _activeReaderTabs.value + tabId
+            _pendingActivationTabs.update { it - tabId }
+            _activeReaderTabs.update { it + tabId }
         }
     }
 
     fun clearReaderState(tabId: String) {
-        val currentActive = _activeReaderTabs.value.toMutableSet()
-        currentActive.remove(tabId)
-        _activeReaderTabs.value = currentActive
-
-        val currentEligible = _eligibleReaderTabs.value.toMutableSet()
-        currentEligible.remove(tabId)
-        _eligibleReaderTabs.value = currentEligible
-
-        val currentArticles = _tabArticles.value.toMutableMap()
-        currentArticles.remove(tabId)
-        _tabArticles.value = currentArticles
+        _activeReaderTabs.update { it - tabId }
+        _eligibleReaderTabs.update { it - tabId }
+        _tabArticles.update { it - tabId }
     }
 
     fun setTheme(newTheme: ReaderTheme) {

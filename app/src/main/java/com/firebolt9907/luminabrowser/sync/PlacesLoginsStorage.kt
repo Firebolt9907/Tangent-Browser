@@ -5,6 +5,8 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.KeyStore
 import javax.crypto.KeyGenerator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import mozilla.appservices.logins.DatabaseLoginsStorage
 import mozilla.appservices.logins.KeyManager
 import mozilla.components.concept.storage.Login
@@ -54,35 +56,49 @@ class PlacesLoginsStorage(
         return generator.generateKey().encoded
     }
 
-    override suspend fun list(): List<Login> =
+    // The appservices DatabaseLoginsStorage calls are blocking (synchronous SQLite + per-row
+    // decryption), so every suspend method dispatches to IO to honor the LoginsStorage contract
+    // that callers (e.g. PasswordsSheet's LaunchedEffect on the main thread) can rely on being
+    // main-safe.
+    override suspend fun list(): List<Login> = withContext(Dispatchers.IO) {
         nativeStorage.list().map { it.toConceptLogin() }
+    }
 
-    override suspend fun get(id: String): Login? =
+    override suspend fun get(id: String): Login? = withContext(Dispatchers.IO) {
         nativeStorage.get(id)?.toConceptLogin()
+    }
 
-    override suspend fun getByBaseDomain(domain: String): List<Login> =
+    override suspend fun getByBaseDomain(domain: String): List<Login> = withContext(Dispatchers.IO) {
         nativeStorage.getByBaseDomain(domain).map { it.toConceptLogin() }
+    }
 
-    override suspend fun add(entry: LoginEntry): Login =
+    override suspend fun add(entry: LoginEntry): Login = withContext(Dispatchers.IO) {
         nativeStorage.add(entry.toAppservicesEntry()).toConceptLogin()
+    }
 
-    override suspend fun update(id: String, entry: LoginEntry): Login =
+    override suspend fun update(id: String, entry: LoginEntry): Login = withContext(Dispatchers.IO) {
         nativeStorage.update(id, entry.toAppservicesEntry()).toConceptLogin()
+    }
 
-    override suspend fun addOrUpdate(entry: LoginEntry): Login =
+    override suspend fun addOrUpdate(entry: LoginEntry): Login = withContext(Dispatchers.IO) {
         nativeStorage.addOrUpdate(entry.toAppservicesEntry()).toConceptLogin()
+    }
 
-    override suspend fun findLoginToUpdate(entry: LoginEntry): Login? =
+    override suspend fun findLoginToUpdate(entry: LoginEntry): Login? = withContext(Dispatchers.IO) {
         nativeStorage.findLoginToUpdate(entry.toAppservicesEntry())?.toConceptLogin()
+    }
 
-    override suspend fun touch(id: String) =
+    override suspend fun touch(id: String) = withContext(Dispatchers.IO) {
         nativeStorage.touch(id)
+    }
 
-    override suspend fun delete(id: String): Boolean =
+    override suspend fun delete(id: String): Boolean = withContext(Dispatchers.IO) {
         nativeStorage.delete(id)
+    }
 
-    override suspend fun wipeLocal() =
+    override suspend fun wipeLocal() = withContext(Dispatchers.IO) {
         nativeStorage.wipeLocal()
+    }
 
     override fun close() = nativeStorage.close()
 

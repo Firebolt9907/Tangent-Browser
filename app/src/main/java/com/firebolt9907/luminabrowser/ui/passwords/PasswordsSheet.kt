@@ -76,7 +76,9 @@ fun PasswordsSheet(
     var showDeleteConfirm by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
-        logins = loginsStorage.list()
+        // Guard against storage/decryption errors so a read failure shows an empty list rather
+        // than crashing this screen (and never clearing the loading state).
+        logins = runCatching { loginsStorage.list() }.getOrDefault(emptyList())
         loading = false
     }
 
@@ -181,8 +183,12 @@ fun PasswordsSheet(
             onDismiss = { showAddDialog = false },
             onSave = { entry ->
                 scope.launch {
-                    loginsStorage.add(entry)
-                    logins = loginsStorage.list()
+                    // Don't let an add failure (e.g. invalid record) crash the screen; refresh
+                    // the list afterward so the UI reflects whatever actually persisted.
+                    runCatching {
+                        loginsStorage.add(entry)
+                        loginsStorage.list()
+                    }.onSuccess { logins = it }
                 }
                 showAddDialog = false
             },
@@ -200,8 +206,10 @@ fun PasswordsSheet(
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
-                        loginsStorage.delete(guid)
-                        logins = loginsStorage.list()
+                        runCatching {
+                            loginsStorage.delete(guid)
+                            loginsStorage.list()
+                        }.onSuccess { logins = it }
                     }
                     showDeleteConfirm = null
                 }) {

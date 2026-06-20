@@ -136,10 +136,14 @@ class TabSnapshotCache(
     }
 
     private fun pruneDisk() {
-        val files = directory.listFiles { file -> file.extension == "jpg" }
-            ?.sortedByDescending(File::lastModified)
-            ?: return
-        files.drop(maxEntries).forEach(File::delete)
+        val all = directory.listFiles() ?: return
+        // Sweep orphaned temp files left behind by a write interrupted between compress and
+        // rename (e.g. a process kill); pruneDisk's jpg filter would otherwise never reach them.
+        all.filter { it.name.endsWith(".jpg.tmp") }.forEach(File::delete)
+        all.filter { it.extension == "jpg" }
+            .sortedByDescending(File::lastModified)
+            .drop(maxEntries)
+            .forEach(File::delete)
     }
 
     private fun fileForKey(key: String): File =

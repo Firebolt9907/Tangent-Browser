@@ -143,7 +143,11 @@ class MainActivity : ComponentActivity(), ActivityDelegate {
 
     private fun firstUrlIn(text: String): String? {
         val match = Regex("https?://\\S+").find(text) ?: return null
-        return match.value
+        // \S+ greedily swallows trailing sentence punctuation when a URL is shared inside prose
+        // (e.g. "Read this https://example.com!"). Those terminators aren't part of the URL and
+        // would otherwise be loaded literally, so trim the common ones.
+        return match.value.trimEnd('.', ',', '!', '?', ';', ':', ')', ']', '}', '"', '\'')
+            .takeIf { it.isNotBlank() }
     }
 
     private companion object {

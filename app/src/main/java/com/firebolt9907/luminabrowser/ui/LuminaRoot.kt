@@ -199,6 +199,13 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     val selectedTabId = visualSelectedTabId ?: actualSelectedTabId
     val isReaderActiveOnSelectedTab = selectedTabId != null && activeReaderTabs.contains(selectedTabId)
     val selectedTabArticle = selectedTabId?.let { tabArticles[it] }
+    // Retain the last non-null article so the reader's exit animation can keep rendering it:
+    // AnimatedVisibility composes its content for the full exit transition, by which point
+    // selectedTabArticle may already have cleared to null.
+    val lastReaderArticle = remember { mutableStateOf(selectedTabArticle) }
+    LaunchedEffect(selectedTabArticle) {
+        if (selectedTabArticle != null) lastReaderArticle.value = selectedTabArticle
+    }
     val selectedTab = browserState.tabs.firstOrNull { it.id == selectedTabId }
     val actualSelectedTab = browserState.tabs.firstOrNull { it.id == actualSelectedTabId }
     val selectedEngineSession = actualSelectedTab?.engineState?.engineSession
@@ -1796,8 +1803,9 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         .fillMaxSize()
                         .graphicsLayer { translationX = offsetX },
                 ) {
+                    lastReaderArticle.value?.let { article ->
                     com.firebolt9907.luminabrowser.ui.reader.ReaderView(
-                        article = selectedTabArticle!!,
+                        article = article,
                         theme = readerTheme,
                         fontSizePercent = readerFontSize,
                         fontName = readerFontName,
@@ -1805,6 +1813,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         topPadding = with(density) { topChromeInsetPx.toDp() },
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                     )
+                    }
                 }
                 val movingCurrentSnapshot = tabSwitchCurrentSnapshot
                 // Computed once; shared by horizontal overlay, commit animation, and grid overlay

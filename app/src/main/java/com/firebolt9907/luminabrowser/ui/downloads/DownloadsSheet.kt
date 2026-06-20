@@ -138,7 +138,7 @@ fun DownloadsSheet(
                                 // remove() hits the DownloadManager content provider and can throw;
                                 // guard it so a failure can't crash the sheet. The row is dropped
                                 // from the UI regardless so the action still feels responsive.
-                                runCatching { downloadManager(context).remove(entry.id) }
+                                runCatching { downloadManager(context)?.remove(entry.id) }
                                 downloads = downloads.filterNot { it.id == entry.id }
                             },
                         )
@@ -161,7 +161,8 @@ fun DownloadsSheet(
                 TextButton(onClick = {
                     showClearConfirm = false
                     val dm = downloadManager(context)
-                    downloads.forEach { dm.remove(it.id) }
+                    // remove() can throw; guard the whole sweep so one bad id can't crash the sheet.
+                    runCatching { downloads.forEach { dm?.remove(it.id) } }
                     downloads = emptyList()
                 }) {
                     Text("Clear all")
@@ -249,11 +250,13 @@ private fun DownloadEntry.progressText(): String =
         formatBytes(bytesSoFar)
     }
 
-private fun downloadManager(context: Context): DownloadManager =
-    context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+// Nullable: getSystemService can return null on unusual/restricted device configurations, so a
+// hard `as` cast would NPE. Callers degrade gracefully on null instead.
+private fun downloadManager(context: Context): DownloadManager? =
+    context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
 
 private fun queryDownloads(context: Context): List<DownloadEntry> {
-    val dm = downloadManager(context)
+    val dm = downloadManager(context) ?: return emptyList()
     val result = mutableListOf<DownloadEntry>()
     val cursor = dm.query(DownloadManager.Query()) ?: return emptyList()
     cursor.use { c ->
@@ -282,12 +285,12 @@ private fun queryDownloads(context: Context): List<DownloadEntry> {
 
 private fun openDownload(context: Context, entry: DownloadEntry) {
     val dm = downloadManager(context)
-    val uri: Uri? = dm.getUriForDownloadedFile(entry.id)
+    val uri: Uri? = dm?.getUriForDownloadedFile(entry.id)
     if (uri == null) {
         Toast.makeText(context, "File not available", Toast.LENGTH_SHORT).show()
         return
     }
-    val mime = entry.mimeType ?: dm.getMimeTypeForDownloadedFile(entry.id) ?: "*/*"
+    val mime = entry.mimeType ?: dm?.getMimeTypeForDownloadedFile(entry.id) ?: "*/*"
     val intent = Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(uri, mime)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

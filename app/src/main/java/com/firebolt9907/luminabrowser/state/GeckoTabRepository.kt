@@ -54,6 +54,12 @@ class GeckoTabRepository(
         }
         if (newSelected != null) lastAccessById[newSelected] = System.currentTimeMillis()
         _selectedTabId.value = newSelected
+        // Drop access timestamps for tabs that no longer exist, so the map can't grow unbounded
+        // as tabs are opened and closed over a long session. Only scan when something was removed.
+        if (lastAccessById.size > state.tabs.size) {
+            val live = state.tabs.mapTo(HashSet()) { it.id }
+            lastAccessById.keys.retainAll(live)
+        }
         schedulePersist()
     }
 

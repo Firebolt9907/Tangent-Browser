@@ -165,6 +165,9 @@ private const val BarCollapseDistancePx = 360f
 private const val BarCollapseSettleDelayMs = 120L
 private const val BarCollapseSnapThresholdPx = 180f
 private const val BarExpandSnapThresholdPx = 120f
+// Cap on the URL-keyed in-memory snapshot map so a long browsing session can't retain a
+// screen-sized bitmap for every page ever visited. Evicted entries still live in the disk cache.
+private const val MaxRecentPageSnapshots = 24
 private const val BarCollapsePreviewMaxProgress = 0.28f
 private const val CompactInteractionThreshold = 0.5f
 private val BarCollapseEasing = CubicBezierEasing(0.33f, 0f, 0.2f, 1f)
@@ -1655,8 +1658,17 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     },
                     onSnapshotCaptured = { capturedTabId, url, bitmap ->
                         recentTabSnapshots[capturedTabId] = bitmap
+                        // Drop snapshots for tabs that no longer exist so closed-tab bitmaps aren't
+                        // retained in memory indefinitely.
+                        val liveTabIds = browserState.tabs.mapTo(HashSet()) { it.id }
+                        recentTabSnapshots.keys.retainAll(liveTabIds)
                         if (url.isNotBlank() && url != "about:blank") {
                             recentPageSnapshots[url] = bitmap
+                            // Bound the URL-keyed map; the disk cache still backs evicted entries.
+                            while (recentPageSnapshots.size > MaxRecentPageSnapshots) {
+                                val evict = recentPageSnapshots.keys.firstOrNull { it != url } ?: break
+                                recentPageSnapshots.remove(evict)
+                            }
                         }
                     },
                     onPageScrollDelta = ::enqueuePageScrollDelta,

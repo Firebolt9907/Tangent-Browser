@@ -1,6 +1,7 @@
 package com.firebolt9907.luminabrowser.state
 
 import android.content.Context
+import androidx.core.content.edit
 
 class GlobalPreferencesStore(context: Context) {
     private val prefs = context.getSharedPreferences("lumina_global_prefs", Context.MODE_PRIVATE)
@@ -9,8 +10,10 @@ class GlobalPreferencesStore(context: Context) {
     var preferredBrowserPackage: String?
         get() = prefs.getString("preferredBrowserPackage", null)
         set(value) {
-            if (value == null) prefs.edit().remove("preferredBrowserPackage").apply()
-            else prefs.edit().putString("preferredBrowserPackage", value).apply()
+            prefs.edit {
+                if (value == null) remove("preferredBrowserPackage")
+                else putString("preferredBrowserPackage", value)
+            }
         }
 
     // "" = Default browser, "com.foo" = specific app
@@ -21,7 +24,7 @@ class GlobalPreferencesStore(context: Context) {
             return raw.split("|")
         }
         private set(value) {
-            prefs.edit().putString("recentBrowserPackages", value.joinToString("|")).apply()
+            prefs.edit { putString("recentBrowserPackages", value.joinToString("|")) }
         }
 
     fun recordRecentBrowser(pkg: String) {
@@ -33,21 +36,21 @@ class GlobalPreferencesStore(context: Context) {
 
     var trackingProtection: Boolean
         get() = prefs.getBoolean("trackingProtection", true)
-        set(value) { prefs.edit().putBoolean("trackingProtection", value).apply() }
+        set(value) { prefs.edit { putBoolean("trackingProtection", value) } }
 
     var blockPopUps: Boolean
         get() = prefs.getBoolean("blockPopUps", true)
-        set(value) { prefs.edit().putBoolean("blockPopUps", value).apply() }
+        set(value) { prefs.edit { putBoolean("blockPopUps", value) } }
 
     var javaScriptEnabled: Boolean
         get() = prefs.getBoolean("javaScriptEnabled", true)
-        set(value) { prefs.edit().putBoolean("javaScriptEnabled", value).apply() }
+        set(value) { prefs.edit { putBoolean("javaScriptEnabled", value) } }
 
     var httpsOnly: Boolean
         get() = prefs.getBoolean("httpsOnly", false)
-        set(value) { prefs.edit().putBoolean("httpsOnly", value).apply() }
+        set(value) { prefs.edit { putBoolean("httpsOnly", value) } }
 
     var globalPrivacyControl: Boolean
         get() = prefs.getBoolean("globalPrivacyControl", false)
-        set(value) { prefs.edit().putBoolean("globalPrivacyControl", value).apply() }
+        set(value) { prefs.edit { putBoolean("globalPrivacyControl", value) } }
 }

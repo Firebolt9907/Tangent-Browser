@@ -64,12 +64,26 @@ class LuminaViewModel(
         mode.value = BarMode.Expanded
     }
 
+    /**
+     * Loads an address-bar suggestion (a history/bookmark URL or a raw search query) into the
+     * selected tab and leaves editing mode. [repo.loadUrl] runs the same `normalizeUrl` path as
+     * a manual submit, so a full URL loads directly and bare text becomes a search.
+     */
+    fun onSubmitText(text: String) {
+        repo.loadUrl(text)
+        editingText.value = ""
+        mode.value = BarMode.Expanded
+    }
+
     fun onSwitchTab(direction: Int) {
         repo.selectAdjacent(direction)
     }
 
     fun dismissBlankTabAndReturn(): Boolean =
         (repo as? GeckoTabRepository)?.dismissBlankTabAndReturn() ?: false
+
+    fun closeChildTabAndReturnToParent(): Boolean =
+        (repo as? GeckoTabRepository)?.closeChildTabAndReturnToParent() ?: false
 
     fun onCreateTabFromEdge(selectTab: Boolean = true): String {
         val id = repo.addTab(url = "about:blank", title = "New Tab")

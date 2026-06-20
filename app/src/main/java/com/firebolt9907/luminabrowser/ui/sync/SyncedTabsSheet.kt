@@ -1,5 +1,6 @@
 package com.firebolt9907.luminabrowser.ui.sync
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -24,6 +26,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import com.firebolt9907.luminabrowser.sync.FirefoxSyncController
 import com.firebolt9907.luminabrowser.sync.FirefoxSyncedDevice
 import com.firebolt9907.luminabrowser.sync.FirefoxSyncedTab
@@ -42,9 +46,16 @@ fun SyncedTabsSheet(
     onDismiss: () -> Unit,
     onOpenTab: (String) -> Unit,
     onSignInUrl: (String) -> Unit,
+    currentPageUrl: String = "",
+    currentPageTitle: String = "",
     bottomInsetDp: Dp = 0.dp,
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
+
+    // Reflect the latest background-sync results immediately on open (no network round trip).
+    LaunchedEffect(state.isSignedIn) {
+        if (state.isSignedIn) controller.loadCachedSyncedTabs()
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -123,13 +134,51 @@ fun SyncedTabsSheet(
 
                 Spacer(Modifier.height(12.dp))
 
-                if (state.devices.isEmpty()) {
+                val hasRealUrl = currentPageUrl.isNotBlank() && currentPageUrl != "about:blank"
+                if (hasRealUrl && state.targetDevices.isNotEmpty()) {
                     Text(
-                        text = state.message ?: "No tabs from other devices yet",
-                        color = if (state.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(vertical = 18.dp),
+                        text = "Send this tab to",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(Modifier.height(4.dp))
+                    state.targetDevices.forEach { device ->
+                        TextButton(
+                            enabled = !state.isBusy,
+                            onClick = {
+                                controller.sendTab(device.id, currentPageTitle, currentPageUrl)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = null,
+                                    modifier = Modifier.width(18.dp),
+                                )
+                                Text(device.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
+
+                if (state.devices.isEmpty()) {
+                    // Friendly empty state for the normal "nothing synced yet" case. Error cases
+                    // are surfaced by the red message block below, so we don't render here for them
+                    // (which also avoids the message appearing twice).
+                    if (!state.isError) {
+                        EmptyState(
+                            icon = Icons.Default.CloudSync,
+                            title = "No synced tabs yet",
+                            description = state.message
+                                ?: "Tabs open on your other Firefox devices will appear here.",
+                        )
+                    }
                 } else {
                     LazyColumn {
                         state.devices.forEach { device ->
@@ -189,6 +238,7 @@ private fun SyncedTabRow(
     onOpen: () -> Unit,
 ) {
     ListItem(
+        modifier = Modifier.clickable(onClick = onOpen),
         headlineContent = {
             Text(
                 text = tab.title,
@@ -204,11 +254,10 @@ private fun SyncedTabRow(
             )
         },
         trailingContent = {
-            TextButton(onClick = onOpen) {
-                Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text("Open")
-            }
+            Icon(
+                Icons.AutoMirrored.Filled.OpenInNew,
+                contentDescription = "Open tab",
+            )
         },
     )
 }

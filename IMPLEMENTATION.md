@@ -12,14 +12,17 @@ Snapshot of the app's design and the rationale behind the choices that aren't ob
 
 `LuminaApplication.components` holds:
 
-- `engine: GeckoEngine`
+- `globalPreferencesStore: GlobalPreferencesStore` — initialized first so its values can be passed to `GeckoEngine` at construction time.
+- `engine: GeckoEngine` — constructed with `buildDefaultSettings(globalPreferencesStore)` so stored engine settings survive process death.
 - `store: BrowserStore` with `EngineMiddleware`
 - `sessionUseCases: SessionUseCases`, `tabsUseCases: TabsUseCases`
 - `tabRepository: GeckoTabRepository` (UI-facing tab façade)
 - `tabSnapshotCache: TabSnapshotCache`
+- `sitePreferencesStore: SitePreferencesStore`
 - `addonController: AddonController` wrapping Gecko's `WebExtensionRuntime`
 - `firefoxSyncController: FirefoxSyncController` wrapping FxA authentication plus remote-tabs sync
 - `browserState: StateFlow<BrowserState>` mirrored from the store via `observeManually`
+- `applyEngineSettings()` — mutates `engine.settings` from the current `globalPreferencesStore` values; called from `SettingsSheet` when any toggle changes.
 
 Three demo tabs are seeded on first launch (Apple, NYT, Wikipedia).
 
@@ -70,8 +73,9 @@ Why not two live engine views? GeckoView only supports one rendered session at a
 - Full size is screen width minus 40 dp. Compact target width is based on the displayed domain length, clamped so short domains remain tappable and long domains cannot exceed the full bar width.
 - The tab-count chip fades/shrinks out before full compact. Tapping the compact domain pill expands the URL bar instead of entering text editing.
 - `BottomBarLayer` owns the read of `barCollapseProgressState.value`; `LuminaRoot` passes the `Animatable` down instead of reading its value directly. This limits per-frame invalidation during pill animation to the bottom bar layer instead of recomposing the full root around Gecko.
-- `SafariBar` reports stable bottom inset heights instead of its animated height: 56 dp for normal/compact and 72 dp for Editing, plus 24 dp bottom padding. This avoids changing Gecko toolbar/clipping insets on every collapse frame while still giving the address text field enough vertical room.
+- `SafariBar` reports stable bottom inset heights instead of its animated height: 56 dp for normal/compact and 72 dp for Editing, plus 24 dp bottom padding. This avoids resizing the Gecko viewport on every collapse frame while still giving the address text field enough vertical room.
 - `bottomChromeInsetPx` (measured via `onGloballyPositioned` on the `SafariBar` box) is the single source of truth for how much vertical space the pill occupies. It is passed to `ContentHost` for the Gecko viewport inset **and** to every `ModalBottomSheet` (`AddonsSheet`, `AaSheet`) as `windowInsets = WindowInsets(bottom = bottomInsetDp)`, replacing the default `navigationBars` inset. The 24 dp bottom padding already clears the gesture-nav bar, so the full pill height is the correct sheet inset — sheets stop above the pill rather than behind it.
+- `ContentHost` calls `engineView.setDynamicToolbarMaxHeight(bottomChromeInsetPx)` and `engineView.setVerticalClipping(bottomChromeInsetPx)` (both **positive**) via `SideEffect`. This tells Gecko the pill occupies `bottomChromeInsetPx` pixels at the bottom, so `window.innerHeight` / `visualViewport.height` exclude the pill and `position: fixed; bottom: 0` elements land at the pill's top edge — while the GeckoView itself remains full-screen so content can scroll beneath the pill. Both calls are guarded by `> 0` to avoid calling `setDynamicToolbarMaxHeight(0)` on the initial composition before `SafariBar` is measured, which GeckoView treats as "no toolbar" and may not re-enable. Do not negate `bottomChromeInsetPx` when passing to `setVerticalClipping` — the parameter is a positive pixel height, not a negative offset.
 
 ## Snapshot cache (`state/TabSnapshotCache.kt`, `ui/content/ContentHost.kt`)
 
@@ -162,38 +166,114 @@ Entering or tapping the editing text field selects the full current address, mak
 
 If no previous tab exists the call is a no-op — the only tab is never killed.
 
-## Firefox add-ons (`addons/AddonController.kt`, `ui/addons/AddonsSheet.kt`)
+### Address suggestions (`state/AddressSuggestionProvider.kt`)
+
+`addressSuggestions(query, history, bookmarks)` (on `Dispatchers.IO`) returns up to a few
+`AddressSuggestion`s for the typed query, de-duplicated by URL:
+
+- **Bookmarks** — `BookmarksStorage.searchBookmarks` has an inline-class signature that doesn't
+  resolve cleanly from Kotlin here, so we mirror `BookmarksSheet`'s proven path instead: read
+  `getTree(BookmarkRoot.Mobile.id, recursive = true)` and filter the flattened items locally
+  (bookmark counts are small, so this is cheap).
+- **History** — `HistoryStorage.getSuggestions(query, max)`.
+
+The view-model exposes `onSubmitText(text)` which loads a tapped suggestion through the same
+`repo.loadUrl` → `normalizeUrl` path as a manual submit, so a URL loads directly and bare text
+becomes a search.
+
+### Address sheet (`ui/chrome/AddressSheet`, `ui/chrome/ImeSheetController.kt`)
+
+While the bar is in `BarMode.Editing`, `AddressSheet` presents the suggestions as an iOS-style
+sheet over a scaled-down snapshot of the page being left:
+
+- **Backdrop** — a scrim plus the selected tab's `currentPageSnapshot` (the existing snapshot
+  cache bitmap) rendered as a card that scales `1f → 0.93f` about its top edge and gains rounded
+  corners as the sheet opens, leaving the page's top peeking below the status bar. Tapping the
+  backdrop dismisses (calls `onEditingCancel`).
+- **Sheet** — a rounded panel with a grabber and the suggestion list. The live editing pill
+  (bottom bar) keeps its own `imePadding()` and so stays pinned to the keyboard top. The **sheet
+  itself does NOT use `imePadding`** — it positions its resting bottom with an explicit `kbHeightPx`
+  inset (captured live from `WindowInsets.ime` while not dragging) and *translates* its whole self by
+  the finger travel, because it must slide fully off-screen (top edge and all), which `imePadding`
+  (a grow/shrink of the bottom edge) cannot do.
+- **Drag-to-dismiss (frame-locked, API 30+)** — dragging anywhere on the sheet down translates it
+  1:1 with the finger (`rawDragPx`) so it slides off-screen with no fade. In parallel the keyboard is
+  driven down frame-for-frame via `ImeSheetController` (`insetByUp(-dy)`), a wrapper around the
+  platform `WindowInsetsAnimationController`. Verified on device, Compose's `imePadding()` **does**
+  track manual IME control, so the editing pill rides the collapsing keyboard down for free and comes
+  to rest as the pill once the keyboard is fully collapsed — the pill must therefore NOT also be
+  translated by the descent (doing so double-counts and pushes it behind the keyboard). The backdrop
+  scale/dim is driven by `f = 1 - rawDragPx/kbHeight`. On release, `rawDragPx > kbHeight/2` or a fast
+  fling dismisses (sheet animates the rest of the way off, then `onEditingCancel`), else it settles
+  back open; `animateToFinish(show)` rides the real keyboard to its resting state either way.
+- **Below API 30** there is no manual IME control (`isSupported = false`): the sheet still slides via
+  `rawDragPx` and dismiss hides the keyboard the normal way.
+
+## Firefox add-ons (`addons/AddonController.kt`, `ui/addons/AddonsSheet.kt`, `ui/chrome/AaSheet.kt`)
 
 Add-ons use Gecko's built-in WebExtension APIs directly instead of the larger `feature-addons` UI stack.
 
 - `AddonController` registers a `WebExtensionDelegate` at component construction time, then mirrors installed extensions into a `StateFlow`.
-- The expanded Safari bar has an add-ons button that opens `AddonsSheet`.
-- The sheet accepts an AMO slug (`ublock-origin`), an AMO add-on page URL (`https://addons.mozilla.org/firefox/addon/ublock-origin/`), or a direct `.xpi` URL.
+- The add-ons manager lives in the **Add-ons tab of `AaSheet`** (the sheet opened by the `aA` button). There is no separate add-ons toolbar button. The tab embeds `AddonsManagerSheetContent` inline — install by AMO slug / page URL / direct `.xpi` URL, enable/disable with a switch, remove with a trash icon, and open an extension's options page via its settings icon.
 - Slugs/pages are normalized to `https://addons.mozilla.org/firefox/downloads/latest/{slug}/latest.xpi`; direct `.xpi` URLs are passed through.
-- Installed add-ons can be enabled, disabled, removed, and opened to their manifest-declared options/settings page from the sheet. `AddonController` exposes `WebExtension.Metadata.optionsPageUrl` on each `InstalledAddon`; `AddonsSheet` shows a settings button when that URL exists, and `LuminaRoot` opens it in a normal selected tab.
-- Install, update, and optional permission prompts are bridged into `AddonsSheet`. This is required because Gecko waits for those callbacks before completing installation. While a prompt is pending, the sheet shows only the permission review; the normal add-ons manager page is revealed after the user taps Allow. The prompt groups requested access into extension, website, and data-collection sections, with common WebExtension permission keys rendered as readable descriptions instead of raw manifest strings.
-- AMO detail pages get a small page-level click bridge injected from `ContentHost`: clicking “Add to Firefox” navigates to the add-on's latest `.xpi`, and `.xpi` / AMO download requests are intercepted and passed to `AddonController.installFromPageRequest`. `LuminaRoot` observes `AddonController.state.pendingPrompt` and opens `AddonsSheet` automatically, so Gecko's install permission dialog appears without manually tapping the add-ons toolbar button.
+- Installed add-ons can be enabled, disabled, removed, and opened to their manifest-declared options/settings page from the tab. `AddonController` exposes `WebExtension.Metadata.optionsPageUrl` on each `InstalledAddon`; the manager shows a settings icon when that URL exists, and `LuminaRoot` opens it in a normal selected tab.
+- **`AddonsSheet` is permission-prompt-only.** Install, update, and optional permission prompts are bridged into `AddonsSheet` as a separate `ModalBottomSheet` that appears automatically above `AaSheet` when Gecko issues a permission callback. This is required because Gecko waits for those callbacks before completing installation. The prompt groups requested access into extension, website, and data-collection sections, with common WebExtension permission keys rendered as readable descriptions instead of raw manifest strings. Accepting or denying the prompt dismisses `AddonsSheet` immediately.
+- AMO detail pages get a small page-level click bridge injected from `ContentHost`: clicking “Add to Firefox” navigates to the add-on's latest `.xpi`, and `.xpi` / AMO download requests are intercepted and passed to `AddonController.installFromPageRequest`. `LuminaRoot` observes `AddonController.state.pendingPrompt` and opens `AddonsSheet` automatically so Gecko's install permission dialog appears regardless of whether the user has `AaSheet` open.
 
 Known limitations:
 
 - No curated/recommended AMO catalog is built yet.
 - Browser-action/page-action toolbar surfaces are not implemented. The add-ons can run, but action popups/buttons do not have first-class UI yet.
 
-## Firefox Sync (`sync/FirefoxSyncController.kt`, `ui/sync/SyncedTabsSheet.kt`)
+## Firefox Sync (`sync/FirefoxSyncController.kt`, `sync/PlacesLoginsStorage.kt`, `ui/sync/SyncedTabsSheet.kt`, `ui/passwords/PasswordsSheet.kt`)
 
-Firefox Sync support currently targets the `tabs` engine, because Lumina still does not have local bookmarks, history, logins, or downloads models.
+Firefox Sync supports the `tabs` and `passwords` engines. Passwords are stored locally using AES-256-GCM encryption backed by Android KeyStore and synced via Firefox Sync when the user is signed in.
 
 - `LuminaApplication` initializes application-services HTTP plumbing via `AppServicesInitializer` / `RustHttpConfig`.
 - `FirefoxSyncController` owns `FxaAccountManager`, `RemoteTabsStorage`, and `SyncedTabsStorage`.
 - The FxA OAuth flow uses Mozilla's public Android sample client id (`3c49430b43dfba77`) and redirects to `https://accounts.firefox.com/oauth/success/{clientId}`. `ContentHost` intercepts that success URL from Gecko observer callbacks (both `onLoadRequest` and `onLocationChange`), extracts `code` / `state`, and calls `FxaAccountManager.finishAuthentication`. A `@Volatile authInFlight` flag in `FirefoxSyncController` prevents `finishAuthentication` from being called twice if both callbacks fire before `stopLoading()` takes effect.
 - `SyncedTabsStorage.start()` watches the `BrowserStore`, stores non-private loaded local tabs into the remote-tabs store, and syncs the tabs engine after debounced tab changes.
-- The tab grid exposes a **Synced Tabs** button. `SyncedTabsSheet` handles sign-in, sign-out, manual "Sync Now", and opening tabs from other Firefox devices.
+- The tab grid exposes a **Synced Tabs** button and a **Settings** button side-by-side. `SyncedTabsSheet` handles sign-in, sign-out, manual "Sync Now", and opening tabs from other Firefox devices.
 - Authentication completion removes the temporary sign-in tab and reopens the sheet with synced tabs.
 - When the sign-in URL is opened from the sheet, `closeGrid(animateBack = false)` is called immediately so the sign-in page is visible rather than hidden behind the grid. When a synced tab is opened, `closeGrid(animateBack = true)` is called so the grid closes with animation and the opened tab is visible.
 
+### Passwords storage (`sync/PlacesLoginsStorage.kt`)
+
+`PlacesLoginsStorage` implements `LoginsStorage` (from `concept-storage`) and `SyncableStore` (from `concept-sync`), wrapping `mozilla.appservices.logins.DatabaseLoginsStorage` from the native Rust logins crate (`org.mozilla.appservices:logins:147.0.1`):
+
+- **Encryption**: Managed natively by the Rust logins crate (SQLite + encryption). A 256-bit AES key is generated once via Android KeyStore and provided to `DatabaseLoginsStorage` through a custom `KeyManager` implementation.
+- **Persistence**: The Rust `DatabaseLoginsStorage` writes to `lumina_logins.db` in the app's private database directory. All crypto and serialization happens in native code via the Rust logins crate, backed by the `libmegazord.so` native library.
+- **Sync registration**: `DatabaseLoginsStorage.registerWithSyncManager()` registers the Rust store with the native sync engine. The store is also registered with `GlobalSyncableStoreProvider` in `FirefoxSyncController.init` for the `SyncEngine.Passwords` engine. `FxaAccountManager` is configured with `supportedEngines = setOf(SyncEngine.Tabs, SyncEngine.Passwords)`.
+- **API**: `list()`, `get(id)`, `getByBaseDomain(domain)`, `add(LoginEntry)`, `update(id, LoginEntry)`, `addOrUpdate(LoginEntry)`, `findLoginToUpdate(LoginEntry)`, `touch(id)`, `delete(id)`, `wipeLocal()`.
+- **Autofill**: `engine.settings.loginAutofillEnabled = true` is set at construction time in `buildDefaultSettings()`.
+
+### Critical: register `RemoteTabsStorage` with `GlobalSyncableStoreProvider` before `accountManager.start()`
+
+`FxaAccountManager` is configured with `SyncConfig(supportedEngines = setOf(SyncEngine.Tabs))`, but that only tells the sync scheduler *which* engine to run — not *where* to store data. The backing store must be registered separately via:
+
+```kotlin
+GlobalSyncableStoreProvider.configureStore(SyncEngine.Tabs to lazy { remoteTabsStorage })
+```
+
+This must be called **before** `accountManager.start()`. Without it, sync runs but writes to and reads from nowhere — `getSyncedDeviceTabs()` always returns empty.
+
+### Critical: `syncNow` is fire-and-forget — always await completion before reading
+
+`FxaAccountManager.syncNow()` returns as soon as it has **enqueued** a WorkManager one-shot job (`WorkManagerSyncDispatcher.syncNow` calls `WorkManager.beginUniqueWork("Immediate", KEEP, …).enqueue()` and returns immediately — it is not a suspending call that awaits the job). Calling `syncedTabsStorage.getSyncedDeviceTabs()` right after will read **stale data** because the sync worker hasn't run yet.
+
+The correct pattern in `refreshSyncedTabs` is:
+1. Register a `SyncStatusObserver` on `accountManager.syncStatusObserverRegistry` (Kotlin property, not a `getSyncStatusObserverRegistry()` method call) **before** calling `syncNow`.
+2. Store the result in a `CompletableDeferred<Unit>`.
+3. Call `syncNow`.
+4. `withTimeout(30_000L) { syncDone.await() }` — suspends until `onIdle` or `onError` fires, with a 30 s fallback that still lets the read proceed on stale data.
+5. Only then call `getSyncedDeviceTabs()`.
+
+The observer must be registered first to avoid a race where sync completes before the observer is attached (completing immediately with stale data and leaving the deferred unresolved forever). Note that `accountManager` implements `Observable<AccountObserver>` — its `register`/`unregister` methods accept `AccountObserver` only. `SyncStatusObserver` must be registered on `accountManager.syncStatusObserverRegistry` (`ObserverRegistry<SyncStatusObserver>`), not on `accountManager` directly.
+
 Known limitations:
 
-- Only open tabs are synced. Bookmarks, history, passwords, credit cards, addresses, and add-ons are not wired because Lumina has no corresponding local storage yet.
+- Passwords sync uses `PlacesLoginsStorage` wrapping the native Rust `DatabaseLoginsStorage` from `org.mozilla.appservices:logins:147.0.1`, which provides full Rust-backed sync engine bindings via the `libmegazord.so` native library. The `DatabaseLoginsStorage.registerWithSyncManager()` call registers the Rust sync engine for bidirectional password sync.
+- Bookmarks, history, credit cards, addresses, and add-ons are not wired.
 - Push/send-tab notifications are not implemented; remote tabs refresh on tab changes and manual "Sync Now".
 - Production distribution should use an app-specific FxA OAuth client instead of the sample client id.
 
@@ -215,12 +295,69 @@ GeckoView 120+ implements the WebAuthn spec internally — challenge/response cr
 
 Passkeys are stored in the Android platform Keystore / Credential Manager and are independent of Firefox Sync's logins database. Sync can add cloud backup of passkeys separately without touching this bridge.
 
+## Reader mode (`ui/reader/`, `ui/chrome/AaSheet.kt`, `ui/content/ContentHost.kt`)
+
+Reader mode extracts article content from the live page via JavaScript and renders it in a clean native Compose view.
+
+### Architecture
+
+- `ReaderManager` (singleton) holds four `StateFlow`s: `activeReaderTabs`, `eligibleReaderTabs`, `tabArticles`, `pendingActivationTabs`. All keyed by tab id.
+- `ReaderExtractor.extractReaderContent(engineSession, tabId)` injects a `javascript:` URL that walks the DOM (article element scoring → heading/paragraph/blockquote/list block extraction) and calls `window.prompt("lumina-reader", JSON.stringify(articleData))` to send the result back to Kotlin.
+- `ReaderExtractor.registerPromptDelegate(engineSession, tabId)` wraps `GeckoSession.promptDelegate` with `ReaderPromptDelegate` which intercepts `TextPrompt` where `prompt.message == "lumina-reader"`. The data is in `prompt.defaultValue` (the second argument to `window.prompt`). Guard `if (oldDelegate is ReaderPromptDelegate) return` prevents double-wrapping on re-render.
+- `ContentHost` calls `registerPromptDelegate` inside `DisposableEffect(engineView, engineSession, tabId)` after `engineView.render(session)`.
+
+### Critical: `prompt.message` not `prompt.title`
+
+`window.prompt(message, defaultValue)` maps to `TextPrompt.message` (first argument) and `TextPrompt.defaultValue` (second argument). There is no `TextPrompt.title` field for this purpose. Checking `prompt.title` silently discards every extraction result.
+
+### Activation flow
+
+1. User taps "Show Reader" in `AaSheet` (Page tab).
+2. If already eligible → `readerManager.setReaderActive(tabId, true)` — immediate.
+3. If not yet eligible → `readerManager.requestReaderActivation(tabId)` (adds to `pendingActivationTabs`) then `ReaderExtractor.extractReaderContent(engineSession, tabId)`.
+4. When the `javascript:` prompt fires, `ReaderPromptDelegate` calls `ReaderManager.setReaderEligible(tabId, article)`, which also auto-activates any pending tab.
+5. `LuminaRoot` observes `activeReaderTabs` and `tabArticles` — when both have an entry for the selected tab, `ReaderView` overlays `ContentHost`.
+
+### JS injection guard
+
+`extractReaderContent` loads a `javascript:` URL via `engineSession.loadUrl(..., ALLOW_JAVASCRIPT_URL | LOAD_FLAGS_REPLACE_HISTORY)`. `ContentHost` sets `suppressJavascriptLoadCallback = true` before calling it (same guard used by the viewport spacer injection) so the JS URL load does not re-trigger extraction or spacer injection in `onLoadingStateChange` / `onFirstContentfulPaint`. Reader state (`ReaderManager.clearReaderState`) is cleared in `onLocationChange` only for non-`javascript:` URLs.
+
 ## What's intentionally not built
 
 - **Profile / tab persistence**. `BrowserState` is in-memory only; local open tabs are published to Firefox Sync while signed in, but the selected/open local tab set still is not restored on cold start.
 - **Browser-action / page-action surfaces** for extensions.
-- **History, bookmarks, downloads, find-in-page, reader mode** — none wired.
 - **Multi-window**. Activity is single-window only.
+- **Per-session engine settings** (e.g. per-tab JavaScript toggle). `applyEngineSettings()` mutates the shared `GeckoEngine.settings` object; changes apply to subsequent page loads across all tabs, not retroactively to already-loaded sessions.
+
+## Downloads (`MainActivity.kt`, `engine/Engine.kt`, `ui/downloads/DownloadsSheet.kt`)
+
+File downloads are captured by mozilla-components and handed off to the **platform**
+`android.app.DownloadManager`:
+
+- `LuminaBrowserComponents.downloadsUseCases = DownloadsUseCases(store, application)`.
+- `MainActivity.downloadsFeature` is a `DownloadsFeature` wired with `AndroidDownloadManager`,
+  started in `onStart` / stopped in `onStop`. It observes the selected tab's `content.download`,
+  consumes it, and enqueues into the system DownloadManager (OS owns the notification, storage,
+  and persistence). No `fragmentManager` is given, so there is no pre-download confirm dialog —
+  downloads start immediately. On API ≤ 28 it requests `WRITE_EXTERNAL_STORAGE` via
+  `onNeedToRequestPermissions` → `REQUEST_CODE_DOWNLOAD_PERMISSIONS`, resolved in
+  `onRequestPermissionsResult` → `downloadsFeature.onPermissionsResult`.
+
+The in-app **Downloads list** (`DownloadsSheet`) does not read `BrowserStore.state.downloads`
+(no `DownloadMiddleware`/`DownloadStorage` is installed, so that map stays empty with the
+AndroidDownloadManager path). Instead it queries the platform `DownloadManager.query()` directly —
+that API only returns downloads owned by this app, and the OS keeps them across process death,
+so it is the source of truth that matches what AndroidDownloadManager enqueued.
+
+- Reached from a **Downloads button** in the tab-grid toolbar (alongside Synced Tabs, Passwords,
+  History, Bookmarks, Settings).
+- Rows show file name, status (Pending / Downloading / Paused / Failed / size + time when done),
+  and a live `LinearProgressIndicator` for active downloads. The sheet polls `queryDownloads`
+  every 1.2 s **only while** an active (running/pending/paused) download exists, then stops.
+- Tapping a completed row opens the file via `ACTION_VIEW` on
+  `DownloadManager.getUriForDownloadedFile(id)` with `FLAG_GRANT_READ_URI_PERMISSION`.
+- Trailing trash icon calls `DownloadManager.remove(id)` (removes entry + file); "Clear all"
+  removes every entry.
 
 ## GeckoView background color
 
@@ -264,6 +401,8 @@ Unified gesture handlers in `LuminaRoot`:
 
 `openGrid` and `springGridProgressTo` both accept `fromProgress: Float` and `snapTo` it inside the coroutine before calling `animateTo`, so the spring starts exactly where the finger lifted rather than from a stale zero. Spring parameters: `openGrid` uses `dampingRatio=0.75, stiffness=400` (snappy open with a slight elastic overshoot at the end); `springGridProgressTo` uses `dampingRatio=1.0, stiffness=220` (critically damped cancel, paced to match); `closeGrid(animateBack=true)` uses `tween(300ms, CubicBezierEasing(0,0,0.2,1))` — a fast ease-out (decelerate) curve with no spring bounce, matching the iOS/Material close-to-fullscreen feel. The actual Gecko session selection is deferred to `afterClose()` to avoid CPU spikes competing with the animation.
 
+**Initial scroll position**: `TabGridOverlay` pre-positions the scroll while the grid is fully closed so the selected tab is visible when it next opens. A `LaunchedEffect(gridIsClosed, selectedTabId)` fires when `progress < 0.001 && !isGesture && commitFromProgress == 0 && cancelFromProgress == 0`, calling `scrollState.scrollTo((cell.top − topMarginPx).coerceAtLeast(0))` for the selected tab's row. Doing this while the grid is closed (progress ≈ 0) is safe: visual y = `ty − scrollState.value = scrollState.value − scrollState.value = 0`, so there is no visible jump. Setting scroll mid-gesture (progress > 0) would shift the `ty = lerp(scrollState.value, cell.top, progress)` base value and cause a visible upward teleport, so the effect is explicitly gated on the closed condition. The `scrollEnabled` gate remains unchanged — user touch-scroll is still disabled until `progress ≥ 0.999`.
+
 Domain pills (`pillAlpha` in `TabGridOverlay`) are suppressed entirely while `isGesture=true` (finger still down) and only fade in once the finger lifts and the commit spring begins. This prevents the labels from being visible during the swipe-up drag — they appear as part of the settle animation, not as a side-effect of partial progress.
 
 A **new-tab "+" cell** is always appended at `index = tabs.size` in `TabGridOverlay`. It uses the same `gridCellRect` position as if it were an extra tab, fades in with `pillAlpha` (same gate as domain pills — suppressed during the gesture, visible after), and is always placed at its grid position with no browse-layer lerp. `totalItems = tabs.size + 1` is used for the row-count / content-height calculation so it correctly reserves space for the extra cell.
@@ -283,24 +422,54 @@ Tapping a cell clears the handoff pins, calls `tabRepository.selectTab` if chang
 
 Both the commit and cancel springs in `onDragEnd` pull their `dampingRatio` from a shared top-level helper `dampingForVelocity(velocity)`. Slow swipes (`|v| < 400 px/s`) get a critically damped settle (1.0), the average band (400–1500 px/s) interpolates linearly from 1.0 down to 0.88 for a barely-perceptible bounce, and fast swipes (`>= 1500 px/s`) snap to 0.82 for a slightly noticeable overshoot. Stiffness stays fixed: `Spring.StiffnessMediumLow` for commit, `Spring.StiffnessMedium` for cancel. The new-tab pop spring is unchanged.
 
-## Per-site preferences (`state/SitePreferencesStore.kt`, `ui/chrome/AaSheet.kt`)
+## Per-site preferences & appearance sheet (`state/SitePreferencesStore.kt`, `ui/chrome/AaSheet.kt`)
 
-`SitePreferencesStore` is a `SharedPreferences`-backed store keyed by host (derived via `compactHost`/`hostFromUrl`, which strips `www.`). It exposes `get(host)` / `set(host, prefs)` and a `SharedFlow<String> updates` that emits the host whenever its prefs change. The `aA` button in the bottom bar is now wired separately from the URL field — `BarExpanded` takes both `onUrlTap` and `onAaTap`, threaded through `SafariBar` and `BottomBarLayer`. Tapping `aA` opens `AaSheet`, a `ModalBottomSheet` styled after `AddonsSheet` with a zoom +/-/reset row (10% steps, clamped 50%–200%) and a per-site override switch for top-padding fix. `about:blank` / empty hosts open the sheet but the per-site controls no-op.
+`SitePreferencesStore` is a `SharedPreferences`-backed store keyed by host (derived via `compactHost`/`hostFromUrl`, which strips `www.`). It exposes `get(host)` / `set(host, prefs)` and a `SharedFlow<String> updates` that emits the host whenever its prefs change. The `aA` button in the bottom bar is wired separately from the URL field — `BarExpanded` takes both `onUrlTap` and `onAaTap`, threaded through `SafariBar` and `BottomBarLayer`. Tapping `aA` opens `AaSheet`, a `ModalBottomSheet` with a `PrimaryTabRow` across the top.
 
-For real URLs, the sheet's bottom section also exposes:
+### Page tab
+
+Contains per-site controls. `about:blank` / empty hosts open the sheet but the per-site controls no-op.
+
+- **Zoom** — +/-/reset row (10% steps, clamped 50%–200%).
+- **Add top padding for this site** — per-site override switch for the viewport top-padding fix.
+- **Request desktop site** — per-host switch persisted in `SitePreferences.desktopMode`. Toggling it
+  calls `engineSession.toggleDesktopMode(enabled, reload = true)` for immediate effect. A
+  `LaunchedEffect(selectedEngineSession, currentHost, …)` in `LuminaRoot` re-applies the host's saved
+  preference (`reload = false`) on tab-switch / cross-host navigation / restored tabs, so the desktop
+  UA follows the site rather than the session.
+
+For real URLs, the tab also exposes:
 
 - **Share** — fires `Intent.ACTION_SEND` (`text/plain`) wrapped in `createChooser` so the system share sheet appears. Dismisses `AaSheet` on tap.
 - **Open in [browser]** — launches `Intent.ACTION_VIEW` targeting the user's stored preferred browser package. Falls back to the system chooser via a bare `ACTION_VIEW` on `ActivityNotFoundException`. The button label resolves the package to a human-readable app name via `PackageManager.getApplicationLabel`; shows "Open in browser" when no preference is set. When the stored preference is `""` (empty string), it means the user explicitly chose "Default browser" and no `setPackage` is applied, so the OS routes to the system default.
 - **Change** — opens an `AlertDialog` listing browsers available on the device. The list is built by querying `PackageManager.queryIntentActivities` with an HTTPS probe intent and **`flags=0`** (not `MATCH_DEFAULT_ONLY` — that flag returns only the current system default, so every other installed browser is invisible), then **filtering out Lumina's own package** (`com.firebolt9907.luminabrowser`) so the app does not appear as its own fallback. Hardcoded well-known entries (Default browser, Chrome, Firefox, Firefox Nightly) are pinned at the top of the list; each is included if its package appears in the query results *or* if `PackageManager.getApplicationInfo` confirms it is installed (the second check covers packages that are installed but don't surface via `queryIntentActivities` on some Android versions). "Default browser" (empty package) is always present. Any remaining dynamically discovered browsers follow in alphabetical order. If the user has picked a browser before, a **Recent** section (up to 5 entries) appears above a divider so prior choices are one tap away. Tapping any entry writes its package name (or `""` for Default) to `GlobalPreferencesStore`, adds it to the recent list, and immediately updates the button label.
 
+### Add-ons tab
+
+Embeds `AddonsManagerSheetContent` (from `ui/addons/AddonsSheet.kt`) inline — no nested `ModalBottomSheet`. Shows the install field, the installed-addon list, and relays the `onOpenAddonSettings` callback back to `LuminaRoot` to open an extension's options page in a new tab. `AaSheet` receives `AddonController` directly and collects its state via `collectAsStateWithLifecycle` inside the tab content. The `initialTab: Int` parameter lets `LuminaRoot` open the sheet directly to the Add-ons tab if needed.
+
 ## Global preferences (`state/GlobalPreferencesStore.kt`)
 
-`GlobalPreferencesStore` holds app-wide (not per-host) user preferences, backed by the `lumina_global_prefs` `SharedPreferences` file. Currently stores two keys:
+`GlobalPreferencesStore` holds app-wide (not per-host) user preferences, backed by the `lumina_global_prefs` `SharedPreferences` file. Keys:
 
 - `preferredBrowserPackage` — a nullable string. `null` = no preference set; `""` (empty string) = user explicitly chose "Default browser" (no package constraint on the intent); any other value is a package name.
 - `recentBrowserPackages` — a pipe-separated list of up to 5 package strings the user has previously selected from the Change picker (most-recent-first). `""` in the list represents "Default browser". Managed via `recordRecentBrowser(pkg: String)`, which prepends and caps at 5.
+- `trackingProtection: Boolean` (default `true`) — Enhanced Tracking Protection; maps to `TrackingProtectionPolicy.recommended()` vs `none()`.
+- `blockPopUps: Boolean` (default `true`) — maps to `javaScriptCanOpenWindowsAutomatically = false` in `GeckoEngine.settings`.
+- `javaScriptEnabled: Boolean` (default `true`) — maps to `GeckoEngine.settings.javascriptEnabled`.
+- `httpsOnly: Boolean` (default `false`) — maps to `Engine.HttpsOnlyMode.ENABLED` vs `DISABLED`.
+- `globalPrivacyControl: Boolean` (default `false`) — maps to `GeckoEngine.settings.globalPrivacyControlEnabled`.
 
-No reactive flow is needed because both values are only read when `AaSheet` opens. Constructed once in `LuminaBrowserComponents` alongside `sitePreferencesStore` and passed directly to `AaSheet`.
+No reactive flow is needed because browser-package values are only read when `AaSheet` opens. Engine settings are read at startup (see Engine section). Constructed once in `LuminaBrowserComponents` **before** the engine so `buildDefaultSettings` can read stored values at engine construction time.
+
+## Settings sheet (`ui/settings/SettingsSheet.kt`)
+
+`SettingsSheet` is a `ModalBottomSheet` accessed from the **Settings button** in the tab grid (displayed alongside the Synced Tabs button, fading in with the same `gridProgress`-keyed alpha). It presents two sections:
+
+- **Privacy & Security** — Enhanced Tracking Protection, Global Privacy Control, HTTPS-Only Mode.
+- **Content** — Block Pop-ups, JavaScript.
+
+Each toggle writes to `GlobalPreferencesStore` and immediately calls `LuminaBrowserComponents.applyEngineSettings()`, which mutates `engine.settings` in place so the change takes effect for subsequent navigations without an app restart. The engine settings are also applied at startup via `buildDefaultSettings(globalPreferencesStore)` passed to the `GeckoEngine` constructor, so stored preferences survive process death.
 
 ## Per-site top padding & zoom (`ui/content/ContentHost.kt`, `ui/content/PageBottomSpacer.kt`)
 

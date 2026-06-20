@@ -8,6 +8,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -25,14 +29,18 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.state.BarMode
 import com.firebolt9907.luminabrowser.state.BarUiState
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
+import kotlinx.coroutines.delay
 
 @Composable
 internal fun BarEditing(
@@ -44,6 +52,7 @@ internal fun BarEditing(
     controlsEnabled: Boolean = true,
 ) {
     val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
     var fieldValue by remember {
         mutableStateOf(
             TextFieldValue(
@@ -65,7 +74,16 @@ internal fun BarEditing(
         }
     }
     LaunchedEffect(controlsEnabled) {
-        if (controlsEnabled) focusRequester.requestFocus()
+        if (controlsEnabled) {
+            focusRequester.requestFocus()
+            // Re-assert after the bar's enter transition settles. When editing is entered
+            // programmatically mid-animation (e.g. a new tab from an edge swipe, where
+            // `controlsEnabled` never toggles), the first request can be dropped during the
+            // `AnimatedContent` transition and the keyboard never opens.
+            delay(60)
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
     }
 
     Surface(
@@ -101,7 +119,26 @@ internal fun BarEditing(
                     },
                 singleLine = true,
                 placeholder = { Text("Search or enter address") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                trailingIcon = if (fieldValue.text.isNotEmpty()) {
+                    {
+                        IconButton(
+                            onClick = {
+                                fieldValue = TextFieldValue("")
+                                onEditingTextChange("")
+                                focusRequester.requestFocus()
+                            },
+                            enabled = controlsEnabled,
+                        ) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear address")
+                        }
+                    }
+                } else null,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Uri,
+                    autoCorrectEnabled = false,
+                    capitalization = KeyboardCapitalization.None,
+                    imeAction = ImeAction.Go,
+                ),
                 keyboardActions = KeyboardActions(onGo = { onEditingSubmit() }),
                 shape = RoundedCornerShape(24.dp),
             )

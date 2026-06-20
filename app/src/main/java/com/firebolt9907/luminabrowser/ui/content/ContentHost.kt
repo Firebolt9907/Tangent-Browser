@@ -4,7 +4,11 @@ import android.annotation.SuppressLint
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.ViewConfiguration
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -12,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -19,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.lerp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -26,12 +32,12 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.firebolt9907.luminabrowser.addons.AddonController
 import com.firebolt9907.luminabrowser.state.TabSnapshotCache
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import mozilla.components.concept.engine.Engine
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineSession.Observer
 import mozilla.components.concept.engine.window.WindowRequest
 import kotlinx.coroutines.delay
-import androidx.compose.runtime.mutableLongStateOf
 
 private const val BottomSpacerExtraCssPx = 10
 
@@ -47,6 +53,7 @@ fun ContentHost(
     pageUrl: String = "",
     snapshotCache: TabSnapshotCache? = null,
     addonController: AddonController? = null,
+    sitePermissionController: com.firebolt9907.luminabrowser.permissions.SitePermissionController? = null,
     onTabPainted: (String) -> Unit = {},
     onSnapshotCaptured: (tabId: String, url: String, bitmap: android.graphics.Bitmap) -> Unit = { _, _, _ -> },
     onPageScrollDelta: (Float) -> Unit = {},
@@ -57,11 +64,12 @@ fun ContentHost(
     currentSnapshotRequestId: Int = 0,
     onCurrentSnapshotCaptured: (tabId: String, bitmap: android.graphics.Bitmap) -> Unit = { _, _ -> },
     onTopOverscrollPull: (Float) -> Unit = {},
-    onTopOverscrollRelease: () -> Unit = {},
+    onTopOverscrollRelease: (Float) -> Unit = {},
     onOpenWindowRequest: (WindowRequest) -> Unit = {},
     onFirefoxAuthRedirect: (String) -> Boolean = { false },
     topPaddingFixActive: Boolean = false,
     pageZoomFactor: Float = 1.0f,
+    barCollapseProgressState: Animatable<Float, AnimationVector1D>? = null,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -76,6 +84,16 @@ fun ContentHost(
     }
     val engineView = remember(engine) {
         engine.createView(context).also { it.setActivityContext(context) }
+    }
+    // Wrap the EngineView in a PullRefreshContainer (a nested-scroll parent) so pull-to-refresh
+    // works reliably over GeckoView, which cooperates as a NestedScrollingChild. canPull is true
+    // only when the page is at the very top; the container reports live pull distance, which Compose
+    // turns into the reactive refresh line + threshold haptic.
+    val pullContainer = remember(engineView) {
+        PullRefreshContainer(context).apply {
+            canPull = { !engineView.canScrollVerticallyUp() }
+            addView(engineView.asView())
+        }
     }
     var lastTouchY by remember { mutableFloatStateOf(0f) }
     var pullingFromTop by remember { mutableStateOf(false) }
@@ -118,9 +136,24 @@ fun ContentHost(
         }
     }
 
+    // SafariBar layout hardcodes 24dp bottom padding to clear the gesture nav bar, but the
+    // actual nav bar height varies by device. Use the real inset so fixed-bottom web elements
+    // land exactly at the pill's top edge rather than above it.
+    val navBarPx = WindowInsets.navigationBars.getBottom(density)
+    val barPaddingPx = with(density) { 24.dp.roundToPx() }
+    val compactPillPx = with(density) { 44.dp.roundToPx() }
+    val collapseProgress = barCollapseProgressState?.value ?: 0f
+    val expandedClippingPx = (bottomChromeInsetPx - barPaddingPx + navBarPx).coerceAtLeast(0)
+    val currentClippingPx = lerp(
+        expandedClippingPx.toFloat(),
+        (compactPillPx + navBarPx).toFloat(),
+        collapseProgress,
+    ).roundToInt().coerceAtLeast(0)
     SideEffect {
-        engineView.setDynamicToolbarMaxHeight(bottomChromeInsetPx)
-        engineView.setVerticalClipping(-bottomChromeInsetPx)
+        if (bottomChromeInsetPx > 0) {
+            engineView.setDynamicToolbarMaxHeight(expandedClippingPx)
+            engineView.setVerticalClipping(currentClippingPx)
+        }
     }
 
     DisposableEffect(engineView, lifecycle) {
@@ -143,7 +176,12 @@ fun ContentHost(
     }
 
     DisposableEffect(engineView, engineSession, tabId) {
-        engineSession?.let(engineView::render)
+        engineSession?.let { session ->
+            engineView.render(session)
+            if (tabId != null) {
+                com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.registerPromptDelegate(session, tabId)
+            }
+        }
         onDispose {
             if (engineSession != null) captureSnapshot(tabId)
         }
@@ -228,6 +266,9 @@ fun ContentHost(
                         amoInstallerInjectedForCurrentLoad = false
                         suppressJavascriptLoadCallback = false
                         injectAmoInstaller(url)
+                        if (tabId != null) {
+                            com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.clearReaderState(tabId)
+                        }
                     }
                 }
 
@@ -236,6 +277,10 @@ fun ContentHost(
                     injectAmoInstaller(currentUrl)
                     captureSnapshot(capturingUrl = currentUrl, deduped = true)
                     notifyPainted()
+                    if (tabId != null && !suppressJavascriptLoadCallback) {
+                        suppressJavascriptLoadCallback = true
+                        com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
+                    }
                 }
 
                 override fun onLoadingStateChange(loading: Boolean) {
@@ -252,6 +297,36 @@ fun ContentHost(
                         injectAmoInstaller(currentUrl)
                         captureSnapshot(capturingUrl = currentUrl, deduped = true)
                         notifyPainted()
+                        if (tabId != null) {
+                            suppressJavascriptLoadCallback = true
+                            com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
+                        }
+                    }
+                }
+
+                override fun onContentPermissionRequest(
+                    permissionRequest: mozilla.components.concept.engine.permission.PermissionRequest,
+                ) {
+                    if (sitePermissionController != null) {
+                        sitePermissionController.onContentPermissionRequest(permissionRequest)
+                    } else {
+                        permissionRequest.reject()
+                    }
+                }
+
+                override fun onCancelContentPermissionRequest(
+                    permissionRequest: mozilla.components.concept.engine.permission.PermissionRequest,
+                ) {
+                    sitePermissionController?.onCancelContentPermissionRequest(permissionRequest)
+                }
+
+                override fun onAppPermissionRequest(
+                    permissionRequest: mozilla.components.concept.engine.permission.PermissionRequest,
+                ) {
+                    if (sitePermissionController != null) {
+                        sitePermissionController.onAppPermissionRequest(permissionRequest)
+                    } else {
+                        permissionRequest.reject()
                     }
                 }
 
@@ -313,11 +388,13 @@ fun ContentHost(
         modifier.fillMaxSize()
     }
     AndroidView(
-        factory = { engineView.asView() },
+        factory = { pullContainer },
         modifier = engineModifier,
-    ) { view ->
-        engineView.setActivityContext(view.context)
-        view.setOnTouchListener { _, event ->
+    ) { _ ->
+        engineView.setActivityContext(context)
+        pullContainer.onPull = onTopOverscrollPull
+        pullContainer.onRelease = onTopOverscrollRelease
+        engineView.asView().setOnTouchListener { _, event ->
             predictiveBackVelocityTracker?.addMovement(event)
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -354,14 +431,7 @@ fun ContentHost(
                         onPredictiveBackProgress(predictiveBackProgressPx)
                         return@setOnTouchListener true
                     }
-                    val deltaY = event.rawY - lastTouchY
-                    lastTouchY = event.rawY
-                    if (deltaY > 0f && !engineView.canScrollVerticallyUp()) {
-                        pullingFromTop = true
-                        onTopOverscrollPull(deltaY)
-                    } else if (pullingFromTop && deltaY < 0f) {
-                        onTopOverscrollPull(deltaY)
-                    }
+                    // Pull-to-refresh is handled by the enclosing SwipeRefreshLayout.
                     false
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -382,10 +452,6 @@ fun ContentHost(
                         velocityTracker?.recycle()
                         predictiveBackVelocityTracker = null
                         return@setOnTouchListener true
-                    }
-                    if (pullingFromTop) {
-                        pullingFromTop = false
-                        onTopOverscrollRelease()
                     }
                     predictiveBackEligible = false
                     predictiveBackProgressPx = 0f

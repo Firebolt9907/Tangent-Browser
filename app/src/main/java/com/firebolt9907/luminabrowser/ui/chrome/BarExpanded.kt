@@ -1,15 +1,19 @@
 package com.firebolt9907.luminabrowser.ui.chrome
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -20,7 +24,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -29,6 +37,7 @@ import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.util.lerp
 import com.firebolt9907.luminabrowser.state.BarMode
 import com.firebolt9907.luminabrowser.state.BarUiState
+import com.firebolt9907.luminabrowser.ui.reader.ReaderTheme
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 
 @Composable
@@ -36,22 +45,49 @@ internal fun BarExpanded(
     state: BarUiState,
     onUrlTap: () -> Unit,
     onAaTap: () -> Unit,
+    onAaLongPress: () -> Unit = {},
     onDragStart: () -> Unit,
     onDragDelta: (Offset) -> Unit,
     onDragEnd: (totalDelta: Offset, velocity: Offset) -> Unit,
     onReload: () -> Unit,
-    onAddonsClick: () -> Unit,
+    onReloadLongPress: () -> Unit = {},
+    canGoForward: Boolean = false,
     modifier: Modifier = Modifier,
     interactive: Boolean = true,
     controlsEnabled: Boolean = true,
     collapseProgress: Float = 0f,
+    isReaderEligible: Boolean = false,
+    isReaderActive: Boolean = false,
+    readerTheme: ReaderTheme = ReaderTheme.White,
 ) {
     val progress = collapseProgress.coerceIn(0f, 1f)
     val controlsProgress = 1f - progress
+    // Flag plain-HTTP pages as not secure (modern-browser convention). https / internal pages
+    // (about:, blank new tab) show nothing — only http:// is called out.
+    val isInsecure = !state.blankNewTabPreview &&
+        state.pageUrl.startsWith("http://", ignoreCase = true)
     val controlsWidth = lerp(48.dp, 0.dp, progress)
     val tabChipWidth = lerp(36.dp, 0.dp, progress)
     val tabChipSpacing = lerp(8.dp, 0.dp, progress)
     val blankPreview = state.blankNewTabPreview
+
+    val containerColor = if (isReaderActive) {
+        when (readerTheme) {
+            ReaderTheme.White -> Color(0xFFF2F2F7)
+            ReaderTheme.Sepia -> Color(0xFFEADFCA)
+            ReaderTheme.Dark -> Color(0xFF2C2C2E)
+        }
+    } else {
+        null
+    }
+
+    val aAColor = if (isReaderActive) {
+        MaterialTheme.colorScheme.primary
+    } else if (isReaderEligible) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    }
 
     BoxWithConstraints(modifier = modifier) {
         val expandedWidth = (maxWidth - 40.dp).coerceAtLeast(0.dp)
@@ -66,6 +102,7 @@ internal fun BarExpanded(
             onDragDelta = onDragDelta,
             onDragEnd = onDragEnd,
             interactive = interactive,
+            containerColor = containerColor,
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = lerp(8.dp, 12.dp, progress)),
@@ -78,29 +115,58 @@ internal fun BarExpanded(
                             .clipToBounds()
                             .graphicsLayer { alpha = controlsProgress },
                     ) {
-                        IconButton(onClick = onAaTap, enabled = controlsEnabled) {
-                            Text("aA", style = MaterialTheme.typography.labelLarge)
+                        @OptIn(ExperimentalFoundationApi::class)
+                        val aADescription = if (isReaderActive) {
+                            "Reader and page settings"
+                        } else {
+                            "Page settings and reader view"
                         }
-                    }
-                    Box(
-                        modifier = Modifier
-                            .width(controlsWidth)
-                            .clipToBounds()
-                            .graphicsLayer { alpha = controlsProgress },
-                    ) {
-                        IconButton(onClick = onAddonsClick, enabled = controlsEnabled) {
-                            Icon(Icons.Default.Extension, contentDescription = "Add-ons")
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .combinedClickable(
+                                    onClick = onAaTap,
+                                    onLongClick = onAaLongPress,
+                                    enabled = controlsEnabled,
+                                )
+                                .semantics(mergeDescendants = true) {
+                                    contentDescription = aADescription
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "aA",
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    fontWeight = if (isReaderEligible) FontWeight.Bold else FontWeight.Normal
+                                ),
+                                color = aAColor
+                            )
                         }
                     }
                 }
                 Row(
                     modifier = Modifier
                         .weight(1f)
-                        .clickable(enabled = controlsEnabled, onClick = onUrlTap)
+                        .clickable(
+                            enabled = controlsEnabled,
+                            onClickLabel = if (blankPreview) "Open a new tab" else "Edit address",
+                            onClick = onUrlTap,
+                        )
                         .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
                 ) {
+                    if (isInsecure) {
+                        Icon(
+                            imageVector = Icons.Default.LockOpen,
+                            contentDescription = "Not secure",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .size(14.dp)
+                                .graphicsLayer { alpha = controlsProgress },
+                        )
+                        Spacer(Modifier.width(lerp(4.dp, 0.dp, progress)))
+                    }
                     Text(
                         text = if (blankPreview) "+" else state.displayUrl,
                         style = if (blankPreview) {
@@ -131,8 +197,30 @@ internal fun BarExpanded(
                             .clipToBounds()
                             .graphicsLayer { alpha = controlsProgress },
                     ) {
-                        IconButton(onClick = onReload, enabled = controlsEnabled) {
+                        @OptIn(ExperimentalFoundationApi::class)
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .combinedClickable(
+                                    onClick = onReload,
+                                    onLongClick = if (canGoForward) onReloadLongPress else null,
+                                    enabled = controlsEnabled,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
                             Icon(Icons.Default.Refresh, contentDescription = "Reload")
+                            // Subtle chevron hints that long-press navigates forward.
+                            if (canGoForward) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                                    contentDescription = "Go forward (long press reload)",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(end = 6.dp, bottom = 6.dp)
+                                        .size(9.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -153,7 +241,6 @@ private fun BarExpandedPreview() {
             onDragDelta = { _ -> },
             onDragEnd = { _, _ -> },
             onReload = {},
-            onAddonsClick = {},
         )
     }
 }

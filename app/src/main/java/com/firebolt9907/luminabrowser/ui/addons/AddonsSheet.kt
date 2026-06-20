@@ -10,10 +10,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Settings
@@ -39,24 +42,26 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.firebolt9907.luminabrowser.addons.AddonController
 import com.firebolt9907.luminabrowser.addons.AddonPermissionPrompt
 import com.firebolt9907.luminabrowser.addons.InstalledAddon
+import com.firebolt9907.luminabrowser.ui.components.EmptyState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddonsSheet(
     controller: AddonController,
     onDismiss: () -> Unit,
-    onOpenSettings: (InstalledAddon) -> Unit = {},
     bottomInsetDp: Dp = 0.dp,
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
     val pendingPrompt = state.pendingPrompt
-    var installText by rememberSaveable { mutableStateOf("") }
 
     ModalBottomSheet(
         onDismissRequest = {
@@ -68,28 +73,21 @@ fun AddonsSheet(
         if (pendingPrompt != null) {
             AddonPermissionSheetContent(
                 prompt = pendingPrompt,
-                onAccept = { controller.respondToPrompt(pendingPrompt.id, true) },
+                onAccept = {
+                    controller.respondToPrompt(pendingPrompt.id, true)
+                    onDismiss()
+                },
                 onDeny = {
                     controller.respondToPrompt(pendingPrompt.id, false)
                     onDismiss()
                 },
-            )
-        } else {
-            AddonsManagerSheetContent(
-                state = state,
-                installText = installText,
-                onInstallTextChange = { installText = it },
-                onInstall = { controller.install(installText) },
-                onEnabledChange = controller::setEnabled,
-                onOpenSettings = onOpenSettings,
-                onUninstall = controller::uninstall,
             )
         }
     }
 }
 
 @Composable
-private fun AddonsManagerSheetContent(
+internal fun AddonsManagerSheetContent(
     state: com.firebolt9907.luminabrowser.addons.AddonsUiState,
     installText: String,
     onInstallTextChange: (String) -> Unit,
@@ -128,15 +126,30 @@ private fun AddonsManagerSheetContent(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            val canInstall = installText.isNotBlank() && !state.isBusy
             OutlinedTextField(
                 value = installText,
                 onValueChange = onInstallTextChange,
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 label = { Text("AMO slug, page, or .xpi URL") },
+                trailingIcon = if (installText.isNotEmpty()) {
+                    {
+                        IconButton(onClick = { onInstallTextChange("") }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear")
+                        }
+                    }
+                } else null,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Uri,
+                    autoCorrectEnabled = false,
+                    capitalization = KeyboardCapitalization.None,
+                    imeAction = ImeAction.Go,
+                ),
+                keyboardActions = KeyboardActions(onGo = { if (canInstall) onInstall() }),
             )
             Button(
-                enabled = installText.isNotBlank() && !state.isBusy,
+                enabled = canInstall,
                 onClick = onInstall,
             ) {
                 Text("Install")
@@ -159,11 +172,10 @@ private fun AddonsManagerSheetContent(
         Spacer(Modifier.height(12.dp))
 
         if (state.addons.isEmpty()) {
-            Text(
-                text = "No add-ons installed",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(vertical = 18.dp),
+            EmptyState(
+                icon = Icons.Default.Extension,
+                title = "No add-ons installed",
+                description = "Install an extension by entering its addons.mozilla.org name or .xpi link above.",
             )
         } else {
             LazyColumn {

@@ -41,7 +41,7 @@ internal fun BarCompact(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(onClick = onUrlTap)
+                .clickable(onClickLabel = "Edit address", onClick = onUrlTap)
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,

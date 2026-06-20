@@ -4,36 +4,88 @@ import android.graphics.Bitmap
 import androidx.activity.ExperimentalActivityApi
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.util.lerp
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathOperation
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -52,7 +104,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -66,8 +120,12 @@ import com.firebolt9907.luminabrowser.state.compactHost
 import com.firebolt9907.luminabrowser.state.hostFromUrl
 import com.firebolt9907.luminabrowser.ui.addons.AddonsSheet
 import com.firebolt9907.luminabrowser.ui.chrome.AaSheet
+import com.firebolt9907.luminabrowser.ui.chrome.AddressSheet
+import com.firebolt9907.luminabrowser.ui.chrome.FindInPageBar
 import com.firebolt9907.luminabrowser.ui.chrome.SafariBar
+import com.firebolt9907.luminabrowser.ui.settings.SettingsSheet
 import com.firebolt9907.luminabrowser.sync.FirefoxSyncEvent
+import mozilla.components.browser.state.action.EngineAction
 import mozilla.components.browser.state.state.TabSessionState
 import mozilla.components.browser.state.state.content.HistoryState
 import com.firebolt9907.luminabrowser.ui.content.ContentHost
@@ -79,6 +137,10 @@ import com.firebolt9907.luminabrowser.ui.grid.GridTopMarginDp
 import com.firebolt9907.luminabrowser.ui.grid.TabGridOverlay
 import com.firebolt9907.luminabrowser.ui.grid.gridCellRect
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
+import com.firebolt9907.luminabrowser.ui.bookmarks.BookmarksSheet
+import com.firebolt9907.luminabrowser.ui.downloads.DownloadsSheet
+import com.firebolt9907.luminabrowser.ui.history.HistorySheet
+import com.firebolt9907.luminabrowser.ui.passwords.PasswordsSheet
 import com.firebolt9907.luminabrowser.ui.sync.SyncedTabsSheet
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 import mozilla.components.concept.engine.EngineSession
@@ -117,9 +179,26 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val browserState by components.browserState.collectAsStateWithLifecycle()
     val addonsState by components.addonController.state.collectAsStateWithLifecycle()
+
+    val readerManager = remember { com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance }
+    val activeReaderTabs by readerManager.activeReaderTabs.collectAsStateWithLifecycle()
+    val eligibleReaderTabs by readerManager.eligibleReaderTabs.collectAsStateWithLifecycle()
+    val tabArticles by readerManager.tabArticles.collectAsStateWithLifecycle()
+    val readerTheme by readerManager.theme.collectAsStateWithLifecycle()
+    val readerFontSize by readerManager.fontSize.collectAsStateWithLifecycle()
+    val readerFontName by readerManager.fontName.collectAsStateWithLifecycle()
+
+    // Find-in-page state. The match counts are pushed by the engine session's onFindResult.
+    var findInPageActive by remember { mutableStateOf(false) }
+    var findQuery by remember { mutableStateOf("") }
+    var findActiveMatch by remember { mutableIntStateOf(0) }
+    var findTotalMatches by remember { mutableIntStateOf(0) }
+
     var visualSelectedTabId by remember { mutableStateOf<String?>(null) }
     val actualSelectedTabId = browserState.selectedTabId
     val selectedTabId = visualSelectedTabId ?: actualSelectedTabId
+    val isReaderActiveOnSelectedTab = selectedTabId != null && activeReaderTabs.contains(selectedTabId)
+    val selectedTabArticle = selectedTabId?.let { tabArticles[it] }
     val selectedTab = browserState.tabs.firstOrNull { it.id == selectedTabId }
     val actualSelectedTab = browserState.tabs.firstOrNull { it.id == actualSelectedTabId }
     val selectedEngineSession = actualSelectedTab?.engineState?.engineSession
@@ -134,6 +213,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     val canCreateTabFromRightEdge = selectedIndex == tabCount - 1 && selectedIndex >= 0
 
     val density = LocalDensity.current
+    val haptics = LocalHapticFeedback.current
     val topChromeInsetPx = max(
         WindowInsets.statusBars.getTop(density),
         WindowInsets.displayCutout.getTop(density),
@@ -189,6 +269,9 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     // Direct drag progress during gesture — avoids scope.launch per delta frame.
     // gridProgressState is only used for spring animations; this drives the render during drag.
     var gridDragProgress by remember { mutableFloatStateOf(0f) }
+    // True once the upward drag has crossed the grid-commit threshold (50% of travel) so we fire
+    // the confirmation haptic exactly once on crossing, and don't re-fire it on release.
+    var gridThresholdHapticFired by remember { mutableStateOf(false) }
     // Mid-switch handoff: when grid grabbed during a horizontal commit spring, the leaving and
     // incoming tabs' frozen X offsets seed the grid animation. Otherwise these stay null and the
     // grid derives live tabs dynamically from offsetX/selectedTabId/previousTabId/nextTabId.
@@ -219,13 +302,24 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     var pageScrollFrameJob by remember { mutableStateOf<Job?>(null) }
     var showAddons by remember { mutableStateOf(false) }
     var showSyncedTabs by remember { mutableStateOf(false) }
+    var showPasswords by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
+    var showBookmarks by remember { mutableStateOf(false) }
+    var showDownloads by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
     var firefoxSignInTabId by remember { mutableStateOf<String?>(null) }
     var showAa by remember { mutableStateOf(false) }
+    var aaInitialTab by remember { mutableIntStateOf(0) }
     var sitePrefsVersion by remember { mutableIntStateOf(0) }
     var barCollapsePx by remember { mutableFloatStateOf(0f) }
     var barCollapseCompact by remember { mutableStateOf(false) }
     var barCollapseProgressTarget by remember { mutableFloatStateOf(0f) }
     var pullRefreshDistancePx by remember { mutableFloatStateOf(0f) }
+    // True from the moment a pull crosses the threshold and triggers a reload until that load
+    // completes — drives the "pulsing while loading" phase of the refresh line.
+    var pullRefreshing by remember { mutableStateOf(false) }
+    // One-shot guard so the threshold haptic fires once per crossing, not every drag frame.
+    var pullThresholdHapticFired by remember { mutableStateOf(false) }
     val pendingPageScrollDelta = remember { floatArrayOf(0f) }
     val recentTabSnapshots = remember { mutableStateMapOf<String, Bitmap>() }
     val recentPageSnapshots = remember { mutableStateMapOf<String, Bitmap>() }
@@ -233,7 +327,6 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     val previousObservedUrlByTab = remember { mutableStateMapOf<String, String>() }
     val barCollapseProgressState = remember { Animatable(0f) }
     val pullRefreshProgress = (pullRefreshDistancePx / pullRefreshThresholdPx).coerceIn(0f, 1f)
-    val isRefreshing = selectedContent?.loading == true && pullRefreshDistancePx > 0f
     val trackedPreviousUrl = selectedTabId?.let(previousObservedUrlByTab::get)
     val previousHistoryUrl = remember(
         selectedTabId,
@@ -260,6 +353,51 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     LaunchedEffect(addonsState.pendingPrompt?.id) {
         if (addonsState.pendingPrompt != null) {
             showAddons = true
+        }
+    }
+
+    // Clear the refresh-line "loading pulse" once the reload finishes (transition-driven, so it
+    // stays on through the load and only clears when loading goes false).
+    LaunchedEffect(selectedContent?.loading) {
+        if (pullRefreshing && selectedContent?.loading == false) pullRefreshing = false
+    }
+
+    // Auto-engage reader mode whenever a tab becomes reader-eligible (after a navigation/load),
+    // unless the user has explicitly turned reader off for that host. This makes every readable
+    // article open straight into reader view by default; opting out on a site is remembered.
+    LaunchedEffect(eligibleReaderTabs) {
+        eligibleReaderTabs.forEach { tabId ->
+            if (!readerManager.isReaderActive(tabId)) {
+                val url = browserState.tabs.firstOrNull { it.id == tabId }?.content?.url.orEmpty()
+                val host = hostFromUrl(url)
+                if (host.isNotEmpty() && !components.sitePreferencesStore.isReaderAutoDisabled(host)) {
+                    readerManager.setReaderActive(tabId, true)
+                }
+            }
+        }
+    }
+
+    // Receive find-in-page match counts from the selected tab's engine session. Re-registers when
+    // the selected session changes; the ordinal Gecko reports is 0-based, shown as 1-based.
+    DisposableEffect(selectedEngineSession) {
+        val session = selectedEngineSession
+        val observer = object : mozilla.components.concept.engine.EngineSession.Observer {
+            override fun onFindResult(activeMatchOrdinal: Int, numberOfMatches: Int, isDoneCounting: Boolean) {
+                findActiveMatch = if (numberOfMatches > 0) activeMatchOrdinal + 1 else 0
+                findTotalMatches = numberOfMatches
+            }
+        }
+        session?.register(observer)
+        onDispose { session?.unregister(observer) }
+    }
+
+    // Keep find results accurate after a navigation or tab switch: the old page's matches no longer
+    // apply, so reset the counter and re-run the search on the now-current page if the bar is open.
+    LaunchedEffect(selectedContent?.url) {
+        if (findInPageActive) {
+            findActiveMatch = 0
+            findTotalMatches = 0
+            if (findQuery.isNotBlank()) selectedEngineSession?.findAll(findQuery)
         }
     }
 
@@ -486,6 +624,14 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     LaunchedEffect(sitePrefsStore) {
         sitePrefsStore.updates.collect { sitePrefsVersion += 1 }
     }
+    // Keep the selected session's desktop-mode UA in sync with the current host's saved preference,
+    // so restored tabs and cross-host navigation honor a "Request desktop site" choice. reload=false
+    // here (the page is already loading the new host); the aA toggle uses reload=true for intent.
+    LaunchedEffect(selectedEngineSession, currentHost, sitePrefsVersion) {
+        val session = selectedEngineSession ?: return@LaunchedEffect
+        val wantDesktop = currentHost.isNotEmpty() && sitePrefsStore.get(currentHost).desktopMode
+        session.toggleDesktopMode(wantDesktop, reload = false)
+    }
     val topChromeInsetDp = with(density) { topChromeInsetPx.toDp() }
     fun topPadDpFor(url: String?): androidx.compose.ui.unit.Dp {
         @Suppress("UNUSED_EXPRESSION") sitePrefsVersion
@@ -520,6 +666,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
 
     fun resetPullRefresh() {
         pullRefreshDistancePx = 0f
+        pullThresholdHapticFired = false
     }
 
     fun previewCollapseProgress(px: Float): Float {
@@ -893,19 +1040,30 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             gridProgressState.snapTo(fromProgress)
             // x always starts from carousel positions (0) regardless of any interrupted animation.
             gridXProgressState.snapTo(0f)
+            // Smooth, lightly-damped deceleration that carries the finger's release velocity —
+            // closer to Safari's settle than a stiff snap. Crucially, the X (carousel→columns)
+            // spring gets the SAME spec and initial velocity as the vertical progress so the two
+            // axes stay locked together; desynced axes are what made the motion feel robotic.
+            val launchVelocity = initialVelocityProgressPerSec.coerceAtLeast(0f)
             val s = spring<Float>(
-                dampingRatio = 0.75f,
-                stiffness = 400f,
+                dampingRatio = 0.9f,
+                stiffness = 300f,
             )
             coroutineScope {
                 launch {
                     gridProgressState.animateTo(
                         1f,
-                        initialVelocity = initialVelocityProgressPerSec.coerceAtLeast(0f),
+                        initialVelocity = launchVelocity,
                         animationSpec = s,
                     )
                 }
-                launch { gridXProgressState.animateTo(1f, animationSpec = s) }
+                launch {
+                    gridXProgressState.animateTo(
+                        1f,
+                        initialVelocity = launchVelocity,
+                        animationSpec = s,
+                    )
+                }
             }
             gridDragProgress = 0f
             gridCommitFromProgress = 0f
@@ -999,6 +1157,16 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             // snapTo so there's zero scheduling overhead on the hot drag path.
             val travelPx = gridTravelPx()
             gridDragProgress = (gridDragPx / travelPx).coerceIn(0f, 1f)
+            // Vibrate the moment the drag crosses the commit threshold (the point past which
+            // releasing opens the all-tabs grid), and reset if the user drags back below it.
+            if (gridDragProgress >= 0.5f) {
+                if (!gridThresholdHapticFired) {
+                    gridThresholdHapticFired = true
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+            } else {
+                gridThresholdHapticFired = false
+            }
         }
     }
 
@@ -1037,6 +1205,13 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             }
         }
         if (gridWantsCommit) {
+            // Subtle confirmation that the grid has "caught" and is opening (Safari-like). Skip it
+            // if the crossing haptic already fired during the drag so a slow drag-past-threshold
+            // doesn't double-buzz; a fast velocity flick that never crossed still gets one buzz.
+            if (!gridThresholdHapticFired) {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
+            gridThresholdHapticFired = false
             // Capture finger-tracking positions BEFORE resetting offsetX.
             // These seed the commit animation so tabs spring from wherever they were
             // under the finger to their grid cells, rather than from carousel positions.
@@ -1062,6 +1237,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             // Snapping to 0 immediately keeps gridEngaged false so only the horizontal commit
             // overlay renders and the bitmaps track the finger cleanly.
             commitHorizontalRelease(velocity.x)
+            gridThresholdHapticFired = false
             // Capture the live drag progress before we tear down the gesture state so the
             // spring-back animation starts from where the finger actually was, not 0.
             val cancelFromProgress = gridDragProgress
@@ -1218,6 +1394,33 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         }
     }
 
+    // Guarantee the selected tab always has a live engine session. mozilla-components suspends and
+    // trims background tab sessions to reclaim memory, and restored tabs start with none. When the
+    // selected tab's engineSession is null, ContentHost cannot rebind the single EngineView, so the
+    // view keeps showing the PREVIOUS tab while the pill shows the newly-selected tab's URL — the
+    // desync the user sees, which only a reload (which lazily recreates the session via
+    // CreateEngineSessionMiddleware) would otherwise fix. Dispatching CreateEngineSessionAction here
+    // forces creation immediately, replicating feature-session's EngineViewPresenter.
+    //
+    // A SINGLE dispatch is not enough: it can be lost if the middleware is concurrently trimming or
+    // closing the session, or if creation completes but the link doesn't land in engineState before
+    // the next state emission — leaving the tab session-less with no further trigger to retry. That
+    // is the intermittent desync the user hits. So retry until a session actually exists in the live
+    // store state (not the composition-captured snapshot, which would never update inside this
+    // coroutine). Keyed on the null-ness too, so a mid-session trim of the selected tab re-arms it.
+    LaunchedEffect(actualSelectedTabId, selectedEngineSession == null) {
+        val tabId = actualSelectedTabId ?: return@LaunchedEffect
+        var attempts = 0
+        while (attempts < 6) {
+            val tab = components.store.state.tabs.firstOrNull { it.id == tabId }
+            // Tab gone (closed mid-switch) or session now present — nothing left to do.
+            if (tab == null || tab.engineState.engineSession != null) return@LaunchedEffect
+            components.store.dispatch(EngineAction.CreateEngineSessionAction(tabId))
+            attempts++
+            delay(300)
+        }
+    }
+
     LaunchedEffect(actualSelectedTabId) {
         // Pre-set to true if the tab has a cached snapshot (previously rendered) or is not loading.
         // Already-loaded sessions won't fire a new paint callback after rebind, so leaving this
@@ -1334,6 +1537,48 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             viewModel.dismissBlankTabAndReturn()
         }
 
+        // A tab opened by another tab (window.open / target=_blank) has a live parent. When it
+        // can't navigate back any further, Back closes this child tab and returns to its parent
+        // instead of exiting the browser.
+        val selectedTabParentId =
+            browserState.tabs.firstOrNull { it.id == selectedTabId }?.parentId
+        val selectedTabHasLiveParent = selectedTabParentId != null &&
+            selectedTabParentId != selectedTabId &&
+            browserState.tabs.any { it.id == selectedTabParentId }
+        BackHandler(
+            enabled = !gridOpen &&
+                selectedContent?.canGoBack == false &&
+                selectedContent?.url != "about:blank" &&
+                selectedTabHasLiveParent,
+        ) {
+            viewModel.closeChildTabAndReturnToParent()
+        }
+
+        // When reader mode is showing, Back should dismiss the reader overlay first (like closing
+        // any overlay) rather than navigating the page. Composed last so it takes priority over the
+        // page-navigation and predictive-back handlers above while reader is active.
+        BackHandler(enabled = isReaderActiveOnSelectedTab && !gridOpen) {
+            selectedTabId?.let { readerManager.setReaderActive(it, false) }
+        }
+
+        // Back closes the find-in-page bar first (highest priority overlay).
+        BackHandler(enabled = findInPageActive) {
+            selectedEngineSession?.clearFindMatches()
+            findInPageActive = false
+            findQuery = ""
+            findActiveMatch = 0
+            findTotalMatches = 0
+        }
+
+        // Back closes the address sheet (editing mode) instead of exiting the app — mirrors the
+        // Cancel button, including discarding an untouched blank new tab.
+        BackHandler(enabled = state.mode == BarMode.Editing && !gridEngaged) {
+            viewModel.onEditingCancel()
+            if (currentUrl == "about:blank") {
+                viewModel.dismissBlankTabAndReturn()
+            }
+        }
+
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
@@ -1344,19 +1589,10 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     .onSizeChanged { contentSize = it },
             ) {
                 val contentWidth = contentSize.width.toFloat()
-                val predictiveBackProgress = if (contentWidth > 0f) {
-                    (predictiveBackOffsetPx / contentWidth).coerceIn(0f, 1f)
-                } else {
-                    0f
-                }
-                val predictiveBackReveal = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
-                    .transform(predictiveBackProgress)
-                val previousPageTranslationX = if (contentWidth > 0f) {
-                    -contentWidth * 0.14f * (1f - predictiveBackReveal)
-                } else {
-                    0f
-                }
-                val previousPageDimAlpha = 0.16f * (1f - predictiveBackReveal)
+                // Easing hoisted out of the per-frame path; the predictive-back overlay reads the
+                // animating offset inside draw-phase lambdas (graphicsLayer / drawBehind) so the
+                // back-swipe doesn't recompose this subtree on every frame.
+                val predictiveBackEasing = remember { CubicBezierEasing(0.22f, 1f, 0.36f, 1f) }
                 ContentHost(
                     engine = components.engine,
                     engineSession = selectedEngineSession,
@@ -1366,6 +1602,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     pageUrl = actualSelectedContent?.url.orEmpty(),
                     snapshotCache = components.tabSnapshotCache,
                     addonController = components.addonController,
+                    sitePermissionController = components.sitePermissionController,
                     onTabPainted = { paintedTabId ->
                         if (paintedTabId == actualSelectedTabId) geckoHasPainted = true
                         if (paintedTabId == actualSelectedTabId && paintedTabId == stickyIncomingTabId) {
@@ -1397,19 +1634,27 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         }
                     },
                     onPageScrollDelta = ::enqueuePageScrollDelta,
-                    onTopOverscrollPull = { delta ->
-                        pullRefreshDistancePx = (pullRefreshDistancePx + delta)
-                            .coerceIn(0f, pullRefreshMaxDistancePx)
-                    },
-                    onTopOverscrollRelease = {
-                        if (pullRefreshDistancePx >= pullRefreshThresholdPx && selectedContent?.loading != true) {
-                            selectedTabId?.let {
-                                pullRefreshDistancePx = pullRefreshThresholdPx
-                                components.sessionUseCases.reload.invoke(it)
-                            } ?: resetPullRefresh()
-                        } else if (selectedContent?.loading != true) {
-                            resetPullRefresh()
+                    onTopOverscrollPull = { distance ->
+                        pullRefreshDistancePx = distance.coerceIn(0f, pullRefreshMaxDistancePx)
+                        // Buzz exactly once when the pull first crosses the refresh threshold, and
+                        // re-arm the haptic if the user drags back below it.
+                        if (pullRefreshDistancePx >= pullRefreshThresholdPx) {
+                            if (!pullThresholdHapticFired) {
+                                pullThresholdHapticFired = true
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            }
+                        } else {
+                            pullThresholdHapticFired = false
                         }
+                    },
+                    onTopOverscrollRelease = { distance ->
+                        if (distance >= pullRefreshThresholdPx && selectedContent?.loading != true) {
+                            selectedTabId?.let {
+                                pullRefreshing = true
+                                components.sessionUseCases.reload.invoke(it)
+                            }
+                        }
+                        resetPullRefresh()
                     },
                     onOpenWindowRequest = { request: WindowRequest ->
                         val preparedSession = request.prepare()
@@ -1450,24 +1695,132 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         .graphicsLayer { translationX = offsetX },
                     topPaddingFixActive = currentSitePrefs.topPaddingFix,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
+                    barCollapseProgressState = barCollapseProgressState,
                 )
                 if (selectedContent?.url.isBlankPageUrl()) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.surface),
+                            .background(MaterialTheme.colorScheme.surface)
+                            // Tapping the empty new-tab page opens the address bar to search/type.
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onPrimaryUrlTap,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Public,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.size(56.dp),
+                            )
+                            Text(
+                                text = "Search or enter an address",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                // Thin determinate page-load bar under the status bar, driven by Gecko's reported
+                // load progress. Shown only while the selected tab is actively loading and the grid
+                // isn't engaged. Independent of the bottom-bar gesture system.
+                val pageLoadProgress = selectedContent?.progress ?: 0
+                val pageIsLoading = selectedContent?.loading == true
+                val showLoadBar = pageIsLoading && pageLoadProgress in 1..99 &&
+                    !gridEngaged && !findInPageActive
+                val animatedLoadProgress by animateFloatAsState(
+                    targetValue = (pageLoadProgress / 100f).coerceIn(0f, 1f),
+                    animationSpec = tween(durationMillis = 150),
+                    label = "pageLoadProgress",
+                )
+                AnimatedVisibility(
+                    visible = showLoadBar,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier.align(Alignment.TopCenter),
+                ) {
+                    LinearProgressIndicator(
+                        progress = { animatedLoadProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .height(2.5.dp),
+                        trackColor = Color.Transparent,
+                    )
+                }
+                // Find-in-page bar, pinned under the status bar at the top of the content area.
+                AnimatedVisibility(
+                    visible = findInPageActive,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier.align(Alignment.TopCenter),
+                ) {
+                    FindInPageBar(
+                        query = findQuery,
+                        activeMatch = findActiveMatch,
+                        totalMatches = findTotalMatches,
+                        onQueryChange = { text ->
+                            findQuery = text
+                            if (text.isBlank()) {
+                                selectedEngineSession?.clearFindMatches()
+                                findActiveMatch = 0
+                                findTotalMatches = 0
+                            } else {
+                                selectedEngineSession?.findAll(text)
+                            }
+                        },
+                        onNext = { selectedEngineSession?.findNext(true) },
+                        onPrevious = { selectedEngineSession?.findNext(false) },
+                        onClose = {
+                            selectedEngineSession?.clearFindMatches()
+                            findInPageActive = false
+                            findQuery = ""
+                            findActiveMatch = 0
+                            findTotalMatches = 0
+                        },
+                        modifier = Modifier.statusBarsPadding(),
+                    )
+                }
+                AnimatedVisibility(
+                    visible = isReaderActiveOnSelectedTab && selectedTabArticle != null,
+                    enter = slideInVertically { it } + fadeIn(),
+                    exit = slideOutVertically { it } + fadeOut(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { translationX = offsetX },
+                ) {
+                    com.firebolt9907.luminabrowser.ui.reader.ReaderView(
+                        article = selectedTabArticle!!,
+                        theme = readerTheme,
+                        fontSizePercent = readerFontSize,
+                        fontName = readerFontName,
+                        modifier = Modifier.fillMaxSize(),
+                        topPadding = with(density) { topChromeInsetPx.toDp() },
+                        bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                     )
                 }
                 val movingCurrentSnapshot = tabSwitchCurrentSnapshot
                 // Computed once; shared by horizontal overlay, commit animation, and grid overlay
                 // so the corner radius is always in sync across all three rendering layers.
                 val switchCornerRadiusDp = with(density) { (topChromeInsetPx * 0.8f * 2).toDp() }
+                // Shared by every snapshot layer (horizontal overlay, commit anim, and the sticky
+                // covers) so they all carry the same rounded corners the live viewport mask paints.
+                // The sticky covers especially need their own clip: when a tab is selected from the
+                // grid, the persistent corner mask is still faded out (grid is mid-close), so an
+                // unclipped sticky cover would flash square corners.
+                val switchPaneShape = remember(switchCornerRadiusDp) {
+                    SquircleShape(switchCornerRadiusDp)
+                }
                 if (overlayActive && !gridEngaged) {
                     val width = contentSize.width.toFloat()
                     val pageStride = width + tabSwitchGapPx
-                    val switchPaneShape = remember(switchCornerRadiusDp) {
-                        SquircleShape(switchCornerRadiusDp)
-                    }
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -1544,12 +1897,27 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .fillMaxSize()
-                                .graphicsLayer { translationX = previousPageTranslationX },
+                                .graphicsLayer {
+                                    val reveal = predictiveBackEasing.transform(
+                                        if (contentWidth > 0f) {
+                                            (predictiveBackOffsetPx / contentWidth).coerceIn(0f, 1f)
+                                        } else 0f
+                                    )
+                                    translationX =
+                                        if (contentWidth > 0f) -contentWidth * 0.14f * (1f - reveal) else 0f
+                                },
                         )
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .background(Color.Black.copy(alpha = previousPageDimAlpha)),
+                                .drawBehind {
+                                    val reveal = predictiveBackEasing.transform(
+                                        if (contentWidth > 0f) {
+                                            (predictiveBackOffsetPx / contentWidth).coerceIn(0f, 1f)
+                                        } else 0f
+                                    )
+                                    drawRect(Color.Black, alpha = 0.16f * (1f - reveal))
+                                },
                         )
                     }
                     gestureCurrentSnapshot?.let { bitmap ->
@@ -1562,7 +1930,11 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                                 .fillMaxSize()
                                 .graphicsLayer {
                                     translationX = predictiveBackOffsetPx
-                                    shadowElevation = 18f * predictiveBackProgress
+                                    shadowElevation = 18f * (
+                                        if (contentWidth > 0f) {
+                                            (predictiveBackOffsetPx / contentWidth).coerceIn(0f, 1f)
+                                        } else 0f
+                                    )
                                     clip = true
                                 },
                         )
@@ -1570,7 +1942,12 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer { translationX = predictiveBackOffsetPx - 10f }
-                                .background(Color.Black.copy(alpha = 0.10f * predictiveBackProgress)),
+                                .drawBehind {
+                                    val p = if (contentWidth > 0f) {
+                                        (predictiveBackOffsetPx / contentWidth).coerceIn(0f, 1f)
+                                    } else 0f
+                                    drawRect(Color.Black, alpha = 0.10f * p)
+                                },
                         )
                     }
                 }
@@ -1583,15 +1960,13 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(top = pad),
+                            .padding(top = pad)
+                            .clip(switchPaneShape),
                     )
                 }
                 if (leavingSnapshotBitmap != null || incomingSnapshotBitmap != null || commitAnimNewTab) {
                     val width = contentSize.width.toFloat()
                     val pageStride = width + tabSwitchGapPx
-                    val switchPaneShape = remember(switchCornerRadiusDp) {
-                        SquircleShape(switchCornerRadiusDp)
-                    }
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -1612,14 +1987,16 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         )
                     }
                     if (commitAnimNewTab && pageStride > 0f) {
-                        val reveal = (1f - (incomingSnapshotOffsetX / pageStride))
-                            .coerceIn(0f, 1f)
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
+                                // Read the animating offset inside the graphicsLayer lambda so the
+                                // per-frame alpha update runs in the draw phase only, instead of
+                                // recomposing this block on every frame of the new-tab spring.
                                 .graphicsLayer {
                                     translationX = incomingSnapshotOffsetX
-                                    alpha = reveal
+                                    alpha = (1f - (incomingSnapshotOffsetX / pageStride))
+                                        .coerceIn(0f, 1f)
                                 }
                                 .clip(switchPaneShape)
                                 .background(MaterialTheme.colorScheme.surface),
@@ -1657,7 +2034,8 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .fillMaxSize(),
+                            .fillMaxSize()
+                            .clip(switchPaneShape),
                     )
                 }
                 if (stickyBackCoverSnapshot == null && stickyBackCoverUrl != null) {
@@ -1808,6 +2186,23 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                             }
                         }
                     }
+                    // Shared new-tab action: used by both the grid's "+" cell and the header
+                    // "New Tab" button so you can create a tab without scrolling to the bottom.
+                    val openNewTabFromGrid: () -> Unit = {
+                        gridNewTabSelected = true
+                        pendingActiveBarState = visualBarStateForUrl(
+                            url = "about:blank",
+                            count = tabCount + 1,
+                            blankNewTabPreview = true,
+                        )
+                        closeGrid(animateBack = true) {
+                            gridNewTabSelected = false
+                            val newTabId = viewModel.onCreateTabFromEdge(selectTab = false)
+                            stickyIncomingTabId = newTabId
+                            stagePendingGeckoSelection(tabId = newTabId, createdTab = true, editBlankTab = true)
+                            commitPendingGeckoSelection()
+                        }
+                    }
                     TabGridOverlay(
                         progress = gridProgress,
                         xProgress = xProgress,
@@ -1819,20 +2214,11 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         commitFromProgress = if (gridGestureActive) 0f else gridCommitFromProgress,
                         cancelFromProgress = if (gridGestureActive) 0f else gridCancelFromProgress,
                         newTabSelected = gridNewTabSelected,
+                        onCloseTab = { tabId ->
+                            components.tabRepository.removeTab(tabId)
+                        },
                         onNewTab = {
-                            gridNewTabSelected = true
-                            pendingActiveBarState = visualBarStateForUrl(
-                                url = "about:blank",
-                                count = tabCount + 1,
-                                blankNewTabPreview = true,
-                            )
-                            closeGrid(animateBack = true) {
-                                gridNewTabSelected = false
-                                val newTabId = viewModel.onCreateTabFromEdge(selectTab = false)
-                                stickyIncomingTabId = newTabId
-                                stagePendingGeckoSelection(tabId = newTabId, createdTab = true, editBlankTab = true)
-                                commitPendingGeckoSelection()
-                            }
+                            openNewTabFromGrid()
                         },
                         onTabSelected = { tabId ->
                             // Switch the selected tab so the closing animation lands on the
@@ -1868,35 +2254,145 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                             }
                         },
                     )
-                    Button(
-                        onClick = { showSyncedTabs = true },
-                        enabled = !gridGestureActive && gridProgress > 0.65f,
+                    // Floating action toolbar pinned to the bottom of the all-tabs page. zIndex
+                    // lifts it above the (full-screen) bottom-bar layer that's composed after the
+                    // grid, so its buttons actually receive taps instead of the invisible pill.
+                    Surface(
                         modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 14.dp)
+                            .zIndex(2f)
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(bottom = 16.dp, start = 12.dp, end = 12.dp)
                             .graphicsLayer {
                                 alpha = ((gridProgress - 0.35f) / 0.35f).coerceIn(0f, 1f)
                             },
+                        shape = RoundedCornerShape(28.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        tonalElevation = 3.dp,
+                        shadowElevation = 6.dp,
                     ) {
-                        Icon(Icons.Default.CloudSync, contentDescription = null)
-                        Text(" Synced Tabs")
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val toolbarEnabled = !gridGestureActive && gridProgress > 0.65f
+                        FilledTonalIconButton(
+                            onClick = { openNewTabFromGrid() },
+                            enabled = toolbarEnabled,
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "New Tab")
+                        }
+                        FilledTonalIconButton(
+                            onClick = { showSyncedTabs = true },
+                            enabled = toolbarEnabled,
+                        ) {
+                            Icon(Icons.Default.CloudSync, contentDescription = "Synced Tabs")
+                        }
+                        FilledTonalIconButton(
+                            onClick = { showPasswords = true },
+                            enabled = toolbarEnabled,
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = "Passwords")
+                        }
+                        FilledTonalIconButton(
+                            onClick = { showHistory = true },
+                            enabled = toolbarEnabled,
+                        ) {
+                            Icon(Icons.Default.History, contentDescription = "History")
+                        }
+                        FilledTonalIconButton(
+                            onClick = { showBookmarks = true },
+                            enabled = toolbarEnabled,
+                        ) {
+                            Icon(Icons.Outlined.BookmarkBorder, contentDescription = "Bookmarks")
+                        }
+                        FilledTonalIconButton(
+                            onClick = { showDownloads = true },
+                            enabled = toolbarEnabled,
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = "Downloads")
+                        }
+                        FilledTonalIconButton(
+                            onClick = { showSettings = true },
+                            enabled = toolbarEnabled,
+                        ) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        }
+                    }
                     }
                 }
-                if (pullRefreshDistancePx > 0f) {
-                    CircularProgressIndicator(
-                        progress = { if (isRefreshing) 1f else pullRefreshProgress },
+                // Arc/Zen-style refresh line: a horizontal primary-coloured line that fills from the
+                // centre as you pull (driven by the live distance from PullRefreshContainer's nested
+                // scroll), snaps bright + buzzes at the threshold, then pulses while the reload runs.
+                if (pullRefreshDistancePx > 0f || pullRefreshing) {
+                    PullRefreshLine(
+                        progress = pullRefreshProgress,
+                        refreshing = pullRefreshing,
+                        color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
-                            .offset(y = with(density) {
-                                (topChromeInsetPx + pullRefreshDistancePx * 0.4f).toDp()
-                            })
-                            .size(28.dp)
-                            .graphicsLayer {
-                                alpha = if (isRefreshing) 1f else pullRefreshProgress
-                            },
-                        strokeWidth = 3.dp,
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .offset(y = with(density) { topChromeInsetPx.toDp() }),
                     )
                 }
+                // Persistent rounded-corner mask: the live GeckoView surface can't be clipped to a
+                // rounded shape directly, so we paint the four corner cut-outs with the background
+                // colour on top of the content. This keeps the browsing viewport's rounded corners
+                // visible at all times (idle, scrolling, pill drag) — it only fades out as the
+                // all-tabs grid opens, which draws its own rounded cards.
+                run {
+                    val gridOpenFraction =
+                        (if (gridGestureActive) gridDragProgress else gridProgressState.value)
+                            .coerceIn(0f, 1f)
+                    val maskAlpha = 1f - gridOpenFraction
+                    if (maskAlpha > 0.001f) {
+                        val cornerMaskDp = with(density) { (topChromeInsetPx * 1.6f).toDp() }
+                        val maskColor = MaterialTheme.colorScheme.background
+                        val maskShape = remember(cornerMaskDp) { SquircleShape(cornerMaskDp) }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { alpha = maskAlpha }
+                                .drawWithCache {
+                                    // SquircleShape yields Outline.Rectangle when the radius/size
+                                    // resolves to 0 (e.g. a zero-size first draw); only a Generic
+                                    // outline has corners to mask.
+                                    val inner = (maskShape.createOutline(size, layoutDirection, this)
+                                        as? Outline.Generic)?.path
+                                    val mask = if (inner != null) {
+                                        val full = Path().apply {
+                                            addRect(Rect(0f, 0f, size.width, size.height))
+                                        }
+                                        Path.combine(PathOperation.Difference, full, inner)
+                                    } else {
+                                        null
+                                    }
+                                    onDrawBehind { mask?.let { drawPath(it, color = maskColor) } }
+                                },
+                        )
+                    }
+                }
+                AddressSheet(
+                    query = state.editingText,
+                    pageUrl = state.pageUrl,
+                    visible = state.mode == BarMode.Editing && !gridEngaged,
+                    statusBarTopPad = with(density) { topChromeInsetPx.toDp() },
+                    bottomInset = with(density) { bottomChromeInsetPx.toDp() },
+                    backgroundSnapshot = currentPageSnapshot,
+                    historyStorage = components.historyStorage,
+                    bookmarksStorage = components.bookmarksStorage,
+                    onSubmit = { viewModel.onSubmitText(it) },
+                    onDismiss = {
+                        // Mirror the Cancel button: dismissing the sheet on an untouched blank new
+                        // tab must also discard that tab, otherwise it lingers in the tab list.
+                        viewModel.onEditingCancel()
+                        if (currentUrl == "about:blank") {
+                            viewModel.dismissBlankTabAndReturn()
+                        }
+                    },
+                )
                 BottomBarLayer(
                     contentSize = contentSize,
                     tabSwitchGapPx = tabSwitchGapPx,
@@ -1914,8 +2410,37 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                             components.sessionUseCases.reload.invoke(it)
                         }
                     },
-                    onAddonsClick = { showAddons = true },
-                    onAaTap = { showAa = true },
+                    onReloadLongPress = {
+                        selectedTabId?.let {
+                            components.sessionUseCases.goForward.invoke(it, true)
+                        }
+                    },
+                    canGoForward = selectedContent?.canGoForward == true,
+                    onAaTap = { aaInitialTab = 0; showAa = true },
+                    onAaLongPress = {
+                        selectedTabId?.let { tabId ->
+                            val readerHost = hostFromUrl(selectedContent?.url.orEmpty())
+                            if (activeReaderTabs.contains(tabId)) {
+                                readerManager.setReaderActive(tabId, false)
+                                components.sitePreferencesStore.setReaderPreferred(readerHost, false)
+                                // Remember the opt-out so auto-engage stops for this host.
+                                components.sitePreferencesStore.setReaderAutoDisabled(readerHost, true)
+                            } else if (eligibleReaderTabs.contains(tabId)) {
+                                readerManager.setReaderActive(tabId, true)
+                                components.sitePreferencesStore.setReaderPreferred(readerHost, true)
+                                components.sitePreferencesStore.setReaderAutoDisabled(readerHost, false)
+                            } else {
+                                readerManager.requestReaderActivation(tabId)
+                                components.sitePreferencesStore.setReaderPreferred(readerHost, true)
+                                components.sitePreferencesStore.setReaderAutoDisabled(readerHost, false)
+                                selectedEngineSession?.let { session ->
+                                    com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(
+                                        session, tabId
+                                    )
+                                }
+                            }
+                        }
+                    },
                     offsetX = offsetXState,
                     activeOffsetX = if (leavingSnapshotJob != null || commitAnimNewTab) {
                         incomingSnapshotOffsetX
@@ -1928,6 +2453,10 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     controlsEnabled = !gridEngaged,
                     gridProgress = if (gridGestureActive) gridDragProgress else gridProgressState.value,
                     showNewTabGhost = showNewTabPane,
+                    selectedTabId = selectedTabId,
+                    eligibleReaderTabs = eligibleReaderTabs,
+                    activeReaderTabs = activeReaderTabs,
+                    readerTheme = readerTheme,
                 )
             }
         }
@@ -1936,12 +2465,17 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             AddonsSheet(
                 controller = components.addonController,
                 onDismiss = { showAddons = false },
-                onOpenSettings = { addon ->
-                    addon.optionsPageUrl?.let { url ->
-                        viewModel.onOpenNewTab(url = url, title = "${addon.name} Settings", selectTab = true)
-                        showAddons = false
-                        if (gridEngaged) closeGrid(animateBack = false)
-                    }
+                bottomInsetDp = with(density) { bottomChromeInsetPx.toDp() },
+            )
+        }
+
+        if (showSettings) {
+            SettingsSheet(
+                globalPrefsStore = components.globalPreferencesStore,
+                onDismiss = { showSettings = false },
+                onSettingChanged = { components.applyEngineSettings() },
+                onClearSitePermissions = {
+                    components.sitePermissionController.clearRememberedDecisions()
                 },
                 bottomInsetDp = with(density) { bottomChromeInsetPx.toDp() },
             )
@@ -1964,6 +2498,53 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     showSyncedTabs = false
                     if (gridEngaged) closeGrid(animateBack = false)
                 },
+                currentPageUrl = selectedContent?.url.orEmpty(),
+                currentPageTitle = selectedContent?.title.orEmpty(),
+                bottomInsetDp = with(density) { bottomChromeInsetPx.toDp() },
+            )
+        }
+
+        SitePermissionDialog(controller = components.sitePermissionController)
+
+        if (showPasswords) {
+            PasswordsSheet(
+                loginsStorage = components.loginsStorage,
+                onDismiss = { showPasswords = false },
+                bottomInsetDp = with(density) { bottomChromeInsetPx.toDp() },
+            )
+        }
+
+        if (showHistory) {
+            HistorySheet(
+                historyStorage = components.historyStorage,
+                onOpenUrl = { url ->
+                    viewModel.onOpenNewTab(url = url, title = "", selectTab = true)
+                    showHistory = false
+                    if (gridEngaged) closeGrid(animateBack = true)
+                },
+                onDismiss = { showHistory = false },
+                bottomInsetDp = with(density) { bottomChromeInsetPx.toDp() },
+            )
+        }
+
+        if (showBookmarks) {
+            BookmarksSheet(
+                bookmarksStorage = components.bookmarksStorage,
+                currentPageUrl = selectedContent?.url.orEmpty(),
+                currentPageTitle = selectedContent?.title.orEmpty(),
+                onOpenUrl = { url ->
+                    viewModel.onOpenNewTab(url = url, title = "", selectTab = true)
+                    showBookmarks = false
+                    if (gridEngaged) closeGrid(animateBack = true)
+                },
+                onDismiss = { showBookmarks = false },
+                bottomInsetDp = with(density) { bottomChromeInsetPx.toDp() },
+            )
+        }
+
+        if (showDownloads) {
+            DownloadsSheet(
+                onDismiss = { showDownloads = false },
                 bottomInsetDp = with(density) { bottomChromeInsetPx.toDp() },
             )
         }
@@ -1973,9 +2554,29 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                 host = currentHost,
                 store = sitePrefsStore,
                 globalPrefsStore = components.globalPreferencesStore,
+                addonController = components.addonController,
                 onDismiss = { showAa = false },
+                onOpenAddonSettings = { addon ->
+                    addon.optionsPageUrl?.let { url ->
+                        viewModel.onOpenNewTab(url = url, title = "${addon.name} Settings", selectTab = true)
+                        showAa = false
+                        if (gridEngaged) closeGrid(animateBack = false)
+                    }
+                },
+                onFindInPage = {
+                    findQuery = ""
+                    findActiveMatch = 0
+                    findTotalMatches = 0
+                    findInPageActive = true
+                },
                 pageUrl = currentUrl.orEmpty(),
+                pageTitle = selectedContent?.title.orEmpty(),
                 bottomInsetDp = with(density) { bottomChromeInsetPx.toDp() },
+                initialTab = aaInitialTab,
+                tabId = selectedTabId,
+                engineSession = selectedEngineSession,
+                backgroundSnapshot = currentPageSnapshot,
+                statusBarTopPad = with(density) { topChromeInsetPx.toDp() },
             )
         }
     }
@@ -1995,8 +2596,10 @@ private fun BottomBarLayer(
     onDragDelta: (androidx.compose.ui.geometry.Offset) -> Unit,
     onDragEnd: (totalDelta: androidx.compose.ui.geometry.Offset, velocity: androidx.compose.ui.geometry.Offset) -> Unit,
     onReload: () -> Unit,
-    onAddonsClick: () -> Unit,
+    onReloadLongPress: () -> Unit = {},
+    canGoForward: Boolean = false,
     onAaTap: () -> Unit,
+    onAaLongPress: () -> Unit = {},
     offsetX: androidx.compose.runtime.FloatState,
     activeOffsetX: Float,
     onBottomInsetMeasured: (Int) -> Unit,
@@ -2005,6 +2608,10 @@ private fun BottomBarLayer(
     controlsEnabled: Boolean = true,
     gridProgress: Float = 0f,
     showNewTabGhost: Boolean = false,
+    selectedTabId: String? = null,
+    eligibleReaderTabs: Set<String> = emptySet(),
+    activeReaderTabs: Set<String> = emptySet(),
+    readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme = com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.White,
 ) {
     val barCollapseProgress = barCollapseProgressState.value
     val pillAlpha = (1f - (gridProgress * 1.5f).coerceIn(0f, 1f)).coerceIn(0f, 1f)
@@ -2016,7 +2623,15 @@ private fun BottomBarLayer(
     ) {
         val width = contentSize.width.toFloat()
         val pageStride = width + tabSwitchGapPx
+        // Parallax: the full-width page panes slide by the full `pageStride` (width + inter-tab
+        // gap), but the pills are spaced only `width` apart (flush, no gap). Scaling the pill
+        // translations by width/pageStride makes the tab content move slightly more than the pill
+        // while dragging — Safari's depth effect — and still lands both at 0 on commit.
+        val pillParallax = if (pageStride > 0f) width / pageStride else 1f
+        val pillStride = pageStride * pillParallax // == width
         if (previousTab != null && width > 0f) {
+            val prevEligible = eligibleReaderTabs.contains(previousTab.id)
+            val prevActive = activeReaderTabs.contains(previousTab.id)
             SafariBar(
                 state = ghostBarState(previousTab, tabCount, activeState.mode),
                 onUrlTap = {},
@@ -2028,16 +2643,20 @@ private fun BottomBarLayer(
                 onDragDelta = { _ -> },
                 onDragEnd = { _, _ -> },
                 onReload = {},
-                onAddonsClick = {},
                 interactive = false,
                 controlsEnabled = false,
                 collapseProgress = barCollapseProgress,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .graphicsLayer { translationX = offsetX.floatValue - pageStride },
+                    .graphicsLayer { translationX = offsetX.floatValue * pillParallax - pillStride },
+                isReaderEligible = prevEligible,
+                isReaderActive = prevActive,
+                readerTheme = readerTheme,
             )
         }
         if (nextTab != null && width > 0f) {
+            val nextEligible = eligibleReaderTabs.contains(nextTab.id)
+            val nextActive = activeReaderTabs.contains(nextTab.id)
             SafariBar(
                 state = ghostBarState(nextTab, tabCount, activeState.mode),
                 onUrlTap = {},
@@ -2049,13 +2668,15 @@ private fun BottomBarLayer(
                 onDragDelta = { _ -> },
                 onDragEnd = { _, _ -> },
                 onReload = {},
-                onAddonsClick = {},
                 interactive = false,
                 controlsEnabled = false,
                 collapseProgress = barCollapseProgress,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .graphicsLayer { translationX = offsetX.floatValue + pageStride },
+                    .graphicsLayer { translationX = offsetX.floatValue * pillParallax + pillStride },
+                isReaderEligible = nextEligible,
+                isReaderActive = nextActive,
+                readerTheme = readerTheme,
             )
         }
         if (showNewTabGhost && nextTab == null && width > 0f) {
@@ -2076,19 +2697,21 @@ private fun BottomBarLayer(
                 onDragDelta = { _ -> },
                 onDragEnd = { _, _ -> },
                 onReload = {},
-                onAddonsClick = {},
                 interactive = false,
                 controlsEnabled = false,
                 collapseProgress = 0f,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .graphicsLayer { translationX = offsetX.floatValue + pageStride },
+                    .graphicsLayer { translationX = offsetX.floatValue * pillParallax + pillStride },
             )
         }
+        val activeEligible = selectedTabId != null && eligibleReaderTabs.contains(selectedTabId)
+        val activeActive = selectedTabId != null && activeReaderTabs.contains(selectedTabId)
         SafariBar(
             state = activeState,
             onUrlTap = onPrimaryUrlTap,
             onAaTap = onAaTap,
+            onAaLongPress = onAaLongPress,
             onEditingTextChange = callbacks.onEditingTextChange,
             onEditingSubmit = callbacks.onEditingSubmit,
             onEditingCancel = callbacks.onEditingCancel,
@@ -2096,15 +2719,77 @@ private fun BottomBarLayer(
             onDragDelta = onDragDelta,
             onDragEnd = onDragEnd,
             onReload = onReload,
-            onAddonsClick = onAddonsClick,
+            onReloadLongPress = onReloadLongPress,
+            canGoForward = canGoForward,
             interactive = pillInteractive,
             controlsEnabled = controlsEnabled,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .graphicsLayer { translationX = activeOffsetX },
+                .graphicsLayer { translationX = activeOffsetX * pillParallax },
             onBottomInsetMeasured = onBottomInsetMeasured,
             collapseProgress = barCollapseProgress,
+            isReaderEligible = activeEligible,
+            isReaderActive = activeActive,
+            readerTheme = readerTheme,
         )
+    }
+}
+
+/**
+ * Arc/Zen-style refresh indicator: a thin horizontal line.
+ *  - While pulling: a centre-out fill whose width and brightness track [progress]; at the
+ *    threshold (progress == 1) it reaches full brightness (the haptic is fired by the caller).
+ *  - While [refreshing]: a bright band sweeps horizontally across a faint full-width track.
+ */
+@Composable
+private fun PullRefreshLine(
+    progress: Float,
+    refreshing: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val sweep by rememberInfiniteTransition(label = "refreshSweep").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 850, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "sweep",
+    )
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val cy = size.height / 2f
+        val stroke = size.height
+        // Faint full-width track.
+        drawLine(
+            color = color.copy(alpha = 0.15f),
+            start = Offset(0f, cy),
+            end = Offset(w, cy),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round,
+        )
+        if (refreshing) {
+            val band = w * 0.35f
+            val start = -band + sweep * (w + band)
+            drawLine(
+                color = color,
+                start = Offset(start.coerceAtLeast(0f), cy),
+                end = Offset((start + band).coerceAtMost(w), cy),
+                strokeWidth = stroke,
+                cap = StrokeCap.Round,
+            )
+        } else if (progress > 0f) {
+            val fill = w * progress
+            val left = (w - fill) / 2f
+            drawLine(
+                color = color.copy(alpha = lerp(0.45f, 1f, progress)),
+                start = Offset(left, cy),
+                end = Offset(left + fill, cy),
+                strokeWidth = stroke,
+                cap = StrokeCap.Round,
+            )
+        }
     }
 }
 
@@ -2132,6 +2817,88 @@ private class BarCallbacks(
     val onEditingSubmit: () -> Unit,
     val onEditingCancel: () -> Unit,
 )
+
+@Composable
+private fun SitePermissionDialog(
+    controller: com.firebolt9907.luminabrowser.permissions.SitePermissionController,
+) {
+    val request by controller.contentRequest.collectAsStateWithLifecycle()
+    val current = request ?: return
+    val host = remember(current.uri) {
+        runCatching { android.net.Uri.parse(current.uri).host }.getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: current.uri?.takeIf { it.isNotBlank() }
+            ?: "This site"
+    }
+    val what = remember(current) { describeContentPermissions(current.permissions) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { controller.rejectCurrent() },
+        icon = {
+            androidx.compose.material3.Icon(
+                imageVector = permissionIcon(current.permissions),
+                contentDescription = null,
+            )
+        },
+        title = { androidx.compose.material3.Text("Allow $what?") },
+        text = { androidx.compose.material3.Text("$host wants to use your $what.") },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = { controller.grantCurrent() }) {
+                androidx.compose.material3.Text("Allow")
+            }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = { controller.rejectCurrent() }) {
+                androidx.compose.material3.Text("Block")
+            }
+        },
+    )
+}
+
+private fun permissionIcon(
+    permissions: List<mozilla.components.concept.engine.permission.Permission>,
+): androidx.compose.ui.graphics.vector.ImageVector {
+    permissions.forEach { perm ->
+        when (perm) {
+            is mozilla.components.concept.engine.permission.Permission.ContentGeoLocation ->
+                return Icons.Filled.LocationOn
+            is mozilla.components.concept.engine.permission.Permission.ContentVideoCamera,
+            is mozilla.components.concept.engine.permission.Permission.ContentVideoCapture ->
+                return Icons.Filled.Videocam
+            is mozilla.components.concept.engine.permission.Permission.ContentAudioCapture,
+            is mozilla.components.concept.engine.permission.Permission.ContentAudioMicrophone ->
+                return Icons.Filled.Mic
+            is mozilla.components.concept.engine.permission.Permission.ContentNotification ->
+                return Icons.Filled.Notifications
+            is mozilla.components.concept.engine.permission.Permission.ContentPersistentStorage ->
+                return Icons.Filled.Storage
+            is mozilla.components.concept.engine.permission.Permission.ContentAutoPlayAudible,
+            is mozilla.components.concept.engine.permission.Permission.ContentAutoPlayInaudible ->
+                return Icons.Filled.PlayArrow
+            else -> Unit
+        }
+    }
+    return Icons.Filled.Lock
+}
+
+private fun describeContentPermissions(
+    permissions: List<mozilla.components.concept.engine.permission.Permission>,
+): String {
+    val labels = permissions.map { perm ->
+        when (perm) {
+            is mozilla.components.concept.engine.permission.Permission.ContentGeoLocation -> "location"
+            is mozilla.components.concept.engine.permission.Permission.ContentVideoCamera,
+            is mozilla.components.concept.engine.permission.Permission.ContentVideoCapture -> "camera"
+            is mozilla.components.concept.engine.permission.Permission.ContentAudioCapture,
+            is mozilla.components.concept.engine.permission.Permission.ContentAudioMicrophone -> "microphone"
+            is mozilla.components.concept.engine.permission.Permission.ContentNotification -> "notifications"
+            is mozilla.components.concept.engine.permission.Permission.ContentPersistentStorage -> "persistent storage"
+            is mozilla.components.concept.engine.permission.Permission.ContentAutoPlayAudible,
+            is mozilla.components.concept.engine.permission.Permission.ContentAutoPlayInaudible -> "autoplay media"
+            else -> "this device feature"
+        }
+    }.distinct()
+    return if (labels.isEmpty()) "this device feature" else labels.joinToString(" and ")
+}
 
 private enum class SnapshotRequestPurpose {
     PredictiveBack,

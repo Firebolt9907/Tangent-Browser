@@ -11,6 +11,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -18,12 +20,14 @@ internal fun TabCountChip(
     count: Int,
     modifier: Modifier = Modifier,
 ) {
+    val tabsLabel = if (count == 1) "1 tab open" else "$count tabs open"
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .defaultMinSize(minWidth = 24.dp, minHeight = 20.dp)
-            .padding(horizontal = 8.dp, vertical = 2.dp),
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .semantics(mergeDescendants = true) { contentDescription = tabsLabel },
         contentAlignment = Alignment.Center,
     ) {
         Text(

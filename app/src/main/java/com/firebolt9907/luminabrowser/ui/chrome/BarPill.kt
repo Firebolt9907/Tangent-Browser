@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -33,6 +34,7 @@ internal fun BarPill(
     widthFraction: Float? = null,
     width: Dp? = null,
     interactive: Boolean = true,
+    containerColor: Color? = null,
     content: @Composable () -> Unit,
 ) {
     val currentOnStart by rememberUpdatedState(onDragStart)
@@ -102,7 +104,7 @@ internal fun BarPill(
     Surface(
         modifier = modifier.then(sizing).then(gestureModifier),
         shape = RoundedCornerShape(cornerRadius),
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        color = containerColor ?: MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 6.dp,
     ) {
         content()

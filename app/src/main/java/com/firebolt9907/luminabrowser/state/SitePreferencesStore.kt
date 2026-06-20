@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 data class SitePreferences(
     val topPaddingFix: Boolean = false,
     val zoomFactor: Float = 1.0f,
+    val desktopMode: Boolean = false,
 )
 
 /**
@@ -23,7 +24,8 @@ class SitePreferencesStore(context: Context) {
         if (host.isEmpty()) return SitePreferences()
         val topFix = prefs.getBoolean("${host}__topPaddingFix", false)
         val zoom = prefs.getFloat("${host}__zoomFactor", 1.0f).coerceIn(0.5f, 2.0f)
-        return SitePreferences(topPaddingFix = topFix, zoomFactor = zoom)
+        val desktop = prefs.getBoolean("${host}__desktopMode", false)
+        return SitePreferences(topPaddingFix = topFix, zoomFactor = zoom, desktopMode = desktop)
     }
 
     fun set(host: String, prefs: SitePreferences) {
@@ -31,7 +33,39 @@ class SitePreferencesStore(context: Context) {
         this.prefs.edit()
             .putBoolean("${host}__topPaddingFix", prefs.topPaddingFix)
             .putFloat("${host}__zoomFactor", prefs.zoomFactor)
+            .putBoolean("${host}__desktopMode", prefs.desktopMode)
             .apply()
+        _updates.tryEmit(host)
+    }
+
+    /**
+     * Whether reader mode should auto-engage for this host. Set when the user turns reader on/off
+     * for a site so that future pages on the same domain open straight into reader view.
+     */
+    fun isReaderPreferred(host: String): Boolean {
+        if (host.isEmpty()) return false
+        return prefs.getBoolean("${host}__readerPreferred", false)
+    }
+
+    fun setReaderPreferred(host: String, value: Boolean) {
+        if (host.isEmpty()) return
+        prefs.edit().putBoolean("${host}__readerPreferred", value).apply()
+        _updates.tryEmit(host)
+    }
+
+    /**
+     * Whether the user has explicitly opted *out* of reader mode for this host. Reader auto-engages
+     * on every eligible page by default; turning reader off for a site sets this so we stop
+     * auto-engaging there. Cleared when the user turns reader back on for the host.
+     */
+    fun isReaderAutoDisabled(host: String): Boolean {
+        if (host.isEmpty()) return false
+        return prefs.getBoolean("${host}__readerAutoDisabled", false)
+    }
+
+    fun setReaderAutoDisabled(host: String, value: Boolean) {
+        if (host.isEmpty()) return
+        prefs.edit().putBoolean("${host}__readerAutoDisabled", value).apply()
         _updates.tryEmit(host)
     }
 }

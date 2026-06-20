@@ -3,8 +3,10 @@ package com.firebolt9907.luminabrowser.sync
 import android.app.Application
 import android.net.Uri
 import com.firebolt9907.luminabrowser.R
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -13,6 +15,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import mozilla.appservices.fxaclient.FxaServer
 import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.browser.storage.sync.RemoteTabsStorage
@@ -30,7 +33,10 @@ import mozilla.components.service.fxa.ServerConfig
 import mozilla.components.service.fxa.SyncConfig
 import mozilla.components.service.fxa.SyncEngine
 import mozilla.components.service.fxa.manager.FxaAccountManager
+import mozilla.components.service.fxa.sync.GlobalSyncableStoreProvider
 import mozilla.components.service.fxa.sync.SyncReason
+import mozilla.components.service.fxa.sync.SyncStatusObserver
+import mozilla.components.support.base.observer.ObserverRegistry
 
 private const val FxAClientId = "3c49430b43dfba77"
 private const val FxARedirectUrl = "https://accounts.firefox.com/oauth/success/$FxAClientId"
@@ -40,6 +46,7 @@ class FirefoxSyncController(
     private val application: Application,
     private val store: BrowserStore,
     private val scope: CoroutineScope,
+    private val loginsStorage: PlacesLoginsStorage? = null,
 ) {
     private val crashReporter = object : CrashReporting {
         override fun submitCaughtException(throwable: Throwable): Job = Job()
@@ -56,7 +63,7 @@ class FirefoxSyncController(
             secureStateAtRest = true,
         ),
         syncConfig = SyncConfig(
-            supportedEngines = setOf(SyncEngine.Tabs),
+            supportedEngines = setOf(SyncEngine.Tabs, SyncEngine.Passwords),
             periodicSyncConfig = PeriodicSyncConfig(periodMinutes = 240, initialDelayMinutes = 5),
         ),
         crashReporter = crashReporter,
@@ -79,6 +86,12 @@ class FirefoxSyncController(
     @Volatile private var authInFlight = false
 
     init {
+        GlobalSyncableStoreProvider.configureStore(SyncEngine.Tabs to lazy { remoteTabsStorage })
+        if (loginsStorage != null) {
+            GlobalSyncableStoreProvider.configureStore(
+                SyncEngine.Passwords to lazy { loginsStorage },
+            )
+        }
         syncedTabsStorage.start()
         scope.launch {
             setBusy("Preparing Firefox Sync...")
@@ -151,26 +164,42 @@ class FirefoxSyncController(
             setBusy("Syncing tabs...")
             runCatching {
                 accountManager.authenticatedAccount()?.deviceConstellation()?.refreshDevices()
+                refreshTargetDevices()
+
+                // syncNow only enqueues a WorkManager job — it returns before sync actually runs.
+                // Register the observer first so we don't miss the completion callback, then
+                // trigger sync and await the result before reading from storage.
+                // Sync all supported engines (tabs + passwords).
+                val syncDone = CompletableDeferred<Unit>()
+                val syncRegistry = accountManager.syncStatusObserverRegistry
+                val observer = object : SyncStatusObserver {
+                    override fun onStarted() {}
+                    override fun onIdle() {
+                        syncRegistry.unregister(this)
+                        syncDone.complete(Unit)
+                    }
+                    override fun onError(error: Exception?) {
+                        syncRegistry.unregister(this)
+                        syncDone.completeExceptionally(error ?: Exception("Sync error"))
+                    }
+                }
+                syncRegistry.register(observer)
                 accountManager.syncNow(
                     reason = SyncReason.User,
-                    customEngineSubset = listOf(SyncEngine.Tabs),
+                    customEngineSubset = if (loginsStorage != null) {
+                        listOf(SyncEngine.Tabs, SyncEngine.Passwords)
+                    } else {
+                        listOf(SyncEngine.Tabs)
+                    },
                     debounce = false,
                 )
-                val devices = syncedTabsStorage.getSyncedDeviceTabs().map { deviceTabs ->
-                    FirefoxSyncedDevice(
-                        id = deviceTabs.device.id,
-                        name = deviceTabs.device.displayName,
-                        type = deviceTabs.device.deviceType.name.lowercase().replaceFirstChar(Char::titlecase),
-                        tabs = deviceTabs.tabs.mapNotNull { tab ->
-                            val active = runCatching { tab.active() }.getOrNull() ?: return@mapNotNull null
-                            FirefoxSyncedTab(
-                                title = active.title.ifBlank { active.url },
-                                url = active.url,
-                                lastUsed = tab.lastUsed,
-                            )
-                        },
-                    )
-                }.filter { it.tabs.isNotEmpty() }
+                try {
+                    withTimeout(30_000L) { syncDone.await() }
+                } catch (_: TimeoutCancellationException) {
+                    syncRegistry.unregister(observer)
+                }
+
+                val devices = readSyncedDevices()
                 _state.update {
                     it.copy(
                         devices = devices,
@@ -181,6 +210,120 @@ class FirefoxSyncController(
                 }
             }.onFailure { throwable ->
                 setError("Could not sync tabs: ${throwable.readableMessage()}")
+            }
+        }
+    }
+
+    /**
+     * Populate the synced-tabs list from local storage without triggering a network sync.
+     * Background periodic sync (every 4h) keeps that storage fresh, so this lets the UI show
+     * the most recent results instantly when the sheet opens, without a 30s round trip.
+     */
+    fun loadCachedSyncedTabs() {
+        scope.launch {
+            if (accountManager.authenticatedAccount() == null) return@launch
+            refreshTargetDevices()
+            runCatching { readSyncedDevices() }
+                .onSuccess { devices ->
+                    if (devices.isNotEmpty()) {
+                        _state.update { it.copy(devices = devices, isError = false) }
+                    }
+                }
+        }
+    }
+
+    /** Read the constellation's other devices (Send Tab targets) into UI state. */
+    private fun refreshTargetDevices() {
+        val others = accountManager.authenticatedAccount()
+            ?.deviceConstellation()?.state()?.otherDevices.orEmpty()
+        val targets = others.map { device ->
+            FirefoxTargetDevice(
+                id = device.id,
+                name = device.displayName,
+                type = device.deviceType.name.lowercase().replaceFirstChar(Char::titlecase),
+            )
+        }
+        _state.update { it.copy(targetDevices = targets) }
+    }
+
+    /** Push the current tab to another of the account's devices via the Send Tab command. */
+    fun sendTab(deviceId: String, title: String, url: String) {
+        scope.launch {
+            val constellation = accountManager.authenticatedAccount()?.deviceConstellation()
+            if (constellation == null) {
+                setError("Sign in to send tabs")
+                return@launch
+            }
+            setBusy("Sending tab...")
+            runCatching {
+                constellation.sendCommandToDevice(
+                    deviceId,
+                    mozilla.components.concept.sync.DeviceCommandOutgoing.SendTab(
+                        title.ifBlank { url },
+                        url,
+                    ),
+                )
+            }.onSuccess { sent ->
+                _state.update {
+                    it.copy(
+                        isBusy = false,
+                        isError = sent != true,
+                        message = if (sent == true) "Tab sent" else "Could not send tab",
+                    )
+                }
+            }.onFailure { throwable ->
+                setError("Could not send tab: ${throwable.readableMessage()}")
+            }
+        }
+    }
+
+    private suspend fun readSyncedDevices(): List<FirefoxSyncedDevice> =
+        syncedTabsStorage.getSyncedDeviceTabs().map { deviceTabs ->
+            FirefoxSyncedDevice(
+                id = deviceTabs.device.id,
+                name = deviceTabs.device.displayName,
+                type = deviceTabs.device.deviceType.name.lowercase().replaceFirstChar(Char::titlecase),
+                tabs = deviceTabs.tabs.mapNotNull { tab ->
+                    val active = runCatching { tab.active() }.getOrNull() ?: return@mapNotNull null
+                    FirefoxSyncedTab(
+                        title = active.title.ifBlank { active.url },
+                        url = active.url,
+                        lastUsed = tab.lastUsed,
+                    )
+                },
+            )
+        }.filter { it.tabs.isNotEmpty() }
+
+    val logins: PlacesLoginsStorage? get() = loginsStorage
+
+    fun syncNow() {
+        scope.launch {
+            if (accountManager.authenticatedAccount() == null) return@launch
+            setBusy("Syncing...")
+            runCatching {
+                val syncDone = CompletableDeferred<Unit>()
+                val syncRegistry = accountManager.syncStatusObserverRegistry
+                val observer = object : SyncStatusObserver {
+                    override fun onStarted() {}
+                    override fun onIdle() {
+                        syncRegistry.unregister(this)
+                        syncDone.complete(Unit)
+                    }
+                    override fun onError(error: Exception?) {
+                        syncRegistry.unregister(this)
+                        syncDone.completeExceptionally(error ?: Exception("Sync error"))
+                    }
+                }
+                syncRegistry.register(observer)
+                accountManager.syncNow(reason = SyncReason.User, debounce = false)
+                try {
+                    withTimeout(30_000L) { syncDone.await() }
+                } catch (_: TimeoutCancellationException) {
+                    syncRegistry.unregister(observer)
+                }
+                _state.update { it.copy(isBusy = false, message = "Sync completed", isError = false) }
+            }.onFailure { throwable ->
+                setError("Sync failed: ${throwable.readableMessage()}")
             }
         }
     }
@@ -222,6 +365,7 @@ data class FirefoxSyncUiState(
     val isSignedIn: Boolean = false,
     val accountEmail: String? = null,
     val devices: List<FirefoxSyncedDevice> = emptyList(),
+    val targetDevices: List<FirefoxTargetDevice> = emptyList(),
     val isBusy: Boolean = false,
     val message: String? = null,
     val isError: Boolean = false,
@@ -232,6 +376,12 @@ data class FirefoxSyncedDevice(
     val name: String,
     val type: String,
     val tabs: List<FirefoxSyncedTab>,
+)
+
+data class FirefoxTargetDevice(
+    val id: String,
+    val name: String,
+    val type: String,
 )
 
 data class FirefoxSyncedTab(

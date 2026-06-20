@@ -30,4 +30,24 @@ class GlobalPreferencesStore(context: Context) {
         current.add(0, pkg)
         recentBrowserPackages = current.take(5)
     }
+
+    var trackingProtection: Boolean
+        get() = prefs.getBoolean("trackingProtection", true)
+        set(value) { prefs.edit().putBoolean("trackingProtection", value).apply() }
+
+    var blockPopUps: Boolean
+        get() = prefs.getBoolean("blockPopUps", true)
+        set(value) { prefs.edit().putBoolean("blockPopUps", value).apply() }
+
+    var javaScriptEnabled: Boolean
+        get() = prefs.getBoolean("javaScriptEnabled", true)
+        set(value) { prefs.edit().putBoolean("javaScriptEnabled", value).apply() }
+
+    var httpsOnly: Boolean
+        get() = prefs.getBoolean("httpsOnly", false)
+        set(value) { prefs.edit().putBoolean("httpsOnly", value).apply() }
+
+    var globalPrivacyControl: Boolean
+        get() = prefs.getBoolean("globalPrivacyControl", false)
+        set(value) { prefs.edit().putBoolean("globalPrivacyControl", value).apply() }
 }

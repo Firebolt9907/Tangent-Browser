@@ -1,7 +1,6 @@
 package com.firebolt9907.luminabrowser
 
 import org.junit.Test
-
 import org.junit.Assert.*
 
 /**

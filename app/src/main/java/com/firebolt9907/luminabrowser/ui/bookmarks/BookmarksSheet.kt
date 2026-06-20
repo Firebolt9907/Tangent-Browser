@@ -108,12 +108,16 @@ fun BookmarksSheet(
                 FilledTonalButton(
                     onClick = {
                         scope.launch {
-                            bookmarksStorage.addItem(
-                                parentGuid = BookmarkRoot.Mobile.id,
-                                url = currentPageUrl,
-                                title = currentPageTitle.ifBlank { currentPageUrl },
-                                position = null,
-                            )
+                            // Guard the write so a storage error can't crash the sheet; reload
+                            // afterward to reflect whatever actually persisted.
+                            runCatching {
+                                bookmarksStorage.addItem(
+                                    parentGuid = BookmarkRoot.Mobile.id,
+                                    url = currentPageUrl,
+                                    title = currentPageTitle.ifBlank { currentPageUrl },
+                                    position = null,
+                                )
+                            }
                             reload()
                         }
                     },
@@ -196,7 +200,7 @@ fun BookmarksSheet(
                                 trailingContent = {
                                     IconButton(onClick = {
                                         scope.launch {
-                                            bookmarksStorage.deleteNode(node.guid)
+                                            runCatching { bookmarksStorage.deleteNode(node.guid) }
                                             reload()
                                         }
                                     }) {

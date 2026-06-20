@@ -65,17 +65,21 @@ fun HistorySheet(
     var showClearConfirm by remember { mutableStateOf(false) }
 
     suspend fun reload() {
-        visits = historyStorage.getVisitsPaginated(
-            offset = 0,
-            count = 500,
-            excludeTypes = listOf(
-                VisitType.RELOAD,
-                VisitType.REDIRECT_PERMANENT,
-                VisitType.REDIRECT_TEMPORARY,
-                VisitType.EMBED,
-                VisitType.DOWNLOAD,
-            ),
-        ).reversed()
+        // Guard the read so a storage error shows an empty list instead of crashing the sheet
+        // (and never clearing the loading state).
+        visits = runCatching {
+            historyStorage.getVisitsPaginated(
+                offset = 0,
+                count = 500,
+                excludeTypes = listOf(
+                    VisitType.RELOAD,
+                    VisitType.REDIRECT_PERMANENT,
+                    VisitType.REDIRECT_TEMPORARY,
+                    VisitType.EMBED,
+                    VisitType.DOWNLOAD,
+                ),
+            ).reversed()
+        }.getOrDefault(emptyList())
         loading = false
     }
 
@@ -182,7 +186,7 @@ fun HistorySheet(
                                 trailingContent = {
                                     IconButton(onClick = {
                                         scope.launch {
-                                            historyStorage.deleteVisitsFor(visit.url)
+                                            runCatching { historyStorage.deleteVisitsFor(visit.url) }
                                             reload()
                                         }
                                     }) {
@@ -206,7 +210,7 @@ fun HistorySheet(
                 TextButton(onClick = {
                     showClearConfirm = false
                     scope.launch {
-                        historyStorage.deleteEverything()
+                        runCatching { historyStorage.deleteEverything() }
                         reload()
                     }
                 }) {

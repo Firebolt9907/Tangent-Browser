@@ -341,7 +341,9 @@ private fun String.toAddonInstallUrl(): String? {
         if (path.endsWith(".xpi")) return trimmed
         val segments = uri.pathSegments
         val addonIndex = segments.indexOf("addon")
-        val slug = segments.getOrNull(addonIndex + 1)
+        // Guard against indexOf returning -1: addonIndex + 1 would then be 0, silently picking the
+        // first path segment as the slug and building a bogus install URL for a non-/addon/ page.
+        val slug = if (addonIndex >= 0) segments.getOrNull(addonIndex + 1) else null
         if (uri.host?.endsWith("addons.mozilla.org") == true && !slug.isNullOrBlank()) {
             return slug.toAmoLatestXpiUrl()
         }

@@ -110,4 +110,28 @@ class UrlNormalizationTest {
 
     @Test fun compactHost_httpsUrl_noWwwPrefix_isUnchanged() =
         assertEquals("wikipedia.org", compactHost("https://www.wikipedia.org"))
+
+    // A bare domain (no scheme) is normalized to https:// first, then www is stripped.
+    @Test fun compactHost_bareWwwDomain_stripsWww() =
+        assertEquals("example.com", compactHost("www.example.com"))
+
+    // An explicit scheme whose host java.net.URI cannot parse (here an illegal '^') must not crash
+    // compactHost; the runCatching fallback returns the raw input. Guards the host-parse error path.
+    @Test fun compactHost_malformedUri_returnsFallback() =
+        assertEquals("https://exa^mple.com", compactHost("https://exa^mple.com"))
+
+    // ── normalizeUrl: additional robustness cases ─────────────────────────────
+
+    // The scheme regex is case-insensitive in its first char class, so an uppercased scheme is
+    // still recognized as explicit and passes through untouched rather than being searched.
+    @Test fun uppercaseScheme_passesThrough() =
+        assertEquals("HTTPS://example.com", normalizeUrl("HTTPS://example.com"))
+
+    // A bare IPv4 address has dots, so it is treated as a host and gets https:// prepended.
+    @Test fun bareIpAddress_prependsHttps() =
+        assertEquals("https://127.0.0.1", normalizeUrl("127.0.0.1"))
+
+    // mailto: is an explicit scheme and must pass through unchanged (not become a web search).
+    @Test fun mailtoScheme_passesThrough() =
+        assertEquals("mailto:test@example.com", normalizeUrl("mailto:test@example.com"))
 }

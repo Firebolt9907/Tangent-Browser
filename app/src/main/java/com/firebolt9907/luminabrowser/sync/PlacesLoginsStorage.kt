@@ -29,6 +29,10 @@ class PlacesLoginsStorage(
 
     private val nativeStorage = DatabaseLoginsStorage(dbPath, keyManager)
 
+    // Synchronized so a concurrent first-run getKey() can't race two threads past the "key absent"
+    // check and generate the AES key twice under the same alias — the second generateKey() would
+    // overwrite the first, making any data already encrypted with it permanently unreadable.
+    @Synchronized
     private fun getOrCreateEncryptionKey(): ByteArray {
         val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
         keyStore.load(null)

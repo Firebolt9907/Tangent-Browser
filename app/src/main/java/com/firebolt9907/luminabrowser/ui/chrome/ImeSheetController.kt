@@ -10,6 +10,7 @@ import android.view.WindowInsetsAnimationController
 import android.view.animation.LinearInterpolator
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalView
 import androidx.core.animation.doOnEnd
@@ -187,5 +188,11 @@ class ImeSheetController(private val view: View) {
 @Composable
 fun rememberImeSheetController(): ImeSheetController {
     val view = LocalView.current
-    return remember(view) { ImeSheetController(view) }
+    val controller = remember(view) { ImeSheetController(view) }
+    // If the sheet leaves composition mid-gesture, abort any in-flight settle animator and release
+    // the held WindowInsetsAnimationController so neither leaks. cancel() is a no-op below API 30.
+    DisposableEffect(controller) {
+        onDispose { controller.cancel() }
+    }
+    return controller
 }

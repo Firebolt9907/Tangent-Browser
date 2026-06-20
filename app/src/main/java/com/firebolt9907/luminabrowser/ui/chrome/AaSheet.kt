@@ -59,9 +59,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -279,7 +282,11 @@ private fun PageTabContent(
     val hasRealUrl = pageUrl.isNotBlank() && pageUrl != "about:blank"
 
     if (showBrowserPicker) {
-        val allBrowsers = remember { installedBrowsers(context.packageManager) }
+        // installedBrowsers runs several PackageManager queries; produce it off the main thread so
+        // opening the picker never blocks composition. Empty until the IO pass returns (one frame).
+        val allBrowsers by produceState(initialValue = emptyList<BrowserInfo>(), context) {
+            value = withContext(Dispatchers.IO) { installedBrowsers(context.packageManager) }
+        }
         val recentPkgs = remember { globalPrefsStore.recentBrowserPackages }
         val recentBrowsers = remember(recentPkgs, allBrowsers) {
             val allByPkg = allBrowsers.associateBy { it.packageName }
@@ -662,13 +669,17 @@ private fun PageTabContent(
             Spacer(Modifier.height(4.dp))
 
             // Open in associated native app (e.g. Instagram for an instagram.com link),
-            // shown only when a non-browser app claims this specific URL.
-            val nativeApp = remember(pageUrl) { nativeAppFor(context.packageManager, pageUrl) }
-            if (nativeApp != null) {
+            // shown only when a non-browser app claims this specific URL. Resolved off the main
+            // thread (two PackageManager queries) so it never blocks the sheet; null until ready.
+            val nativeApp by produceState<NativeApp?>(initialValue = null, pageUrl, context) {
+                value = withContext(Dispatchers.IO) { nativeAppFor(context.packageManager, pageUrl) }
+            }
+            val resolvedNativeApp = nativeApp
+            if (resolvedNativeApp != null) {
                 TextButton(
                     onClick = {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(pageUrl)).apply {
-                            setPackage(nativeApp.packageName)
+                            setPackage(resolvedNativeApp.packageName)
                             addCategory(Intent.CATEGORY_BROWSABLE)
                         }
                         try {
@@ -682,7 +693,7 @@ private fun PageTabContent(
                 ) {
                     ActionRowContent(
                         icon = Icons.AutoMirrored.Filled.OpenInNew,
-                        text = "Open in ${nativeApp.label}",
+                        text = "Open in ${resolvedNativeApp.label}",
                         bold = true,
                     )
                 }

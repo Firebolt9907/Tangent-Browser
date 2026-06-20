@@ -686,7 +686,9 @@ private fun PageTabContent(
                         try {
                             context.startActivity(intent)
                         } catch (_: ActivityNotFoundException) {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, pageUrl.toUri()))
+                            // Preferred native app gone; fall back to a plain VIEW, still guarded
+                            // in case nothing at all handles the URL.
+                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, pageUrl.toUri())) }
                         }
                         onDismiss()
                     },
@@ -732,7 +734,11 @@ private fun PageTabContent(
                         // Title becomes the subject line in apps that use one (email, etc.).
                         if (pageTitle.isNotBlank()) putExtra(Intent.EXTRA_SUBJECT, pageTitle)
                     }
-                    context.startActivity(Intent.createChooser(shareIntent, null))
+                    try {
+                        context.startActivity(Intent.createChooser(shareIntent, null))
+                    } catch (_: ActivityNotFoundException) {
+                        Toast.makeText(context, "No app available to share", Toast.LENGTH_SHORT).show()
+                    }
                     onDismiss()
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -768,7 +774,9 @@ private fun PageTabContent(
                         try {
                             context.startActivity(intent)
                         } catch (_: ActivityNotFoundException) {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                            // Preferred browser gone; fall back to a plain VIEW, still guarded in
+                            // case nothing handles the URL.
+                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
                         }
                         onDismiss()
                     },

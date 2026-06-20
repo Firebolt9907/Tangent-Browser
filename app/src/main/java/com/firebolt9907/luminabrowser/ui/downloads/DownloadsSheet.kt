@@ -49,8 +49,9 @@ import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
@@ -308,7 +309,9 @@ private fun formatBytes(bytes: Long): String {
     return if (unit == 0) "${bytes} B" else String.format(Locale.getDefault(), "%.1f %s", value, units[unit])
 }
 
-private val timeFormat = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault())
+// DateTimeFormatter is immutable and thread-safe, unlike the shared SimpleDateFormat it replaces.
+private val timeFormat = DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.getDefault())
 
 private fun formatTime(epochMillis: Long): String =
-    if (epochMillis <= 0) "" else timeFormat.format(Date(epochMillis))
+    if (epochMillis <= 0) "" else
+        timeFormat.format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))

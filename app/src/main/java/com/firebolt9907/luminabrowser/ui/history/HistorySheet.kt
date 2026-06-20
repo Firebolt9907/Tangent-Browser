@@ -45,8 +45,9 @@ import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.HistoryStorage
 import mozilla.components.concept.storage.VisitInfo
 import mozilla.components.concept.storage.VisitType
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -221,7 +222,8 @@ fun HistorySheet(
     }
 }
 
-private val timeFormat = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault())
+// DateTimeFormatter is immutable and thread-safe, unlike the shared SimpleDateFormat it replaces.
+private val timeFormat = DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.getDefault())
 
 private fun formatVisitTime(epochMillis: Long): String =
-    timeFormat.format(Date(epochMillis))
+    timeFormat.format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))

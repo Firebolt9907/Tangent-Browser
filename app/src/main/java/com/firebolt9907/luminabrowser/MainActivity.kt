@@ -77,7 +77,11 @@ class MainActivity : ComponentActivity(), ActivityDelegate {
         }
 
         setContent { LuminaRoot() }
-        handleIncomingIntent(intent)
+        // Only handle the launch intent on a fresh start. On recreation (process-death restore or a
+        // config change) onCreate re-runs with the original launch intent still set as getIntent(),
+        // which would re-open a duplicate tab from the same ACTION_VIEW/SEND. Live intents that
+        // arrive while the activity exists are delivered through onNewIntent instead.
+        if (savedInstanceState == null) handleIncomingIntent(intent)
     }
 
     override fun onStart() {

@@ -135,7 +135,10 @@ fun DownloadsSheet(
                             entry = entry,
                             onOpen = { openDownload(context, entry) },
                             onRemove = {
-                                downloadManager(context).remove(entry.id)
+                                // remove() hits the DownloadManager content provider and can throw;
+                                // guard it so a failure can't crash the sheet. The row is dropped
+                                // from the UI regardless so the action still feels responsive.
+                                runCatching { downloadManager(context).remove(entry.id) }
                                 downloads = downloads.filterNot { it.id == entry.id }
                             },
                         )

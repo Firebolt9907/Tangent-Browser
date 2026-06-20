@@ -57,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -259,7 +260,7 @@ private fun PageTabContent(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val initial = remember(host) { store.get(host) }
-    var zoomFactor by remember(host) { mutableStateOf(initial.zoomFactor) }
+    var zoomFactor by remember(host) { mutableFloatStateOf(initial.zoomFactor) }
     var topPaddingFix by remember(host) { mutableStateOf(initial.topPaddingFix) }
     var desktopMode by remember(host) { mutableStateOf(initial.desktopMode) }
     val canEdit = host.isNotEmpty()

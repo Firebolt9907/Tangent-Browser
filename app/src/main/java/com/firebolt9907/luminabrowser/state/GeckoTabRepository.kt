@@ -4,8 +4,10 @@ import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -104,7 +106,7 @@ class GeckoTabRepository(
                         selected = tab.id == selected,
                     )
                 }
-            persistence.save(snapshot)
+            withContext(Dispatchers.IO) { persistence.save(snapshot) }
         }
     }
 

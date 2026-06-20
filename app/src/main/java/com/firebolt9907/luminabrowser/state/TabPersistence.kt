@@ -56,7 +56,18 @@ class TabPersistence(context: Context) {
                         .put("selected", tab.selected),
                 )
             }
-            file.writeText(array.toString())
+            // Write to a temp file then atomically rename, so a crash or process kill
+            // mid-write can never leave a half-written (corrupt) tab state behind.
+            val tmp = File(file.parentFile, "${file.name}.tmp")
+            tmp.writeText(array.toString())
+            if (!tmp.renameTo(file)) {
+                // renameTo can fail across some filesystems; fall back to a direct copy.
+                file.writeText(tmp.readText())
+                tmp.delete()
+            }
+        }.onFailure {
+            // Best-effort cleanup of a stale temp file so it doesn't accumulate.
+            runCatching { File(file.parentFile, "${file.name}.tmp").delete() }
         }
     }
 }

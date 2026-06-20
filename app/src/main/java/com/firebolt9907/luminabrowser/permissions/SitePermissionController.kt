@@ -1,7 +1,8 @@
 package com.firebolt9907.luminabrowser.permissions
 
 import android.content.Context
-import android.net.Uri
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -99,14 +100,14 @@ class SitePermissionController(context: Context? = null) {
 
     /** Forget every remembered allow/deny decision so sites will prompt again. */
     fun clearRememberedDecisions() {
-        prefs?.edit()?.clear()?.apply()
+        prefs?.edit { clear() }
     }
 
     private fun Permission.isAutoPlay(): Boolean =
         this is Permission.ContentAutoPlayAudible || this is Permission.ContentAutoPlayInaudible
 
     private fun hostOf(uri: String?): String? =
-        uri?.let { runCatching { Uri.parse(it).host }.getOrNull() }?.takeIf { it.isNotBlank() }
+        uri?.let { runCatching { it.toUri().host }.getOrNull() }?.takeIf { it.isNotBlank() }
 
     private fun keyFor(host: String, permission: Permission): String =
         "$host|${permission::class.java.simpleName}"
@@ -122,9 +123,9 @@ class SitePermissionController(context: Context? = null) {
     private fun rememberDecision(request: PermissionRequest, granted: Boolean) {
         val store = prefs ?: return
         val host = hostOf(request.uri) ?: return
-        val editor = store.edit()
-        request.permissions.forEach { editor.putBoolean(keyFor(host, it), granted) }
-        editor.apply()
+        store.edit {
+            request.permissions.forEach { putBoolean(keyFor(host, it), granted) }
+        }
     }
 
     fun onAppPermissionRequest(request: PermissionRequest) {

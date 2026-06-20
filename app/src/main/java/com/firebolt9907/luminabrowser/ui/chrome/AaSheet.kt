@@ -5,7 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.widget.Toast
-import android.net.Uri
+import androidx.core.net.toUri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -110,11 +110,11 @@ private data class NativeApp(val packageName: String, val label: String)
  * a browser does). Returns null when only browsers (or nothing) can open the link.
  */
 private fun nativeAppFor(pm: PackageManager, url: String): NativeApp? {
-    val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return null
+    val uri = runCatching { url.toUri() }.getOrNull() ?: return null
     if (uri.scheme != "http" && uri.scheme != "https") return null
 
     // Packages that handle *any* https URL are general-purpose browsers.
-    val genericProbe = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
+    val genericProbe = Intent(Intent.ACTION_VIEW, "https://example.com".toUri())
         .addCategory(Intent.CATEGORY_BROWSABLE)
     val browserPkgs = pm.queryIntentActivities(genericProbe, 0)
         .map { it.activityInfo.packageName }
@@ -134,7 +134,7 @@ private fun nativeAppFor(pm: PackageManager, url: String): NativeApp? {
 
 private fun installedBrowsers(pm: PackageManager): List<BrowserInfo> {
     // Use flags=0 to get every app that handles https, not only the current default.
-    val probe = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
+    val probe = Intent(Intent.ACTION_VIEW, "https://example.com".toUri())
     val dynamic = pm.queryIntentActivities(probe, 0)
         .map { ri ->
             BrowserInfo(
@@ -679,14 +679,14 @@ private fun PageTabContent(
             if (resolvedNativeApp != null) {
                 TextButton(
                     onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(pageUrl)).apply {
+                        val intent = Intent(Intent.ACTION_VIEW, pageUrl.toUri()).apply {
                             setPackage(resolvedNativeApp.packageName)
                             addCategory(Intent.CATEGORY_BROWSABLE)
                         }
                         try {
                             context.startActivity(intent)
                         } catch (_: ActivityNotFoundException) {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(pageUrl)))
+                            context.startActivity(Intent(Intent.ACTION_VIEW, pageUrl.toUri()))
                         }
                         onDismiss()
                     },
@@ -760,7 +760,7 @@ private fun PageTabContent(
             ) {
                 TextButton(
                     onClick = {
-                        val uri = Uri.parse(pageUrl)
+                        val uri = pageUrl.toUri()
                         val pkg = preferredBrowserPkg
                         val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                             if (!pkg.isNullOrEmpty()) setPackage(pkg)

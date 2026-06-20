@@ -2,6 +2,7 @@ package com.firebolt9907.luminabrowser.state
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.core.graphics.scale
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.CoroutineScope
@@ -110,9 +111,9 @@ class TabSnapshotCache(
         // so anything wider than 1080px is wasteful on disk and during decoding.
         val toWrite: Bitmap = if (bitmap.width > 1080) {
             try {
-                val scale = 1080f / bitmap.width
-                val scaledHeight = (bitmap.height * scale).toInt().coerceAtLeast(1)
-                Bitmap.createScaledBitmap(bitmap, 1080, scaledHeight, true)
+                val scaleFactor = 1080f / bitmap.width
+                val scaledHeight = (bitmap.height * scaleFactor).toInt().coerceAtLeast(1)
+                bitmap.scale(1080, scaledHeight)
             } catch (_: OutOfMemoryError) {
                 bitmap // fall back to original on OOM
             }

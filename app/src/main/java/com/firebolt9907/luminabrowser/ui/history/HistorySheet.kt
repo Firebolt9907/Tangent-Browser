@@ -223,7 +223,10 @@ fun HistorySheet(
 }
 
 // DateTimeFormatter is immutable and thread-safe, unlike the shared SimpleDateFormat it replaces.
-private val timeFormat = DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.getDefault())
+// The pattern is locale-independent; the locale is bound per call so a runtime locale change is
+// reflected rather than frozen at class-load time.
+private val timeFormat = DateTimeFormatter.ofPattern("MMM d, h:mm a")
 
 private fun formatVisitTime(epochMillis: Long): String =
-    timeFormat.format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))
+    timeFormat.withLocale(Locale.getDefault())
+        .format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))

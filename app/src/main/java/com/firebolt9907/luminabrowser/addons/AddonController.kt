@@ -261,6 +261,13 @@ class AddonController(
         responder: (Boolean) -> Unit,
     ) {
         scope.launch {
+            // Only one permission prompt at a time. If one is already showing, deny this new one
+            // immediately rather than overwriting pendingPrompt — that would orphan the first
+            // prompt's Gecko callback, hanging its extension operation and leaking the callback.
+            if (_state.value.pendingPrompt != null) {
+                responder(false)
+                return@launch
+            }
             val promptId = nextPromptId++
             promptCallbacks[promptId] = responder
             _state.update {

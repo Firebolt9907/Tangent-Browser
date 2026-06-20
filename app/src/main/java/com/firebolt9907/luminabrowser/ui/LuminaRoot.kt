@@ -2,6 +2,7 @@ package com.firebolt9907.luminabrowser.ui
 
 import android.graphics.Bitmap
 import androidx.activity.ExperimentalActivityApi
+import androidx.core.net.toUri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -2834,7 +2835,7 @@ private fun SitePermissionDialog(
     val request by controller.contentRequest.collectAsStateWithLifecycle()
     val current = request ?: return
     val host = remember(current.uri) {
-        runCatching { android.net.Uri.parse(current.uri).host }.getOrNull()
+        runCatching { current.uri?.toUri()?.host }.getOrNull()
             ?.takeIf { it.isNotBlank() }
             ?: current.uri?.takeIf { it.isNotBlank() }
             ?: "This site"

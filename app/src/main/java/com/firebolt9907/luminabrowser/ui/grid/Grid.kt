@@ -1,7 +1,7 @@
 package com.firebolt9907.luminabrowser.ui.grid
 
 import android.graphics.Bitmap
-import android.net.Uri
+import androidx.core.net.toUri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -597,7 +597,7 @@ fun TabGridOverlay(
 private fun hostLabel(url: String): String {
     if (url.isBlankTabUrl()) return ""
     return try {
-        Uri.parse(url).host.orEmpty().removePrefix("www.")
+        url.toUri().host.orEmpty().removePrefix("www.")
     } catch (_: Throwable) {
         ""
     }

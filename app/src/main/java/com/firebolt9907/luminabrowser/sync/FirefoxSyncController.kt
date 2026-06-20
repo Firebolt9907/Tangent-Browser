@@ -2,6 +2,7 @@ package com.firebolt9907.luminabrowser.sync
 
 import android.app.Application
 import android.net.Uri
+import androidx.core.net.toUri
 import com.firebolt9907.luminabrowser.R
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -394,7 +395,7 @@ private enum class LuminaFxAEntryPoint(override val entryName: String) : FxAEntr
 }
 
 private fun String.oauthValues(): Map<String, String> {
-    val uri = Uri.parse(this)
+    val uri = this.toUri()
     val queryPairs = uri.queryParameterNames.associateWith { name ->
         uri.getQueryParameter(name).orEmpty()
     }

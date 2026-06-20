@@ -53,4 +53,18 @@ class GlobalPreferencesStore(context: Context) {
     var globalPrivacyControl: Boolean
         get() = prefs.getBoolean("globalPrivacyControl", false)
         set(value) { prefs.edit { putBoolean("globalPrivacyControl", value) } }
+
+    // Reader-view appearance, persisted so the user's choices survive app restarts. Theme is stored
+    // by enum name; an unknown/missing value falls back to the caller's default.
+    var readerThemeName: String?
+        get() = prefs.getString("readerThemeName", null)
+        set(value) { prefs.edit { putString("readerThemeName", value) } }
+
+    var readerFontSize: Int
+        get() = prefs.getInt("readerFontSize", 100)
+        set(value) { prefs.edit { putInt("readerFontSize", value) } }
+
+    var readerFontName: String
+        get() = prefs.getString("readerFontName", "System") ?: "System"
+        set(value) { prefs.edit { putString("readerFontName", value) } }
 }

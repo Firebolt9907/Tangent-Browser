@@ -189,6 +189,24 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     val readerFontSize by readerManager.fontSize.collectAsStateWithLifecycle()
     val readerFontName by readerManager.fontName.collectAsStateWithLifecycle()
 
+    // Reader appearance lives in the (Context-less) ReaderManager singleton, so bridge it to disk
+    // here: load the persisted values into the manager once, then mirror later changes back to the
+    // store. Loading synchronously before starting the collectors avoids a startup race where the
+    // first (replayed) emission would overwrite the saved value with the default.
+    LaunchedEffect(Unit) {
+        val prefs = components.globalPreferencesStore
+        prefs.readerThemeName
+            ?.let { name ->
+                runCatching { com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.valueOf(name) }.getOrNull()
+            }
+            ?.let { readerManager.setTheme(it) }
+        readerManager.setFontSize(prefs.readerFontSize)
+        readerManager.setFontName(prefs.readerFontName)
+        launch { readerManager.theme.collect { prefs.readerThemeName = it.name } }
+        launch { readerManager.fontSize.collect { prefs.readerFontSize = it } }
+        launch { readerManager.fontName.collect { prefs.readerFontName = it } }
+    }
+
     // Find-in-page state. The match counts are pushed by the engine session's onFindResult.
     var findInPageActive by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }

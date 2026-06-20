@@ -156,6 +156,16 @@ fun ContentHost(
         }
     }
 
+    // A VelocityTracker is obtain()-ed on ACTION_DOWN and only recycled on ACTION_UP/CANCEL. If this
+    // composable leaves while a predictive-back drag is in flight (e.g. a tab switch mid-gesture),
+    // that ACTION_UP never arrives, so recycle here to return the tracker to the pool.
+    DisposableEffect(Unit) {
+        onDispose {
+            predictiveBackVelocityTracker?.recycle()
+            predictiveBackVelocityTracker = null
+        }
+    }
+
     DisposableEffect(engineView, lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {

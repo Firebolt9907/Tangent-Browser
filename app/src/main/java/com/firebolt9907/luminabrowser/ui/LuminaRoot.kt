@@ -1390,6 +1390,11 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             previousObservedUrlByTab[tabId] = previousUrl
         }
         lastObservedUrlByTab[tabId] = url
+        // Drop entries for tabs that no longer exist so these per-tab maps can't grow without
+        // bound as tabs are opened and closed.
+        val liveTabIds = browserState.tabs.mapTo(HashSet()) { it.id }
+        lastObservedUrlByTab.keys.retainAll(liveTabIds)
+        previousObservedUrlByTab.keys.retainAll(liveTabIds)
     }
 
     LaunchedEffect(state.mode) {

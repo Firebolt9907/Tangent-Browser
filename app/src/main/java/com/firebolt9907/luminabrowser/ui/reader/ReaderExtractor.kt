@@ -1,5 +1,6 @@
 package com.firebolt9907.luminabrowser.ui.reader
 
+import android.util.Log
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.browser.engine.gecko.GeckoEngineSession
 import org.mozilla.geckoview.GeckoSession
@@ -198,7 +199,7 @@ object ReaderExtractor {
                             ReaderManager.instance.setReaderEligible(tabId, article)
                         }
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        Log.w("ReaderExtractor", "Failed to parse reader article JSON", e)
                     }
                 }
                 return GeckoResult.fromValue(prompt.confirm("ok"))

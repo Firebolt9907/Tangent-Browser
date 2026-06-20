@@ -59,18 +59,10 @@ class LuminaBrowserComponents(application: Application) {
 
     fun applyEngineSettings() {
         val prefs = globalPreferencesStore
-        engine.settings.trackingProtectionPolicy = if (prefs.trackingProtection) {
-            TrackingProtectionPolicy.recommended()
-        } else {
-            TrackingProtectionPolicy.none()
-        }
+        engine.settings.trackingProtectionPolicy = trackingPolicyOf(prefs)
         engine.settings.javaScriptCanOpenWindowsAutomatically = !prefs.blockPopUps
         engine.settings.javascriptEnabled = prefs.javaScriptEnabled
-        engine.settings.httpsOnlyMode = if (prefs.httpsOnly) {
-            Engine.HttpsOnlyMode.ENABLED
-        } else {
-            Engine.HttpsOnlyMode.DISABLED
-        }
+        engine.settings.httpsOnlyMode = httpsModeOf(prefs)
         engine.settings.globalPrivacyControlEnabled = prefs.globalPrivacyControl
     }
 
@@ -92,19 +84,22 @@ class LuminaBrowserComponents(application: Application) {
     }
 }
 
+// Shared so the initial DefaultSettings and the runtime applyEngineSettings re-apply can't drift.
+private fun trackingPolicyOf(prefs: GlobalPreferencesStore) =
+    if (prefs.trackingProtection) TrackingProtectionPolicy.recommended() else TrackingProtectionPolicy.none()
+
+private fun httpsModeOf(prefs: GlobalPreferencesStore) =
+    if (prefs.httpsOnly) Engine.HttpsOnlyMode.ENABLED else Engine.HttpsOnlyMode.DISABLED
+
 private fun buildDefaultSettings(
     prefs: GlobalPreferencesStore,
     historyStorage: PlacesHistoryStorage,
 ) = DefaultSettings(
     historyTrackingDelegate = HistoryDelegate(lazy { historyStorage }),
-    trackingProtectionPolicy = if (prefs.trackingProtection) {
-        TrackingProtectionPolicy.recommended()
-    } else {
-        TrackingProtectionPolicy.none()
-    },
+    trackingProtectionPolicy = trackingPolicyOf(prefs),
     javaScriptCanOpenWindowsAutomatically = !prefs.blockPopUps,
     javascriptEnabled = prefs.javaScriptEnabled,
-    httpsOnlyMode = if (prefs.httpsOnly) Engine.HttpsOnlyMode.ENABLED else Engine.HttpsOnlyMode.DISABLED,
+    httpsOnlyMode = httpsModeOf(prefs),
     globalPrivacyControlEnabled = prefs.globalPrivacyControl,
     loginAutofillEnabled = true,
 )

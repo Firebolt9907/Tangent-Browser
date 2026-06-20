@@ -1,6 +1,7 @@
 package com.firebolt9907.luminabrowser.state
 
 import android.content.Context
+import androidx.core.content.edit
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -30,11 +31,11 @@ class SitePreferencesStore(context: Context) {
 
     fun set(host: String, prefs: SitePreferences) {
         if (host.isEmpty()) return
-        this.prefs.edit()
-            .putBoolean("${host}__topPaddingFix", prefs.topPaddingFix)
-            .putFloat("${host}__zoomFactor", prefs.zoomFactor)
-            .putBoolean("${host}__desktopMode", prefs.desktopMode)
-            .apply()
+        this.prefs.edit {
+            putBoolean("${host}__topPaddingFix", prefs.topPaddingFix)
+            putFloat("${host}__zoomFactor", prefs.zoomFactor)
+            putBoolean("${host}__desktopMode", prefs.desktopMode)
+        }
         _updates.tryEmit(host)
     }
 
@@ -49,7 +50,7 @@ class SitePreferencesStore(context: Context) {
 
     fun setReaderPreferred(host: String, value: Boolean) {
         if (host.isEmpty()) return
-        prefs.edit().putBoolean("${host}__readerPreferred", value).apply()
+        prefs.edit { putBoolean("${host}__readerPreferred", value) }
         _updates.tryEmit(host)
     }
 
@@ -65,7 +66,7 @@ class SitePreferencesStore(context: Context) {
 
     fun setReaderAutoDisabled(host: String, value: Boolean) {
         if (host.isEmpty()) return
-        prefs.edit().putBoolean("${host}__readerAutoDisabled", value).apply()
+        prefs.edit { putBoolean("${host}__readerAutoDisabled", value) }
         _updates.tryEmit(host)
     }
 }

@@ -1,6 +1,6 @@
 package com.firebolt9907.luminabrowser.addons
 
-import android.net.Uri
+import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -336,7 +336,7 @@ private fun String.toAddonInstallUrl(): String? {
     val trimmed = trim()
     if (trimmed.isEmpty()) return null
     if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-        val uri = Uri.parse(trimmed)
+        val uri = trimmed.toUri()
         val path = uri.path.orEmpty()
         if (path.endsWith(".xpi")) return trimmed
         val segments = uri.pathSegments
@@ -356,7 +356,7 @@ private fun String.toAmoLatestXpiUrl(): String =
     "https://addons.mozilla.org/firefox/downloads/latest/$this/latest.xpi"
 
 private fun String.isAddonDownloadUrl(): Boolean {
-    val uri = Uri.parse(this)
+    val uri = this.toUri()
     val path = uri.path.orEmpty()
     return path.endsWith(".xpi", ignoreCase = true) ||
         (uri.host?.endsWith("addons.mozilla.org") == true &&

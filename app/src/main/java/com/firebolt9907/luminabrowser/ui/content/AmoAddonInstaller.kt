@@ -1,12 +1,12 @@
 package com.firebolt9907.luminabrowser.ui.content
 
-import android.net.Uri
+import androidx.core.net.toUri
 import mozilla.components.concept.engine.EngineSession
 
 private const val LuminaAmoInstallerId = "lumina-amo-addon-installer"
 
 internal fun String.isAmoPageUrl(): Boolean {
-    val host = Uri.parse(this).host ?: return false
+    val host = toUri().host ?: return false
     return host == "addons.mozilla.org" || host.endsWith(".addons.mozilla.org")
 }
 

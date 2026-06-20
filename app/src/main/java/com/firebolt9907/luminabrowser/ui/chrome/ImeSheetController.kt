@@ -166,7 +166,11 @@ class ImeSheetController(private val view: View) {
         settleAnimator?.cancel()
         settleAnimator = null
         cancellationSignal?.cancel()
-        controller?.finish(false)
+        // controller is only ever non-null on API 30+ (set in the R-gated control request), so the
+        // guard is a no-op at runtime; it's here to satisfy lint since cancel() itself isn't gated.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            controller?.finish(false)
+        }
         reset()
     }
 

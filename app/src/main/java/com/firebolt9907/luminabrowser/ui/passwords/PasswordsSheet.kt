@@ -42,12 +42,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.Context
+import android.os.Build
+import android.os.PersistableBundle
 import android.widget.Toast
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -231,7 +234,6 @@ private fun PasswordRow(
     onDelete: () -> Unit,
 ) {
     var showPassword by remember { mutableStateOf(false) }
-    val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
     ListItem(
@@ -270,7 +272,7 @@ private fun PasswordRow(
                     )
                 }
                 IconButton(onClick = {
-                    clipboard.setText(AnnotatedString(login.password))
+                    copyPasswordToClipboard(context, login.password)
                     Toast.makeText(context, "Password copied", Toast.LENGTH_SHORT).show()
                 }) {
                     Icon(Icons.Default.ContentCopy, contentDescription = "Copy password")
@@ -285,6 +287,22 @@ private fun PasswordRow(
             }
         },
     )
+}
+
+/**
+ * Copy a password to the clipboard, flagging the clip as sensitive (Android 13+) so the OS redacts
+ * it from the clipboard preview and excludes it from clipboard history — important for a password
+ * manager. Uses the platform clipboard because Compose's ClipboardManager can't set the flag.
+ */
+private fun copyPasswordToClipboard(context: Context, password: String) {
+    val clip = ClipData.newPlainText("password", password)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        clip.description.extras = PersistableBundle().apply {
+            putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+        }
+    }
+    val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+    manager?.setPrimaryClip(clip)
 }
 
 @Composable

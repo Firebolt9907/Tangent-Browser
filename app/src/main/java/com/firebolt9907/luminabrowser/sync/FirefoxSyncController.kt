@@ -166,38 +166,13 @@ class FirefoxSyncController(
                 accountManager.authenticatedAccount()?.deviceConstellation()?.refreshDevices()
                 refreshTargetDevices()
 
-                // syncNow only enqueues a WorkManager job — it returns before sync actually runs.
-                // Register the observer first so we don't miss the completion callback, then
-                // trigger sync and await the result before reading from storage.
-                // Sync all supported engines (tabs + passwords).
-                val syncDone = CompletableDeferred<Unit>()
-                val syncRegistry = accountManager.syncStatusObserverRegistry
-                val observer = object : SyncStatusObserver {
-                    override fun onStarted() {}
-                    override fun onIdle() {
-                        syncRegistry.unregister(this)
-                        syncDone.complete(Unit)
-                    }
-                    override fun onError(error: Exception?) {
-                        syncRegistry.unregister(this)
-                        syncDone.completeExceptionally(error ?: Exception("Sync error"))
-                    }
-                }
-                syncRegistry.register(observer)
-                accountManager.syncNow(
-                    reason = SyncReason.User,
-                    customEngineSubset = if (loginsStorage != null) {
+                awaitSync(
+                    if (loginsStorage != null) {
                         listOf(SyncEngine.Tabs, SyncEngine.Passwords)
                     } else {
                         listOf(SyncEngine.Tabs)
                     },
-                    debounce = false,
                 )
-                try {
-                    withTimeout(30_000L) { syncDone.await() }
-                } catch (_: TimeoutCancellationException) {
-                    syncRegistry.unregister(observer)
-                }
 
                 val devices = readSyncedDevices()
                 _state.update {
@@ -277,6 +252,45 @@ class FirefoxSyncController(
         }
     }
 
+    /**
+     * Trigger a sync and suspend until it reaches idle, or 30s elapses. `syncNow` only enqueues a
+     * WorkManager job and returns immediately, so we register a status observer first to avoid
+     * missing the completion callback. The observer is unregistered in a `finally` so it can never
+     * leak in the registry — even if `syncNow` throws or the wait times out. A timeout is benign:
+     * the WorkManager job keeps running, we just stop blocking the UI on it. [engines] null means
+     * "sync the account's default engine set".
+     */
+    private suspend fun awaitSync(engines: List<SyncEngine>?) {
+        val syncDone = CompletableDeferred<Unit>()
+        val syncRegistry = accountManager.syncStatusObserverRegistry
+        val observer = object : SyncStatusObserver {
+            override fun onStarted() {}
+            override fun onIdle() {
+                syncDone.complete(Unit)
+            }
+            override fun onError(error: Exception?) {
+                syncDone.completeExceptionally(error ?: Exception("Sync error"))
+            }
+        }
+        syncRegistry.register(observer)
+        try {
+            if (engines != null) {
+                accountManager.syncNow(
+                    reason = SyncReason.User,
+                    customEngineSubset = engines,
+                    debounce = false,
+                )
+            } else {
+                accountManager.syncNow(reason = SyncReason.User, debounce = false)
+            }
+            withTimeout(30_000L) { syncDone.await() }
+        } catch (_: TimeoutCancellationException) {
+            // Sync is still running in WorkManager; we just stop waiting on it here.
+        } finally {
+            syncRegistry.unregister(observer)
+        }
+    }
+
     private suspend fun readSyncedDevices(): List<FirefoxSyncedDevice> =
         syncedTabsStorage.getSyncedDeviceTabs().map { deviceTabs ->
             FirefoxSyncedDevice(
@@ -301,26 +315,7 @@ class FirefoxSyncController(
             if (accountManager.authenticatedAccount() == null) return@launch
             setBusy("Syncing...")
             runCatching {
-                val syncDone = CompletableDeferred<Unit>()
-                val syncRegistry = accountManager.syncStatusObserverRegistry
-                val observer = object : SyncStatusObserver {
-                    override fun onStarted() {}
-                    override fun onIdle() {
-                        syncRegistry.unregister(this)
-                        syncDone.complete(Unit)
-                    }
-                    override fun onError(error: Exception?) {
-                        syncRegistry.unregister(this)
-                        syncDone.completeExceptionally(error ?: Exception("Sync error"))
-                    }
-                }
-                syncRegistry.register(observer)
-                accountManager.syncNow(reason = SyncReason.User, debounce = false)
-                try {
-                    withTimeout(30_000L) { syncDone.await() }
-                } catch (_: TimeoutCancellationException) {
-                    syncRegistry.unregister(observer)
-                }
+                awaitSync(null)
                 _state.update { it.copy(isBusy = false, message = "Sync completed", isError = false) }
             }.onFailure { throwable ->
                 setError("Sync failed: ${throwable.readableMessage()}")

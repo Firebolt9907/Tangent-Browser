@@ -27,6 +27,8 @@ import mozilla.components.feature.session.HistoryDelegate
 import mozilla.components.feature.downloads.DownloadsUseCases
 import mozilla.components.feature.session.SessionUseCases
 import mozilla.components.feature.tabs.TabsUseCases
+import org.mozilla.geckoview.GeckoRuntime
+import org.mozilla.geckoview.GeckoRuntimeSettings
 
 /**
  * Application-scoped DI graph. Owns the [GeckoEngine], the [BrowserStore], the tab
@@ -38,7 +40,11 @@ class LuminaBrowserComponents(application: Application) {
     val globalPreferencesStore = GlobalPreferencesStore(application)
     val historyStorage = PlacesHistoryStorage(application)
     val bookmarksStorage = PlacesBookmarksStorage(application)
-    val engine = GeckoEngine(application, buildDefaultSettings(globalPreferencesStore, historyStorage))
+    val engine = GeckoEngine(
+        application,
+        buildDefaultSettings(globalPreferencesStore, historyStorage),
+        buildRuntime(application),
+    )
     val store = BrowserStore(
         initialState = BrowserState(),
         middleware = EngineMiddleware.create(engine, scope),
@@ -56,6 +62,10 @@ class LuminaBrowserComponents(application: Application) {
     val firefoxSyncController = FirefoxSyncController(application, store, scope, loginsStorage)
     val sitePermissionController =
         com.firebolt9907.luminabrowser.permissions.SitePermissionController(application)
+    // Bounds live GeckoSessions to the foreground tab + a few recent ones so many open tabs stay
+    // responsive. See BackgroundTabSuspender.
+    val backgroundTabSuspender =
+        com.firebolt9907.luminabrowser.state.BackgroundTabSuspender(store)
 
     fun applyEngineSettings() {
         val prefs = globalPreferencesStore
@@ -75,6 +85,7 @@ class LuminaBrowserComponents(application: Application) {
 
     init {
         storeSubscription.resume()
+        backgroundTabSuspender.start()
         tabRepository.restoreOrSeedBlank(TAB_MAX_AGE_MILLIS)
     }
 
@@ -90,6 +101,28 @@ private fun trackingPolicyOf(prefs: GlobalPreferencesStore) =
 
 private fun httpsModeOf(prefs: GlobalPreferencesStore) =
     if (prefs.httpsOnly) Engine.HttpsOnlyMode.ENABLED else Engine.HttpsOnlyMode.DISABLED
+
+/**
+ * The single per-process [GeckoRuntime]. There must be exactly one runtime per process; it is
+ * owned by the app-scoped [LuminaBrowserComponents]. Tuned for memory/responsiveness rather than
+ * left fully default:
+ * - `lowMemoryDetection` lets Gecko shed internal caches under pressure (pairs with the app-level
+ *   [mozilla.components.browser.state.action.SystemAction.LowMemoryAction] forwarding that suspends
+ *   background tabs).
+ * - `consoleOutput` / `debugLogging` / `remoteDebugging` off removes per-frame logging cost in
+ *   non-debug use; remote debugging is an attack surface we don't ship enabled.
+ * - `aboutConfig` off keeps the runtime from exposing the raw pref editor.
+ */
+private fun buildRuntime(application: Application): GeckoRuntime {
+    val settings = GeckoRuntimeSettings.Builder()
+        .lowMemoryDetection(true)
+        .consoleOutput(false)
+        .debugLogging(false)
+        .remoteDebuggingEnabled(false)
+        .aboutConfigEnabled(false)
+        .build()
+    return GeckoRuntime.create(application, settings)
+}
 
 private fun buildDefaultSettings(
     prefs: GlobalPreferencesStore,

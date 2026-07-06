@@ -6,15 +6,34 @@ import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.widget.Toast
 import androidx.core.net.toUri
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Close
+import com.firebolt9907.luminabrowser.ui.reader.PageSpeaker
+import kotlinx.coroutines.launch
+import mozilla.appservices.places.BookmarkRoot
+import mozilla.components.concept.storage.BookmarksStorage
+import mozilla.components.concept.storage.BookmarkNodeType
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
+import com.firebolt9907.luminabrowser.MainActivity
+import com.firebolt9907.luminabrowser.R
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
@@ -23,6 +42,7 @@ import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -33,8 +53,11 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.unit.Dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
@@ -89,6 +112,9 @@ import com.firebolt9907.luminabrowser.ui.addons.AddonsManagerSheetContent
 import kotlin.math.roundToInt
 
 private const val OWN_PKG = "com.firebolt9907.luminabrowser"
+
+/** Folder (under the Mobile bookmarks root) that backs the Safari-style Reading List. */
+private const val READING_LIST_FOLDER = "Reading List"
 
 // packageName "" = "Default browser" (no package constraint on the intent)
 private data class BrowserInfo(val packageName: String, val label: String)
@@ -168,6 +194,7 @@ fun AaSheet(
     addonController: AddonController,
     onDismiss: () -> Unit,
     onOpenAddonSettings: (InstalledAddon) -> Unit = {},
+    onOpenAddonQuickSettings: (InstalledAddon) -> Unit = {},
     onFindInPage: () -> Unit = {},
     pageUrl: String = "",
     pageTitle: String = "",
@@ -177,6 +204,8 @@ fun AaSheet(
     engineSession: mozilla.components.concept.engine.EngineSession? = null,
     backgroundSnapshot: android.graphics.Bitmap? = null,
     statusBarTopPad: Dp = 0.dp,
+    bookmarksStorage: BookmarksStorage? = null,
+    pageIcon: android.graphics.Bitmap? = null,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
     val sheetState = rememberModalBottomSheetState()
@@ -227,6 +256,8 @@ fun AaSheet(
                 pageTitle = pageTitle,
                 tabId = tabId,
                 engineSession = engineSession,
+                bookmarksStorage = bookmarksStorage,
+                pageIcon = pageIcon,
             )
             1 -> {
                 val addonState by addonController.state.collectAsStateWithLifecycle()
@@ -238,12 +269,20 @@ fun AaSheet(
                     onInstall = { addonController.install(installText) },
                     onEnabledChange = addonController::setEnabled,
                     onOpenSettings = onOpenAddonSettings,
+                    onOpenQuickSettings = onOpenAddonQuickSettings,
                     onUninstall = addonController::uninstall,
                 )
             }
         }
     }
 }
+
+/** One tile in the quick-action row: an icon chip over a short label. */
+private data class QuickAction(
+    val icon: ImageVector,
+    val label: String,
+    val onClick: () -> Unit,
+)
 
 @Composable
 private fun PageTabContent(
@@ -256,9 +295,12 @@ private fun PageTabContent(
     pageTitle: String = "",
     tabId: String? = null,
     engineSession: mozilla.components.concept.engine.EngineSession? = null,
+    bookmarksStorage: BookmarksStorage? = null,
+    pageIcon: android.graphics.Bitmap? = null,
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val bookmarkScope = rememberCoroutineScope()
     val initial = remember(host) { store.get(host) }
     var zoomFactor by remember(host) { mutableFloatStateOf(initial.zoomFactor) }
     var topPaddingFix by remember(host) { mutableStateOf(initial.topPaddingFix) }
@@ -270,6 +312,8 @@ private fun PageTabContent(
         mutableStateOf(globalPrefsStore.preferredBrowserPackage)
     }
     var showBrowserPicker by remember { mutableStateOf(false) }
+    // Advanced per-site toggles are collapsed by default — most users never touch them.
+    var pageSettingsExpanded by rememberSaveable { mutableStateOf(false) }
 
     fun persist(
         zoom: Float = zoomFactor,
@@ -281,6 +325,110 @@ private fun PageTabContent(
     }
 
     val hasRealUrl = pageUrl.isNotBlank() && pageUrl != "about:blank"
+    // Persistent actions (home-screen shortcut, bookmark, reading list) only make sense for real
+    // web pages — not javascript:/data:/file:/about: URLs.
+    val isWebPage = pageUrl.startsWith("http://", ignoreCase = true) ||
+        pageUrl.startsWith("https://", ignoreCase = true)
+
+    // ---- Shared action handlers (reused by the quick-action tiles and secondary rows) ----
+    fun doShare() {
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, pageUrl)
+            // Title becomes the subject line in apps that use one (email, etc.).
+            if (pageTitle.isNotBlank()) putExtra(Intent.EXTRA_SUBJECT, pageTitle)
+        }
+        try {
+            context.startActivity(Intent.createChooser(shareIntent, null))
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(context, "No app available to share", Toast.LENGTH_SHORT).show()
+        }
+        onDismiss()
+    }
+
+    fun doCopy() {
+        clipboard.setText(AnnotatedString(pageUrl))
+        Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+        onDismiss()
+    }
+
+    fun doFind() {
+        onFindInPage()
+        onDismiss()
+    }
+
+    fun doBookmark() {
+        val storage = bookmarksStorage ?: return
+        val url = pageUrl
+        val title = pageTitle.ifBlank { url }
+        bookmarkScope.launch {
+            val ok = runCatching {
+                storage.addItem(
+                    parentGuid = BookmarkRoot.Mobile.id,
+                    url = url,
+                    title = title,
+                    position = null,
+                ).getOrThrow()
+            }.isSuccess
+            Toast.makeText(
+                context,
+                if (ok) "Bookmarked" else "Couldn't add bookmark",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+        onDismiss()
+    }
+
+    fun doReadingList() {
+        val storage = bookmarksStorage ?: return
+        val url = pageUrl
+        val title = pageTitle.ifBlank { url }
+        bookmarkScope.launch {
+            val ok = runCatching {
+                val root = storage.getTree(BookmarkRoot.Mobile.id, recursive = false).getOrNull()
+                val folderGuid = root?.children
+                    ?.firstOrNull { it.type == BookmarkNodeType.FOLDER && it.title == READING_LIST_FOLDER }
+                    ?.guid
+                    ?: storage.addFolder(BookmarkRoot.Mobile.id, READING_LIST_FOLDER, null).getOrThrow()
+                storage.addItem(
+                    parentGuid = folderGuid,
+                    url = url,
+                    title = title,
+                    position = null,
+                ).getOrThrow()
+            }.isSuccess
+            Toast.makeText(
+                context,
+                if (ok) "Added to Reading List" else "Couldn't add to Reading List",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+        onDismiss()
+    }
+
+    fun doAddToHomeScreen() {
+        if (ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
+            val label = pageTitle.ifBlank { host.ifBlank { pageUrl } }
+            val shortcutIntent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                data = pageUrl.toUri()
+                putExtra(MainActivity.EXTRA_HOME_SHORTCUT, true)
+            }
+            // Use the page favicon when available (Safari does), else the app icon.
+            val shortcutIcon = pageIcon?.let { IconCompat.createWithBitmap(it) }
+                ?: IconCompat.createWithResource(context, R.mipmap.ic_launcher)
+            val info = ShortcutInfoCompat.Builder(context, "lumina-${pageUrl.hashCode()}")
+                .setShortLabel(label.take(24))
+                .setLongLabel(label.take(48))
+                .setIcon(shortcutIcon)
+                .setIntent(shortcutIntent)
+                .build()
+            ShortcutManagerCompat.requestPinShortcut(context, info, null)
+        } else {
+            Toast.makeText(context, "Not supported on this launcher", Toast.LENGTH_SHORT).show()
+        }
+        onDismiss()
+    }
 
     if (showBrowserPicker) {
         // installedBrowsers runs several PackageManager queries; produce it off the main thread so
@@ -357,7 +505,7 @@ private fun PageTabContent(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp)
-            .padding(top = 16.dp, bottom = 28.dp),
+            .padding(top = 12.dp, bottom = 28.dp),
     ) {
         val readerManager = ReaderManager.instance
         val activeReaderTabs by readerManager.activeReaderTabs.collectAsStateWithLifecycle()
@@ -366,6 +514,9 @@ private fun PageTabContent(
         val readerTheme by readerManager.theme.collectAsStateWithLifecycle()
         val readerFontSize by readerManager.fontSize.collectAsStateWithLifecycle()
         val readerFontName by readerManager.fontName.collectAsStateWithLifecycle()
+        val tabArticles by readerManager.tabArticles.collectAsStateWithLifecycle()
+        val listenArticle = tabId?.let { tabArticles[it] }
+        val isSpeaking by PageSpeaker.speaking.collectAsStateWithLifecycle()
 
         val isEligible = tabId != null && eligibleReaderTabs.contains(tabId)
         val isActive = tabId != null && activeReaderTabs.contains(tabId)
@@ -377,7 +528,40 @@ private fun PageTabContent(
             mutableStateOf(store.isReaderPreferred(hostFromUrl(pageUrl)))
         }
 
+        // ---------- 1. Page header: favicon + title + host ----------
+        PageHeader(
+            pageIcon = pageIcon,
+            title = pageTitle.ifBlank { if (canEdit) host else "Page" },
+            host = if (canEdit) host else "",
+        )
+
+        // ---------- 2. Quick actions: the everyday, high-priority actions ----------
         if (hasRealUrl) {
+            val quickActions = buildList {
+                add(QuickAction(Icons.Default.Share, "Share", ::doShare))
+                if (bookmarksStorage != null && isWebPage) {
+                    add(QuickAction(Icons.Default.Star, "Bookmark", ::doBookmark))
+                }
+                add(QuickAction(Icons.Default.ContentCopy, "Copy", ::doCopy))
+                add(QuickAction(Icons.Default.Search, "Find", ::doFind))
+                if (isWebPage) {
+                    add(QuickAction(Icons.Default.Home, "Home", ::doAddToHomeScreen))
+                }
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                quickActions.forEach { action ->
+                    QuickActionTile(action = action, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+
+        // ---------- 3. Reader ----------
+        if (hasRealUrl) {
+            Spacer(Modifier.height(18.dp))
             TextButton(
                 onClick = {
                     // Remember the choice per-domain so future pages on this site honor it.
@@ -417,257 +601,273 @@ private fun PageTabContent(
                 )
             }
 
+            // Listen to Page (TTS over the reader-extracted article). Shown once the article has
+            // been extracted; kept in the sheet (no onDismiss) so the toggle stays reachable.
+            if (listenArticle != null) {
+                Spacer(Modifier.height(4.dp))
+                TextButton(
+                    onClick = { PageSpeaker.toggle(context, listenArticle, tabId) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    ActionRowContent(
+                        icon = if (isSpeaking) Icons.Default.Close else Icons.Default.PlayArrow,
+                        text = if (isSpeaking) "Stop Listening" else "Listen to Page",
+                    )
+                }
+            }
+
             if (isActive) {
                 Spacer(Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    ReaderTheme.entries.forEach { themeOption ->
-                        val optionBg = when (themeOption) {
-                            ReaderTheme.White -> Color(0xFFFFFFFF)
-                            ReaderTheme.Sepia -> Color(0xFFF4ECD8)
-                            ReaderTheme.Dark -> Color(0xFF1C1C1E)
-                        }
-                        val optionBorderColor = if (readerTheme == themeOption) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            Color.LightGray
-                        }
-                        val themeLabel = "${themeOption.name} reader theme"
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(optionBg)
-                                .border(
-                                    width = if (readerTheme == themeOption) 3.dp else 1.dp,
-                                    color = optionBorderColor,
-                                    shape = CircleShape
-                                )
-                                .semantics {
-                                    contentDescription = themeLabel
-                                    if (readerTheme == themeOption) selected = true
-                                }
-                                .clickable { readerManager.setTheme(themeOption) }
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    IconButton(
-                        onClick = { readerManager.setFontSize(readerFontSize - 10) },
-                        enabled = readerFontSize > 50,
-                        modifier = Modifier.semantics {
-                            contentDescription = "Decrease reader font size"
-                        }
+                SectionCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("A", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Text(
-                        text = "${readerFontSize}%",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    IconButton(
-                        onClick = { readerManager.setFontSize(readerFontSize + 10) },
-                        enabled = readerFontSize < 200,
-                        modifier = Modifier.semantics {
-                            contentDescription = "Increase reader font size"
-                        }
-                    ) {
-                        Text("A", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    listOf("System", "Georgia", "Charter", "Athelas").forEach { name ->
-                        val fontTypeface = when (name) {
-                            "Georgia" -> FontFamily(Typeface.create("georgia", Typeface.NORMAL))
-                            "Charter" -> FontFamily(Typeface.create("charter", Typeface.NORMAL))
-                            "Athelas" -> FontFamily(Typeface.create("athelas", Typeface.NORMAL))
-                            else -> FontFamily.Default
-                        }
-                        val fontSelected = readerFontName == name
-                        TextButton(
-                            onClick = { readerManager.setFontName(name) },
-                            modifier = Modifier.semantics {
-                                contentDescription = "$name reader font"
-                                if (fontSelected) selected = true
-                            },
-                        ) {
-                            Text(
-                                text = name,
-                                fontFamily = fontTypeface,
-                                fontWeight = if (fontSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (fontSelected) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                }
+                        ReaderTheme.entries.forEach { themeOption ->
+                            val optionBg = when (themeOption) {
+                                ReaderTheme.System -> MaterialTheme.colorScheme.surface
+                                ReaderTheme.White -> Color(0xFFFFFFFF)
+                                ReaderTheme.Sepia -> Color(0xFFF4ECD8)
+                                ReaderTheme.Dark -> Color(0xFF1C1C1E)
+                            }
+                            val optionBorderColor = when {
+                                readerTheme == themeOption -> MaterialTheme.colorScheme.primary
+                                themeOption == ReaderTheme.System -> MaterialTheme.colorScheme.outlineVariant
+                                else -> Color.LightGray
+                            }
+                            val borderWidth = if (readerTheme == themeOption) 3.dp else 1.5.dp
+                            val themeLabel = "${themeOption.name} reader theme"
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(optionBg)
+                                    .border(borderWidth, optionBorderColor, CircleShape)
+                                    .semantics {
+                                        contentDescription = themeLabel
+                                        if (readerTheme == themeOption) selected = true
+                                    }
+                                    .clickable { readerManager.setTheme(themeOption) }
                             )
                         }
                     }
+
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        IconButton(
+                            onClick = { readerManager.setFontSize(readerFontSize - 10) },
+                            enabled = readerFontSize > 50,
+                            modifier = Modifier.semantics {
+                                contentDescription = "Decrease reader font size"
+                            }
+                        ) {
+                            Text("A", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Text(
+                            text = "${readerFontSize}%",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        IconButton(
+                            onClick = { readerManager.setFontSize(readerFontSize + 10) },
+                            enabled = readerFontSize < 200,
+                            modifier = Modifier.semantics {
+                                contentDescription = "Increase reader font size"
+                            }
+                        ) {
+                            Text("A", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        listOf("System", "Georgia", "Charter", "Athelas").forEach { name ->
+                            val fontTypeface = when (name) {
+                                "Georgia" -> FontFamily(Typeface.create("georgia", Typeface.NORMAL))
+                                "Charter" -> FontFamily(Typeface.create("charter", Typeface.NORMAL))
+                                "Athelas" -> FontFamily(Typeface.create("athelas", Typeface.NORMAL))
+                                else -> FontFamily.Default
+                            }
+                            val fontSelected = readerFontName == name
+                            TextButton(
+                                onClick = { readerManager.setFontName(name) },
+                                modifier = Modifier.semantics {
+                                    contentDescription = "$name reader font"
+                                    if (fontSelected) selected = true
+                                },
+                            ) {
+                                Text(
+                                    text = name,
+                                    fontFamily = fontTypeface,
+                                    fontWeight = if (fontSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (fontSelected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
+        }
 
+        // ---------- 4. Page zoom ----------
+        Spacer(Modifier.height(18.dp))
+        SectionCard {
+            SectionLabel("Page Zoom")
+            Spacer(Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                IconButton(
+                    onClick = {
+                        val next = ((zoomFactor - 0.1f) * 100f).roundToInt() / 100f
+                        zoomFactor = next.coerceIn(0.5f, 2.0f)
+                        persist(zoom = zoomFactor)
+                    },
+                    enabled = canEdit && zoomFactor > 0.5f,
+                ) {
+                    Icon(Icons.Default.Remove, contentDescription = "Zoom out")
+                }
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "${(zoomFactor * 100f).roundToInt()}%",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        val next = ((zoomFactor + 0.1f) * 100f).roundToInt() / 100f
+                        zoomFactor = next.coerceIn(0.5f, 2.0f)
+                        persist(zoom = zoomFactor)
+                    },
+                    enabled = canEdit && zoomFactor < 2.0f,
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Zoom in")
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                TextButton(
+                    onClick = {
+                        zoomFactor = 1.0f
+                        persist(zoom = 1.0f)
+                    },
+                    // Nothing to reset when already at 100%.
+                    enabled = canEdit && zoomFactor != 1.0f,
+                ) {
+                    Text("Reset")
+                }
+            }
+        }
+
+        // ---------- 5. Page Settings (advanced, collapsed by default) ----------
+        Spacer(Modifier.height(8.dp))
+        CollapsibleSection(
+            title = "Page Settings",
+            expanded = pageSettingsExpanded,
+            onToggle = { pageSettingsExpanded = !pageSettingsExpanded },
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = topPaddingFix,
+                        enabled = canEdit,
+                        role = Role.Switch,
+                        onValueChange = {
+                            topPaddingFix = it
+                            persist(top = it)
+                        },
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Add top padding for this site",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        text = "Use when site headers don't move into the safe area",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                // Row owns the toggle (and a11y); switch is visual-only to avoid a double-toggle.
+                Switch(
+                    checked = topPaddingFix,
+                    onCheckedChange = null,
+                    enabled = canEdit,
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = desktopMode,
+                        enabled = canEdit,
+                        role = Role.Switch,
+                        onValueChange = {
+                            desktopMode = it
+                            persist(desktop = it)
+                            // Apply immediately to the live session and reload so the new UA takes hold.
+                            engineSession?.toggleDesktopMode(it, reload = true)
+                        },
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Request desktop site",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        text = "Load the desktop layout for this site",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = desktopMode,
+                    onCheckedChange = null,
+                    enabled = canEdit,
+                )
+            }
+        }
+
+        // ---------- 6. Secondary actions: reading list + open-in ----------
+        if (hasRealUrl) {
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
-            Spacer(Modifier.height(12.dp))
-        }
-
-        Text(
-            text = if (canEdit) host else "Page",
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-
-        Spacer(Modifier.height(20.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            IconButton(
-                onClick = {
-                    val next = ((zoomFactor - 0.1f) * 100f).roundToInt() / 100f
-                    zoomFactor = next.coerceIn(0.5f, 2.0f)
-                    persist(zoom = zoomFactor)
-                },
-                enabled = canEdit && zoomFactor > 0.5f,
-            ) {
-                Icon(Icons.Default.Remove, contentDescription = "Zoom out")
-            }
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "${(zoomFactor * 100f).roundToInt()}%",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            }
-            IconButton(
-                onClick = {
-                    val next = ((zoomFactor + 0.1f) * 100f).roundToInt() / 100f
-                    zoomFactor = next.coerceIn(0.5f, 2.0f)
-                    persist(zoom = zoomFactor)
-                },
-                enabled = canEdit && zoomFactor < 2.0f,
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Zoom in")
-            }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            TextButton(
-                onClick = {
-                    zoomFactor = 1.0f
-                    persist(zoom = 1.0f)
-                },
-                // Nothing to reset when already at 100%.
-                enabled = canEdit && zoomFactor != 1.0f,
-            ) {
-                Text("Reset")
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(16.dp))
-
-        Text(
-            text = "Per-site overrides",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .toggleable(
-                    value = topPaddingFix,
-                    enabled = canEdit,
-                    role = Role.Switch,
-                    onValueChange = {
-                        topPaddingFix = it
-                        persist(top = it)
-                    },
-                ),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Add top padding for this site",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Text(
-                    text = "Use when site headers don't move into the safe area",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            // Row owns the toggle (and a11y); switch is visual-only to avoid a double-toggle.
-            Switch(
-                checked = topPaddingFix,
-                onCheckedChange = null,
-                enabled = canEdit,
-            )
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .toggleable(
-                    value = desktopMode,
-                    enabled = canEdit,
-                    role = Role.Switch,
-                    onValueChange = {
-                        desktopMode = it
-                        persist(desktop = it)
-                        // Apply immediately to the live session and reload so the new UA takes hold.
-                        engineSession?.toggleDesktopMode(it, reload = true)
-                    },
-                ),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Request desktop site",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Text(
-                    text = "Load the desktop layout for this site",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(
-                checked = desktopMode,
-                onCheckedChange = null,
-                enabled = canEdit,
-            )
-        }
-
-        if (hasRealUrl) {
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider()
             Spacer(Modifier.height(4.dp))
+
+            // Add to Reading List (Safari keeps this separate from bookmarks). Backed by a
+            // dedicated "Reading List" folder under the Mobile root, created on first use.
+            if (bookmarksStorage != null && isWebPage) {
+                TextButton(
+                    onClick = ::doReadingList,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    ActionRowContent(icon = Icons.AutoMirrored.Filled.MenuBook, text = "Add to Reading List")
+                }
+            }
 
             // Open in associated native app (e.g. Instagram for an instagram.com link),
             // shown only when a non-browser app claims this specific URL. Resolved off the main
@@ -700,50 +900,6 @@ private fun PageTabContent(
                         bold = true,
                     )
                 }
-            }
-
-            // Find in page button
-            TextButton(
-                onClick = {
-                    onFindInPage()
-                    onDismiss()
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                ActionRowContent(icon = Icons.Default.Search, text = "Find in Page")
-            }
-
-            // Copy link button
-            TextButton(
-                onClick = {
-                    clipboard.setText(AnnotatedString(pageUrl))
-                    Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
-                    onDismiss()
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                ActionRowContent(icon = Icons.Default.ContentCopy, text = "Copy link")
-            }
-
-            // Share button
-            TextButton(
-                onClick = {
-                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, pageUrl)
-                        // Title becomes the subject line in apps that use one (email, etc.).
-                        if (pageTitle.isNotBlank()) putExtra(Intent.EXTRA_SUBJECT, pageTitle)
-                    }
-                    try {
-                        context.startActivity(Intent.createChooser(shareIntent, null))
-                    } catch (_: ActivityNotFoundException) {
-                        Toast.makeText(context, "No app available to share", Toast.LENGTH_SHORT).show()
-                    }
-                    onDismiss()
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                ActionRowContent(icon = Icons.Default.Share, text = "Share")
             }
 
             // Open in browser row — label + Change button
@@ -792,6 +948,165 @@ private fun PageTabContent(
                     )
                 }
             }
+        }
+    }
+}
+
+/** Page header: a favicon chip beside the page title and host. */
+@Composable
+private fun PageHeader(
+    pageIcon: android.graphics.Bitmap?,
+    title: String,
+    host: String,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (pageIcon != null) {
+                val img = remember(pageIcon) { pageIcon.asImageBitmap() }
+                Image(
+                    bitmap = img,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(6.dp)),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.Public,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (host.isNotEmpty()) {
+                Text(
+                    text = host,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/** A single quick-action tile: rounded icon chip over a short label. */
+@Composable
+private fun QuickActionTile(
+    action: QuickAction,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClickLabel = action.label) { action.onClick() }
+            .padding(vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = action.icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Text(
+            text = action.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** Rounded surface card used to group related controls (reader options, zoom). */
+@Composable
+private fun SectionCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(16.dp),
+        content = content,
+    )
+}
+
+/** A small muted section label. */
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** A tappable header that expands/collapses its content. */
+@Composable
+private fun CollapsibleSection(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { onToggle() }
+                .padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(8.dp))
+            content()
         }
     }
 }

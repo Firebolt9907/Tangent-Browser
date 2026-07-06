@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Fallback Custom-Tab close animation (Chrome's activity-close style: short slide-down + fade),
+  played by CustomTabActivity.finish() when the caller supplied no CCT exit-animation bundle but
+  the system would otherwise cut (home-screen Discover launches — see resolveCloseAnimation).
+  zAdjustment=top keeps the closing window above the revealed home task while it fades.
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:interpolator/fast_out_linear_in"
+    android:zAdjustment="top">
+    <translate
+        android:fromYDelta="0%"
+        android:toYDelta="8%"
+        android:duration="250" />
+    <alpha
+        android:fromAlpha="1.0"
+        android:toAlpha="0.0"
+        android:duration="250" />
+</set>

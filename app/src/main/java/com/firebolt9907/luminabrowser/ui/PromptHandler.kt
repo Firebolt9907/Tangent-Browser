@@ -1,0 +1,358 @@
+package com.firebolt9907.luminabrowser.ui
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import mozilla.components.concept.engine.EngineSession
+import mozilla.components.concept.engine.prompt.Choice
+import mozilla.components.concept.engine.prompt.PromptRequest
+
+@Composable
+fun PromptHandler(engineSession: EngineSession?) {
+    var promptRequest by remember { mutableStateOf<PromptRequest?>(null) }
+
+    DisposableEffect(engineSession) {
+        if (engineSession == null) return@DisposableEffect onDispose {}
+
+        val observer = object : EngineSession.Observer {
+            override fun onPromptRequest(request: PromptRequest) {
+                promptRequest = request
+            }
+
+            override fun onPromptDismissed(request: PromptRequest) {
+                if (promptRequest == request) {
+                    promptRequest = null
+                }
+            }
+        }
+        engineSession.register(observer)
+
+        onDispose {
+            engineSession.unregister(observer)
+            promptRequest = null
+        }
+    }
+
+    when (val request = promptRequest) {
+        is PromptRequest.IdentityCredential.SelectProvider -> {
+            IdentityCredentialProviderDialog(
+                providers = request.providers.map { it.name },
+                onConfirm = { index -> request.onConfirm(request.providers[index]); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
+        is PromptRequest.IdentityCredential.SelectAccount -> {
+            IdentityCredentialAccountDialog(
+                accounts = request.accounts.map {
+                    listOfNotNull(it.name, it.email).filter { it.isNotBlank() }.joinToString(" — ")
+                },
+                providerName = request.provider.name,
+                onConfirm = { index -> request.onConfirm(request.accounts[index]); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
+        is PromptRequest.IdentityCredential.PrivacyPolicy -> {
+            IdentityCredentialPrivacyPolicyDialog(
+                providerDomain = request.providerDomain,
+                onConfirm = { accepted -> request.onConfirm(accepted); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
+        is PromptRequest.Alert -> {
+            request.onConfirm(true)
+            promptRequest = null
+        }
+        is PromptRequest.Confirm -> {
+            request.onConfirmPositiveButton(true)
+            promptRequest = null
+        }
+        is PromptRequest.BeforeUnload -> {
+            request.onLeave()
+            promptRequest = null
+        }
+        is PromptRequest.SingleChoice -> {
+            SingleChoiceDialog(
+                choices = request.choices.toList(),
+                onConfirm = { choice -> request.onConfirm(choice); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
+        is PromptRequest.MultipleChoice -> {
+            MultipleChoiceDialog(
+                choices = request.choices.toList(),
+                onConfirm = { choices -> request.onConfirm(choices); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
+        is PromptRequest.MenuChoice -> {
+            MenuChoiceDialog(
+                choices = request.choices.toList(),
+                onConfirm = { choice -> request.onConfirm(choice); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
+        else -> {
+            android.util.Log.w("PromptHandler", "Unhandled prompt: ${request?.javaClass?.simpleName}")
+        }
+    }
+}
+
+@Composable
+private fun IdentityCredentialProviderDialog(
+    providers: List<String>,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select credential provider") },
+        text = {
+            Column {
+                providers.forEachIndexed { index, name ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onConfirm(index) }
+                            .padding(vertical = 12.dp),
+                    ) {
+                        Text(name, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun IdentityCredentialAccountDialog(
+    accounts: List<String>,
+    providerName: String,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select passkey") },
+        text = {
+            Column {
+                accounts.forEachIndexed { index, account ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onConfirm(index) }
+                            .padding(vertical = 12.dp),
+                    ) {
+                        Text(account, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun IdentityCredentialPrivacyPolicyDialog(
+    providerDomain: String,
+    onConfirm: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Privacy policy") },
+        text = {
+            Text(
+                "The provider at $providerDomain requires you to review their privacy policy " +
+                    "and terms of service before proceeding.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(true) }) { Text("Accept") }
+        },
+        dismissButton = {
+            TextButton(onClick = { onDismiss() }) { Text("Decline") }
+        },
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SingleChoiceDialog(
+    choices: List<Choice>,
+    onConfirm: (Choice) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Text(
+                text = "Choose an option",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            ChoiceItems(choices, indicator = { choice, onClick ->
+                RadioButton(
+                    selected = choice.selected,
+                    onClick = onClick,
+                    enabled = choice.enable,
+                )
+            }, onSelect = onConfirm)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MultipleChoiceDialog(
+    choices: List<Choice>,
+    onConfirm: (Array<Choice>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val selected = remember { mutableStateOf(choices.filter { it.selected }.toMutableSet()) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Text(
+                text = "Select options",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            ChoiceItems(choices, indicator = { choice, onClick ->
+                Checkbox(
+                    checked = choice in selected.value,
+                    onCheckedChange = { checked ->
+                        if (checked) selected.value.add(choice)
+                        else selected.value.remove(choice)
+                    },
+                    enabled = choice.enable,
+                )
+            }, onSelect = { choice ->
+                if (choice in selected.value) selected.value.remove(choice)
+                else selected.value.add(choice)
+            })
+            Spacer(Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = { onConfirm(selected.value.toTypedArray()) }) { Text("OK") }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MenuChoiceDialog(
+    choices: List<Choice>,
+    onConfirm: (Choice) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            ChoiceItems(choices, indicator = { _, _ -> }, onSelect = onConfirm)
+        }
+    }
+}
+
+@Composable
+private fun ChoiceItems(
+    choices: List<Choice>,
+    indicator: @Composable (Choice, () -> Unit) -> Unit,
+    onSelect: (Choice) -> Unit,
+    indent: Int = 0,
+) {
+    choices.forEach { choice ->
+        if (choice.isASeparator) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+        } else if (!choice.children.isNullOrEmpty()) {
+            Text(
+                text = choice.label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(
+                    start = (16 + indent * 24).dp,
+                    top = 12.dp,
+                    bottom = 4.dp,
+                ),
+            )
+            ChoiceItems(choice.children!!.toList(), indicator, onSelect, indent + 1)
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (choice.enable) Modifier.clickable { onSelect(choice) }
+                        else Modifier
+                    )
+                    .padding(
+                        start = (8 + indent * 24).dp,
+                        end = 16.dp,
+                        top = 8.dp,
+                        bottom = 8.dp,
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                indicator(choice, { onSelect(choice) })
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = choice.label,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (choice.enable) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                )
+            }
+        }
+    }
+}

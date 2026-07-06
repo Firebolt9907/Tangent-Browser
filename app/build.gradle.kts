@@ -63,6 +63,7 @@ configurations.configureEach {
 dependencies {
 
     implementation(libs.androidx.core.ktx)
+    implementation(libs.coil.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -77,6 +78,7 @@ dependencies {
     implementation(libs.mozilla.feature.session)
     implementation(libs.mozilla.feature.downloads)
     implementation(libs.mozilla.feature.tabs)
+    implementation(libs.mozilla.feature.customtabs)
     implementation(libs.mozilla.feature.syncedtabs)
     implementation(libs.mozilla.lib.fetch.httpurlconnection)
     implementation(libs.mozilla.service.firefox.accounts)
@@ -93,6 +95,9 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     testImplementation(libs.junit)
+    // Real org.json for JVM unit tests (Android's bundled org.json is a throwing stub under
+    // unit tests); lets ReaderExtractor.parseArticleJson be tested off-device.
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

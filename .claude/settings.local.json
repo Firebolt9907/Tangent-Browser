@@ -32,7 +32,8 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:searchfox.org)",
       "Skill(loop)",
-      "Bash(./gradlew :app:compileReleaseKotlin -q)"
+      "Bash(./gradlew :app:compileReleaseKotlin -q)",
+      "Bash(./gradlew :app:installRelease)"
     ]
   }
 }

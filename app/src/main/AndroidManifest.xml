@@ -10,6 +10,18 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+    <!-- Opt-in "keep active in background" foreground service (see BrowsingKeepAliveService). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- WebAuthn/passkeys: lets GeckoView issue Credential Manager requests on behalf of the web
+         origin (setOrigin) and probe for candidate credentials. Both are protection level
+         "normal" (granted at install); without them the create/get call dies silently and no
+         passkey sheet ever appears. -->
+    <uses-permission android:name="android.permission.CREDENTIAL_MANAGER_SET_ORIGIN" />
+    <uses-permission android:name="android.permission.CREDENTIAL_MANAGER_QUERY_CANDIDATE_CREDENTIALS" />
+
     <!-- Requested at runtime only when a site asks for the matching capability. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -56,7 +68,25 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.APP_BROWSER" />
             </intent-filter>
+        </activity>
 
+        <!--
+          External links from other apps (e.g. a Google Discover article) open here, not in the main
+          browser task. Its own (empty) task affinity + documentLaunchMode make each external link a
+          fresh document layered directly on the calling app's task, so pressing Back returns to the
+          caller with the system's native predictive-back animation. autoRemoveFromRecents keeps the
+          throwaway task out of recents once it finishes. "Open in Lumina" migrates the page into the
+          real browser (MainActivity). See CustomTabActivity.
+        -->
+        <activity
+            android:name=".CustomTabActivity"
+            android:exported="true"
+            android:taskAffinity="com.firebolt9907.luminabrowser.customtab"
+            android:launchMode="singleTask"
+            android:autoRemoveFromRecents="true"
+            android:theme="@style/Theme.LuminaBrowser"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustNothing">
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW" />
 
@@ -91,6 +121,30 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <!--
+          Advertises Lumina as a Custom Tabs protocol provider. Callers that speak CCT (e.g. the
+          Google app / Discover) bind here and then launch article links via CustomTabsIntent
+          (session token + enter/exit-animation options bundle) instead of a plain ACTION_VIEW that
+          animates nothing. The launched VIEW intent is still handled by CustomTabActivity above.
+          See LuminaCustomTabsService.
+        -->
+        <service
+            android:name=".service.LuminaCustomTabsService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.support.customtabs.action.CustomTabsService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".service.BrowsingKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the browser process and its open tabs alive while backgrounded so the system low-memory killer does not discard them." />
+        </service>
     </application>
 
 </manifest>

@@ -7,7 +7,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import mozilla.components.concept.engine.Engine
 import mozilla.components.concept.engine.EngineSession
+import mozilla.components.concept.engine.webextension.Action
+import mozilla.components.concept.engine.webextension.ActionHandler
 import mozilla.components.concept.engine.webextension.EnableSource
 import mozilla.components.concept.engine.webextension.InstallationMethod
 import mozilla.components.concept.engine.webextension.PermissionPromptResponse
@@ -17,18 +20,40 @@ import mozilla.components.concept.engine.webextension.WebExtensionInstallExcepti
 import mozilla.components.concept.engine.webextension.WebExtensionRuntime
 
 /**
- * Thin wrapper over Gecko's [WebExtensionRuntime]. Mirrors installed extensions into
- * [state], normalizes user-typed install inputs (slug / AMO page / `.xpi` URL), and
- * bridges Gecko's blocking permission prompts to Compose via [respondToPrompt].
+ * Thin wrapper over Gecko's [Engine] (which is also a [WebExtensionRuntime]). Mirrors installed
+ * extensions into [state], normalizes user-typed install inputs (slug / AMO page / `.xpi` URL),
+ * bridges Gecko's blocking permission prompts to Compose via [respondToPrompt], and surfaces each
+ * add-on's browser/page action ("quick settings" popup) via [openPopup].
  */
 class AddonController(
-    private val runtime: WebExtensionRuntime,
+    private val engine: Engine,
     private val scope: CoroutineScope,
 ) {
     private val extensions = mutableMapOf<String, WebExtension>()
     private val promptCallbacks = mutableMapOf<Long, (Boolean) -> Unit>()
     private var nextPromptId = 1L
+
+    /** Latest browser/page action per extension id, the source for the quick-settings popup. */
+    private val actions = mutableMapOf<String, Action>()
+    /**
+     * Extension *instances* we've attached a global [ActionHandler] to. Keyed by identity, not id:
+     * [refresh] replaces extensions with fresh instances, and the default action delegate (which
+     * Gecko consults to toggle the popup) must be re-applied to each new instance or the popup
+     * toggle silently goes nowhere.
+     */
+    private val actionHandlersRegistered: MutableSet<WebExtension> =
+        java.util.Collections.newSetFromMap(java.util.IdentityHashMap())
+    /** The tab session currently treated as active for web extensions (never a popup tab). */
+    private var activeSession: EngineSession? = null
+
     var onNewTabRequested: ((url: String, engineSession: EngineSession, active: Boolean) -> Unit)? = null
+
+    /**
+     * Invoked when an add-on's action popup ("quick settings") should be shown. Firefox for Android
+     * renders these popups in a regular tab, and so do we: the host opens a new tab backed by the
+     * provided popup [EngineSession], which Gecko then loads the popup document into.
+     */
+    var onActionPopupTabRequested: ((title: String, engineSession: EngineSession) -> Unit)? = null
 
     private val _state = MutableStateFlow(AddonsUiState())
     val state: StateFlow<AddonsUiState> = _state.asStateFlow()
@@ -142,16 +167,22 @@ class AddonController(
     }
 
     init {
-        runtime.registerWebExtensionDelegate(delegate)
+        engine.registerWebExtensionDelegate(delegate)
         refresh()
     }
 
     fun refresh() {
-        runtime.listInstalledWebExtensions(
+        engine.listInstalledWebExtensions(
             onSuccess = { list ->
                 scope.launch {
                     extensions.clear()
-                    list.forEach { extensions[it.id] = it }
+                    // Drop handler bookkeeping for the now-replaced instances so the fresh ones get
+                    // their default action delegate (re)attached — required for popup toggling.
+                    actionHandlersRegistered.clear()
+                    list.forEach {
+                        extensions[it.id] = it
+                        registerActionHandlerIfNeeded(it)
+                    }
                     publishInstalled()
                 }
             },
@@ -177,7 +208,7 @@ class AddonController(
 
     private fun installResolvedUrl(url: String) {
         setBusy("Installing add-on...")
-        runtime.installWebExtension(
+        engine.installWebExtension(
             url = url,
             installationMethod = InstallationMethod.MANAGER,
             onSuccess = { extension ->
@@ -195,14 +226,14 @@ class AddonController(
         val extension = extensions[addonId] ?: return
         setBusy(if (enabled) "Enabling add-on..." else "Disabling add-on...")
         if (enabled) {
-            runtime.enableWebExtension(
+            engine.enableWebExtension(
                 extension = extension,
                 source = EnableSource.USER,
                 onSuccess = { remember(it); setStatus("${it.displayName()} enabled") },
                 onError = { setError("Enable failed: ${it.readableMessage()}") },
             )
         } else {
-            runtime.disableWebExtension(
+            engine.disableWebExtension(
                 extension = extension,
                 source = EnableSource.USER,
                 onSuccess = { remember(it); setStatus("${it.displayName()} disabled") },
@@ -214,7 +245,7 @@ class AddonController(
     fun uninstall(addonId: String) {
         val extension = extensions[addonId] ?: return
         setBusy("Removing add-on...")
-        runtime.uninstallWebExtension(
+        engine.uninstallWebExtension(
             ext = extension,
             onSuccess = {
                 extensions.remove(addonId)
@@ -235,9 +266,94 @@ class AddonController(
         _state.update { it.copy(message = null, isError = false) }
     }
 
+    /**
+     * Open the add-on's action popup ("quick settings"). Triggering the action's click is what
+     * makes Gecko toggle the popup, which arrives back as [ActionHandler.onToggleActionPopup].
+     */
+    fun openPopup(addonId: String) {
+        val action = actions[addonId]
+        android.util.Log.d("LuminaAddon", "openPopup $addonId action=$action enabled=${action?.enabled} activeSession=$activeSession")
+        if (action == null) {
+            setError("This add-on has no quick settings")
+            return
+        }
+        if (action.enabled == false) {
+            setError("Quick settings aren't available on this page")
+            return
+        }
+        action.onClick()
+        android.util.Log.d("LuminaAddon", "openPopup $addonId onClick() returned")
+    }
+
     private fun remember(webExtension: WebExtension) {
         scope.launch {
             extensions[webExtension.id] = webExtension
+            registerActionHandlerIfNeeded(webExtension)
+            publishInstalled()
+        }
+    }
+
+    /**
+     * Set the tab session that should be treated as the active tab for web extensions. Extensions
+     * report their browser/page action *per tab* (e.g. uBlock's badge count, Chrome Mask's per-site
+     * state) via a *session-scoped* action delegate — without one we never learn an add-on has a
+     * popup. So we register a session handler on the active tab and mark it active. The popup, when
+     * toggled from a session action, also binds to this tab, giving it the right page context.
+     *
+     * Pass `null` when the active tab is itself a popup tab, so the originating page stays active.
+     */
+    fun setActiveSession(session: EngineSession?) {
+        android.util.Log.d("LuminaAddon", "setActiveSession $session (was $activeSession)")
+        if (session == null) return
+        if (session === activeSession) return
+        // Clear the active flag on the tab we're leaving so extensions don't see two active tabs.
+        (activeSession as? mozilla.components.browser.engine.gecko.GeckoEngineSession)
+            ?.markActiveForWebExtensions(false)
+        activeSession = session
+        extensions.values.forEach { registerSessionActionHandlerIfNeeded(it, session) }
+        (session as? mozilla.components.browser.engine.gecko.GeckoEngineSession)
+            ?.markActiveForWebExtensions(true)
+    }
+
+    /** Attach a global [ActionHandler] once per extension (covers default, tab-independent actions). */
+    private fun registerActionHandlerIfNeeded(extension: WebExtension) {
+        if (!extension.supportActions) return
+        if (!actionHandlersRegistered.add(extension)) return
+        extension.registerActionHandler(makeActionHandler())
+        // A new extension can install after a tab is already active; give it a session handler too.
+        activeSession?.let { registerSessionActionHandlerIfNeeded(extension, it) }
+    }
+
+    /** Attach a per-session [ActionHandler] so we receive this extension's per-tab action updates. */
+    private fun registerSessionActionHandlerIfNeeded(extension: WebExtension, session: EngineSession) {
+        if (!extension.supportActions) return
+        if (extension.hasActionHandler(session)) return
+        extension.registerActionHandler(session, makeActionHandler())
+    }
+
+    private fun makeActionHandler(): ActionHandler = object : ActionHandler {
+        override fun onBrowserAction(extension: WebExtension, session: EngineSession?, action: Action) {
+            updateAction(extension.id, action)
+        }
+
+        override fun onPageAction(extension: WebExtension, session: EngineSession?, action: Action) {
+            updateAction(extension.id, action)
+        }
+
+        override fun onToggleActionPopup(extension: WebExtension, action: Action): EngineSession? {
+            val popupSession = engine.createSession()
+            val name = extensions[extension.id]?.displayName() ?: "Add-on"
+            android.util.Log.d("LuminaAddon", "onToggleActionPopup ${extension.id} popupSession=$popupSession activeSession=$activeSession")
+            onActionPopupTabRequested?.invoke(name, popupSession)
+            return popupSession
+        }
+    }
+
+    private fun updateAction(addonId: String, action: Action) {
+        scope.launch {
+            // Gecko sends partial action updates; merge so a badge-only update doesn't drop the
+            // title/icon/onClick captured by the initial default action.
+            actions[addonId] = actions[addonId]?.copyWithOverride(action) ?: action
             publishInstalled()
         }
     }
@@ -246,7 +362,7 @@ class AddonController(
         _state.update { current ->
             current.copy(
                 addons = extensions.values
-                    .map { it.toInstalledAddon() }
+                    .map { it.toInstalledAddon(hasQuickSettings = actions.containsKey(it.id)) }
                     .sortedBy { it.name.lowercase() },
                 isBusy = false,
             )
@@ -313,6 +429,7 @@ data class InstalledAddon(
     val version: String,
     val isEnabled: Boolean,
     val optionsPageUrl: String?,
+    val hasQuickSettings: Boolean = false,
 )
 
 data class AddonPermissionPrompt(
@@ -323,7 +440,7 @@ data class AddonPermissionPrompt(
     val dataCollectionPermissions: List<String>,
 )
 
-private fun WebExtension.toInstalledAddon(): InstalledAddon =
+private fun WebExtension.toInstalledAddon(hasQuickSettings: Boolean): InstalledAddon =
     InstalledAddon(
         id = id,
         name = displayName(),
@@ -331,6 +448,7 @@ private fun WebExtension.toInstalledAddon(): InstalledAddon =
         version = getMetadata()?.version.orEmpty(),
         isEnabled = isEnabled(),
         optionsPageUrl = getMetadata()?.optionsPageUrl?.takeIf { it.isNotBlank() },
+        hasQuickSettings = hasQuickSettings,
     )
 
 private fun WebExtension.displayName(): String =

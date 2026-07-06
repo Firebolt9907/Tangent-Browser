@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
+import com.firebolt9907.luminabrowser.ui.components.SheetHeader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -107,12 +108,7 @@ fun DownloadsSheet(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 12.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("Downloads", style = MaterialTheme.typography.titleLarge)
+            SheetHeader("Downloads") {
                 if (downloads.isNotEmpty()) {
                     TextButton(onClick = { showClearConfirm = true }) {
                         Text("Clear all")

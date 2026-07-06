@@ -49,11 +49,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.state.AddressSuggestion
 import com.firebolt9907.luminabrowser.state.AddressSuggestionKind
+import com.firebolt9907.luminabrowser.state.SearchEngine
 import com.firebolt9907.luminabrowser.state.addressSuggestions
+import com.firebolt9907.luminabrowser.state.searchSuggestions
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.BookmarksStorage
 import mozilla.components.concept.storage.HistoryStorage
+import mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient
 
 /**
  * iOS-style address sheet shown while the bar is in editing mode.
@@ -86,6 +90,10 @@ fun AddressSheet(
     bookmarksStorage: BookmarksStorage,
     onSubmit: (String) -> Unit,
     onDismiss: () -> Unit,
+    onPreconnect: (String) -> Unit = {},
+    onPreloadPage: (String) -> Unit = {},
+    searchSuggestionsEnabled: Boolean = true,
+    searchEngine: SearchEngine = SearchEngine.DEFAULT,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -153,17 +161,40 @@ fun AddressSheet(
     // Suggestions: skip while the field still holds the untouched current-page URL (Safari-style).
     val trimmed = query.trim()
     val rowsActive = visible && trimmed.isNotEmpty() && trimmed != pageUrl.trim()
-    var matches by remember { mutableStateOf<List<AddressSuggestion>>(emptyList()) }
+    val suggestClient = remember { HttpURLConnectionClient() }
+    var localMatches by remember { mutableStateOf<List<AddressSuggestion>>(emptyList()) }
+    var searchTerms by remember { mutableStateOf<List<String>>(emptyList()) }
     LaunchedEffect(rowsActive, trimmed) {
         if (!rowsActive) {
-            matches = emptyList()
+            localMatches = emptyList()
+            searchTerms = emptyList()
             return@LaunchedEffect
         }
         delay(120)
-        matches = addressSuggestions(trimmed, historyStorage, bookmarksStorage)
+        // Local (history/bookmark) and remote (search-engine) suggestions in parallel; each keystroke
+        // cancels the prior fetch via this LaunchedEffect's key. Remote suggestions are skipped
+        // entirely when the user has turned them off (no keystrokes leave the device).
+        val local = async { addressSuggestions(trimmed, historyStorage, bookmarksStorage, max = 4) }
+        val remote = async {
+            if (searchSuggestionsEnabled) {
+                searchSuggestions(trimmed, suggestClient, searchEngine)
+            } else {
+                emptyList()
+            }
+        }
+        localMatches = local.await()
+        searchTerms = remote.await()
+        // Pre-warm connections to the likeliest destinations (the top concrete-URL suggestions) so
+        // tapping one lands on an already-open connection. Search-query rows have no origin, so the
+        // preconnector's URL check ignores them.
+        localMatches.take(2).forEach { onPreconnect(it.url) }
+        // Go further for the single top hit: actually preload the page into cache so tapping it is
+        // near-instant. Gated by the caller (preload policy) since this spends data. Only concrete
+        // URL suggestions are preloadable — a raw search query isn't a page.
+        localMatches.firstOrNull()?.let { onPreloadPage(it.url) }
     }
     val rows = if (rowsActive) {
-        matches + AddressSuggestion(title = trimmed, url = trimmed, kind = AddressSuggestionKind.Search)
+        buildSuggestionRows(localMatches, searchTerms, trimmed)
     } else {
         emptyList()
     }
@@ -283,6 +314,37 @@ fun AddressSheet(
             }
         }
     }
+}
+
+/**
+ * Merges local URL matches with remote search-query suggestions into the final ordered row list:
+ * history/bookmark hits first (strongest intent), then the search engine's query suggestions, then a
+ * guaranteed "search for exactly what I typed" fallback. De-duplicated (URLs by normalized URL,
+ * queries by lowercased text) and capped at [max].
+ */
+private fun buildSuggestionRows(
+    local: List<AddressSuggestion>,
+    searchTerms: List<String>,
+    typed: String,
+    max: Int = 8,
+): List<AddressSuggestion> {
+    val rows = LinkedHashMap<String, AddressSuggestion>()
+    for (s in local) {
+        val key = "u:" + s.url.trimEnd('/').lowercase()
+        if (!rows.containsKey(key)) rows[key] = s
+    }
+    for (term in searchTerms) {
+        val key = "q:" + term.lowercase()
+        if (!rows.containsKey(key)) {
+            rows[key] = AddressSuggestion(title = term, url = term, kind = AddressSuggestionKind.Search)
+        }
+    }
+    // Always offer to search the raw text, even when the network returned nothing.
+    val typedKey = "q:" + typed.lowercase()
+    if (!rows.containsKey(typedKey)) {
+        rows[typedKey] = AddressSuggestion(title = typed, url = typed, kind = AddressSuggestionKind.Search)
+    }
+    return rows.values.take(max).toList()
 }
 
 @Composable

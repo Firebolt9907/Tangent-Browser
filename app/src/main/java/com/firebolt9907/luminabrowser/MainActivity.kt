@@ -123,34 +123,20 @@ class MainActivity : ComponentActivity(), ActivityDelegate {
         handleIncomingIntent(intent)
     }
 
+    // MainActivity only receives its own explicit intents now: the LAUNCHER entry (no URL) and the
+    // "Add to Home Screen" shortcut (an explicit ACTION_VIEW that bypasses intent-filters). External
+    // links from other apps go to CustomTabActivity instead. A home-shortcut opens as a normal,
+    // persisted tab (no reader auto-attempt / Custom-Tab surface).
     private fun handleIncomingIntent(intent: Intent?) {
-        val url = extractUrl(intent) ?: return
-        if (app.components.firefoxSyncController.handleOAuthRedirect(url)) return
+        if (intent?.getBooleanExtra(EXTRA_HOME_SHORTCUT, false) != true) return
+        val url = IntentUrls.extractUrl(intent) ?: return
         app.components.tabRepository.addTab(url = url, title = "")
     }
 
-    private fun extractUrl(intent: Intent?): String? {
-        if (intent == null) return null
-        return when (intent.action) {
-            Intent.ACTION_VIEW -> intent.dataString?.takeIf { it.isNotBlank() }
-            Intent.ACTION_SEND -> {
-                val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
-                if (text.isEmpty()) null else firstUrlIn(text) ?: text
-            }
-            else -> null
-        }
-    }
+    companion object {
+        private const val REQUEST_CODE_DOWNLOAD_PERMISSIONS = 1
 
-    private fun firstUrlIn(text: String): String? {
-        val match = Regex("https?://\\S+").find(text) ?: return null
-        // \S+ greedily swallows trailing sentence punctuation when a URL is shared inside prose
-        // (e.g. "Read this https://example.com!"). Those terminators aren't part of the URL and
-        // would otherwise be loaded literally, so trim the common ones.
-        return match.value.trimEnd('.', ',', '!', '?', ';', ':', ')', ']', '}', '"', '\'')
-            .takeIf { it.isNotBlank() }
-    }
-
-    private companion object {
-        const val REQUEST_CODE_DOWNLOAD_PERMISSIONS = 1
+        /** Set true on an "Add to Home Screen" shortcut intent so it opens as a normal saved tab. */
+        const val EXTRA_HOME_SHORTCUT = "com.firebolt9907.luminabrowser.HOME_SHORTCUT"
     }
 }

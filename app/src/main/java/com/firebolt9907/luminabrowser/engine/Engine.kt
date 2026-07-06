@@ -26,6 +26,8 @@ import mozilla.components.browser.storage.sync.PlacesHistoryStorage
 import mozilla.components.feature.session.HistoryDelegate
 import mozilla.components.feature.downloads.DownloadsUseCases
 import mozilla.components.feature.session.SessionUseCases
+import mozilla.components.feature.customtabs.store.CustomTabsServiceStore
+import mozilla.components.feature.tabs.CustomTabsUseCases
 import mozilla.components.feature.tabs.TabsUseCases
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
@@ -43,7 +45,7 @@ class LuminaBrowserComponents(application: Application) {
     val engine = GeckoEngine(
         application,
         buildDefaultSettings(globalPreferencesStore, historyStorage),
-        buildRuntime(application),
+        buildRuntime(application, globalPreferencesStore),
     )
     val store = BrowserStore(
         initialState = BrowserState(),
@@ -51,10 +53,26 @@ class LuminaBrowserComponents(application: Application) {
     )
     val sessionUseCases = SessionUseCases(store)
     val tabsUseCases = TabsUseCases(store)
+    // Owns add/remove/migrate for custom-tab sessions (external-link "Custom Tab" surface hosted by
+    // CustomTabActivity). Custom tabs live in store.state.customTabs, separate from the normal tab
+    // list, so they never touch the grid, persistence, or Firefox Sync.
+    val customTabsUseCases = CustomTabsUseCases(store, sessionUseCases.loadUrl)
+    // Backs LuminaCustomTabsService — the CustomTabsService we advertise so callers using the
+    // Custom Tabs protocol (e.g. the Google app / Discover) recognize Lumina as a CCT provider and
+    // launch us through CustomTabsIntent (session token + enter-animation options bundle + first-
+    // class custom-tab treatment) instead of a plain ACTION_VIEW that carries no animation.
+    val customTabsServiceStore = CustomTabsServiceStore()
     val downloadsUseCases = DownloadsUseCases(store, application)
     val tabPersistence = com.firebolt9907.luminabrowser.state.TabPersistence(application)
     val tabRepository =
-        GeckoTabRepository(store, sessionUseCases, tabsUseCases, tabPersistence, scope)
+        GeckoTabRepository(
+            store,
+            sessionUseCases,
+            tabsUseCases,
+            tabPersistence,
+            scope,
+            searchEngine = { globalPreferencesStore.searchEngine },
+        )
     val tabSnapshotCache = TabSnapshotCache(application.cacheDir)
     val sitePreferencesStore = SitePreferencesStore(application)
     val addonController = AddonController(engine, scope)
@@ -66,6 +84,14 @@ class LuminaBrowserComponents(application: Application) {
     // responsive. See BackgroundTabSuspender.
     val backgroundTabSuspender =
         com.firebolt9907.luminabrowser.state.BackgroundTabSuspender(store)
+    // Warms connections to frecent origins so revisiting a common site (google.com etc.) lands on an
+    // already-open TLS connection with its assets already in Gecko's enlarged HTTP disk cache.
+    val speculativePreconnector =
+        com.firebolt9907.luminabrowser.state.SpeculativePreconnector(engine, scope)
+    // Preloads Custom Tabs `mayLaunchUrl` targets (e.g. Google Discover article links) into the
+    // shared HTTP cache so the tap-through open is served from cache. See LuminaCustomTabsService.
+    val externalLinkPreloader =
+        com.firebolt9907.luminabrowser.state.ExternalLinkPreloader(engine, scope)
 
     fun applyEngineSettings() {
         val prefs = globalPreferencesStore
@@ -87,6 +113,11 @@ class LuminaBrowserComponents(application: Application) {
         storeSubscription.resume()
         backgroundTabSuspender.start()
         tabRepository.restoreOrSeedBlank(TAB_MAX_AGE_MILLIS)
+        // Get a head start on the first navigation of the session: spin up a content process now so
+        // the first page load doesn't pay process-spawn latency, and warm the user's top sites while
+        // they're still looking at the restored tab / new-tab bar.
+        engine.speculativeCreateSession()
+        speculativePreconnector.warmTopSites(historyStorage)
     }
 
     companion object {
@@ -112,16 +143,70 @@ private fun httpsModeOf(prefs: GlobalPreferencesStore) =
  * - `consoleOutput` / `debugLogging` / `remoteDebugging` off removes per-frame logging cost in
  *   non-debug use; remote debugging is an attack surface we don't ship enabled.
  * - `aboutConfig` off keeps the runtime from exposing the raw pref editor.
+ * - `configFilePath` points at a generated YAML that enlarges the necko HTTP disk cache (see
+ *   [writeGeckoConfig]) so frequently-visited sites' assets survive in cache far longer. Setting the
+ *   path explicitly is what lets a non-debuggable (release) build read the config at all — otherwise
+ *   Gecko only reads it for debuggable apps.
  */
-private fun buildRuntime(application: Application): GeckoRuntime {
+private fun buildRuntime(application: Application, prefs: GlobalPreferencesStore): GeckoRuntime {
     val settings = GeckoRuntimeSettings.Builder()
         .lowMemoryDetection(true)
         .consoleOutput(false)
         .debugLogging(false)
         .remoteDebuggingEnabled(false)
         .aboutConfigEnabled(false)
+        .apply { writeGeckoConfig(application, prefs)?.let { configFilePath(it) } }
         .build()
+    // WebAuthn/passkeys need no pref overrides: Gecko's Android defaults already route requests
+    // to the platform FIDO2/Credential Manager path (Google Password Manager) with resident-key
+    // support enabled. Forcing `webauthn_enable_softtoken` on would silently service requests
+    // with Gecko's virtual test authenticator instead of showing the system passkey UI.
     return GeckoRuntime.create(application, settings)
+}
+
+/**
+ * Writes the GeckoView config YAML that tunes necko for aggressive asset caching, returning its
+ * absolute path (or null if it couldn't be written — in which case we simply fall back to Gecko's
+ * defaults). Rewritten every launch so the [GlobalPreferencesStore.httpCacheSizeMb] setting always
+ * takes effect on the next launch.
+ *
+ * - `browser.cache.disk.parent_directory` relocates the necko disk cache (`cache2/`) into the app's
+ *   Android **cache** directory. That's what keeps it out of the "app data" bucket in Android
+ *   Settings → Storage: files under `getCacheDir()` count as Cache (and Android may evict them under
+ *   storage pressure) rather than as durable user data.
+ * - `browser.cache.disk.smart_size.enabled = false` stops Gecko from auto-shrinking the cache to a
+ *   fraction of free space; without this, a large `capacity` is ignored.
+ * - `browser.cache.disk.capacity` (KB) is the on-disk HTTP cache cap — user-configurable, default
+ *   512 MB vs the ~tens of MB a small device would otherwise get, so a heavy site's assets aren't
+ *   evicted between visits.
+ * - `network.http.speculative-parallel-limit` widens how many origins we can pre-warm at once (see
+ *   [com.firebolt9907.luminabrowser.state.SpeculativePreconnector]).
+ * - `network.predictor.*` turns on necko's built-in predictor: it records which subresources each
+ *   origin pulls and, the moment a navigation to that origin starts, preconnects/prefetches them
+ *   from local history. This is what makes a *revisited* site load noticeably faster (the browser
+ *   is already fetching the CSS/JS/images before the HTML finishes parsing).
+ */
+private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesStore): String? = try {
+    val capacityKb = prefs.httpCacheSizeMb.toLong() * 1024L
+    val cacheParent = application.cacheDir.absolutePath
+    val file = java.io.File(application.filesDir, "geckoview-config.yaml")
+    file.writeText(
+        """
+        prefs:
+          browser.cache.disk.parent_directory: "$cacheParent"
+          browser.cache.disk.smart_size.enabled: false
+          browser.cache.disk.capacity: $capacityKb
+          network.http.speculative-parallel-limit: 12
+          network.predictor.enabled: true
+          network.predictor.enable-prefetch: true
+          network.http.http3.enable: true
+          network.http.max-persistent-connections-per-server: 10
+          network.dns.disablePrefetch: false
+        """.trimIndent() + "\n",
+    )
+    file.absolutePath
+} catch (_: Exception) {
+    null
 }
 
 private fun buildDefaultSettings(

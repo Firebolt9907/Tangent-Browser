@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
+import com.firebolt9907.luminabrowser.ui.components.SheetHeader
 import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.HistoryStorage
 import mozilla.components.concept.storage.VisitInfo
@@ -106,12 +107,7 @@ fun HistorySheet(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 12.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("History", style = MaterialTheme.typography.titleLarge)
+            SheetHeader("History") {
                 if (visits.isNotEmpty()) {
                     TextButton(onClick = { showClearConfirm = true }) {
                         Text("Clear all")

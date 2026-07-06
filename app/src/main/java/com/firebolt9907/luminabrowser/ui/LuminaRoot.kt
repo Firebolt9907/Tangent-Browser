@@ -165,21 +165,45 @@ private const val BarCollapseDistancePx = 360f
 private const val BarCollapseSettleDelayMs = 120L
 private const val BarCollapseSnapThresholdPx = 180f
 private const val BarExpandSnapThresholdPx = 120f
+// Min reader scroll travel (px) before the pill auto-hides/reveals, so tiny jitter doesn't toggle it.
+private const val ReaderBarHideSlopPx = 6f
 // Cap on the URL-keyed in-memory snapshot map so a long browsing session can't retain a
 // screen-sized bitmap for every page ever visited. Evicted entries still live in the disk cache.
 private const val MaxRecentPageSnapshots = 24
 private const val BarCollapsePreviewMaxProgress = 0.28f
 private const val CompactInteractionThreshold = 0.5f
 private val BarCollapseEasing = CubicBezierEasing(0.33f, 0f, 0.2f, 1f)
+// Decelerate-only curve for gesture-release slides (predictive back, grid dismiss): the motion
+// continues from the finger and eases into the target without re-accelerating, matching iOS's
+// interactive-pop settle. Default FastOutSlowIn eases in *and* out, which feels wrong mid-gesture.
+private val EaseOut = CubicBezierEasing(0f, 0f, 0.2f, 1f)
+private const val PredictiveBackDurationMs = 220
 private val TabSwitchGap = 64.dp
 private val PullRefreshThreshold = 96.dp
 private val PullRefreshMaxDistance = 132.dp
 private const val GridCommitVelocityPxS = 1000f
 
+// Safari-style motion for the tab-overview (grid) transitions. iOS springs are authored as a
+// "response" (seconds to settle) + damping fraction; Compose's stiffness maps as
+// stiffness = (2*PI / response)^2. Safari's overview zoom is a soft, lightly-damped settle that
+// carries the finger's release velocity rather than snapping — damping just under 1 so it eases
+// in without a visible bounce. Centralised here so the open/settle/cancel phases stay coherent.
+private object LuminaMotion {
+    // Overview zoom-in (carousel → grid). response ~0.40s.
+    val GridOpen = spring<Float>(dampingRatio = 0.86f, stiffness = 260f)
+    // Settle to a target and cancel-return. response ~0.42s, a hair more damped so it doesn't
+    // overshoot back into the chrome.
+    val GridSettle = spring<Float>(dampingRatio = 0.9f, stiffness = 240f)
+    // Toolbar collapse/expand. Safari's bar snaps crisply but does NOT bounce, so this stays just
+    // under critically damped — a quick settle with no visible overshoot.
+    val BarCollapse = spring<Float>(dampingRatio = 0.9f, stiffness = Spring.StiffnessMedium)
+}
+
 @OptIn(ExperimentalActivityApi::class)
 @Composable
 fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
-    val components = (LocalContext.current.applicationContext as LuminaApplication).components
+    val appContext = LocalContext.current.applicationContext
+    val components = (appContext as LuminaApplication).components
     val state by viewModel.state.collectAsStateWithLifecycle()
     val browserState by components.browserState.collectAsStateWithLifecycle()
     val addonsState by components.addonController.state.collectAsStateWithLifecycle()
@@ -232,6 +256,18 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     val actualSelectedTab = browserState.tabs.firstOrNull { it.id == actualSelectedTabId }
     val selectedEngineSession = actualSelectedTab?.engineState?.engineSession
     val selectedContent = selectedTab?.content
+
+    // Tabs that host an add-on action popup ("quick settings"). They must NOT become the active tab
+    // for web extensions, or the popup (uBlock, Chrome Mask, …) would query itself (about:blank)
+    // instead of the page the user opened it from.
+    val popupTabIds = remember { mutableSetOf<String>() }
+    // Mirror WebExtensionSupport: tell the add-on controller which tab is "current" so it can attach
+    // per-tab action handlers (the source of every action update) and mark it active for extensions.
+    LaunchedEffect(actualSelectedTabId, selectedEngineSession) {
+        val current = actualSelectedTabId ?: return@LaunchedEffect
+        if (current in popupTabIds) return@LaunchedEffect
+        components.addonController.setActiveSession(selectedEngineSession)
+    }
     val actualSelectedContent = actualSelectedTab?.content
     val selectedIndex = browserState.tabs.indexOfFirst { it.id == selectedTabId }
     val previousTab = browserState.tabs.getOrNull(selectedIndex - 1)
@@ -324,6 +360,10 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     var gridNewTabSelected by remember { mutableStateOf(false) }
     var currentSnapshotRequestPurpose by remember { mutableStateOf<SnapshotRequestPurpose?>(null) }
     var currentSnapshotRequestId by remember { mutableIntStateOf(0) }
+    // Bumped when a full-screen overlay (e.g. the appearance sheet's opaque ScaledPageBackdrop) is
+    // dismissed, to force the z-ordered GeckoView surface to recomposite. Without this the surface
+    // keeps showing its stale pre-overlay frame — which covers the pill — until the user scrolls.
+    var engineRefreshTick by remember { mutableIntStateOf(0) }
     var switchAnimationJob by remember { mutableStateOf<Job?>(null) }
     var predictiveBackAnimationJob by remember { mutableStateOf<Job?>(null) }
     var barCollapseAnimationJob by remember { mutableStateOf<Job?>(null) }
@@ -352,9 +392,16 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     val pendingPageScrollDelta = remember { floatArrayOf(0f) }
     val recentTabSnapshots = remember { mutableStateMapOf<String, Bitmap>() }
     val recentPageSnapshots = remember { mutableStateMapOf<String, Bitmap>() }
+    // Bitmaps rendered from the native ReaderView, keyed by tab id. Preferred over the engine
+    // capture for reader-active tabs so grid/tab-switch reflect the reader content, not the hidden
+    // web page. Pruned to the active-reader set (see LaunchedEffect below).
+    val readerTabSnapshots = remember { mutableStateMapOf<String, Bitmap>() }
     val lastObservedUrlByTab = remember { mutableStateMapOf<String, String>() }
     val previousObservedUrlByTab = remember { mutableStateMapOf<String, String>() }
     val barCollapseProgressState = remember { Animatable(0f) }
+    // Reader-mode pill auto-hide: 0 = pill shown, 1 = pill fully translated off the bottom edge.
+    // Driven by reader scroll direction (separate from the web-page compact collapse above).
+    val readerBarHidden = remember { Animatable(0f) }
     val pullRefreshProgress = (pullRefreshDistancePx / pullRefreshThresholdPx).coerceIn(0f, 1f)
     val trackedPreviousUrl = selectedTabId?.let(previousObservedUrlByTab::get)
     val previousHistoryUrl = remember(
@@ -404,6 +451,12 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                 }
             }
         }
+    }
+
+    // Drop reader thumbnails once a tab exits reader mode (or closes) so its grid/switch cover
+    // falls back to the live web-page snapshot again.
+    LaunchedEffect(activeReaderTabs) {
+        readerTabSnapshots.keys.retainAll(activeReaderTabs)
     }
 
     // Receive find-in-page match counts from the selected tab's engine session. Re-registers when
@@ -546,6 +599,9 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     val snapshotCacheVersion by cache.version.collectAsStateWithLifecycle()
     fun snapshotFor(tabId: String?, url: String?): Bitmap? {
         val id = tabId ?: return null
+        // Reader-active tabs render their thumbnail from the native ReaderView; the engine capture
+        // would show the (invisible) underlying page.
+        if (activeReaderTabs.contains(id)) readerTabSnapshots[id]?.let { return it }
         val pageUrl = url.orEmpty()
         return recentTabSnapshots[id]
             ?: pageUrl.takeIf { it.isNotBlank() && it != "about:blank" }?.let(recentPageSnapshots::get)
@@ -570,6 +626,8 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         snapshotCacheVersion,
         selectedTabId?.let(recentTabSnapshots::get),
         recentPageSnapshots[selectedContent?.url],
+        activeReaderTabs,
+        selectedTabId?.let(readerTabSnapshots::get),
     ) {
         snapshotFor(selectedTabId, selectedContent?.url)
     }
@@ -597,6 +655,9 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         nextTabId,
         nextTab?.content?.url,
         snapshotCacheVersion,
+        activeReaderTabs,
+        previousTabId?.let(readerTabSnapshots::get),
+        nextTabId?.let(readerTabSnapshots::get),
     ) {
         when (adjacentDirection) {
             1 -> previousTab?.let { snapshotFor(it.id, it.content.url) }
@@ -719,10 +780,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         barCollapseAnimationJob = scope.launch {
             barCollapseProgressState.animateTo(
                 targetValue = target,
-                animationSpec = spring(
-                    dampingRatio = 0.6f,
-                    stiffness = Spring.StiffnessMedium,
-                ),
+                animationSpec = LuminaMotion.BarCollapse,
             )
         }
     }
@@ -777,6 +835,28 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                 handlePageScrollDelta(pendingDelta)
             }
         }
+    }
+
+    // Reader-mode pill auto-hide. Scrolling the article down past a small slop hides the pill fully;
+    // scrolling up reveals it again. A spring keeps it from snapping on tiny jitter.
+    fun handleReaderScrollDelta(delta: Float) {
+        val target = when {
+            delta > ReaderBarHideSlopPx -> 1f
+            delta < -ReaderBarHideSlopPx -> 0f
+            else -> return
+        }
+        if (readerBarHidden.targetValue == target) return
+        scope.launch {
+            readerBarHidden.animateTo(
+                targetValue = target,
+                animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
+            )
+        }
+    }
+
+    // Always reveal the pill when entering or leaving reader mode (or switching tabs in reader).
+    LaunchedEffect(isReaderActiveOnSelectedTab, selectedTabId) {
+        readerBarHidden.snapTo(0f)
     }
 
     val onPrimaryUrlTap: () -> Unit = {
@@ -893,16 +973,12 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             incomingSnapshotOffsetX = current - side * pageStride
             incomingSnapshotTopPadPx = with(density) { incomingPadDp.toPx() }.toInt()
             incomingSnapshotTabId = pinnedIncomingTabId
-            val commitDampingRatio = dampingForVelocity(velocity)
             leavingSnapshotJob = scope.launch {
                 animate(
                     initialValue = current,
                     targetValue = target,
                     initialVelocity = velocity,
-                    animationSpec = spring(
-                        dampingRatio = commitDampingRatio,
-                        stiffness = Spring.StiffnessMediumLow,
-                    ),
+                    animationSpec = switchSpring(velocity, Spring.StiffnessMediumLow),
                 ) { v, _ ->
                     leavingSnapshotOffsetX = v
                     incomingSnapshotOffsetX = v - side * pageStride
@@ -923,14 +999,11 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         } else {
             switchAnimationJob = scope.launch {
                 animate(
-                                    initialValue = current,
-                                    targetValue = 0f,
-                                    initialVelocity = velocity,
-                                    animationSpec = spring(
-                                        dampingRatio = dampingForVelocity(velocity),
-                                        stiffness = Spring.StiffnessMedium,
-                                    ),
-                                ) { v, _ -> offsetX = v }
+                    initialValue = current,
+                    targetValue = 0f,
+                    initialVelocity = velocity,
+                    animationSpec = switchSpring(velocity, Spring.StiffnessMedium),
+                ) { v, _ -> offsetX = v }
                 resetTabSwitchSnapshot()
                 switchAnimationJob = null
             }
@@ -943,18 +1016,18 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         preparedEngineSession: EngineSession? = null,
         editBlankTab: Boolean = false,
         onStarted: () -> Unit = {},
-    ) {
+    ): String {
         val width = contentSize.width.toFloat()
         val pageStride = width + tabSwitchGapPx
         if (width <= 0f) {
-            viewModel.onOpenNewTab(
+            val id = viewModel.onOpenNewTab(
                 url = url,
                 title = title,
                 engineSession = preparedEngineSession,
                 editBlankTab = editBlankTab,
             )
             onStarted()
-            return
+            return id
         }
         val leavingBitmap = tabSwitchCurrentSnapshot ?: snapshotFor(selectedTabId, currentUrl)
         val leavingPadDp = topPadDpFor(currentUrl)
@@ -1020,6 +1093,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             commitAnimNewTab = false
             leavingSnapshotJob = null
         }
+        return newTabId
     }
 
     fun closeGrid(animateBack: Boolean, afterClose: () -> Unit = {}) {
@@ -1038,8 +1112,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         gridAnimationJob = scope.launch {
             if (animateBack) {
                 // Fast ease-out: critically damped (no bounce), decelerates into the target.
-                val easeOut = CubicBezierEasing(0f, 0f, 0.2f, 1f)
-                val anim = tween<Float>(durationMillis = 300, easing = easeOut)
+                val anim = tween<Float>(durationMillis = 300, easing = EaseOut)
                 coroutineScope {
                     launch { gridProgressState.animateTo(0f, animationSpec = anim) }
                     launch { gridXProgressState.animateTo(0f, animationSpec = anim) }
@@ -1074,10 +1147,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             // spring gets the SAME spec and initial velocity as the vertical progress so the two
             // axes stay locked together; desynced axes are what made the motion feel robotic.
             val launchVelocity = initialVelocityProgressPerSec.coerceAtLeast(0f)
-            val s = spring<Float>(
-                dampingRatio = 0.9f,
-                stiffness = 300f,
-            )
+            val s = LuminaMotion.GridOpen
             coroutineScope {
                 launch {
                     gridProgressState.animateTo(
@@ -1107,10 +1177,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         gridAnimationJob = scope.launch {
             // Seed spring from drag release position so there's no pop.
             if (fromProgress > 0f) gridProgressState.snapTo(fromProgress)
-            val s = spring<Float>(
-                dampingRatio = 1.0f,
-                stiffness = 220f,
-            )
+            val s = LuminaMotion.GridSettle
             coroutineScope {
                 launch { gridProgressState.animateTo(target, animationSpec = s) }
                 launch { gridXProgressState.animateTo(target, animationSpec = s) }
@@ -1287,10 +1354,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         if (travelPx > 0f) (-velocity.y / travelPx).coerceAtLeast(0f) else 0f
                     gridProgressState.snapTo(cancelFromProgress)
                     gridXProgressState.snapTo(0f)
-                    val s = spring<Float>(
-                        dampingRatio = 1.0f,
-                        stiffness = Spring.StiffnessMedium,
-                    )
+                    val s = LuminaMotion.GridSettle
                     gridProgressState.animateTo(
                         0f,
                         initialVelocity = initialVelocityProgressPerSec,
@@ -1343,7 +1407,11 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         predictiveBackAnimationJob?.cancel()
         predictiveBackAnimationJob = scope.launch {
             if (shouldCommit && selectedTabId != null && targetUrl != null) {
-                animate(current, width, animationSpec = tween(durationMillis = 220)) { value, _ ->
+                animate(
+                    current,
+                    width,
+                    animationSpec = tween(PredictiveBackDurationMs, easing = EaseOut),
+                ) { value, _ ->
                     predictiveBackOffsetPx = value
                 }
                 stickyBackCoverSnapshot = activePredictiveBackSnapshot ?: predictiveBackSnapshot
@@ -1351,7 +1419,11 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                 resetPredictiveBackGesture()
                 components.sessionUseCases.goBack.invoke(selectedTabId, true)
             } else {
-                animate(current, 0f, animationSpec = tween(durationMillis = 220)) { value, _ ->
+                animate(
+                    current,
+                    0f,
+                    animationSpec = tween(PredictiveBackDurationMs, easing = EaseOut),
+                ) { value, _ ->
                     predictiveBackOffsetPx = value
                 }
                 resetPredictiveBackGesture()
@@ -1401,6 +1473,11 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         if (state.mode == BarMode.Editing && pendingActiveBarState?.blankNewTabPreview == true) {
             pendingActiveBarState = null
         }
+        // Focusing the address bar is a strong signal a navigation is imminent — warm the user's top
+        // sites so the likely destination is already connected before they finish typing/tapping.
+        if (state.mode == BarMode.Editing) {
+            components.speculativePreconnector.warmTopSites(components.historyStorage)
+        }
     }
 
     LaunchedEffect(selectedContent?.loading) {
@@ -1425,6 +1502,18 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     selectTab = false,
                 )
             }
+        }
+        components.addonController.onActionPopupTabRequested = { title, engineSession ->
+            // The popup document is loaded into engineSession by Gecko; open a foreground tab that
+            // renders it. editBlankTab stays false so we show the popup, not the URL editor. Record
+            // the id so the active-session effect leaves the originating page active for extensions.
+            val popupTabId = openTabToRight(
+                url = "about:blank",
+                title = title,
+                preparedEngineSession = engineSession,
+                editBlankTab = false,
+            )
+            popupTabIds.add(popupTabId)
         }
     }
 
@@ -1524,7 +1613,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     animate(
                         predictiveBackOffsetPx,
                         width,
-                        animationSpec = tween(durationMillis = 220),
+                        animationSpec = tween(PredictiveBackDurationMs, easing = EaseOut),
                     ) { value, _ ->
                         predictiveBackOffsetPx = value
                     }
@@ -1542,7 +1631,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         animate(
                             current,
                             0f,
-                            animationSpec = tween(durationMillis = 180),
+                            animationSpec = tween(durationMillis = 180, easing = EaseOut),
                         ) { value, _ ->
                             predictiveBackOffsetPx = value
                         }
@@ -1719,6 +1808,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         resetPredictiveBackGesture()
                     },
                     currentSnapshotRequestId = currentSnapshotRequestId,
+                    engineRefreshTick = engineRefreshTick,
                     onCurrentSnapshotCaptured = { capturedTabId, bitmap ->
                         when (currentSnapshotRequestPurpose) {
                             SnapshotRequestPurpose.PredictiveBack -> {
@@ -1727,7 +1817,12 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                                 }
                             }
                             SnapshotRequestPurpose.TabSwitch -> {
-                                if (capturedTabId == selectedTabId || capturedTabId == actualSelectedTabId) {
+                                // For reader-active tabs the leaving cover comes from the ReaderView
+                                // bitmap (already seeded into tabSwitchCurrentSnapshot); don't clobber
+                                // it with the hidden page's engine capture.
+                                if ((capturedTabId == selectedTabId || capturedTabId == actualSelectedTabId) &&
+                                    !activeReaderTabs.contains(capturedTabId)
+                                ) {
                                     tabSwitchCurrentSnapshot = bitmap
                                 }
                             }
@@ -1780,7 +1875,9 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     !gridEngaged && !findInPageActive
                 val animatedLoadProgress by animateFloatAsState(
                     targetValue = (pageLoadProgress / 100f).coerceIn(0f, 1f),
-                    animationSpec = tween(durationMillis = 150),
+                    // Linear between discrete Gecko progress reports so the bar advances at constant
+                    // velocity; FastOutSlowIn would re-accelerate on every update and stutter.
+                    animationSpec = tween(durationMillis = 150, easing = LinearEasing),
                     label = "pageLoadProgress",
                 )
                 AnimatedVisibility(
@@ -1848,6 +1945,12 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         modifier = Modifier.fillMaxSize(),
                         topPadding = with(density) { topChromeInsetPx.toDp() },
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        onScrollDelta = { delta -> handleReaderScrollDelta(delta) },
+                        onSnapshot = { bitmap ->
+                            selectedTabId?.let { id ->
+                                if (readerManager.isReaderActive(id)) readerTabSnapshots[id] = bitmap
+                            }
+                        },
                     )
                     }
                 }
@@ -2429,6 +2532,18 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     historyStorage = components.historyStorage,
                     bookmarksStorage = components.bookmarksStorage,
                     onSubmit = { viewModel.onSubmitText(it) },
+                    onPreconnect = { components.speculativePreconnector.preconnect(it) },
+                    onPreloadPage = { url ->
+                        if (com.firebolt9907.luminabrowser.state.isPreloadAllowed(
+                                appContext,
+                                components.globalPreferencesStore.preloadMode,
+                            )
+                        ) {
+                            components.externalLinkPreloader.preload(url)
+                        }
+                    },
+                    searchSuggestionsEnabled = components.globalPreferencesStore.searchSuggestionsEnabled,
+                    searchEngine = components.globalPreferencesStore.searchEngine,
                     onDismiss = {
                         // Mirror the Cancel button: dismissing the sheet on an untouched blank new
                         // tab must also discard that tab, otherwise it lingers in the tab list.
@@ -2502,6 +2617,10 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     eligibleReaderTabs = eligibleReaderTabs,
                     activeReaderTabs = activeReaderTabs,
                     readerTheme = readerTheme,
+                    // Translate the pill fully off the bottom edge as the reader hides it. Distance is
+                    // the bar's measured bottom region plus a margin so it clears the screen entirely.
+                    readerHideOffsetPx = readerBarHidden.value *
+                        (bottomChromeInsetPx + with(density) { 48.dp.toPx() }),
                 )
             }
         }
@@ -2550,6 +2669,8 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         }
 
         SitePermissionDialog(controller = components.sitePermissionController)
+
+        PromptHandler(engineSession = selectedEngineSession)
 
         if (showPasswords) {
             PasswordsSheet(
@@ -2600,13 +2721,28 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                 store = sitePrefsStore,
                 globalPrefsStore = components.globalPreferencesStore,
                 addonController = components.addonController,
-                onDismiss = { showAa = false },
+                onDismiss = {
+                    showAa = false
+                    // The appearance sheet's opaque backdrop pauses the GeckoView compositor while
+                    // it covers the engine; on dismiss the surface keeps showing a stale frame that
+                    // covers the pill until the user scrolls. Bump this to wake the compositor now.
+                    engineRefreshTick += 1
+                },
                 onOpenAddonSettings = { addon ->
                     addon.optionsPageUrl?.let { url ->
                         viewModel.onOpenNewTab(url = url, title = "${addon.name} Settings", selectTab = true)
                         showAa = false
                         if (gridEngaged) closeGrid(animateBack = false)
                     }
+                },
+                onOpenAddonQuickSettings = { addon ->
+                    // Dismiss the sheet first; the popup arrives asynchronously via
+                    // onActionPopupTabRequested, which opens a tab backed by the popup session. The
+                    // originating page is already the active tab for extensions (setActiveSession),
+                    // so the popup binds to it rather than the blank popup tab.
+                    showAa = false
+                    if (gridEngaged) closeGrid(animateBack = false)
+                    components.addonController.openPopup(addon.id)
                 },
                 onFindInPage = {
                     findQuery = ""
@@ -2622,6 +2758,8 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                 engineSession = selectedEngineSession,
                 backgroundSnapshot = currentPageSnapshot,
                 statusBarTopPad = with(density) { topChromeInsetPx.toDp() },
+                bookmarksStorage = components.bookmarksStorage,
+                pageIcon = selectedContent?.icon,
             )
         }
     }
@@ -2656,7 +2794,8 @@ private fun BottomBarLayer(
     selectedTabId: String? = null,
     eligibleReaderTabs: Set<String> = emptySet(),
     activeReaderTabs: Set<String> = emptySet(),
-    readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme = com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.White,
+    readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme = com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.System,
+    readerHideOffsetPx: Float = 0f,
 ) {
     val barCollapseProgress = barCollapseProgressState.value
     val pillAlpha = (1f - (gridProgress * 1.5f).coerceIn(0f, 1f)).coerceIn(0f, 1f)
@@ -2770,7 +2909,10 @@ private fun BottomBarLayer(
             controlsEnabled = controlsEnabled,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .graphicsLayer { translationX = activeOffsetX * pillParallax },
+                .graphicsLayer {
+                    translationX = activeOffsetX * pillParallax
+                    translationY = readerHideOffsetPx
+                },
             onBottomInsetMeasured = onBottomInsetMeasured,
             collapseProgress = barCollapseProgress,
             isReaderEligible = activeEligible,
@@ -2971,14 +3113,23 @@ private fun isBlankHistoryUrl(url: String): Boolean {
 
 private fun String?.isBlankPageUrl(): Boolean = isNullOrBlank() || this == "about:blank"
 
+// Horizontal tab-switch commit spring: damping scales with the finger's release velocity (fast
+// flicks settle looser for a livelier feel) while stiffness varies by destination — softer when
+// committing to the adjacent tab, snappier when snapping back to the current one.
+private fun switchSpring(velocity: Float, stiffness: Float) =
+    spring<Float>(dampingRatio = dampingForVelocity(velocity), stiffness = stiffness)
+
 private fun dampingForVelocity(velocity: Float): Float {
     val v = abs(velocity)
     return when {
         v < 400f -> 1.0f
         v >= 1500f -> 0.82f
         else -> {
+            // Linearly ease from critically damped (slow flicks) to a light 0.82 settle at the
+            // fast-flick threshold. Target must match the >=1500 branch so damping stays continuous
+            // across the boundary — a mismatch there makes the tab-switch spring visibly jump feel.
             val t = (v - 400f) / 1100f
-            1.0f + (0.88f - 1.0f) * t
+            1.0f + (0.82f - 1.0f) * t
         }
     }
 }

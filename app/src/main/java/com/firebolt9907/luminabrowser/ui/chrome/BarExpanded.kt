@@ -58,7 +58,7 @@ internal fun BarExpanded(
     collapseProgress: Float = 0f,
     isReaderEligible: Boolean = false,
     isReaderActive: Boolean = false,
-    readerTheme: ReaderTheme = ReaderTheme.White,
+    readerTheme: ReaderTheme = ReaderTheme.System,
 ) {
     val progress = collapseProgress.coerceIn(0f, 1f)
     val controlsProgress = 1f - progress
@@ -73,6 +73,7 @@ internal fun BarExpanded(
 
     val containerColor = if (isReaderActive) {
         when (readerTheme) {
+            ReaderTheme.System -> MaterialTheme.colorScheme.surfaceContainerHigh
             ReaderTheme.White -> Color(0xFFF2F2F7)
             ReaderTheme.Sepia -> Color(0xFFEADFCA)
             ReaderTheme.Dark -> Color(0xFF2C2C2E)

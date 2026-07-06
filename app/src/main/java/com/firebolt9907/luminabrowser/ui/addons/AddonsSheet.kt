@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -94,6 +95,7 @@ internal fun AddonsManagerSheetContent(
     onInstall: () -> Unit,
     onEnabledChange: (String, Boolean) -> Unit,
     onOpenSettings: (InstalledAddon) -> Unit,
+    onOpenQuickSettings: (InstalledAddon) -> Unit,
     onUninstall: (String) -> Unit,
 ) {
     Column(
@@ -184,6 +186,7 @@ internal fun AddonsManagerSheetContent(
                         addon = addon,
                         onEnabledChange = { onEnabledChange(addon.id, it) },
                         onOpenSettings = { onOpenSettings(addon) },
+                        onOpenQuickSettings = { onOpenQuickSettings(addon) },
                         onUninstall = { onUninstall(addon.id) },
                     )
                 }
@@ -197,6 +200,7 @@ private fun AddonRow(
     addon: InstalledAddon,
     onEnabledChange: (Boolean) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenQuickSettings: () -> Unit,
     onUninstall: () -> Unit,
 ) {
     var pendingRemoval by remember { mutableStateOf(false) }
@@ -227,6 +231,11 @@ private fun AddonRow(
                     checked = addon.isEnabled,
                     onCheckedChange = onEnabledChange,
                 )
+                if (addon.isEnabled && addon.hasQuickSettings) {
+                    IconButton(onClick = onOpenQuickSettings) {
+                        Icon(Icons.Default.Tune, contentDescription = "Open ${addon.name} quick settings")
+                    }
+                }
                 if (addon.optionsPageUrl != null) {
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Open ${addon.name} settings")

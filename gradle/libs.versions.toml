@@ -13,8 +13,10 @@ kotlinxCoroutines = "1.9.0"
 mozillaComponents = "147.0.4"
 androidxCredentials = "1.5.0"
 glean = "66.2.0"
+coil = "2.7.0"
 
 [libraries]
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
@@ -43,6 +45,7 @@ mozilla-concept-storage = { group = "org.mozilla.components", name = "concept-st
 mozilla-feature-session = { group = "org.mozilla.components", name = "feature-session", version.ref = "mozillaComponents" }
 mozilla-feature-downloads = { group = "org.mozilla.components", name = "feature-downloads", version.ref = "mozillaComponents" }
 mozilla-feature-tabs = { group = "org.mozilla.components", name = "feature-tabs", version.ref = "mozillaComponents" }
+mozilla-feature-customtabs = { group = "org.mozilla.components", name = "feature-customtabs", version.ref = "mozillaComponents" }
 mozilla-feature-syncedtabs = { group = "org.mozilla.components", name = "feature-syncedtabs", version.ref = "mozillaComponents" }
 mozilla-lib-fetch-httpurlconnection = { group = "org.mozilla.components", name = "lib-fetch-httpurlconnection", version.ref = "mozillaComponents" }
 mozilla-service-firefox-accounts = { group = "org.mozilla.components", name = "service-firefox-accounts", version.ref = "mozillaComponents" }

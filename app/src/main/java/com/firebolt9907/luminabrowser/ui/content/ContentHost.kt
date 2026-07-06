@@ -20,7 +20,10 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -38,8 +41,6 @@ import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineSession.Observer
 import mozilla.components.concept.engine.window.WindowRequest
 import kotlinx.coroutines.delay
-
-private const val BottomSpacerExtraCssPx = 10
 
 @SuppressLint("ClickableViewAccessibility")
 @Composable
@@ -62,6 +63,7 @@ fun ContentHost(
     onPredictiveBackEnd: (progressPx: Float, velocityPxPerSecond: Float) -> Unit = { _, _ -> },
     onPredictiveBackCancel: () -> Unit = {},
     currentSnapshotRequestId: Int = 0,
+    engineRefreshTick: Int = 0,
     onCurrentSnapshotCaptured: (tabId: String, bitmap: android.graphics.Bitmap) -> Unit = { _, _ -> },
     onTopOverscrollPull: (Float) -> Unit = {},
     onTopOverscrollRelease: (Float) -> Unit = {},
@@ -73,12 +75,11 @@ fun ContentHost(
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
+    // The color GeckoView shows before a session's first paint (see the render DisposableEffect).
+    val firstPaintCoverColor = MaterialTheme.colorScheme.background.toArgb()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val touchSlopPx = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     val predictiveBackEdgeWidthPx = with(density) { 24.dp.toPx() }
-    val bottomChromeInsetCssPx = with(density) {
-        (bottomChromeInsetPx.toDp().value.toInt() + BottomSpacerExtraCssPx).coerceAtLeast(0)
-    }
     val topChromeInsetCssPx = with(density) {
         topChromeInsetPx.toDp().value.toInt().coerceAtLeast(0)
     }
@@ -188,6 +189,11 @@ fun ContentHost(
     DisposableEffect(engineView, engineSession, tabId) {
         engineSession?.let { session ->
             engineView.render(session)
+            // Before this session paints its first frame, GeckoView covers the surface with a solid
+            // color (white by default) — a jarring flash on dark pages/theme. Cover with the app's
+            // background color instead so the pre-paint frame is unnoticeable rather than a white
+            // flash. (The snapshot cover, when present, still draws on top for tab switches.)
+            findGeckoView(engineView.asView())?.coverUntilFirstPaint(firstPaintCoverColor)
             if (tabId != null) {
                 com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.registerPromptDelegate(session, tabId)
             }
@@ -215,6 +221,30 @@ fun ContentHost(
         }
     }
 
+    LaunchedEffect(engineRefreshTick) {
+        // A full-screen overlay (the appearance sheet's opaque backdrop) was just dismissed. While
+        // it covered the engine the GeckoView compositor paused, so its surface keeps presenting a
+        // stale frame that visually covers the (still-composed) pill until an input event wakes it.
+        // A scroll fixes it; nothing else (re-asserting clipping, capturing a thumbnail) does. So
+        // replicate the wake a scroll provides by dispatching a no-op touch — ACTION_DOWN followed
+        // immediately by ACTION_CANCEL — which kicks the compositor without moving the page or
+        // registering as a tap on web content.
+        if (engineRefreshTick <= 0) return@LaunchedEffect
+        if (bottomChromeInsetPx > 0) engineView.setVerticalClipping(currentClippingPx)
+        // Wait a frame so the overlay is fully gone before we nudge the surface.
+        withFrameNanos { }
+        val view = engineView.asView()
+        val cx = view.width / 2f
+        val cy = view.height / 2f
+        val now = android.os.SystemClock.uptimeMillis()
+        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, cx, cy, 0)
+        val cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, cx, cy, 0)
+        view.dispatchTouchEvent(down)
+        view.dispatchTouchEvent(cancel)
+        down.recycle()
+        cancel.recycle()
+    }
+
     LaunchedEffect(engineView, engineSession, tabId) {
         if (engineSession == null) return@LaunchedEffect
         engineView.verticalScrollDelta.collect { delta ->
@@ -222,7 +252,7 @@ fun ContentHost(
         }
     }
 
-    DisposableEffect(engineSession, topChromeInsetCssPx, bottomChromeInsetCssPx, tabId, topPaddingFixActive) {
+    DisposableEffect(engineSession, topChromeInsetCssPx, tabId, topPaddingFixActive) {
         if (engineSession == null) {
             onDispose { }
         } else {
@@ -238,13 +268,12 @@ fun ContentHost(
                 captureSnapshot(capturingUrl = currentUrl)
             }
             fun injectSpacer(force: Boolean = false) {
-                if (topChromeInsetCssPx <= 0 && bottomChromeInsetCssPx <= 0) return
+                if (topChromeInsetCssPx <= 0) return
                 if (injectedForCurrentLoad && !force) return
                 injectedForCurrentLoad = true
                 suppressJavascriptLoadCallback = true
                 engineSession.injectViewportSpacers(
                     topPx = if (topPaddingFixActive) 0 else topChromeInsetCssPx,
-                    bottomPx = bottomChromeInsetCssPx,
                     skipHeaderInsets = topPaddingFixActive,
                 )
                 engineSession.injectPageZoom(pageZoomFactor)
@@ -268,15 +297,21 @@ fun ContentHost(
             }
             val observer = object : Observer {
                 override fun onLocationChange(url: String, hasUserGesture: Boolean) {
+                    android.util.Log.d("ReaderDbg", "onLocationChange tab=$tabId url=$url")
                     if (handleFirefoxAuthRedirect(url)) return
                     if (!url.startsWith("javascript:", ignoreCase = true)) {
+                        // A location change to the SAME url is a reload or a suspend/restore rebind,
+                        // not a real navigation. Only a genuine navigation to a different page should
+                        // drop reader state — preserving it across restore is what lets a suspended
+                        // reader tab come back into reader mode when it is re-selected.
+                        val navigatedAway = url != currentUrl
                         currentUrl = url
                         capturedLeavingUrl = null
                         injectedForCurrentLoad = false
                         amoInstallerInjectedForCurrentLoad = false
                         suppressJavascriptLoadCallback = false
                         injectAmoInstaller(url)
-                        if (tabId != null) {
+                        if (tabId != null && navigatedAway) {
                             com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.clearReaderState(tabId)
                         }
                     }
@@ -287,13 +322,22 @@ fun ContentHost(
                     injectAmoInstaller(currentUrl)
                     captureSnapshot(capturingUrl = currentUrl, deduped = true)
                     notifyPainted()
-                    if (tabId != null && !suppressJavascriptLoadCallback) {
+                    // Extract reader content as soon as the article paints, for fast auto-activation
+                    // (custom tabs jump into reader the instant this succeeds). This must NOT be gated
+                    // on !suppressJavascriptLoadCallback: injectSpacer() above already set that flag,
+                    // so the guard was always false and the FCP extraction never ran — auto-activation
+                    // then had to wait for the full onLoadingStateChange(loading=false) at load-complete,
+                    // which on resource-heavy pages (ads/trackers/streaming) can be tens of seconds.
+                    // A later load-complete extraction still runs as a fuller-DOM fallback. FCP fires
+                    // once per real navigation (javascript: injections don't paint), so no loop.
+                    if (tabId != null) {
                         suppressJavascriptLoadCallback = true
                         com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
                     }
                 }
 
                 override fun onLoadingStateChange(loading: Boolean) {
+                    android.util.Log.d("ReaderDbg", "onLoadingStateChange tab=$tabId loading=$loading suppress=$suppressJavascriptLoadCallback url=$currentUrl")
                     if (suppressJavascriptLoadCallback) {
                         if (!loading) suppressJavascriptLoadCallback = false
                         return
@@ -475,4 +519,20 @@ fun ContentHost(
             }
         }
     }
+}
+
+/**
+ * Depth-first search for the [org.mozilla.geckoview.GeckoView] inside an [EngineView]'s view tree.
+ * mozilla-components' `GeckoEngineView` is a FrameLayout wrapping a `NestedGeckoView` (a GeckoView
+ * subclass); the child isn't publicly accessible, so we locate it by type to reach GeckoView's
+ * public `coverUntilFirstPaint`.
+ */
+private fun findGeckoView(root: android.view.View): org.mozilla.geckoview.GeckoView? {
+    if (root is org.mozilla.geckoview.GeckoView) return root
+    if (root is android.view.ViewGroup) {
+        for (i in 0 until root.childCount) {
+            findGeckoView(root.getChildAt(i))?.let { return it }
+        }
+    }
+    return null
 }

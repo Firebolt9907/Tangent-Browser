@@ -1,8 +1,6 @@
 package com.firebolt9907.luminabrowser.state
 
 import java.net.URI
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,6 +27,9 @@ class GeckoTabRepository(
     private val tabsUseCases: TabsUseCases,
     private val persistence: TabPersistence? = null,
     private val scope: CoroutineScope? = null,
+    // Resolves the user's current search engine at call time, so a settings change takes effect
+    // immediately for the next typed search without rebuilding the repository.
+    private val searchEngine: () -> SearchEngine = { SearchEngine.DEFAULT },
 ) : TabRepository {
 
     private val _tabs = MutableStateFlow(store.state.toLuminaTabs())
@@ -84,7 +85,7 @@ class GeckoTabRepository(
         var selectedId: String? = null
         persisted.forEach { tab ->
             val id = tabsUseCases.addTab.invoke(
-                url = normalizeUrl(tab.url),
+                url = normalizeUrl(tab.url, searchEngine()),
                 selectTab = false,
                 title = tab.title,
             )
@@ -103,7 +104,9 @@ class GeckoTabRepository(
             val selected = store.state.selectedTabId
             val now = System.currentTimeMillis()
             val snapshot = store.state.tabs
-                .filter { it.content.url.isNotBlank() && it.content.url != "about:blank" }
+                .filter {
+                    it.content.url.isNotBlank() && it.content.url != "about:blank"
+                }
                 .map { tab ->
                     TabPersistence.PersistedTab(
                         url = tab.content.url,
@@ -130,11 +133,11 @@ class GeckoTabRepository(
 
     override fun loadUrl(url: String, tabId: String?) {
         val selectedId = tabId ?: store.state.selectedTabId ?: return
-        sessionUseCases.loadUrl.invoke(normalizeUrl(url), sessionId = selectedId)
+        sessionUseCases.loadUrl.invoke(normalizeUrl(url, searchEngine()), sessionId = selectedId)
     }
 
     override fun addTab(url: String, title: String): String =
-        tabsUseCases.addTab.invoke(url = normalizeUrl(url), selectTab = true, title = title)
+        tabsUseCases.addTab.invoke(url = normalizeUrl(url, searchEngine()), selectTab = true, title = title)
 
     fun addPreparedTab(
         url: String,
@@ -144,7 +147,7 @@ class GeckoTabRepository(
         selectTab: Boolean = true,
     ): String =
         tabsUseCases.addTab.invoke(
-            url = normalizeUrl(url),
+            url = normalizeUrl(url, searchEngine()),
             selectTab = selectTab,
             parentId = parentId,
             title = title,
@@ -197,15 +200,14 @@ class GeckoTabRepository(
 /**
  * Resolve a user-typed address bar input to a loadable URL.
  * Empty → `about:blank`; explicit scheme → unchanged; host-like → `https://` prepended;
- * everything else → Google search URL.
+ * everything else → the [engine]'s search URL.
  */
-internal fun normalizeUrl(input: String): String {
+internal fun normalizeUrl(input: String, engine: SearchEngine = SearchEngine.DEFAULT): String {
     val trimmed = input.trim()
     if (trimmed.isEmpty()) return "about:blank"
     if (trimmed.hasExplicitScheme()) return trimmed
     if (trimmed.looksLikeWebsite()) return "https://$trimmed"
-    val encodedQuery = URLEncoder.encode(trimmed, StandardCharsets.UTF_8.toString())
-    return "https://www.google.com/search?q=$encodedQuery"
+    return engine.searchUrl(trimmed)
 }
 
 private fun String.hasExplicitScheme(): Boolean =

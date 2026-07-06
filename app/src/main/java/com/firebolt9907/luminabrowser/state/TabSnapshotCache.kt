@@ -21,6 +21,10 @@ import kotlinx.coroutines.launch
 class TabSnapshotCache(
     cacheDir: File,
     private val maxEntries: Int = 16,
+    // Resident bitmaps dominate the app's heap, so the in-memory LRU is capped well below the disk
+    // LRU. Evicted entries reload transparently from disk on the next [get]. Keep enough for the
+    // foreground tab plus its immediate neighbours (used as predictive-back / tab-switch covers).
+    private val maxMemoryEntries: Int = 6,
 ) {
     private val directory = File(cacheDir, "tab_snapshots")
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -28,9 +32,9 @@ class TabSnapshotCache(
     private val _version = MutableStateFlow(0)
     val version: StateFlow<Int> = _version.asStateFlow()
 
-    private val memoryCache = object : LinkedHashMap<String, Bitmap>(maxEntries, 0.75f, true) {
+    private val memoryCache = object : LinkedHashMap<String, Bitmap>(maxMemoryEntries, 0.75f, true) {
         override fun removeEldestEntry(eldest: Map.Entry<String, Bitmap>): Boolean {
-            return size > maxEntries
+            return size > maxMemoryEntries
         }
     }
     private val pendingDiskLoads = HashSet<String>()
@@ -56,7 +60,11 @@ class TabSnapshotCache(
     @Synchronized
     fun put(id: String, bitmap: Bitmap, url: String = "") {
         val key = snapshotKey(id, url)
-        memoryCache[key] = bitmap
+        // captureThumbnail yields a full-screen ARGB_8888 bitmap (~10 MB). Web captures are opaque,
+        // so store the resident copy as RGB_565 to halve heap use; the caller keeps its own ARGB
+        // reference for the immediate cover, which is GC'd once the transition ends.
+        val stored = bitmap.toResidentConfig()
+        memoryCache[key] = stored
         missedDiskKeys.remove(key)
         // Only bump version when the bitmap is a new instance for this key, to avoid
         // invalidating all snapshot-keyed `remember` blocks on redundant puts.
@@ -68,8 +76,18 @@ class TabSnapshotCache(
         val shouldPrune = (System.currentTimeMillis() - lastPruneAtMs) > pruneIntervalMs
         if (shouldPrune) lastPruneAtMs = System.currentTimeMillis()
         ioScope.launch {
-            writeToDisk(key, bitmap)
+            writeToDisk(key, stored)
             if (shouldPrune) pruneDisk()
+        }
+    }
+
+    /** A 565 copy for in-memory/disk storage; falls back to the original if the copy fails (OOM). */
+    private fun Bitmap.toResidentConfig(): Bitmap {
+        if (config == Bitmap.Config.RGB_565) return this
+        return try {
+            copy(Bitmap.Config.RGB_565, false) ?: this
+        } catch (_: OutOfMemoryError) {
+            this
         }
     }
 
@@ -77,7 +95,10 @@ class TabSnapshotCache(
         if (!pendingDiskLoads.add(key)) return
         ioScope.launch {
             val bitmap = runCatching {
-                BitmapFactory.decodeFile(fileForKey(key).absolutePath)
+                val opts = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                }
+                BitmapFactory.decodeFile(fileForKey(key).absolutePath, opts)
             }.getOrNull()
             synchronized(this@TabSnapshotCache) {
                 pendingDiskLoads.remove(key)
@@ -101,6 +122,28 @@ class TabSnapshotCache(
         ioScope.launch {
             fileForKey(key).delete()
         }
+    }
+
+    /**
+     * Release in-memory thumbnails on system memory pressure. Every cached bitmap has already been
+     * (or is being) written to disk, so a later [get] transparently reloads it via the disk-decode
+     * path — we only give up RAM, not the snapshots themselves. Called from
+     * [com.firebolt9907.luminabrowser.LuminaApplication.onTrimMemory].
+     *
+     * At moderate pressure we keep the most-recently-used entry (typically the foreground tab, whose
+     * thumbnail would otherwise flash on the next grid open); at higher pressure we drop everything.
+     */
+    @Synchronized
+    fun trimMemory(level: Int) {
+        if (memoryCache.isEmpty()) return
+        // At/above BACKGROUND the process is in the kill zone, so drop everything; for lighter
+        // signals (e.g. UI_HIDDEN) keep the most-recently-used entry — usually the foreground tab,
+        // whose cover would otherwise flash on the next tab switch. LinkedHashMap is access-ordered,
+        // so the last key is the MRU.
+        val dropAll = level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+        val survivor = if (dropAll) null else memoryCache.keys.lastOrNull()
+        val removed = memoryCache.keys.retainAll(setOfNotNull(survivor))
+        if (removed) _version.value = _version.value + 1
     }
 
     private fun writeToDisk(key: String, bitmap: Bitmap) {

@@ -6,10 +6,15 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -23,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
@@ -39,9 +45,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 
 val GridSideMarginDp = 16.dp
@@ -135,7 +143,10 @@ fun TabGridOverlay(
     val haptics = LocalHapticFeedback.current
     val sideMarginPx = with(density) { GridSideMarginDp.toPx() }
     val topMarginPx = with(density) { GridTopMarginDp.toPx() }
-    val bottomMarginPx = with(density) { GridBottomMarginDp.toPx() }
+    // Add the system navigation-bar inset so the last row scrolls clear of the gesture bar / taskbar
+    // instead of being tucked under it.
+    val navBarPx = WindowInsets.navigationBars.getBottom(density)
+    val bottomMarginPx = with(density) { GridBottomMarginDp.toPx() } + navBarPx
     val gapPx = with(density) { GridGapDp.toPx() }
     // Cell clip radius is in the card's *unscaled* (full-container) space and is then shrunk by the
     // cell's scale (~0.44), so this is intentionally large to land at a generous on-screen radius.
@@ -163,32 +174,42 @@ fun TabGridOverlay(
     val contentHeightPx = rawContentHeightPx.coerceAtLeast(containerH)
     val contentHeightDp = with(density) { contentHeightPx.toDp() }
 
-    val scrollState = rememberScrollState()
+    // Seed the scroll position so the selected tab is already in view as the grid opens. The grid is
+    // only composed while engaged, so every open re-enters this composable with a fresh scrollState;
+    // without the seed the open animation lays cells out at scroll 0 and a tab deep in a long list
+    // animates to an off-screen cell, then gets dragged back by the post-open centering scroll (the
+    // jump we want to avoid). We seed the same centered target that post-open centering settles on,
+    // so that effect finds the cell already fully visible and no-ops.
+    val initialScroll = run {
+        val selectedIndex = tabs.indexOfFirst { it.id == selectedTabId }.coerceAtLeast(0)
+        val cell = gridCellRect(
+            index = selectedIndex,
+            containerSize = containerSize,
+            columns = GridColumns,
+            horizontalGapPx = gapPx,
+            verticalGapPx = gapPx,
+            sideMarginPx = sideMarginPx,
+            topMarginPx = topMarginPx,
+        )
+        val maxScroll = (contentHeightPx - containerH).coerceAtLeast(0f)
+        (cell.top + cell.height / 2f - containerH / 2f).coerceIn(0f, maxScroll).toInt()
+    }
+    val scrollState = rememberScrollState(initial = initialScroll)
     // Only allow scrolling once the grid is essentially fully open — during the open animation
     // the scroll offset must stay 0 so cells land in their target cells, not in scrolled positions.
     val scrollEnabled = !isGesture && commitFromProgress == 0f && cancelFromProgress == 0f &&
         progress >= 0.999f
 
-    // Pre-position scroll when the grid is fully closed so the selected tab is visible the next
-    // time the grid opens. We set scroll only when progress≈0 and no gesture/spring is running,
-    // so the scroll change is invisible and the ty lerp starts from the correct offset.
-    // Setting it while progress>0 would shift the lerp midway and cause tabs to teleport.
+    // Re-assert the seeded scroll for paths that enter at progress≈0 without a gesture (e.g. a
+    // button-open whose spring hasn't moved yet): keep it on the same centered target the seed and
+    // post-open centering use, so all three agree and the selected tab stays centered as it opens.
+    // Only runs while progress≈0 with no gesture/spring, so the scroll change is invisible and the
+    // ty lerp starts from the correct offset; setting it while progress>0 would teleport tabs.
     val gridIsClosed = progress < 0.001f && !isGesture &&
         commitFromProgress == 0f && cancelFromProgress == 0f
     LaunchedEffect(gridIsClosed, selectedTabId) {
         if (gridIsClosed) {
-            val selectedIndex = tabs.indexOfFirst { it.id == selectedTabId }.coerceAtLeast(0)
-            val cell = gridCellRect(
-                index = selectedIndex,
-                containerSize = containerSize,
-                columns = GridColumns,
-                horizontalGapPx = gapPx,
-                verticalGapPx = gapPx,
-                sideMarginPx = sideMarginPx,
-                topMarginPx = topMarginPx,
-            )
-            val targetScroll = (cell.top - topMarginPx).coerceAtLeast(0f).toInt()
-            scrollState.scrollTo(targetScroll)
+            scrollState.scrollTo(initialScroll)
         }
     }
 
@@ -373,14 +394,29 @@ fun TabGridOverlay(
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center,
+                            // No snapshot yet — show a simple placeholder. Sizes are in the cell's
+                            // unscaled space (~0.44x on screen), hence the large values.
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
                             ) {
+                                Icon(
+                                    imageVector = Icons.Default.Public,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(72.dp),
+                                )
+                                Spacer(Modifier.height(12.dp))
                                 Text(
-                                    text = tab.title.ifBlank { tab.url },
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    text = tabLabel,
                                     color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 30.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
@@ -543,14 +579,27 @@ fun TabGridOverlay(
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
-                            // Layout size is in the cell's unscaled coordinate space (~0.44x at runtime),
-                            // so 96.dp in layout ≈ 42.dp visible on screen.
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "New tab",
-                                tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(96.dp),
-                            )
+                            // Content sits in the cell's unscaled coordinate space (~0.44x at
+                            // runtime), so sizes here are ~2.3x their on-screen appearance:
+                            // 96.dp icon ≈ 42.dp, 40.sp label ≈ 17.sp on screen.
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(96.dp),
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = "New Tab",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 40.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
                         }
                     }
                 }

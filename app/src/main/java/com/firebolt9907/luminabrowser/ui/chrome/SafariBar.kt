@@ -46,7 +46,7 @@ fun SafariBar(
     collapseProgress: Float = 0f,
     isReaderEligible: Boolean = false,
     isReaderActive: Boolean = false,
-    readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme = com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.White,
+    readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme = com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.System,
 ) {
     val barHeight = if (state.mode == BarMode.Editing) {
         BottomBarEditingHeight
@@ -67,8 +67,10 @@ fun SafariBar(
                 (fadeIn(spring(stiffness = Spring.StiffnessMediumLow)) togetherWith
                     fadeOut(spring(stiffness = Spring.StiffnessMediumLow)))
                     .using(SizeTransform(clip = false) { _, _ ->
+                        // Safari's bar morph between compact/expanded is crisp with only a faint
+                        // settle — MediumBouncy overshot rubberily. LowBouncy keeps a hint of life.
                         spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            dampingRatio = Spring.DampingRatioLowBouncy,
                             stiffness = Spring.StiffnessMediumLow,
                         )
                     })

@@ -25,7 +25,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.size
@@ -50,6 +51,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.unit.Dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -94,7 +97,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -284,6 +286,7 @@ private data class QuickAction(
     val onClick: () -> Unit,
 )
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PageTabContent(
     host: String,
@@ -299,12 +302,15 @@ private fun PageTabContent(
     pageIcon: android.graphics.Bitmap? = null,
 ) {
     val context = LocalContext.current
+    @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
     val bookmarkScope = rememberCoroutineScope()
     val initial = remember(host) { store.get(host) }
     var zoomFactor by remember(host) { mutableFloatStateOf(initial.zoomFactor) }
     var topPaddingFix by remember(host) { mutableStateOf(initial.topPaddingFix) }
     var desktopMode by remember(host) { mutableStateOf(initial.desktopMode) }
+    var useGoogleCache by remember { mutableStateOf(globalPrefsStore.useGoogleCache) }
+    var showDebugCacheToggle by remember { mutableStateOf(false) }
     val canEdit = host.isNotEmpty()
 
     // null = not set, "" = Default browser, "com.foo" = specific app
@@ -504,6 +510,7 @@ private fun PageTabContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp)
             .padding(top = 12.dp, bottom = 28.dp),
     ) {
@@ -564,21 +571,43 @@ private fun PageTabContent(
             Spacer(Modifier.height(18.dp))
             TextButton(
                 onClick = {
-                    // Remember the choice per-domain so future pages on this site honor it.
                     val readerHost = hostFromUrl(pageUrl)
                     if (isActive) {
-                        tabId?.let { readerManager.setReaderActive(it, false) }
+                        tabId?.let {
+                            val originalUrl = readerManager.getOriginalUrl(it)
+                            if (originalUrl != null) {
+                                readerManager.setRestoring(it, true)
+                                engineSession?.loadUrl(originalUrl)
+                                readerManager.setOriginalUrl(it, null)
+                            }
+                            readerManager.setReaderActive(it, false)
+                        }
                         store.setReaderPreferred(readerHost, false)
                         readerPreferred = false
                     } else if (isEligible) {
-                        tabId?.let { readerManager.setReaderActive(it, true) }
+                        tabId?.let {
+                            if (readerManager.useGoogleCache.value && com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(pageUrl)) {
+                                readerManager.requestReaderActivation(it)
+                                readerManager.setOriginalUrl(it, pageUrl)
+                                val cacheUrl = com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(pageUrl)
+                                engineSession?.loadUrl(cacheUrl)
+                            } else {
+                                readerManager.setReaderActive(it, true)
+                            }
+                        }
                         store.setReaderPreferred(readerHost, true)
                         readerPreferred = true
                     } else if (tabId != null && engineSession != null && !isPending) {
                         readerManager.requestReaderActivation(tabId)
                         store.setReaderPreferred(readerHost, true)
                         readerPreferred = true
-                        com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
+                        if (readerManager.useGoogleCache.value && com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(pageUrl)) {
+                            readerManager.setOriginalUrl(tabId, pageUrl)
+                            val cacheUrl = com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(pageUrl)
+                            engineSession.loadUrl(cacheUrl)
+                        } else {
+                            com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -779,19 +808,17 @@ private fun PageTabContent(
         Spacer(Modifier.height(8.dp))
         CollapsibleSection(
             title = "Page Settings",
-            expanded = pageSettingsExpanded,
+            expanded = pageSettingsExpanded || isActive,
             onToggle = { pageSettingsExpanded = !pageSettingsExpanded },
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .toggleable(
-                        value = topPaddingFix,
+                    .combinedClickable(
                         enabled = canEdit,
-                        role = Role.Switch,
-                        onValueChange = {
-                            topPaddingFix = it
-                            persist(top = it)
+                        onClick = {
+                            topPaddingFix = !topPaddingFix
+                            persist(top = topPaddingFix)
                         },
                     ),
                 verticalAlignment = Alignment.CenterVertically,
@@ -807,7 +834,6 @@ private fun PageTabContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                // Row owns the toggle (and a11y); switch is visual-only to avoid a double-toggle.
                 Switch(
                     checked = topPaddingFix,
                     onCheckedChange = null,
@@ -820,15 +846,12 @@ private fun PageTabContent(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .toggleable(
-                        value = desktopMode,
+                    .combinedClickable(
                         enabled = canEdit,
-                        role = Role.Switch,
-                        onValueChange = {
-                            desktopMode = it
-                            persist(desktop = it)
-                            // Apply immediately to the live session and reload so the new UA takes hold.
-                            engineSession?.toggleDesktopMode(it, reload = true)
+                        onClick = {
+                            desktopMode = !desktopMode
+                            persist(desktop = desktopMode)
+                            engineSession?.toggleDesktopMode(desktopMode, reload = true)
                         },
                     ),
                 verticalAlignment = Alignment.CenterVertically,
@@ -849,6 +872,72 @@ private fun PageTabContent(
                     onCheckedChange = null,
                     enabled = canEdit,
                 )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(
+                        enabled = canEdit,
+                        onClick = {
+                            useGoogleCache = !useGoogleCache
+                            globalPrefsStore.useGoogleCache = useGoogleCache
+                            readerManager.setUseGoogleCache(useGoogleCache)
+                        },
+                        onLongClick = { showDebugCacheToggle = !showDebugCacheToggle },
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Bypass via Google Cache",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        text = "Load reader content from Google's scraper cache",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = useGoogleCache,
+                    onCheckedChange = null,
+                    enabled = canEdit,
+                )
+            }
+
+            if (showDebugCacheToggle) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(
+                            enabled = canEdit,
+                            onClick = {
+                                globalPrefsStore.debugCacheHtml = !globalPrefsStore.debugCacheHtml
+                            },
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Debug: show parsed HTML",
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Text(
+                            text = "Type debug:cache in address bar to inspect raw HTML",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = globalPrefsStore.debugCacheHtml,
+                        onCheckedChange = null,
+                        enabled = canEdit,
+                    )
+                }
             }
         }
 

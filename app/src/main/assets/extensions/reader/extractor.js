@@ -215,6 +215,29 @@
       }
       return false;
     }
+    function isPullQuote(el) {
+      if (!el || el.nodeType !== 1) return false;
+      var PULLQUOTE_RE = /pull[-_]?quote|large[-_]?quote|featured[-_]?quote|accent[-_]?quote|highlight[-_]?quote|big[-_]?quote|inline[-_]?callout|article[-_]?callout/i;
+      var cls = el.className || '';
+      var dataAttr = el.getAttribute('data-pullquote') || el.getAttribute('data-quote') || '';
+      if (PULLQUOTE_RE.test(cls) || dataAttr) return true;
+      if (el.closest && el.closest('[data-pullquote]')) return true;
+      var text = textOf(el);
+      if (text.length < 10 || text.length > 300) return false;
+      try {
+        var bodyStyle = window.getComputedStyle(document.body);
+        var bodySize = parseFloat(bodyStyle.fontSize) || 16;
+        var bqStyle = window.getComputedStyle(el);
+        var bqSize = parseFloat(bqStyle.fontSize) || 0;
+        if (bqSize >= bodySize * 1.4) return true;
+        var innerP = el.querySelector('p');
+        if (innerP) {
+          var pSize = parseFloat(window.getComputedStyle(innerP).fontSize) || 0;
+          if (pSize >= bodySize * 1.4) return true;
+        }
+      } catch (e) {}
+      return false;
+    }
     function linkDensity(el) {
       var total = el.textContent.trim().length;
       if (total === 0) return 1;
@@ -234,6 +257,76 @@
         for (var n of src.querySelectorAll('script, style, noscript, template')) n.remove();
       }
       return (src.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+    function richTextOf(el) {
+      if (!el) return [];
+      var src = el;
+      if (el.querySelector && el.querySelector('script, style, noscript, template')) {
+        src = el.cloneNode(true);
+        for (var n of src.querySelectorAll('script, style, noscript, template')) n.remove();
+      }
+      var spans = [];
+      function walkNode(node) {
+        if (!node) return;
+        if (node.nodeType === 3) {
+          var t = node.textContent;
+          if (t) {
+            spans.push({ text: t, href: null });
+          }
+        } else if (node.nodeType === 1) {
+          if (node.nodeName === 'A') {
+            var rawHref = node.getAttribute('href');
+            var resolvedHref = null;
+            if (rawHref) {
+              var lowHref = rawHref.trim().toLowerCase();
+              if (!lowHref.startsWith('javascript:') && !lowHref.startsWith('mailto:') && !lowHref.startsWith('tel:')) {
+                try {
+                  resolvedHref = new URL(rawHref, location.href).href;
+                } catch (e) {
+                  resolvedHref = rawHref;
+                }
+              }
+            }
+            if (resolvedHref) {
+              var linkText = (node.textContent || '').replace(/\s+/g, ' ').trim();
+              spans.push({ text: linkText, href: resolvedHref });
+            } else {
+              var txt = node.textContent || '';
+              if (txt) {
+                spans.push({ text: txt, href: null });
+              }
+            }
+          } else {
+            for (var c of node.childNodes) {
+              walkNode(c);
+            }
+          }
+        }
+      }
+      for (var c of src.childNodes) {
+        walkNode(c);
+      }
+      var mergedSpans = [];
+      for (var s of spans) {
+        if (s.href === null) {
+          if (mergedSpans.length > 0 && mergedSpans[mergedSpans.length - 1].href === null) {
+            mergedSpans[mergedSpans.length - 1].text += s.text;
+          } else {
+            mergedSpans.push({ text: s.text, href: null });
+          }
+        } else {
+          s.text = s.text.replace(/\s+/g, ' ').trim();
+          if (s.text) {
+            mergedSpans.push(s);
+          }
+        }
+      }
+      for (var i = 0; i < mergedSpans.length; i++) {
+        if (mergedSpans[i].href === null) {
+          mergedSpans[i].text = mergedSpans[i].text.replace(/\s+/g, ' ');
+        }
+      }
+      return mergedSpans;
     }
     function codeText(el) {
       if (!el) return '';
@@ -319,7 +412,8 @@
         if (linkDensity(node) > 0.7) return;
         var text = textOf(node);
         if (text.length > 0 && !isTitleDup(text)) {
-          blocks.push({ type: 'p', text: text });
+          var spans = richTextOf(node);
+          blocks.push({ type: 'p', text: text, spans: spans });
         }
       } else if (/^H[1-6]$/.test(name)) {
         var level = parseInt(name.substring(1));
@@ -330,7 +424,7 @@
       } else if (name === 'BLOCKQUOTE') {
         var bqtext = textOf(node);
         if (bqtext.length > 0) {
-          blocks.push({ type: 'bq', text: bqtext });
+          blocks.push({ type: 'bq', text: bqtext, pullQuote: isPullQuote(node) });
         }
       } else if (name === 'FIGURE') {
         var fb = figureBlock(node);
@@ -383,13 +477,16 @@
         } else if (el.nodeName === 'P') {
           if (linkDensity(el) > 0.7) return;
           var ptext = textOf(el);
-          if (ptext.length > 0 && !isTitleDup(ptext)) blocks.push({ type: 'p', text: ptext });
+          if (ptext.length > 0 && !isTitleDup(ptext)) {
+            var pspans = richTextOf(el);
+            blocks.push({ type: 'p', text: ptext, spans: pspans });
+          }
         } else if (/^H[1-6]$/.test(el.nodeName)) {
           var htext = textOf(el);
           if (htext.length > 0 && !isTitleDup(htext)) blocks.push({ type: 'h', level: parseInt(el.nodeName.substring(1)), text: htext });
         } else if (el.nodeName === 'BLOCKQUOTE') {
           var bqtext = textOf(el);
-          if (bqtext.length > 0) blocks.push({ type: 'bq', text: bqtext });
+          if (bqtext.length > 0) blocks.push({ type: 'bq', text: bqtext, pullQuote: isPullQuote(el) });
         } else if (el.nodeName === 'UL' || el.nodeName === 'OL') {
           if (el.parentElement && el.parentElement.closest('ul, ol')) return;
           pushList(el, 0);

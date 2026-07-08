@@ -24,7 +24,7 @@ class TabSnapshotCache(
     // Resident bitmaps dominate the app's heap, so the in-memory LRU is capped well below the disk
     // LRU. Evicted entries reload transparently from disk on the next [get]. Keep enough for the
     // foreground tab plus its immediate neighbours (used as predictive-back / tab-switch covers).
-    private val maxMemoryEntries: Int = 6,
+    private val maxMemoryEntries: Int = 24,
 ) {
     private val directory = File(cacheDir, "tab_snapshots")
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

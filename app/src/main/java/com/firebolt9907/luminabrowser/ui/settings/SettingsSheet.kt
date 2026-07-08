@@ -2,7 +2,9 @@ package com.firebolt9907.luminabrowser.ui.settings
 
 import android.widget.Toast
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -59,6 +61,7 @@ fun SettingsSheet(
     var searchSuggestionsEnabled by remember { mutableStateOf(globalPrefsStore.searchSuggestionsEnabled) }
     var httpCacheSizeMb by remember { mutableStateOf(globalPrefsStore.httpCacheSizeMb) }
     var preloadMode by remember { mutableStateOf(globalPrefsStore.preloadMode) }
+    var useGoogleCache by remember { mutableStateOf(globalPrefsStore.useGoogleCache) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -67,6 +70,7 @@ fun SettingsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
         ) {
@@ -197,6 +201,24 @@ fun SettingsSheet(
                             preloadMode = mode
                             globalPrefsStore.preloadMode = mode
                         }
+                    },
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            SheetSectionHeader("Reader Mode")
+            Spacer(Modifier.height(8.dp))
+            SheetCard {
+                SettingsToggle(
+                    title = "Bypass via Google Cache",
+                    subtitle = "Load articles from Google's search scraper cache for faster speeds and tracker removal",
+                    checked = useGoogleCache,
+                    onCheckedChange = {
+                        useGoogleCache = it
+                        globalPrefsStore.useGoogleCache = it
+                        com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.setUseGoogleCache(it)
+                        onSettingChanged()
                     },
                 )
             }

@@ -16,11 +16,19 @@ data class ReaderArticle(
     val sourceUrl: String? = null,
 )
 
+data class ReaderLinkSpan(
+    val text: String,
+    val href: String,
+)
+
 sealed class ReaderBlock {
     data class Heading(val level: Int, val text: String) : ReaderBlock()
-    data class Paragraph(val text: String) : ReaderBlock()
+    data class Paragraph(
+        val text: String,
+        val links: List<ReaderLinkSpan> = emptyList(),
+    ) : ReaderBlock()
     data class ListItem(val text: String, val ordered: Boolean, val index: Int = 0, val depth: Int = 0) : ReaderBlock()
-    data class Blockquote(val text: String) : ReaderBlock()
+    data class Blockquote(val text: String, val pullQuote: Boolean = false) : ReaderBlock()
     /** A `<pre>`/code block. [text] preserves the original line breaks and indentation. */
     data class Code(val text: String) : ReaderBlock()
     /** A data table. [rows] is row-major cell text; [hasHeader] marks the first row as headers. */
@@ -61,6 +69,15 @@ class ReaderManager {
     private val _fontName = MutableStateFlow("System") // System, Georgia, Charter, Athelas
     val fontName: StateFlow<String> = _fontName.asStateFlow()
 
+    private val _useGoogleCache = MutableStateFlow(false)
+    val useGoogleCache: StateFlow<Boolean> = _useGoogleCache.asStateFlow()
+
+    private val _originalUrls = MutableStateFlow<Map<String, String>>(emptyMap())
+    val originalUrls: StateFlow<Map<String, String>> = _originalUrls.asStateFlow()
+
+    private val _restoringTabs = MutableStateFlow<Set<String>>(emptySet())
+    val restoringTabs: StateFlow<Set<String>> = _restoringTabs.asStateFlow()
+
     fun isReaderActive(tabId: String): Boolean = _activeReaderTabs.value.contains(tabId)
     
     fun isReaderEligible(tabId: String): Boolean = _eligibleReaderTabs.value.contains(tabId)
@@ -82,6 +99,8 @@ class ReaderManager {
     private val _pendingActivationTabs = MutableStateFlow<Set<String>>(emptySet())
     val pendingActivationTabs: StateFlow<Set<String>> = _pendingActivationTabs.asStateFlow()
 
+    fun isReaderPending(tabId: String): Boolean = _pendingActivationTabs.value.contains(tabId)
+
     fun requestReaderActivation(tabId: String) {
         _pendingActivationTabs.update { it + tabId }
     }
@@ -101,6 +120,8 @@ class ReaderManager {
         _activeReaderTabs.update { it - tabId }
         _eligibleReaderTabs.update { it - tabId }
         _tabArticles.update { it - tabId }
+        _originalUrls.update { it - tabId }
+        _restoringTabs.update { it - tabId }
         // If this tab was being read aloud, its content is now stale — stop TTS.
         PageSpeaker.stopForTab(tabId)
     }
@@ -117,8 +138,39 @@ class ReaderManager {
         _fontName.value = newFont
     }
 
+    fun setUseGoogleCache(enabled: Boolean) {
+        _useGoogleCache.value = enabled
+    }
+
+    fun setOriginalUrl(tabId: String, url: String?) {
+        _originalUrls.update { current ->
+            if (url == null) current - tabId else current + (tabId to url)
+        }
+    }
+
+    fun getOriginalUrl(tabId: String): String? = _originalUrls.value[tabId]
+
+    fun setRestoring(tabId: String, restoring: Boolean) {
+        _restoringTabs.update { if (restoring) it + tabId else it - tabId }
+    }
+
+    fun isRestoring(tabId: String): Boolean = _restoringTabs.value.contains(tabId)
+
     companion object {
         val instance = ReaderManager()
     }
+}
+
+fun shouldRedirectToGoogleCache(url: String): Boolean {
+    return (url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)) &&
+            !url.startsWith("https://webcache.googleusercontent.com/", ignoreCase = true)
+}
+
+fun getGoogleCacheUrl(originalUrl: String): String {
+    if (originalUrl.startsWith("https://webcache.googleusercontent.com/")) {
+        return originalUrl
+    }
+    val encoded = runCatching { java.net.URLEncoder.encode(originalUrl, "UTF-8") }.getOrDefault(originalUrl)
+    return "https://webcache.googleusercontent.com/search?q=cache:$encoded"
 }
 

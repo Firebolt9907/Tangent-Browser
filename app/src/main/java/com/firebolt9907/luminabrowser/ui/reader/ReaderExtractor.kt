@@ -70,6 +70,7 @@ object ReaderExtractor {
     internal fun buildReaderExtractorScript(): String {
         return """
             javascript:(function() {
+                function luminaExtract() {
                 /* Hand the extracted article back to the app WITHOUT touching the page's own
                    window.prompt. Some sites (e.g. TechCrunch's anti-adblock) override window.prompt
                    with a function that pops their own wall / swallows the call, so a direct prompt()
@@ -309,7 +310,7 @@ object ReaderExtractor {
                 /* Share bars, breadcrumbs, related-links, newsletter/subscribe, comments, ads,
                    sponsor/affiliate widgets, image credits and category chips are all boilerplate
                    even when they live inside the article container. */
-                const BOILERPLATE_SEL = 'nav, aside, footer, form, [role="navigation"], [role="complementary"], [role="banner"], [role="contentinfo"], [class*="share" i], [class*="social" i], [class*="related" i], [class*="newsletter" i], [class*="subscribe" i], [class*="comment" i], [class*="breadcrumb" i], [class*="advert" i], [class*="sponsor" i], [class*="promo" i], [class*="credit" i], [class*="disclaimer" i], [class*="affiliate" i], [class*="hawk" i], [class*="category" i], [class*="toolbar" i]';
+                const BOILERPLATE_SEL = 'nav, aside, footer, form, [role="navigation"], [role="complementary"], [role="banner"], [role="contentinfo"], [class*="share" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="social" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="related" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="newsletter" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="subscribe" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="comment" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="breadcrumb" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="advert" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="sponsor" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="promo" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="credit" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="disclaimer" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="affiliate" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="hawk" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="category" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="toolbar" i]:not([class*="has-" i]):not([class*="with-" i])';
                 function isBoilerplate(el) {
                     if (!el || el.nodeType !== 1) return false;
                     /* Only inner wrappers count as boilerplate: walk up to (but not including) the
@@ -317,6 +318,10 @@ object ReaderExtractor {
                        hentry, etc.) don't wrongly disqualify the entire article body. */
                     let n = el;
                     while (n && n !== articleEl && n !== document.body && n.nodeType === 1) {
+                        if (n.nodeName === 'ARTICLE' || n.nodeName === 'MAIN') {
+                            n = n.parentElement;
+                            continue;
+                        }
                         if (n.matches(BOILERPLATE_SEL)) return true;
                         n = n.parentElement;
                     }
@@ -346,6 +351,76 @@ object ReaderExtractor {
                         for (let n of src.querySelectorAll('script, style, noscript, template')) n.remove();
                     }
                     return (src.textContent || '').replace(/\s+/g, ' ').trim();
+                }
+                function richTextOf(el) {
+                    if (!el) return [];
+                    let src = el;
+                    if (el.querySelector && el.querySelector('script, style, noscript, template')) {
+                        src = el.cloneNode(true);
+                        for (let n of src.querySelectorAll('script, style, noscript, template')) n.remove();
+                    }
+                    var spans = [];
+                    function walkNode(node) {
+                        if (!node) return;
+                        if (node.nodeType === 3) {
+                            var t = node.textContent;
+                            if (t) {
+                                spans.push({ text: t, href: null });
+                            }
+                        } else if (node.nodeType === 1) {
+                            if (node.nodeName === 'A') {
+                                var rawHref = node.getAttribute('href');
+                                var resolvedHref = null;
+                                if (rawHref) {
+                                    var lowHref = rawHref.trim().toLowerCase();
+                                    if (!lowHref.startsWith('javascript:') && !lowHref.startsWith('mailto:') && !lowHref.startsWith('tel:')) {
+                                        try {
+                                            resolvedHref = new URL(rawHref, location.href).href;
+                                        } catch (e) {
+                                            resolvedHref = rawHref;
+                                        }
+                                    }
+                                }
+                                if (resolvedHref) {
+                                    var linkText = (node.textContent || '').replace(/\s+/g, ' ').trim();
+                                    spans.push({ text: linkText, href: resolvedHref });
+                                } else {
+                                    var txt = node.textContent || '';
+                                    if (txt) {
+                                        spans.push({ text: txt, href: null });
+                                    }
+                                }
+                            } else {
+                                for (var c of node.childNodes) {
+                                    walkNode(c);
+                                }
+                            }
+                        }
+                    }
+                    for (var c of src.childNodes) {
+                        walkNode(c);
+                    }
+                    var mergedSpans = [];
+                    for (var s of spans) {
+                        if (s.href === null) {
+                            if (mergedSpans.length > 0 && mergedSpans[mergedSpans.length - 1].href === null) {
+                                mergedSpans[mergedSpans.length - 1].text += s.text;
+                            } else {
+                                mergedSpans.push({ text: s.text, href: null });
+                            }
+                        } else {
+                            s.text = s.text.replace(/\s+/g, ' ').trim();
+                            if (s.text) {
+                                mergedSpans.push(s);
+                            }
+                        }
+                    }
+                    for (var i = 0; i < mergedSpans.length; i++) {
+                        if (mergedSpans[i].href === null) {
+                            mergedSpans[i].text = mergedSpans[i].text.replace(/\s+/g, ' ');
+                        }
+                    }
+                    return mergedSpans;
                 }
                 /* Code/pre content must keep its line breaks and indentation, so unlike textOf it
                    does NOT collapse whitespace. Strip inline script/style, normalize CRLF, and trim
@@ -451,7 +526,8 @@ object ReaderExtractor {
                         if (linkDensity(node) > 0.7) return;
                         const text = textOf(node);
                         if (text.length > 0 && !isTitleDup(text)) {
-                            blocks.push({ type: 'p', text: text });
+                            const spans = richTextOf(node);
+                            blocks.push({ type: 'p', text: text, spans: spans });
                         }
                     } else if (/^H[1-6]${'$'}/.test(name)) {
                         const level = parseInt(name.substring(1));
@@ -518,7 +594,10 @@ object ReaderExtractor {
                         } else if (el.nodeName === 'P') {
                             if (linkDensity(el) > 0.7) return;
                             const text = textOf(el);
-                            if (text.length > 0 && !isTitleDup(text)) blocks.push({ type: 'p', text: text });
+                            if (text.length > 0 && !isTitleDup(text)) {
+                                const spans = richTextOf(el);
+                                blocks.push({ type: 'p', text: text, spans: spans });
+                            }
                         } else if (/^H[1-6]${'$'}/.test(el.nodeName)) {
                             const text = textOf(el);
                             if (text.length > 0 && !isTitleDup(text)) blocks.push({ type: 'h', level: parseInt(el.nodeName.substring(1)), text: text });
@@ -560,7 +639,52 @@ object ReaderExtractor {
                         url: location.href,
                         blocks: blocks
                     };
+                    /* Late-hydration guard. News SPAs (e.g. NYT's "optimistic truncation":
+                       isOptimisticallyTruncated) inject the tail of the article — bullet lists, later
+                       paragraphs — into the DOM AFTER load fires, so an extraction pass that runs at
+                       FCP or load-complete can capture a truncated body. The observer below re-runs
+                       this function as content grows; we keep only the RICHEST pass per URL, so a
+                       transient smaller re-render never clobbers a fuller article already handed off. */
+                    let luminaMeasure = 0;
+                    for (let li = 0; li < blocks.length; li++) {
+                        const lb = blocks[li];
+                        luminaMeasure += (lb && lb.text) ? lb.text.length : 24;
+                    }
+                    const luminaUrl = location.href;
+                    const luminaPrev = window.__luminaReaderBest;
+                    if (luminaPrev && luminaPrev.url === luminaUrl && luminaMeasure <= luminaPrev.len) {
+                        return;
+                    }
+                    window.__luminaReaderBest = { url: luminaUrl, len: luminaMeasure };
                     luminaBridge("lumina-reader", JSON.stringify(articleData));
+                }
+                }
+                luminaExtract();
+                /* Re-extract as late-arriving article content lands, then stop. Installed once per
+                   page (guarded) so repeated injections (FCP + load-complete + manual) and the
+                   observer's own re-runs never stack observers. A MutationObserver only marks the DOM
+                   dirty; a bounded interval does the actual (throttled) re-extraction, so a page that
+                   mutates continuously (ads) can't starve a debounce and also can't spin extraction
+                   every frame. The window self-terminates after ~12s. */
+                if (!window.__luminaReaderObserverInstalled) {
+                    window.__luminaReaderObserverInstalled = true;
+                    let luminaDirty = false;
+                    const luminaObserver = new MutationObserver(function() { luminaDirty = true; });
+                    try {
+                        luminaObserver.observe(document.body || document.documentElement, { childList: true, subtree: true, characterData: true });
+                    } catch (e) {}
+                    let luminaTicks = 0;
+                    const luminaTimer = setInterval(function() {
+                        luminaTicks++;
+                        if (luminaDirty) {
+                            luminaDirty = false;
+                            try { luminaExtract(); } catch (e) {}
+                        }
+                        if (luminaTicks >= 15) {
+                            clearInterval(luminaTimer);
+                            try { luminaObserver.disconnect(); } catch (e) {}
+                        }
+                    }, 800);
                 }
             })();
         """.trimIndent().replace("\n", " ")
@@ -574,6 +698,12 @@ object ReaderExtractor {
             session: GeckoSession,
             prompt: GeckoSession.PromptDelegate.TextPrompt
         ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? {
+            if (prompt.message == "lumina-video") {
+                prompt.defaultValue?.let {
+                    com.firebolt9907.luminabrowser.ui.video.VideoPlayerManager.onStatePayload(it)
+                }
+                return GeckoResult.fromValue(prompt.confirm("ok"))
+            }
             if (prompt.message == "lumina-reader") {
                 val defaultValue = prompt.defaultValue
                 if (defaultValue != null) {
@@ -641,7 +771,20 @@ object ReaderExtractor {
             when (type) {
                 "p" -> {
                     val text = obj.optString("text")
-                    blocks.add(ReaderBlock.Paragraph(text))
+                    val spansJson = obj.optJSONArray("spans")
+                    val spans = if (spansJson != null) {
+                        ArrayList<ReaderLinkSpan>(spansJson.length()).apply {
+                            for (s in 0 until spansJson.length()) {
+                                val spanObj = spansJson.optJSONObject(s) ?: continue
+                                val spanText = spanObj.optString("text", "")
+                                val href = spanObj.optString("href", "")
+                                if (spanText.isNotEmpty() && href.isNotEmpty() && href != "null") {
+                                    add(ReaderLinkSpan(spanText, href))
+                                }
+                            }
+                        }
+                    } else emptyList()
+                    blocks.add(ReaderBlock.Paragraph(text, spans))
                 }
                 "h" -> {
                     val level = obj.optInt("level", 2)
@@ -650,7 +793,8 @@ object ReaderExtractor {
                 }
                 "bq" -> {
                     val text = obj.optString("text")
-                    blocks.add(ReaderBlock.Blockquote(text))
+                    val pullQuote = obj.optBoolean("pullQuote", false)
+                    blocks.add(ReaderBlock.Blockquote(text, pullQuote))
                 }
                 "pre" -> {
                     val text = obj.optString("text")

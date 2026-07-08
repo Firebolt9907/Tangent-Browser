@@ -31,12 +31,13 @@ internal fun BarCompact(
 ) {
     BarPill(
         widthFraction = 0.4f,
-        height = 44.dp,
-        cornerRadius = 22.dp,
+        height = 36.dp,
+        cornerRadius = 36.dp,
         onDragDelta = onDragDelta,
         onDragEnd = onDragEnd,
         modifier = modifier,
         interactive = interactive,
+        exponent = 2.0f,
     ) {
         Row(
             modifier = Modifier

@@ -1,15 +1,22 @@
 package com.firebolt9907.luminabrowser
 
+import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.IntentSender
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.firebolt9907.luminabrowser.ui.LuminaRoot
 import mozilla.components.concept.engine.activity.ActivityDelegate
 import mozilla.components.feature.downloads.DownloadsFeature
@@ -19,6 +26,10 @@ class MainActivity : ComponentActivity(), ActivityDelegate {
 
     private val app get() = application as LuminaApplication
 
+    var isInPipMode by mutableStateOf(false)
+        private set
+    var isVideoFullscreen by mutableStateOf(false)
+   
     // Captures file downloads from the engine and hands them to the system DownloadManager
     // (notification + storage handled by the OS). Started/stopped with the activity lifecycle.
     private val downloadsFeature by lazy {
@@ -52,7 +63,9 @@ class MainActivity : ComponentActivity(), ActivityDelegate {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
+        com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.setUseGoogleCache(app.components.globalPreferencesStore.useGoogleCache)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
@@ -76,7 +89,13 @@ class MainActivity : ComponentActivity(), ActivityDelegate {
             }
         }
 
-        setContent { LuminaRoot() }
+        setContent {
+            LuminaRoot(
+                isInPipMode = isInPipMode,
+                onFullScreenChanged = { isVideoFullscreen = it },
+                onRequestPipMode = ::requestPipMode
+            )
+        }
         // Only handle the launch intent on a fresh start. On recreation (process-death restore or a
         // config change) onCreate re-runs with the original launch intent still set as getIntent(),
         // which would re-open a duplicate tab from the same ACTION_VIEW/SEND. Live intents that
@@ -117,6 +136,13 @@ class MainActivity : ComponentActivity(), ActivityDelegate {
         }
     }
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        // While a video is fullscreen, hardware volume keys adjust the media stream silently (no
+        // system panel) and move the overlay's volume slider instead.
+        if (com.firebolt9907.luminabrowser.ui.video.handleVolumeKeyForVideo(this, event)) return true
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -131,6 +157,37 @@ class MainActivity : ComponentActivity(), ActivityDelegate {
         if (intent?.getBooleanExtra(EXTRA_HOME_SHORTCUT, false) != true) return
         val url = IntentUrls.extractUrl(intent) ?: return
         app.components.tabRepository.addTab(url = url, title = "")
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isInPipMode = isInPictureInPictureMode
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (isVideoFullscreen && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            try {
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                enterPictureInPictureMode(params)
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun requestPipMode() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            try {
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                enterPictureInPictureMode(params)
+            } catch (_: Exception) { }
+        }
     }
 
     companion object {

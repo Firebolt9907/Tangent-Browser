@@ -41,7 +41,12 @@ class LuminaViewModel(
             )
         }.stateIn(
             scope = viewModelScope,
-            started = SharingStarted.Eagerly,
+            // WhileSubscribed (not Eagerly) so this combine — which re-derives BarUiState, incl.
+            // compactHost string work, on every BrowserStore emission via repo.tabs — stops running
+            // when nothing is collecting (app backgrounded / bar off-screen). The 5s grace keeps it
+            // warm across config changes and brief backgrounding. Interaction handlers read
+            // state.value only while the bar is on-screen (hence actively subscribed and fresh).
+            started = SharingStarted.WhileSubscribed(5_000),
             initialValue = BarUiState("", 0, BarMode.Expanded, ""),
         )
 

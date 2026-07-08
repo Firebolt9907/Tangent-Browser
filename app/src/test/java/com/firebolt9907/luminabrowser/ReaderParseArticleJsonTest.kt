@@ -2,6 +2,7 @@ package com.firebolt9907.luminabrowser
 
 import com.firebolt9907.luminabrowser.ui.reader.ReaderBlock
 import com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor
+import com.firebolt9907.luminabrowser.ui.reader.ReaderLinkSpan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -53,6 +54,24 @@ class ReaderParseArticleJsonTest {
         val li = blocks[4] as ReaderBlock.ListItem
         assertTrue(li.ordered)
         assertEquals(3, li.index)
+    }
+
+    @Test
+    fun `pullQuote flag defaults to false when absent`() {
+        val bq = parse(
+            """{"title":"T","blocks":[{"type":"bq","text":"regular quote"}]}""",
+        )!!.blocks[0] as ReaderBlock.Blockquote
+        assertEquals("regular quote", bq.text)
+        assertTrue(!bq.pullQuote)
+    }
+
+    @Test
+    fun `pullQuote flag is parsed when present`() {
+        val bq = parse(
+            """{"title":"T","blocks":[{"type":"bq","text":"big quote","pullQuote":true}]}""",
+        )!!.blocks[0] as ReaderBlock.Blockquote
+        assertTrue(bq.pullQuote)
+        assertEquals("big quote", bq.text)
     }
 
     @Test
@@ -124,5 +143,50 @@ class ReaderParseArticleJsonTest {
         )!!
         assertEquals(1, article.blocks.size)
         assertEquals("kept", (article.blocks[0] as ReaderBlock.Paragraph).text)
+    }
+
+    @Test
+    fun `paragraph with links parses spans correctly`() {
+        val article = parse(
+            """{"title":"T","blocks":[
+              {"type":"p","text":"This is a link.","spans":[
+                {"text":"link","href":"https://google.com"},
+                {"text":"other","href":""},
+                {"text":"","href":"https://example.com"}
+              ]}
+            ]}""",
+        )!!
+        val p = article.blocks[0] as ReaderBlock.Paragraph
+        assertEquals("This is a link.", p.text)
+        assertEquals(1, p.links.size)
+        assertEquals("link", p.links[0].text)
+        assertEquals("https://google.com", p.links[0].href)
+    }
+
+    @Test
+    fun `paragraph with no spans field defaults to empty list`() {
+        val article = parse(
+            """{"title":"T","blocks":[{"type":"p","text":"No spans here"}]}""",
+        )!!
+        val p = article.blocks[0] as ReaderBlock.Paragraph
+        assertEquals("No spans here", p.text)
+        assertTrue(p.links.isEmpty())
+    }
+
+    @Test
+    fun `paragraph with empty or malformed spans array skips gracefully`() {
+        val article = parse(
+            """{"title":"T","blocks":[
+              {"type":"p","text":"Malformed","spans":[]},
+              {"type":"p","text":"NullObj","spans":[null, {"text":"ok","href":"https://ex.com"}, {"text":"notalink","href":null}]}
+            ]}""",
+        )!!
+        val p1 = article.blocks[0] as ReaderBlock.Paragraph
+        assertTrue(p1.links.isEmpty())
+
+        val p2 = article.blocks[1] as ReaderBlock.Paragraph
+        assertEquals(1, p2.links.size)
+        assertEquals("ok", p2.links[0].text)
+        assertEquals("https://ex.com", p2.links[0].href)
     }
 }

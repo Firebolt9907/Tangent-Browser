@@ -8,6 +8,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -18,6 +19,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,11 +37,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.delay
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +53,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.draw.shadow
 
 @Composable
 fun ReaderView(
@@ -66,6 +87,7 @@ fun ReaderView(
      * underlying web page, whose engine capture would be blank / stale while reader mode is on.
      */
     onSnapshot: (android.graphics.Bitmap) -> Unit = {},
+    onLinkClick: (String) -> Unit = {},
 ) {
     val backgroundColor = when (theme) {
         ReaderTheme.System -> MaterialTheme.colorScheme.surface
@@ -79,6 +101,13 @@ fun ReaderView(
         ReaderTheme.White -> Color(0xFF1C1C1E)
         ReaderTheme.Sepia -> Color(0xFF3C301D)
         ReaderTheme.Dark -> Color(0xFFE5E5EA)
+    }
+
+    val linkColor = when (theme) {
+        ReaderTheme.System -> MaterialTheme.colorScheme.primary
+        ReaderTheme.White -> Color(0xFF0066CC)
+        ReaderTheme.Sepia -> Color(0xFF1A5276)
+        ReaderTheme.Dark -> Color(0xFF4DA3FF)
     }
 
     val mutedTextColor = when (theme) {
@@ -114,6 +143,9 @@ fun ReaderView(
     }
 
     val scrollState = rememberScrollState()
+    val density = LocalDensity.current
+    var columnCoordinates by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    val headingOffsets = remember(article) { mutableMapOf<ReaderBlock.Heading, Float>() }
 
     // Edge-to-edge: the background fills the whole screen (behind the status and gesture bars), and
     // the safe-area insets are applied as padding *inside* the scroll so the article content scrolls
@@ -121,6 +153,7 @@ fun ReaderView(
     // gesture bar; the floating pill auto-hides on scroll-down, so we don't reserve its height here.
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val statusBarTopPx = with(density) { statusBarTop.toPx() }
 
     // Forward scroll deltas so the host can hide the floating pill when reading downward.
     LaunchedEffect(scrollState) {
@@ -140,6 +173,48 @@ fun ReaderView(
     val captureLayer = rememberGraphicsLayer()
     var captureArmed by remember { mutableStateOf(true) }
 
+    // System long-screenshot ("Capture more") support for reader mode. While a scroll capture is in
+    // progress we keep the graphics layer armed (so the callback can sample the viewport) and hide
+    // the reader's own overlays so they don't get stitched into every tile. See ReaderScrollCapture.
+    val capturing by ReaderScrollCapture.capturing.collectAsState()
+    val hostView = LocalView.current
+    val captureScope = rememberCoroutineScope()
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+        // Register on the activity's content view, NOT the AndroidComposeView: Compose's own
+        // scroll-capture support overrides onScrollCaptureSearch on its view and otherwise wins the
+        // search (redrawing the whole composition, so the floating pill gets stitched into every
+        // tile). We do two things while reader mode is active:
+        //   1. Register our callback on the content FrameLayout (default search picks it up) — it
+        //      renders from the reader layer, so the pill is excluded by construction.
+        //   2. Set the AndroidComposeView's hint to EXCLUDE so its (and thus Compose's) target is
+        //      dropped from the search entirely, leaving ours as the only candidate. Excluding a
+        //      child does not exclude the ancestor content view, so our target survives.
+        val captureTarget = hostView.rootView?.findViewById<android.view.View>(android.R.id.content)
+        DisposableEffect(captureTarget, hostView, scrollState) {
+            val callback = if (captureTarget != null) ReaderScrollCaptureCallback(
+                hostView = hostView,
+                scrollState = scrollState,
+                scope = captureScope,
+                captureViewport = {
+                    runCatching { captureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
+                },
+            ) else null
+            android.util.Log.d(
+                "ReaderScrollCapture",
+                "register callback: target=${captureTarget?.javaClass?.simpleName} host=${hostView.javaClass.simpleName}",
+            )
+            captureTarget?.setScrollCaptureCallback(callback)
+            captureTarget?.scrollCaptureHint = android.view.View.SCROLL_CAPTURE_HINT_INCLUDE
+            hostView.scrollCaptureHint = android.view.View.SCROLL_CAPTURE_HINT_EXCLUDE
+            onDispose {
+                captureTarget?.setScrollCaptureCallback(null)
+                captureTarget?.scrollCaptureHint = android.view.View.SCROLL_CAPTURE_HINT_AUTO
+                hostView.scrollCaptureHint = android.view.View.SCROLL_CAPTURE_HINT_AUTO
+                ReaderScrollCapture.setCapturing(false)
+            }
+        }
+    }
+
     // Tapping an article image opens it fullscreen (Safari-parity); null = no overlay.
     var zoomedImage by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(article, theme, fontName, fontSizePercent) {
@@ -152,12 +227,49 @@ fun ReaderView(
         captureArmed = false
     }
 
+    // Scroll progress calculation
+    val progress = if (scrollState.maxValue > 0) {
+        (scrollState.value.toFloat() / scrollState.maxValue.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+
+    val accentColor = when (theme) {
+        ReaderTheme.System -> MaterialTheme.colorScheme.primary
+        ReaderTheme.White -> Color(0xFF007AFF)
+        ReaderTheme.Sepia -> Color(0xFF9E7E56)
+        ReaderTheme.Dark -> Color(0xFF0A84FF)
+    }
+
+    val headings = remember(article) {
+        article.blocks.filterIsInstance<ReaderBlock.Heading>().filter { it.text.isNotBlank() }
+    }
+
+    var showTOC by remember { mutableStateOf(false) }
+
+    var isTOCButtonVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(scrollState) {
+        var lastValue = scrollState.value
+        snapshotFlow { scrollState.value }.collect { value ->
+            val delta = value - lastValue
+            if (delta > 10) {
+                isTOCButtonVisible = false
+            } else if (delta < -10) {
+                isTOCButtonVisible = true
+            }
+            if (value < 50) {
+                isTOCButtonVisible = true
+            }
+            lastValue = value
+        }
+    }
+
     Box(
         modifier = modifier
             .background(backgroundColor)
             .fillMaxSize()
             .drawWithContent {
-                if (captureArmed) {
+                if (captureArmed || capturing) {
                     captureLayer.record { this@drawWithContent.drawContent() }
                     drawLayer(captureLayer)
                 } else {
@@ -176,6 +288,7 @@ fun ReaderView(
                 .fillMaxHeight()
                 .widthIn(max = 720.dp)
                 .fillMaxWidth()
+                .onGloballyPositioned { columnCoordinates = it }
                 .verticalScroll(scrollState)
                 .padding(horizontal = 24.dp)
                 .padding(top = statusBarTop + 16.dp, bottom = navBarBottom + 40.dp)
@@ -193,58 +306,127 @@ fun ReaderView(
                     .padding(bottom = 8.dp)
             )
 
-            // Byline
+            // Author card — visually distinct from article body (Safari-parity).
             val readMinutes = remember(article) { estimateReadMinutes(article) }
-            article.byline?.let { byline ->
-                Text(
-                    text = byline,
-                    fontSize = (14.sp * scale),
-                    lineHeight = (18.sp * scale),
-                    fontStyle = FontStyle.Italic,
-                    fontFamily = fontFamily,
-                    color = mutedTextColor,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 4.dp)
-                )
-            }
-
-            // Meta line: source domain + estimated reading time (Safari-parity header).
             val sourceHost = remember(article.sourceUrl) { readerHost(article.sourceUrl) }
-            val readText = if (readMinutes > 0) {
-                if (readMinutes == 1) "1 min read" else "$readMinutes min read"
-            } else null
-            val metaText = listOfNotNull(sourceHost, readText).joinToString("   ·   ")
-            if (metaText.isNotEmpty()) {
-                Text(
-                    text = metaText,
-                    fontSize = (13.sp * scale),
-                    lineHeight = (18.sp * scale),
-                    fontFamily = fontFamily,
-                    color = mutedTextColor,
+            if (article.byline != null || sourceHost != null) {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = if (article.byline != null) 0.dp else 4.dp, bottom = 24.dp)
-                )
-            } else if (article.byline != null) {
-                Spacer(Modifier.height(20.dp))
+                        .padding(bottom = 24.dp)
+                ) {
+                    // Thin separator above the author card.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(borderColor)
+                            .padding(bottom = 16.dp)
+                    )
+                    // Author name — larger and bolder than the old muted italic line.
+                    article.byline?.let { byline ->
+                        Text(
+                            text = byline,
+                            fontSize = (16.sp * scale),
+                            lineHeight = (22.sp * scale),
+                            fontWeight = FontWeight.Medium,
+                            fontFamily = fontFamily,
+                            color = textColor,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    // Source domain + reading time beneath the author name.
+                    val readText = if (readMinutes > 0) {
+                        if (readMinutes == 1) "1 min read" else "$readMinutes min read"
+                    } else null
+                    val metaText = listOfNotNull(sourceHost, readText).joinToString("  ·  ")
+                    if (metaText.isNotEmpty()) {
+                        Text(
+                            text = metaText,
+                            fontSize = (13.sp * scale),
+                            lineHeight = (18.sp * scale),
+                            fontFamily = fontFamily,
+                            color = mutedTextColor,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 2.dp)
+                        )
+                    }
+                    // Thin separator below the author card.
+                    Spacer(Modifier.height(16.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(borderColor)
+                    )
+                }
             }
 
             // Article Content
             article.blocks.forEach { block ->
                 when (block) {
                     is ReaderBlock.Paragraph -> {
-                        Text(
-                            text = block.text,
-                            fontSize = (18.sp * scale),
-                            lineHeight = (30.sp * scale),
-                            fontFamily = fontFamily,
-                            color = textColor,
-                            style = proseStyle,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 22.dp)
-                        )
+                        if (block.links.isNotEmpty()) {
+                            val annotatedString = buildAnnotatedString {
+                                var currentIndex = 0
+                                for (link in block.links) {
+                                    val index = block.text.indexOf(link.text, currentIndex)
+                                    if (index != -1) {
+                                        append(block.text.substring(currentIndex, index))
+                                        val start = this.length
+                                        append(link.text)
+                                        val end = this.length
+                                        addStringAnnotation(
+                                            tag = "url",
+                                            annotation = link.href,
+                                            start = start,
+                                            end = end
+                                        )
+                                        addStyle(
+                                            style = SpanStyle(
+                                                color = linkColor,
+                                                textDecoration = TextDecoration.Underline
+                                            ),
+                                            start = start,
+                                            end = end
+                                        )
+                                        currentIndex = index + link.text.length
+                                    }
+                                }
+                                if (currentIndex < block.text.length) {
+                                    append(block.text.substring(currentIndex))
+                                }
+                            }
+                            ClickableText(
+                                text = annotatedString,
+                                onClick = { offset ->
+                                    annotatedString.getStringAnnotations("url", offset, offset)
+                                        .firstOrNull()?.let { onLinkClick(it.item) }
+                                },
+                                style = proseStyle.copy(
+                                    fontSize = (18.sp * scale),
+                                    lineHeight = (30.sp * scale),
+                                    fontFamily = fontFamily,
+                                    color = textColor
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 22.dp)
+                            )
+                        } else {
+                            Text(
+                                text = block.text,
+                                fontSize = (18.sp * scale),
+                                lineHeight = (30.sp * scale),
+                                fontFamily = fontFamily,
+                                color = textColor,
+                                style = proseStyle,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 22.dp)
+                            )
+                        }
                     }
                     is ReaderBlock.Heading -> {
                         val headerSize = when (block.level) {
@@ -268,34 +450,69 @@ fun ReaderView(
                             color = textColor,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .onGloballyPositioned { coords ->
+                                    columnCoordinates?.let { colCoords ->
+                                        val headingY = coords.positionInWindow().y
+                                        val colY = colCoords.positionInWindow().y
+                                        headingOffsets[block] = headingY - colY + scrollState.value
+                                    }
+                                }
                                 .padding(top = 20.dp, bottom = 14.dp)
                         )
                     }
                     is ReaderBlock.Blockquote -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 16.dp, horizontal = 4.dp)
-                                .drawBehind {
-                                    val strokeWidth = 4.dp.toPx()
-                                    drawLine(
-                                        color = borderColor,
-                                        start = Offset(0f, 0f),
-                                        end = Offset(0f, size.height),
-                                        strokeWidth = strokeWidth
-                                    )
-                                }
-                                .padding(start = 16.dp)
-                        ) {
-                            Text(
-                                text = block.text,
-                                fontSize = (18.sp * scale),
-                                lineHeight = (28.sp * scale),
-                                fontStyle = FontStyle.Italic,
-                                fontFamily = fontFamily,
-                                color = mutedTextColor,
-                                style = proseStyle
-                            )
+                        if (block.pullQuote) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 24.dp, horizontal = 24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "\u201C",
+                                    fontSize = (48.sp * scale),
+                                    lineHeight = (48.sp * scale),
+                                    fontFamily = fontFamily,
+                                    color = textColor.copy(alpha = 0.25f),
+                                )
+                                Text(
+                                    text = block.text,
+                                    fontSize = (22.sp * scale),
+                                    lineHeight = (32.sp * scale),
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontStyle = FontStyle.Italic,
+                                    fontFamily = fontFamily,
+                                    color = textColor,
+                                    style = proseStyle,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 16.dp, horizontal = 4.dp)
+                                    .drawBehind {
+                                        val strokeWidth = 4.dp.toPx()
+                                        drawLine(
+                                            color = borderColor,
+                                            start = Offset(0f, 0f),
+                                            end = Offset(0f, size.height),
+                                            strokeWidth = strokeWidth
+                                        )
+                                    }
+                                    .padding(start = 16.dp)
+                            ) {
+                                Text(
+                                    text = block.text,
+                                    fontSize = (18.sp * scale),
+                                    lineHeight = (28.sp * scale),
+                                    fontStyle = FontStyle.Italic,
+                                    fontFamily = fontFamily,
+                                    color = mutedTextColor,
+                                    style = proseStyle
+                                )
+                            }
                         }
                     }
                     is ReaderBlock.Code -> {
@@ -433,6 +650,63 @@ fun ReaderView(
                     }
                 }
             }
+
+            // Site attribution footer — "Article provided by [favicon] TechCrunch".
+            val attributionHost = remember(article.sourceUrl) {
+                article.sourceUrl?.let { url ->
+                    runCatching {
+                        java.net.URI(url).host?.removePrefix("www.")?.lowercase()
+                    }.getOrNull()
+                }
+            }
+            if (attributionHost != null) {
+                Spacer(Modifier.height(32.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(borderColor)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val context = LocalContext.current
+                    val faviconUrl = remember(attributionHost) {
+                        "https://$attributionHost/favicon.ico"
+                    }
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(faviconUrl)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = attributionHost,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "Article provided by",
+                        fontSize = (13.sp * scale),
+                        lineHeight = (18.sp * scale),
+                        fontFamily = fontFamily,
+                        color = mutedTextColor,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = attributionHost,
+                        fontSize = (13.sp * scale),
+                        lineHeight = (18.sp * scale),
+                        fontWeight = FontWeight.Medium,
+                        fontFamily = fontFamily,
+                        color = textColor,
+                    )
+                }
+            }
         }
         } // SelectionContainer
 
@@ -459,6 +733,154 @@ fun ReaderView(
                             .fillMaxSize()
                             .padding(12.dp),
                     )
+                }
+            }
+        }
+
+        // Reading Progress Bar
+        if (progress > 0f && !capturing) {
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = topPadding * 0.8f)
+                    .fillMaxWidth(progress)
+                    .height(3.dp)
+                    .background(accentColor)
+                    .align(Alignment.TopStart)
+            )
+        }
+
+        // Floating Table of Contents Button
+        AnimatedVisibility(
+            visible = headings.size >= 2 && isTOCButtonVisible && !capturing,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = statusBarTop + 8.dp, end = 16.dp)
+        ) {
+            IconButton(
+                onClick = { showTOC = true },
+                modifier = Modifier
+                    .size(40.dp)
+                    .shadow(4.dp, CircleShape)
+                    .background(
+                        color = codeBackgroundColor,
+                        shape = CircleShape
+                    )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Menu,
+                    contentDescription = "Table of Contents",
+                    tint = textColor
+                )
+            }
+        }
+
+        // Table of Contents Dialog (styled like a bottom sheet)
+        if (showTOC) {
+            val coroutineScope = rememberCoroutineScope()
+            Dialog(
+                onDismissRequest = { showTOC = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.4f))
+                        .clickable(
+                            onClick = { showTOC = false },
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.6f)
+                            .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                            .background(backgroundColor)
+                            .clickable(
+                                onClick = {},
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            )
+                            .padding(bottom = navBarBottom)
+                    ) {
+                        // Header
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Table of Contents",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = fontFamily,
+                                color = textColor
+                            )
+                            IconButton(onClick = { showTOC = false }) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close",
+                                    tint = textColor
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(borderColor)
+                        )
+
+                        // Outline List
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp, vertical = 12.dp)
+                        ) {
+                            headings.forEach { heading ->
+                                val indent = when (heading.level) {
+                                    1 -> 0.dp
+                                    2 -> 16.dp
+                                    3 -> 32.dp
+                                    else -> 48.dp
+                                }
+                                val textStyle = when (heading.level) {
+                                    1 -> TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                                    2 -> TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                                    else -> TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Normal)
+                                }
+
+                                Text(
+                                    text = heading.text,
+                                    style = textStyle,
+                                    fontFamily = fontFamily,
+                                    color = textColor,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            showTOC = false
+                                            val offset = headingOffsets[heading]
+                                            if (offset != null) {
+                                                coroutineScope.launch {
+                                                    val target = (offset - statusBarTopPx - with(density) { 16.dp.toPx() }).coerceAtLeast(0f)
+                                                    scrollState.animateScrollTo(target.toInt())
+                                                }
+                                            }
+                                        }
+                                        .padding(start = indent, top = 12.dp, bottom = 12.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

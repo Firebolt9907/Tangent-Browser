@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +34,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.firebolt9907.luminabrowser.addons.AddonController
+import com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache
+import com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl
+import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
 import com.firebolt9907.luminabrowser.state.TabSnapshotCache
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -40,7 +44,10 @@ import mozilla.components.concept.engine.Engine
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineSession.Observer
 import mozilla.components.concept.engine.window.WindowRequest
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @SuppressLint("ClickableViewAccessibility")
 @Composable
@@ -55,9 +62,11 @@ fun ContentHost(
     snapshotCache: TabSnapshotCache? = null,
     addonController: AddonController? = null,
     sitePermissionController: com.firebolt9907.luminabrowser.permissions.SitePermissionController? = null,
+    sitePreferencesStore: com.firebolt9907.luminabrowser.state.SitePreferencesStore? = null,
     onTabPainted: (String) -> Unit = {},
     onSnapshotCaptured: (tabId: String, url: String, bitmap: android.graphics.Bitmap) -> Unit = { _, _, _ -> },
     onPageScrollDelta: (Float) -> Unit = {},
+    onPageTouch: () -> Unit = {},
     canStartPredictiveBack: Boolean = false,
     onPredictiveBackProgress: (Float) -> Unit = {},
     onPredictiveBackEnd: (progressPx: Float, velocityPxPerSecond: Float) -> Unit = { _, _ -> },
@@ -68,16 +77,19 @@ fun ContentHost(
     onTopOverscrollPull: (Float) -> Unit = {},
     onTopOverscrollRelease: (Float) -> Unit = {},
     onOpenWindowRequest: (WindowRequest) -> Unit = {},
+    onFullScreenChange: (Boolean) -> Unit = {},
     onFirefoxAuthRedirect: (String) -> Boolean = { false },
     topPaddingFixActive: Boolean = false,
     pageZoomFactor: Float = 1.0f,
     barCollapseProgressState: Animatable<Float, AnimationVector1D>? = null,
+    tabIsLoading: Boolean = false,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
     // The color GeckoView shows before a session's first paint (see the render DisposableEffect).
     val firstPaintCoverColor = MaterialTheme.colorScheme.background.toArgb()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var isSafeToSnapshot by remember(tabId, engineSession) { mutableStateOf(!tabIsLoading && engineSession != null) }
     val touchSlopPx = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     val predictiveBackEdgeWidthPx = with(density) { 24.dp.toPx() }
     val topChromeInsetCssPx = with(density) {
@@ -109,6 +121,25 @@ fun ContentHost(
     // Tracks the last "$tabId|$url" key and timestamp so repeated captures within 750 ms are skipped.
     var lastCaptureKey: String? by remember { mutableStateOf(null) }
     var lastCaptureMs: Long by remember { mutableLongStateOf(0L) }
+    val captureScope = rememberCoroutineScope()
+
+    /**
+     * Converts the ~10 MB ARGB_8888 capture to the resident RGB_565 config off the main thread,
+     * then delivers it to the cache and callback back on main. Doing the copy inline on the
+     * capture callback cost 10–20 ms of main-thread time per capture (and captures cluster
+     * around tab switches), which read as hitches during swipes. The cache and the snapshot
+     * maps both store 565, so converting once here means neither converts again.
+     */
+    fun storeSnapshotAsync(id: String, capturingUrl: String, bitmap: android.graphics.Bitmap) {
+        val cache = snapshotCache ?: return
+        captureScope.launch(Dispatchers.Default) {
+            val resident = bitmap.toResident565()
+            withContext(Dispatchers.Main) {
+                cache.put(id, resident, capturingUrl)
+                onSnapshotCaptured(id, capturingUrl, resident)
+            }
+        }
+    }
 
     /**
      * @param deduped When true, skips the capture if the same (tabId, url) was captured
@@ -120,8 +151,9 @@ fun ContentHost(
         capturingUrl: String = pageUrl,
         deduped: Boolean = false,
     ) {
+        if (engineSession == null || !isSafeToSnapshot) return
         val id = capturingId ?: return
-        val cache = snapshotCache ?: return
+        if (snapshotCache == null) return
         if (deduped) {
             val key = "$id|$capturingUrl"
             val now = System.currentTimeMillis()
@@ -130,10 +162,7 @@ fun ContentHost(
             lastCaptureMs = now
         }
         engineView.captureThumbnail { bitmap: android.graphics.Bitmap? ->
-            if (bitmap != null) {
-                cache.put(id, bitmap, capturingUrl)
-                onSnapshotCaptured(id, capturingUrl, bitmap)
-            }
+            if (bitmap != null) storeSnapshotAsync(id, capturingUrl, bitmap)
         }
     }
 
@@ -154,6 +183,16 @@ fun ContentHost(
         if (bottomChromeInsetPx > 0) {
             engineView.setDynamicToolbarMaxHeight(expandedClippingPx)
             engineView.setVerticalClipping(currentClippingPx)
+        } else {
+            // No bottom chrome reserved (video fullscreen passes bottomChromeInsetPx=0). Clear any
+            // prior toolbar reservation, otherwise GeckoView keeps clipping space for the now-hidden
+            // pill and the fullscreen video is pushed up, leaving a black gap at the bottom.
+            engineView.setDynamicToolbarMaxHeight(0)
+            engineView.setVerticalClipping(0)
+            android.util.Log.i(
+                "LuminaVideo",
+                "[clip] fullscreen bottomInset=0 set dtmh=0 clip=0 viewH=${engineView.asView().height} navBarPx=$navBarPx",
+            )
         }
     }
 
@@ -209,14 +248,15 @@ fun ContentHost(
         captureSnapshot(tabId, pageUrl, deduped = true)
     }
 
-    LaunchedEffect(engineView, currentSnapshotRequestId, tabId, pageUrl) {
-        if (currentSnapshotRequestId <= 0 || tabId == null) return@LaunchedEffect
+    LaunchedEffect(engineView, currentSnapshotRequestId, tabId, pageUrl, engineSession) {
+        if (currentSnapshotRequestId <= 0 || tabId == null || engineSession == null || !isSafeToSnapshot) return@LaunchedEffect
         val capturedUrl = pageUrl
         engineView.captureThumbnail { bitmap: android.graphics.Bitmap? ->
             if (bitmap != null) {
-                snapshotCache?.put(tabId, bitmap, capturedUrl)
-                onSnapshotCaptured(tabId, capturedUrl, bitmap)
+                // The gesture cover needs the bitmap immediately (a drag is already in flight),
+                // and keeps the full ARGB copy; the cache/map copies convert in the background.
                 onCurrentSnapshotCaptured(tabId, bitmap)
+                storeSnapshotAsync(tabId, capturedUrl, bitmap)
             }
         }
     }
@@ -259,6 +299,8 @@ fun ContentHost(
             var injectedForCurrentLoad = false
             var amoInstallerInjectedForCurrentLoad = false
             var suppressJavascriptLoadCallback = false
+            var cacheTriggeredForCurrentLoad = false
+            var readerExtractedForCurrentLoad = false
             var currentUrl = pageUrl
             var capturedLeavingUrl: String? = null
             fun captureLeavingPage() {
@@ -285,6 +327,11 @@ fun ContentHost(
                 suppressJavascriptLoadCallback = true
                 engineSession.injectAmoAddonInstaller()
             }
+            fun injectCleanPlayer(url: String) {
+                if (!url.isYouTubePageUrl()) return
+                suppressJavascriptLoadCallback = true
+                engineSession.injectYouTubeCleanPlayer()
+            }
             fun installAddonRequest(url: String): Boolean {
                 val handled = addonController?.installFromPageRequest(url) == true
                 if (handled) engineSession.stopLoading()
@@ -295,44 +342,63 @@ fun ContentHost(
                 if (handled) engineSession.stopLoading()
                 return handled
             }
+            fun triggerInitialReaderCheck() {
+                if (tabId != null) {
+                    val isReaderActive = ReaderManager.instance.isReaderActive(tabId)
+                    if (isReaderActive && readerExtractedForCurrentLoad) {
+                        android.util.Log.d("ReaderDbg", "triggerInitialReaderCheck: reader is active and already extracted once for this load, skipping")
+                        return
+                    }
+                    val isCustomTab = context.findActivity() is com.firebolt9907.luminabrowser.CustomTabActivity
+                    val isAutoActivated = isCustomTab || (sitePreferencesStore != null && !sitePreferencesStore.isReaderAutoDisabled(com.firebolt9907.luminabrowser.state.hostFromUrl(currentUrl)))
+                    val useCache = ReaderManager.instance.useGoogleCache.value &&
+                        shouldRedirectToGoogleCache(currentUrl) &&
+                        !ReaderManager.instance.isRestoring(tabId) &&
+                        (isAutoActivated || ReaderManager.instance.isReaderActive(tabId) || ReaderManager.instance.isReaderPending(tabId))
+                    if (useCache) {
+                        ReaderManager.instance.setOriginalUrl(tabId, currentUrl)
+                        val cacheUrl = getGoogleCacheUrl(currentUrl)
+                        engineSession.loadUrl(cacheUrl)
+                    } else {
+                        readerExtractedForCurrentLoad = true
+                        com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
+                    }
+                }
+            }
+
             val observer = object : Observer {
                 override fun onLocationChange(url: String, hasUserGesture: Boolean) {
                     android.util.Log.d("ReaderDbg", "onLocationChange tab=$tabId url=$url")
                     if (handleFirefoxAuthRedirect(url)) return
                     if (!url.startsWith("javascript:", ignoreCase = true)) {
-                        // A location change to the SAME url is a reload or a suspend/restore rebind,
-                        // not a real navigation. Only a genuine navigation to a different page should
-                        // drop reader state — preserving it across restore is what lets a suspended
-                        // reader tab come back into reader mode when it is re-selected.
+                        isSafeToSnapshot = false
                         val navigatedAway = url != currentUrl
                         currentUrl = url
                         capturedLeavingUrl = null
                         injectedForCurrentLoad = false
                         amoInstallerInjectedForCurrentLoad = false
+                        readerExtractedForCurrentLoad = false
                         suppressJavascriptLoadCallback = false
                         injectAmoInstaller(url)
-                        if (tabId != null && navigatedAway) {
-                            com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.clearReaderState(tabId)
+                        injectCleanPlayer(url)
+                        if (navigatedAway) {
+                            if (tabId != null && !url.startsWith("https://webcache.googleusercontent.com/", ignoreCase = true)) {
+                                com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.clearReaderState(tabId)
+                            }
                         }
                     }
                 }
 
                 override fun onFirstContentfulPaint() {
+                    isSafeToSnapshot = true
                     injectSpacer()
                     injectAmoInstaller(currentUrl)
+                    injectCleanPlayer(currentUrl)
                     captureSnapshot(capturingUrl = currentUrl, deduped = true)
                     notifyPainted()
-                    // Extract reader content as soon as the article paints, for fast auto-activation
-                    // (custom tabs jump into reader the instant this succeeds). This must NOT be gated
-                    // on !suppressJavascriptLoadCallback: injectSpacer() above already set that flag,
-                    // so the guard was always false and the FCP extraction never ran — auto-activation
-                    // then had to wait for the full onLoadingStateChange(loading=false) at load-complete,
-                    // which on resource-heavy pages (ads/trackers/streaming) can be tens of seconds.
-                    // A later load-complete extraction still runs as a fuller-DOM fallback. FCP fires
-                    // once per real navigation (javascript: injections don't paint), so no loop.
                     if (tabId != null) {
                         suppressJavascriptLoadCallback = true
-                        com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
+                        triggerInitialReaderCheck()
                     }
                 }
 
@@ -343,17 +409,22 @@ fun ContentHost(
                         return
                     }
                     if (loading) {
+                        isSafeToSnapshot = false
                         captureLeavingPage()
                         injectedForCurrentLoad = false
                         amoInstallerInjectedForCurrentLoad = false
+                        readerExtractedForCurrentLoad = false
                     } else {
+                        isSafeToSnapshot = true
                         injectSpacer()
                         injectAmoInstaller(currentUrl)
+                        injectCleanPlayer(currentUrl)
                         captureSnapshot(capturingUrl = currentUrl, deduped = true)
                         notifyPainted()
                         if (tabId != null) {
+                            ReaderManager.instance.setRestoring(tabId, false)
                             suppressJavascriptLoadCallback = true
-                            com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
+                            triggerInitialReaderCheck()
                         }
                     }
                 }
@@ -393,7 +464,38 @@ fun ContentHost(
                     if (!triggeredByRedirect && currentUrl.isNotBlank() && currentUrl != url) {
                         captureLeavingPage()
                     }
-                    installAddonRequest(url)
+                    if (installAddonRequest(url)) return
+
+                    // Block Google Cache page's JavaScript redirect back to the original
+                    // (paywalled) URL while reader mode is active. Without this guard the
+                    // redirect fires before extraction completes and clears reader state.
+                    if (tabId != null &&
+                        triggeredByWebContent &&
+                        currentUrl.startsWith("https://webcache.googleusercontent.com/", ignoreCase = true) &&
+                        !url.startsWith("https://webcache.googleusercontent.com/", ignoreCase = true) &&
+                        ReaderManager.instance.isReaderActive(tabId)
+                    ) {
+                        android.util.Log.d("ReaderDbg", "onLoadRequest: blocking cache→original redirect tab=$tabId url=$url")
+                        engineSession.stopLoading()
+                        return
+                    }
+
+                    if (tabId != null &&
+                        ReaderManager.instance.useGoogleCache.value &&
+                        shouldRedirectToGoogleCache(url) &&
+                        !ReaderManager.instance.isRestoring(tabId)
+                    ) {
+                        val isCustomTab = context.findActivity() is com.firebolt9907.luminabrowser.CustomTabActivity
+                        val isAutoActivated = isCustomTab || (sitePreferencesStore != null && !sitePreferencesStore.isReaderAutoDisabled(com.firebolt9907.luminabrowser.state.hostFromUrl(url)))
+                        val shouldRedirect = isAutoActivated || ReaderManager.instance.isReaderActive(tabId) || ReaderManager.instance.isReaderPending(tabId)
+                        if (shouldRedirect) {
+                            ReaderManager.instance.setOriginalUrl(tabId, url)
+                            val cacheUrl = getGoogleCacheUrl(url)
+                            engineSession.loadUrl(cacheUrl)
+                            engineSession.stopLoading()
+                            return
+                        }
+                    }
                 }
 
                 override fun onExternalResource(
@@ -418,6 +520,10 @@ fun ContentHost(
                     }
                 }
 
+                override fun onFullScreenChange(enabled: Boolean) {
+                    onFullScreenChange(enabled)
+                }
+
                 private fun notifyPainted() {
                     tabId?.let(onTabPainted)
                 }
@@ -425,6 +531,7 @@ fun ContentHost(
             engineSession.register(observer)
             injectSpacer(force = true)
             injectAmoInstaller(currentUrl, force = true)
+            triggerInitialReaderCheck()
             onDispose { engineSession.unregister(observer) }
         }
     }
@@ -448,6 +555,7 @@ fun ContentHost(
         engineView.setActivityContext(context)
         pullContainer.onPull = onTopOverscrollPull
         pullContainer.onRelease = onTopOverscrollRelease
+        pullContainer.onTouchDown = onPageTouch
         engineView.asView().setOnTouchListener { _, event ->
             predictiveBackVelocityTracker?.addMovement(event)
             when (event.actionMasked) {
@@ -522,6 +630,15 @@ fun ContentHost(
 }
 
 /**
+ * A memory-light RGB_565 copy for resident snapshot storage (half the heap of the ARGB_8888
+ * capture; opaque web pages lose nothing visually). Falls back to the original on OOM.
+ */
+private fun android.graphics.Bitmap.toResident565(): android.graphics.Bitmap {
+    if (config == android.graphics.Bitmap.Config.RGB_565) return this
+    return runCatching { copy(android.graphics.Bitmap.Config.RGB_565, false) }.getOrNull() ?: this
+}
+
+/**
  * Depth-first search for the [org.mozilla.geckoview.GeckoView] inside an [EngineView]'s view tree.
  * mozilla-components' `GeckoEngineView` is a FrameLayout wrapping a `NestedGeckoView` (a GeckoView
  * subclass); the child isn't publicly accessible, so we locate it by type to reach GeckoView's
@@ -536,3 +653,13 @@ private fun findGeckoView(root: android.view.View): org.mozilla.geckoview.GeckoV
     }
     return null
 }
+
+private fun android.content.Context.findActivity(): android.app.Activity? {
+    var ctx = this
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is android.app.Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
+

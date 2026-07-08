@@ -47,6 +47,7 @@ fun SafariBar(
     isReaderEligible: Boolean = false,
     isReaderActive: Boolean = false,
     readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme = com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.System,
+    onClick: (() -> Unit)? = null,
 ) {
     val barHeight = if (state.mode == BarMode.Editing) {
         BottomBarEditingHeight
@@ -95,6 +96,7 @@ fun SafariBar(
                     isReaderEligible = isReaderEligible,
                     isReaderActive = isReaderActive,
                     readerTheme = readerTheme,
+                    onClick = onClick,
                 )
                 BarMode.Compact -> BarExpanded(
                     state = state,
@@ -113,6 +115,7 @@ fun SafariBar(
                     isReaderEligible = isReaderEligible,
                     isReaderActive = isReaderActive,
                     readerTheme = readerTheme,
+                    onClick = onClick,
                 )
                 BarMode.Editing -> BarEditing(
                     state,

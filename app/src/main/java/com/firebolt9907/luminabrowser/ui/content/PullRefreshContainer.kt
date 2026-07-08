@@ -33,6 +33,17 @@ class PullRefreshContainer(context: Context) : FrameLayout(context), NestedScrol
     /** Final pull distance in px when the gesture ends. */
     var onRelease: (Float) -> Unit = {}
 
+    /** Callback triggered on ACTION_DOWN touch events. */
+    var onTouchDown: () -> Unit = {}
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent?): Boolean {
+        if (ev?.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+            android.util.Log.d("LuminaPill", "PullRefreshContainer dispatchTouchEvent ACTION_DOWN: invoking onTouchDown()")
+            onTouchDown()
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
     private val parentHelper = NestedScrollingParentHelper(this)
     private val reusableConsumed = IntArray(2)
     private var pullPx = 0f

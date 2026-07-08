@@ -65,6 +65,14 @@ class ReaderExtractorScriptTest {
     }
 
     @Test
+    fun `boilerplate selector excludes layout wrappers and safeguards article and main`() {
+        assertTrue("excludes has- class prefix", script.contains(":not([class*=\"has-\" i])"))
+        assertTrue("excludes with- class prefix", script.contains(":not([class*=\"with-\" i])"))
+        assertTrue("excludes article from boilerplate", script.contains("n.nodeName === 'ARTICLE'"))
+        assertTrue("excludes main from boilerplate", script.contains("n.nodeName === 'MAIN'"))
+    }
+
+    @Test
     fun `two builds are deterministic`() {
         assertTrue(script == ReaderExtractor.buildReaderExtractorScript())
     }

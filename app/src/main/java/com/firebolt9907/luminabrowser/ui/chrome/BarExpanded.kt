@@ -59,6 +59,7 @@ internal fun BarExpanded(
     isReaderEligible: Boolean = false,
     isReaderActive: Boolean = false,
     readerTheme: ReaderTheme = ReaderTheme.System,
+    onClick: (() -> Unit)? = null,
 ) {
     val progress = collapseProgress.coerceIn(0f, 1f)
     val controlsProgress = 1f - progress
@@ -92,21 +93,23 @@ internal fun BarExpanded(
 
     BoxWithConstraints(modifier = modifier) {
         val expandedWidth = (maxWidth - 40.dp).coerceAtLeast(0.dp)
-        val compactWidth = (((if (blankPreview) "+" else state.displayUrl).length * 8).dp + 56.dp)
-            .coerceIn(96.dp, (maxWidth - 40.dp).coerceAtLeast(96.dp))
+        val compactWidth = (((if (blankPreview) "+" else state.displayUrl).length * 8).dp + 28.dp)
+            .coerceIn(80.dp, (maxWidth - 40.dp).coerceAtLeast(80.dp))
 
         BarPill(
             width = lerp(expandedWidth, compactWidth, progress),
-            height = lerp(56.dp, 44.dp, progress),
-            cornerRadius = lerp(28.dp, 22.dp, progress),
+            height = lerp(56.dp, 36.dp, progress),
+            cornerRadius = lerp(28.dp, 18.dp, progress),
             onDragStart = onDragStart,
             onDragDelta = onDragDelta,
             onDragEnd = onDragEnd,
             interactive = interactive,
             containerColor = containerColor,
+            onClick = onClick,
+            exponent = lerp(3.0f, 2.0f, progress),
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = lerp(8.dp, 12.dp, progress)),
+                modifier = Modifier.padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (!blankPreview) {

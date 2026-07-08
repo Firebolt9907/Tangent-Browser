@@ -1,9 +1,12 @@
 package com.firebolt9907.luminabrowser
 
+import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.IntentSender
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -13,6 +16,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.firebolt9907.luminabrowser.ui.customtab.CustomTabRoot
 import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
 import mozilla.components.browser.state.state.CustomTabConfig
@@ -41,6 +45,10 @@ import mozilla.components.feature.downloads.manager.AndroidDownloadManager
 class CustomTabActivity : ComponentActivity(), ActivityDelegate {
 
     private val app get() = application as LuminaApplication
+
+    var isInPipMode by mutableStateOf(false)
+        private set
+    var isVideoFullscreen by mutableStateOf(false)
 
     /** The custom-tab session id currently shown, or null before an intent has been handled. */
     private var customTabId by mutableStateOf<String?>(null)
@@ -82,6 +90,8 @@ class CustomTabActivity : ComponentActivity(), ActivityDelegate {
             try {
                 @Suppress("DEPRECATION") // Chrome-parity path; still honored on 34+ for finish().
                 overridePendingTransition(animation.enterRes, animation.exitRes)
+            } catch (e: Exception) {
+                android.util.Log.e("LuminaCustomTab", "Failed to override pending transition", e)
             } finally {
                 overridePackageNameForAnimations = false
             }
@@ -146,7 +156,9 @@ class CustomTabActivity : ComponentActivity(), ActivityDelegate {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
+        ReaderManager.instance.setUseGoogleCache(app.components.globalPreferencesStore.useGoogleCache)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
@@ -175,7 +187,7 @@ class CustomTabActivity : ComponentActivity(), ActivityDelegate {
             ?.takeIf { id -> app.components.store.state.customTabs.any { it.id == id } }
         if (restored != null) {
             customTabId = restored
-        } else if (savedInstanceState == null) {
+        } else {
             openCustomTabFor(intent)
         }
 
@@ -185,6 +197,9 @@ class CustomTabActivity : ComponentActivity(), ActivityDelegate {
                 hasCloseAnimation = closeAnimation != null,
                 onOpenInLumina = ::openInLumina,
                 onClose = { finish() },
+                isInPipMode = isInPipMode,
+                onFullScreenChanged = { isVideoFullscreen = it },
+                onRequestPipMode = ::requestPipMode,
             )
         }
     }
@@ -199,6 +214,11 @@ class CustomTabActivity : ComponentActivity(), ActivityDelegate {
         super.onStop()
         app.components.engine.unregisterActivityDelegate()
         downloadsFeature.stop()
+    }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (com.firebolt9907.luminabrowser.ui.video.handleVolumeKeyForVideo(this, event)) return true
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -234,7 +254,8 @@ class CustomTabActivity : ComponentActivity(), ActivityDelegate {
         // real config — session token (links this tab to the caller's CCT session), toolbar color,
         // and the enter/exit-animation options bundle — instead of a bare default. A plain
         // ACTION_VIEW (no CCT session) falls back to CustomTabConfig().
-        val config = if (intent != null && isCustomTabIntent(intent)) {
+        val isCct = intent != null && runCatching { isCustomTabIntent(intent) }.getOrDefault(false)
+        val config = if (isCct) {
             runCatching { createCustomTabConfigFromIntent(intent, resources) }
                 .getOrDefault(CustomTabConfig())
         } else {
@@ -248,14 +269,24 @@ class CustomTabActivity : ComponentActivity(), ActivityDelegate {
                 "exitBundle=${config.exitAnimations != null} referrer=$referrer " +
                 "closeAnimation=$closeAnimation",
         )
+        val useCache = ReaderManager.instance.useGoogleCache.value &&
+            com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(url)
+        val targetUrl = if (useCache) {
+            com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(url)
+        } else {
+            url
+        }
         val id = app.components.customTabsUseCases.add.invoke(
-            url,
+            targetUrl,
             config,
             false,
             null,
             SessionState.Source.External.CustomTab(null),
         )
         customTabId = id
+        if (useCache) {
+            ReaderManager.instance.setOriginalUrl(id, url)
+        }
         // Open straight into reader when the page turns out to be a readable article.
         ReaderManager.instance.requestReaderActivation(id)
     }
@@ -304,6 +335,37 @@ class CustomTabActivity : ComponentActivity(), ActivityDelegate {
         }.onFailure {
             pendingIntentSenderResult = null
             onResult(null)
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isInPipMode = isInPictureInPictureMode
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (isVideoFullscreen && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            try {
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                enterPictureInPictureMode(params)
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun requestPipMode() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            try {
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                enterPictureInPictureMode(params)
+            } catch (_: Exception) { }
         }
     }
 

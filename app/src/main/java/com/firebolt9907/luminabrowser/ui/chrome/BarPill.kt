@@ -1,11 +1,11 @@
 package com.firebolt9907.luminabrowser.ui.chrome
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -21,6 +21,7 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 import kotlin.math.abs
 
 @Composable
@@ -35,6 +36,8 @@ internal fun BarPill(
     width: Dp? = null,
     interactive: Boolean = true,
     containerColor: Color? = null,
+    onClick: (() -> Unit)? = null,
+    exponent: Float = 3.0f,
     content: @Composable () -> Unit,
 ) {
     val currentOnStart by rememberUpdatedState(onDragStart)
@@ -67,7 +70,16 @@ internal fun BarPill(
                 velocityTracker.addPointerInputChange(down)
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
-                    val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                    val change = event.changes.firstOrNull { it.id == pointerId }
+                    if (change == null) {
+                        // Tracked pointer lost (multitouch / palm rejection). Fire onEnd so
+                        // LuminaRoot cleans up offsetX and snapshot state —
+                        // otherwise the gesture is left half-updated ("pill dissociating").
+                        if (started) {
+                            currentOnEnd(Offset(totalDx, totalDy), Offset.Zero)
+                        }
+                        break
+                    }
                     if (!change.pressed) {
                         if (started) {
                             val v = velocityTracker.calculateVelocity()
@@ -101,9 +113,15 @@ internal fun BarPill(
         Modifier
     }
 
+    val clickModifier = if (onClick != null) {
+        Modifier.clickable(onClick = onClick)
+    } else {
+        Modifier
+    }
+
     Surface(
-        modifier = modifier.then(sizing).then(gestureModifier),
-        shape = RoundedCornerShape(cornerRadius),
+        modifier = modifier.then(sizing).then(gestureModifier).then(clickModifier),
+        shape = SquircleShape(cornerRadius, exponent = exponent),
         color = containerColor ?: MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 6.dp,
     ) {

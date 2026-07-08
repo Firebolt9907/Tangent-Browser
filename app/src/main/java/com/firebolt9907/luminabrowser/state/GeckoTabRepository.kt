@@ -16,7 +16,7 @@ import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.feature.session.SessionUseCases
 import mozilla.components.feature.tabs.TabsUseCases
-
+import com.firebolt9907.luminabrowser.ui.content.extractCacheHtml
 /**
  * Production [TabRepository] backed by mozilla-components' [BrowserStore]. Also tracks
  * the previous selected-tab id so [dismissBlankTabAndReturn] can return there.
@@ -133,6 +133,13 @@ class GeckoTabRepository(
 
     override fun loadUrl(url: String, tabId: String?) {
         val selectedId = tabId ?: store.state.selectedTabId ?: return
+        if (url.trim().equals("debug:cache", ignoreCase = true)) {
+            val session = store.state.tabs.firstOrNull { it.id == selectedId }?.engineState?.engineSession
+            if (session != null) {
+                session.extractCacheHtml()
+                return
+            }
+        }
         sessionUseCases.loadUrl.invoke(normalizeUrl(url, searchEngine()), sessionId = selectedId)
     }
 

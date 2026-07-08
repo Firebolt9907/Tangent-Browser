@@ -59,8 +59,9 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.LuminaBrowser"
-            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:supportsPictureInPicture="true"
+            android:theme="@style/Theme.LuminaBrowser.Starting"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
             android:windowSoftInputMode="adjustNothing">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -84,8 +85,9 @@
             android:taskAffinity="com.firebolt9907.luminabrowser.customtab"
             android:launchMode="singleTask"
             android:autoRemoveFromRecents="true"
-            android:theme="@style/Theme.LuminaBrowser"
-            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:supportsPictureInPicture="true"
+            android:theme="@style/Theme.LuminaBrowser.Starting"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
             android:windowSoftInputMode="adjustNothing">
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW" />

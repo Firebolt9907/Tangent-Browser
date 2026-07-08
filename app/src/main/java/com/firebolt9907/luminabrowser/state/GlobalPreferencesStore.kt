@@ -75,6 +75,17 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getString("readerFontName", "System") ?: "System"
         set(value) { prefs.edit { putString("readerFontName", value) } }
 
+    var useGoogleCache: Boolean
+        get() = prefs.getBoolean("useGoogleCache", false)
+        set(value) { prefs.edit { putBoolean("useGoogleCache", value) } }
+
+    // Hidden debug toggle: when on, typing "debug:cache" in the address bar opens the
+    // Google Cache page's parsed HTML in a new tab so the user can inspect what GeckoView
+    // actually received (useful for diagnosing paywall-bypass consistency issues).
+    var debugCacheHtml: Boolean
+        get() = prefs.getBoolean("debugCacheHtml", false)
+        set(value) { prefs.edit { putBoolean("debugCacheHtml", value) } }
+
     // Search engine used both for address-bar searches (via normalizeUrl) and for the live query
     // suggestions in the address sheet. Stored by enum name; unknown/missing falls back to default.
     var searchEngine: SearchEngine

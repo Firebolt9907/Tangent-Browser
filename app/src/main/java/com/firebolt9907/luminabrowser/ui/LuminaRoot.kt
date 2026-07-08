@@ -1,10 +1,14 @@
 package com.firebolt9907.luminabrowser.ui
 
+import android.app.Activity
 import android.graphics.Bitmap
 import androidx.activity.ExperimentalActivityApi
 import androidx.core.net.toUri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
@@ -108,6 +112,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -146,6 +151,7 @@ import com.firebolt9907.luminabrowser.ui.sync.SyncedTabsSheet
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.window.WindowRequest
+import com.firebolt9907.luminabrowser.ui.content.extractCacheHtml
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -201,12 +207,32 @@ private object LuminaMotion {
 
 @OptIn(ExperimentalActivityApi::class)
 @Composable
-fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
+fun LuminaRoot(
+    viewModel: LuminaViewModel = viewModel(),
+    isInPipMode: Boolean = false,
+    onFullScreenChanged: (Boolean) -> Unit = {},
+    onRequestPipMode: () -> Unit = {},
+) {
     val appContext = LocalContext.current.applicationContext
     val components = (appContext as LuminaApplication).components
     val state by viewModel.state.collectAsStateWithLifecycle()
     val browserState by components.browserState.collectAsStateWithLifecycle()
     val addonsState by components.addonController.state.collectAsStateWithLifecycle()
+
+    var isVideoFullscreen by remember { mutableStateOf(false) }
+
+    val window = (LocalContext.current as? Activity)?.window
+    if (window != null) {
+        val controller = remember(window) { WindowCompat.getInsetsController(window, window.decorView) }
+        LaunchedEffect(isVideoFullscreen) {
+            if (isVideoFullscreen) {
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
 
     val readerManager = remember { com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance }
     val activeReaderTabs by readerManager.activeReaderTabs.collectAsStateWithLifecycle()
@@ -229,9 +255,11 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             ?.let { readerManager.setTheme(it) }
         readerManager.setFontSize(prefs.readerFontSize)
         readerManager.setFontName(prefs.readerFontName)
+        readerManager.setUseGoogleCache(prefs.useGoogleCache)
         launch { readerManager.theme.collect { prefs.readerThemeName = it.name } }
         launch { readerManager.fontSize.collect { prefs.readerFontSize = it } }
         launch { readerManager.fontName.collect { prefs.readerFontName = it } }
+        launch { readerManager.useGoogleCache.collect { prefs.useGoogleCache = it } }
     }
 
     // Find-in-page state. The match counts are pushed by the engine session's onFindResult.
@@ -279,6 +307,11 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
 
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
+    // Upward travel required before a pill drag engages the grid gesture. Without a slop, a
+    // pixel of vertical wobble during a horizontal tab swipe flips gridGestureActive for the
+    // rest of the gesture, silently switching rendering from the cheap two-pane overlay to the
+    // per-frame grid path (and dropping the edge rubber-band walls).
+    val gridEngageSlopPx = LocalViewConfiguration.current.touchSlop
     val topChromeInsetPx = max(
         WindowInsets.statusBars.getTop(density),
         WindowInsets.displayCutout.getTop(density),
@@ -319,6 +352,14 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     var incomingSnapshotTopPadPx by remember { mutableIntStateOf(0) }
     var incomingSnapshotTabId by remember { mutableStateOf<String?>(null) }
     var stickyIncomingTopPadPx by remember { mutableIntStateOf(0) }
+    // Fade-out phase of the sticky incoming cover: when the cover is dismissed because the tab
+    // underneath has appeared (paint callback / fallback timeout), it moves into these slots and
+    // fades over the live page instead of popping off. Gesture takeovers bypass the fade.
+    var fadingCoverBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var fadingCoverTopPadPx by remember { mutableIntStateOf(0) }
+    var fadingCoverActive by remember { mutableStateOf(false) }
+    var fadingCoverJob by remember { mutableStateOf<Job?>(null) }
+    val fadingCoverAlpha = remember { Animatable(0f) }
     var commitAnimNewTab by remember { mutableStateOf(false) }
     var gridDragPx by remember { mutableFloatStateOf(0f) }
     var gridGestureActive by remember { mutableStateOf(false) }
@@ -337,6 +378,9 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     // True once the upward drag has crossed the grid-commit threshold (50% of travel) so we fire
     // the confirmation haptic exactly once on crossing, and don't re-fire it on release.
     var gridThresholdHapticFired by remember { mutableStateOf(false) }
+    // Set when a pill gesture is judged (once, at the vertical slop crossing) to be a horizontal
+    // tab swipe; vertical motion is ignored for the rest of that gesture. Reset on drag start.
+    var gridAxisLockedHorizontal by remember { mutableStateOf(false) }
     // Mid-switch handoff: when grid grabbed during a horizontal commit spring, the leaving and
     // incoming tabs' frozen X offsets seed the grid animation. Otherwise these stay null and the
     // grid derives live tabs dynamically from offsetX/selectedTabId/previousTabId/nextTabId.
@@ -383,6 +427,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     var barCollapsePx by remember { mutableFloatStateOf(0f) }
     var barCollapseCompact by remember { mutableStateOf(false) }
     var barCollapseProgressTarget by remember { mutableFloatStateOf(0f) }
+    var userScrollInteractionActive by remember { mutableStateOf(false) }
     var pullRefreshDistancePx by remember { mutableFloatStateOf(0f) }
     // True from the moment a pull crosses the threshold and triggers a reload until that load
     // completes — drives the "pulsing while loading" phase of the refresh line.
@@ -497,9 +542,42 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         }
     }
 
+    /**
+     * Instantly removes the sticky incoming cover *and* any in-flight fade. Used by gesture
+     * takeovers (a new drag / predictive back), where a lingering translucent cover would sit
+     * on top of the freshly-rendered gesture overlay.
+     */
     fun clearStickyCover() {
         stickyIncomingSnapshot = null
         stickyIncomingTabId = null
+        fadingCoverJob?.cancel()
+        fadingCoverJob = null
+        fadingCoverBitmap = null
+        fadingCoverActive = false
+    }
+
+    /**
+     * Dismisses the sticky incoming cover by cross-fading it into the live page underneath,
+     * instead of the instant pop [clearStickyCover] does. For the natural end of a cover's life:
+     * the covered tab has painted (or the fallback timeout decided it must have). A null bitmap
+     * cover (the plain background placeholder) fades the same way. Note this nulls the sticky
+     * state immediately — all gating logic treats the cover as gone; only the visual lingers.
+     */
+    fun fadeOutStickyCover() {
+        if (stickyIncomingSnapshot == null && stickyIncomingTabId == null) return
+        fadingCoverBitmap = stickyIncomingSnapshot
+        fadingCoverTopPadPx = stickyIncomingTopPadPx
+        fadingCoverActive = true
+        stickyIncomingSnapshot = null
+        stickyIncomingTabId = null
+        fadingCoverJob?.cancel()
+        fadingCoverJob = scope.launch {
+            fadingCoverAlpha.snapTo(1f)
+            fadingCoverAlpha.animateTo(0f, animationSpec = tween(durationMillis = 220))
+            fadingCoverBitmap = null
+            fadingCoverActive = false
+            fadingCoverJob = null
+        }
     }
 
     fun visualBarStateForUrl(
@@ -603,9 +681,14 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         // would show the (invisible) underlying page.
         if (activeReaderTabs.contains(id)) readerTabSnapshots[id]?.let { return it }
         val pageUrl = url.orEmpty()
-        return recentTabSnapshots[id]
+        val cached = recentTabSnapshots[id]
             ?: pageUrl.takeIf { it.isNotBlank() && it != "about:blank" }?.let(recentPageSnapshots::get)
-            ?: cache.get(id, pageUrl)
+        if (cached != null) return cached
+        val loaded = cache.get(id, pageUrl)
+        if (loaded != null) {
+            recentTabSnapshots[id] = loaded
+        }
+        return loaded
     }
     val predictiveBackSnapshot: Bitmap? = remember(
         selectedTabId,
@@ -729,11 +812,22 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         if (host.isEmpty()) return 0.dp
         return if (sitePrefsStore.get(host).topPaddingFix) topChromeInsetDp else 0.dp
     }
+    val currentSession by rememberUpdatedState(selectedEngineSession)
     val callbacks = remember(viewModel, currentUrl) {
         BarCallbacks(
             onUrlTap = viewModel::onUrlTap,
             onEditingTextChange = viewModel::onEditingTextChange,
-            onEditingSubmit = viewModel::onEditingSubmit,
+            onEditingSubmit = {
+                val text = viewModel.state.value.editingText.trim()
+                if (text.equals("debug:cache", ignoreCase = true) &&
+                    components.globalPreferencesStore.debugCacheHtml
+                ) {
+                    currentSession?.extractCacheHtml()
+                    viewModel.onEditingCancel()
+                } else {
+                    viewModel.onEditingSubmit()
+                }
+            },
             onEditingCancel = {
                 viewModel.onEditingCancel()
                 if (currentUrl == "about:blank") {
@@ -786,6 +880,8 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     }
 
     fun handlePageScrollDelta(delta: Float) {
+        android.util.Log.d("LuminaPill", "handlePageScrollDelta: delta=$delta, active=$userScrollInteractionActive")
+        if (!userScrollInteractionActive) return
         val nextCollapsePx = (barCollapsePx + delta).coerceIn(0f, BarCollapseDistancePx)
         if (abs(nextCollapsePx - barCollapsePx) < 0.5f) return
         barCollapsePx = nextCollapsePx
@@ -884,21 +980,40 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             predictiveBackOffsetPx = 0f
             clearPredictiveBackCover()
         }
+        // A drag that grabbed a mid-switch commit spring seeds gridHandoff* with the spring's
+        // frozen offsets so a grab-and-lift continues into the grid without a pop. But once the
+        // gesture turns clearly horizontal (a fresh tab swipe), those offsets no longer match
+        // what's on screen — the horizontal overlay renders relative to 0 — so a later grid
+        // engage would snap the cards back to the stale mid-spring position. Drop the handoff
+        // before that can happen; the grid then derives live positions from offsetX as usual.
+        if (!gridGestureActive && gridHandoffSelectedTabId != null && abs(offsetX) > gridEngageSlopPx) {
+            gridHandoffSelectedTabId = null
+            gridHandoffLeavingTabId = null
+            gridHandoffSelectedOffsetX = 0f
+            gridHandoffLeavingOffsetX = 0f
+            gridHandoffSelectedTopPadPx = 0
+            gridHandoffLeavingTopPadPx = 0
+        }
         val pageStride = width + tabSwitchGapPx
         val proposed = (offsetX + delta).coerceIn(-pageStride, pageStride)
-        // During grid gesture, allow free movement in both directions so the user can wiggle
-        // the card left/right without hitting the first/last-tab wall. The guards only apply
-        // in pure tab-switch mode where they prevent overshooting into non-existent tabs.
+        // At the first/last tab there's no page to swipe to. Rather than a dead hard-stop, let the
+        // page follow the finger with iOS-style rubber-band resistance (snaps back on release via
+        // commitHorizontalRelease). During a grid gesture we allow free movement in both directions
+        // so the user can wiggle the card without hitting a wall, so the rubber-band only applies in
+        // pure tab-switch mode.
+        val atLeftWall = !gridGestureActive && previousTabId == null
+        val atRightWall = !gridGestureActive && nextTabId == null && !canCreateTabFromRightEdge
         offsetX = when {
-            !gridGestureActive && proposed > 0f && previousTabId == null -> offsetX.coerceAtMost(0f)
-            !gridGestureActive && proposed < 0f && nextTabId == null && !canCreateTabFromRightEdge ->
-                offsetX.coerceAtLeast(0f)
+            atLeftWall && (offsetX > 0f || (offsetX == 0f && delta > 0f)) ->
+                rubberBand(offsetX, delta, width).coerceAtLeast(0f)
+            atRightWall && (offsetX < 0f || (offsetX == 0f && delta < 0f)) ->
+                rubberBand(offsetX, delta, width).coerceAtMost(0f)
             else -> proposed
         }
     }
 
-    fun commitHorizontalRelease(velocity: Float) {
-        if (offsetX == 0f) {
+    fun commitHorizontalRelease(velocity: Float, forceDirection: Int? = null) {
+        if (offsetX == 0f && forceDirection == null) {
             resetTabSwitchSnapshot()
             return
         }
@@ -908,19 +1023,19 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         val pastDistance = abs(current) > SwitchDistanceThresholdPx
         val pastVelocity = abs(velocity) > SwitchVelocityThresholdPxS &&
             sign(velocity) == sign(current) && current != 0f
-        val direction = when {
+        val direction = forceDirection ?: when {
             current > 0f && previousTabId != null && (pastDistance || pastVelocity) -> -1
             current < 0f && nextTabId != null && (pastDistance || pastVelocity) -> 1
             else -> 0
         }
-        val shouldCreateTab = current < 0f &&
+        val shouldCreateTab = forceDirection == null && current < 0f &&
             nextTabId == null &&
             canCreateTabFromRightEdge &&
             (pastDistance || pastVelocity)
         switchAnimationJob?.cancel()
         switchAnimationJob = null
         if ((direction != 0 || shouldCreateTab) && width > 0f) {
-            val side = if (current > 0f) 1f else -1f
+            val side = -direction.toFloat()
             val target = side * pageStride
             val leavingBitmap = tabSwitchCurrentSnapshot ?: snapshotFor(selectedTabId, currentUrl)
             val incomingBitmap: Bitmap?
@@ -1193,6 +1308,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     val onPillDragStart: () -> Unit = {
         gridAnimationJob?.cancel()
         gridAnimationJob = null
+        gridAxisLockedHorizontal = false
         // If a horizontal commit spring is mid-flight, freeze it and pin both visible tabs as a
         // grid handoff. Their current X offsets seed the grid animation.
         val midSwitch = leavingSnapshotJob != null
@@ -1236,32 +1352,48 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     }
 
     val onPillDragDelta: (androidx.compose.ui.geometry.Offset) -> Unit = { delta ->
-        // Horizontal: drives carousel. Honors tabSwitchingEnabled so collapse/back covers still
-        // suppress horizontal switching, but vertical motion is allowed independently.
         if (tabSwitchingEnabled || gridGestureActive) {
             applyHorizontalDelta(delta.x)
         }
-        // Vertical: only upward motion (negative dy) increases grid progress.
         val nextGridPx = (gridDragPx - delta.y).coerceAtLeast(0f)
-        if (nextGridPx != gridDragPx) {
-            gridDragPx = nextGridPx
-            if (nextGridPx > 0f) gridGestureActive = true
-            // Map drag distance to progress using the selected tab's grid cell travel distance so
-            // that `progress = dragPx / travelPx` keeps the card's bottom literally under the
-            // finger — the same geometry Safari uses.
-            // Written directly to gridDragProgress (plain state) rather than through a coroutine
-            // snapTo so there's zero scheduling overhead on the hot drag path.
-            val travelPx = gridTravelPx()
-            gridDragProgress = (gridDragPx / travelPx).coerceIn(0f, 1f)
-            // Vibrate the moment the drag crosses the commit threshold (the point past which
-            // releasing opens the all-tabs grid), and reset if the user drags back below it.
-            if (gridDragProgress >= 0.5f) {
-                if (!gridThresholdHapticFired) {
-                    gridThresholdHapticFired = true
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                }
+        if (nextGridPx != gridDragPx && !gridAxisLockedHorizontal) {
+            if (!gridGestureActive && nextGridPx <= gridEngageSlopPx) {
+                // Below the engage slop: keep accumulating but don't grab the gesture yet.
+                gridDragPx = nextGridPx
+            } else if (!gridGestureActive && abs(offsetX) > gridEngageSlopPx * 2) {
+                // Axis decision, made once per gesture the moment vertical travel first crosses
+                // the slop: if the finger is already well into a horizontal tab swipe, this is a
+                // thumb arcing upward while swiping sideways, not a grid pull. Letting the arc
+                // engage the grid mid-swipe switches rendering to the grid path — measured at
+                // ~90 ms for its first composition frame plus an elevated per-frame cost after —
+                // so lock the gesture horizontal and ignore vertical motion until the finger lifts.
+                gridAxisLockedHorizontal = true
+                gridDragPx = 0f
             } else {
-                gridThresholdHapticFired = false
+                if (!gridGestureActive) {
+                    gridGestureActive = true
+                    // Swallow the slop so the card starts lifting from the finger's current
+                    // position instead of popping up by a slop's height on engage. Skip the
+                    // swallow when gridDragPx was pre-seeded above the slop (mid-switch grid
+                    // handoff), where subtracting would pop the card downward instead.
+                    gridDragPx = if (gridDragPx <= gridEngageSlopPx) {
+                        (nextGridPx - gridEngageSlopPx).coerceAtLeast(0f)
+                    } else {
+                        nextGridPx
+                    }
+                } else {
+                    gridDragPx = nextGridPx
+                }
+                val travelPx = gridTravelPx()
+                gridDragProgress = (gridDragPx / travelPx).coerceIn(0f, 1f)
+                if (gridDragProgress >= 0.5f) {
+                    if (!gridThresholdHapticFired) {
+                        gridThresholdHapticFired = true
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
+                } else {
+                    gridThresholdHapticFired = false
+                }
             }
         }
     }
@@ -1286,7 +1418,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             val minScale = (cellW / containerW).coerceIn(0.3f, 0.6f)
             val releaseScale = (1f - gridDragProgress * (1f - minScale)).coerceIn(minScale, 1f)
             val captureCarouselShift = if (gridHandoffSelectedTabId != null) {
-                gridHandoffSelectedOffsetX
+                gridHandoffSelectedOffsetX + offsetX
             } else {
                 offsetX
             }
@@ -1407,10 +1539,15 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         predictiveBackAnimationJob?.cancel()
         predictiveBackAnimationJob = scope.launch {
             if (shouldCommit && selectedTabId != null && targetUrl != null) {
+                // Carry the swipe's release velocity into the settle so a fast flick completes fast
+                // and a slow drag eases in — the continuity that makes iOS back-swipe feel connected,
+                // instead of a fixed-duration tween that ignores how hard you flung. Barely-damped so
+                // it lands crisply on the page edge without a visible bounce past it.
                 animate(
                     current,
                     width,
-                    animationSpec = tween(PredictiveBackDurationMs, easing = EaseOut),
+                    initialVelocity = velocity,
+                    animationSpec = spring(dampingRatio = 0.95f, stiffness = Spring.StiffnessMedium),
                 ) { value, _ ->
                     predictiveBackOffsetPx = value
                 }
@@ -1419,10 +1556,13 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                 resetPredictiveBackGesture()
                 components.sessionUseCases.goBack.invoke(selectedTabId, true)
             } else {
+                // Cancel: spring back to rest with the same velocity continuity (critically damped so
+                // any residual outward momentum settles without oscillating).
                 animate(
                     current,
                     0f,
-                    animationSpec = tween(PredictiveBackDurationMs, easing = EaseOut),
+                    initialVelocity = velocity,
+                    animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
                 ) { value, _ ->
                     predictiveBackOffsetPx = value
                 }
@@ -1448,6 +1588,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         resetPredictiveBackGesture()
         resetTabSwitchSnapshot()
         clearPredictiveBackCover()
+        userScrollInteractionActive = false
         expandUrlBar()
         resetPullRefresh()
     }
@@ -1481,6 +1622,8 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     }
 
     LaunchedEffect(selectedContent?.loading) {
+        android.util.Log.d("LuminaPill", "LaunchedEffect(loading) run: loading=${selectedContent?.loading}")
+        userScrollInteractionActive = false
         if (selectedContent?.loading == false) {
             resetPullRefresh()
         }
@@ -1558,12 +1701,12 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         if (actualSelectedTabId != null && actualSelectedTabId == stickyIncomingTabId) {
             delay(700)
             if (actualSelectedTabId == stickyIncomingTabId) {
-                clearStickyCover()
+                fadeOutStickyCover()
             }
         } else if (stickyIncomingTabId != null) {
             delay(250)
             if (actualSelectedTabId != stickyIncomingTabId) {
-                clearStickyCover()
+                fadeOutStickyCover()
             }
         }
     }
@@ -1590,7 +1733,11 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
     }
 
     LuminaBrowserTheme {
-        PredictiveBackHandler(enabled = predictiveBackGestureEnabled) { progress ->
+        BackHandler(enabled = isVideoFullscreen) {
+            selectedTabId?.let { components.sessionUseCases.exitFullscreen.invoke(it) }
+        }
+
+        PredictiveBackHandler(enabled = predictiveBackGestureEnabled && !isVideoFullscreen) { progress ->
             try {
                 gestureCurrentSnapshot = currentPageSnapshot
                 activePredictiveBackSnapshot = predictiveBackSnapshot
@@ -1645,17 +1792,17 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             }
         }
 
-        BackHandler(enabled = gridOpen) {
+        BackHandler(enabled = gridOpen && !isVideoFullscreen) {
             closeGrid(animateBack = true)
         }
 
-        BackHandler(enabled = selectedContent?.canGoBack == true && !predictiveBackGestureEnabled && !gridOpen) {
+        BackHandler(enabled = selectedContent?.canGoBack == true && !predictiveBackGestureEnabled && !gridOpen && !isVideoFullscreen) {
             components.sessionUseCases.goBack.invoke(selectedTabId, true)
         }
 
         BackHandler(
             enabled = selectedContent?.canGoBack == false &&
-                selectedContent.url == "about:blank",
+                selectedContent.url == "about:blank" && !isVideoFullscreen,
         ) {
             viewModel.dismissBlankTabAndReturn()
         }
@@ -1672,7 +1819,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
             enabled = !gridOpen &&
                 selectedContent?.canGoBack == false &&
                 selectedContent?.url != "about:blank" &&
-                selectedTabHasLiveParent,
+                selectedTabHasLiveParent && !isVideoFullscreen,
         ) {
             viewModel.closeChildTabAndReturnToParent()
         }
@@ -1680,12 +1827,12 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
         // When reader mode is showing, Back should dismiss the reader overlay first (like closing
         // any overlay) rather than navigating the page. Composed last so it takes priority over the
         // page-navigation and predictive-back handlers above while reader is active.
-        BackHandler(enabled = isReaderActiveOnSelectedTab && !gridOpen) {
+        BackHandler(enabled = isReaderActiveOnSelectedTab && !gridOpen && !isVideoFullscreen) {
             selectedTabId?.let { readerManager.setReaderActive(it, false) }
         }
 
         // Back closes the find-in-page bar first (highest priority overlay).
-        BackHandler(enabled = findInPageActive) {
+        BackHandler(enabled = findInPageActive && !isVideoFullscreen) {
             selectedEngineSession?.clearFindMatches()
             findInPageActive = false
             findQuery = ""
@@ -1695,7 +1842,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
 
         // Back closes the address sheet (editing mode) instead of exiting the app — mirrors the
         // Cancel button, including discarding an untouched blank new tab.
-        BackHandler(enabled = state.mode == BarMode.Editing && !gridEngaged) {
+        BackHandler(enabled = state.mode == BarMode.Editing && !gridEngaged && !isVideoFullscreen) {
             viewModel.onEditingCancel()
             if (currentUrl == "about:blank") {
                 viewModel.dismissBlankTabAndReturn()
@@ -1712,6 +1859,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     .onSizeChanged { contentSize = it },
             ) {
                 val contentWidth = contentSize.width.toFloat()
+                val shouldShowUi = !isVideoFullscreen && !isInPipMode
                 // Easing hoisted out of the per-frame path; the predictive-back overlay reads the
                 // animating offset inside draw-phase lambdas (graphicsLayer / drawBehind) so the
                 // back-swipe doesn't recompose this subtree on every frame.
@@ -1719,21 +1867,21 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                 ContentHost(
                     engine = components.engine,
                     engineSession = selectedEngineSession,
-                    topChromeInsetPx = topChromeInsetPx,
-                    bottomChromeInsetPx = bottomChromeInsetPx,
+                    topChromeInsetPx = if (isVideoFullscreen) 0 else topChromeInsetPx,
+                    bottomChromeInsetPx = if (isVideoFullscreen) 0 else bottomChromeInsetPx,
                     tabId = actualSelectedTabId,
                     pageUrl = actualSelectedContent?.url.orEmpty(),
                     snapshotCache = components.tabSnapshotCache,
                     addonController = components.addonController,
                     sitePermissionController = components.sitePermissionController,
+                    sitePreferencesStore = components.sitePreferencesStore,
                     onTabPainted = { paintedTabId ->
                         if (paintedTabId == actualSelectedTabId) geckoHasPainted = true
                         if (paintedTabId == actualSelectedTabId && paintedTabId == stickyIncomingTabId) {
                             scope.launch {
                                 delay(80)
                                 if (paintedTabId == actualSelectedTabId && paintedTabId == stickyIncomingTabId) {
-                                    stickyIncomingSnapshot = null
-                                    stickyIncomingTabId = null
+                                    fadeOutStickyCover()
                                 }
                             }
                         }
@@ -1750,7 +1898,13 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                             }
                         }
                     },
-                    onSnapshotCaptured = { capturedTabId, url, bitmap ->
+                    onSnapshotCaptured = { capturedTabId, url, rawBitmap ->
+                        // Keep the in-memory snapshots as RGB_565 (half the heap of the ARGB_8888
+                        // capture; opaque web pages lose nothing). These maps are unbounded across
+                        // live tabs, so holding full ARGB here was a big source of GC pressure —
+                        // which both stutters the swipe and makes later captureThumbnail() calls
+                        // fail under memory pressure, showing blank tab thumbnails on quick swipes.
+                        val bitmap = rawBitmap.toResidentSnapshot()
                         recentTabSnapshots[capturedTabId] = bitmap
                         // Drop snapshots for tabs that no longer exist so closed-tab bitmaps aren't
                         // retained in memory indefinitely.
@@ -1766,6 +1920,10 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         }
                     },
                     onPageScrollDelta = ::enqueuePageScrollDelta,
+                    onPageTouch = {
+                        android.util.Log.d("LuminaPill", "onPageTouch callback triggered: setting active=true")
+                        userScrollInteractionActive = true
+                    },
                     onTopOverscrollPull = { distance ->
                         pullRefreshDistancePx = distance.coerceIn(0f, pullRefreshMaxDistancePx)
                         // Buzz exactly once when the pull first crosses the refresh threshold, and
@@ -1829,13 +1987,25 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                             null -> Unit
                         }
                     },
+                    onFullScreenChange = { enabled ->
+                        isVideoFullscreen = enabled
+                        onFullScreenChanged(enabled)
+                    },
                     modifier = Modifier
-                        .graphicsLayer { translationX = offsetX },
+                        .graphicsLayer {
+                            // Whenever offsetX != 0 outside the grid, the opaque horizontal-switch
+                            // overlay fully covers the viewport, so translating the SurfaceView-
+                            // backed engine under it only costs a SurfaceControl transaction per
+                            // drag frame. Keep it parked at 0 there; the grid path keeps the
+                            // translation because its backdrop fades in and can briefly reveal it.
+                            translationX = if (gridEngaged) offsetX else 0f
+                        },
                     topPaddingFixActive = currentSitePrefs.topPaddingFix,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
                     barCollapseProgressState = barCollapseProgressState,
+                    tabIsLoading = actualSelectedContent?.loading == true,
                 )
-                if (selectedContent?.url.isBlankPageUrl()) {
+                if (selectedContent?.url.isBlankPageUrl() && shouldShowUi) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -1872,7 +2042,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                 val pageLoadProgress = selectedContent?.progress ?: 0
                 val pageIsLoading = selectedContent?.loading == true
                 val showLoadBar = pageIsLoading && pageLoadProgress in 1..99 &&
-                    !gridEngaged && !findInPageActive
+                    !gridEngaged && !findInPageActive && shouldShowUi
                 val animatedLoadProgress by animateFloatAsState(
                     targetValue = (pageLoadProgress / 100f).coerceIn(0f, 1f),
                     // Linear between discrete Gecko progress reports so the bar advances at constant
@@ -1897,7 +2067,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                 }
                 // Find-in-page bar, pinned under the status bar at the top of the content area.
                 AnimatedVisibility(
-                    visible = findInPageActive,
+                    visible = findInPageActive && shouldShowUi,
                     enter = fadeIn(),
                     exit = fadeOut(),
                     modifier = Modifier.align(Alignment.TopCenter),
@@ -1929,7 +2099,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     )
                 }
                 AnimatedVisibility(
-                    visible = isReaderActiveOnSelectedTab && selectedTabArticle != null,
+                    visible = isReaderActiveOnSelectedTab && selectedTabArticle != null && shouldShowUi,
                     enter = slideInVertically { it } + fadeIn(),
                     exit = slideOutVertically { it } + fadeOut(),
                     modifier = Modifier
@@ -1937,6 +2107,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         .graphicsLayer { translationX = offsetX },
                 ) {
                     lastReaderArticle.value?.let { article ->
+                    val context = LocalContext.current
                     com.firebolt9907.luminabrowser.ui.reader.ReaderView(
                         article = article,
                         theme = readerTheme,
@@ -1951,6 +2122,22 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                                 if (readerManager.isReaderActive(id)) readerTabSnapshots[id] = bitmap
                             }
                         },
+                        onLinkClick = { href ->
+                            val lowHref = href.trim().lowercase()
+                            if (lowHref.startsWith("http://") || lowHref.startsWith("https://")) {
+                                selectedTabId?.let { id ->
+                                    readerManager.setReaderActive(id, false)
+                                }
+                                selectedEngineSession?.loadUrl(href)
+                            } else {
+                                try {
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(href))
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    // ignore
+                                }
+                            }
+                        }
                     )
                     }
                 }
@@ -2112,6 +2299,33 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                             .clip(switchPaneShape),
                     )
                 }
+                // The dismissed sticky cover cross-fading into the live page (see
+                // fadeOutStickyCover). Same layer as the sticky cover above; the alpha is read
+                // in graphicsLayer so the fade animates in the draw phase only.
+                if (fadingCoverActive) {
+                    val fadingBitmap = fadingCoverBitmap
+                    val pad = with(density) { fadingCoverTopPadPx.toDp() }
+                    if (fadingBitmap != null) {
+                        val img = remember(fadingBitmap) { fadingBitmap.asImageBitmap() }
+                        Image(
+                            bitmap = img,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = pad)
+                                .graphicsLayer { alpha = fadingCoverAlpha.value }
+                                .clip(switchPaneShape),
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { alpha = fadingCoverAlpha.value }
+                                .background(MaterialTheme.colorScheme.background),
+                        )
+                    }
+                }
                 if (leavingSnapshotBitmap != null || incomingSnapshotBitmap != null || commitAnimNewTab) {
                     val width = contentSize.width.toFloat()
                     val pageStride = width + tabSwitchGapPx
@@ -2263,7 +2477,15 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                             // Plain-float captures computed outside the lambda are not tracked by
                             // derivedStateOf, which caused drag positions to freeze mid-gesture.
                             val isGestureActive = gridGestureActive
-                            val liveShift = if (gridHandoffSelectedTabId != null) gridHandoffSelectedOffsetX else offsetX
+                            // Handoff mode adds the live drag offset on top of the frozen mid-switch
+                            // position (offsetX is 0 at the grab) so the card still follows the
+                            // finger horizontally; a bare frozen read pinned the card's X for the
+                            // whole gesture.
+                            val liveShift = if (gridHandoffSelectedTabId != null) {
+                                gridHandoffSelectedOffsetX + offsetX
+                            } else {
+                                offsetX
+                            }
                             val liveScale: Float
                             val liveSelTx: Float
                             val liveSelTy: Float
@@ -2288,7 +2510,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                             tabsList.mapIndexed { i, tab ->
                                 val isHandoffLeaving = gridHandoffSelectedTabId != null && tab.id == gridHandoffLeavingTabId
                                 val browseX = if (isHandoffLeaving) {
-                                    gridHandoffLeavingOffsetX
+                                    gridHandoffLeavingOffsetX + offsetX
                                 } else {
                                     (i - newSelIdx) * pageStride + liveShift
                                 }
@@ -2297,39 +2519,20 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                                     gridHandoffSelectedTabId != null && i == newSelIdx -> gridHandoffSelectedTopPadPx
                                     else -> tabPadPxMap[tab.id] ?: 0
                                 }
-                                val snapshot = if (tab.content.url.isBlankPageUrl()) {
-                                    null
-                                } else if (i == newSelIdx) {
-                                    // Use the gesture-fresh capture for the live tab when available —
-                                    // matches the existing horizontal-switch overlay behavior.
-                                    tabSwitchCurrentSnapshot ?: snapshotFor(tab.id, tab.content.url)
-                                } else {
-                                    snapshotFor(tab.id, tab.content.url)
-                                }
-                                // dragTx/dragTy/dragScale: used during gesture and commit animation.
-                                // During gesture: finger-tracking computed above.
-                                // During commit spring: positions captured at release (gridCommitFromPositions).
-                                val dragPos = when {
-                                    isGestureActive -> Triple(
-                                        liveSelTx + (i - newSelIdx) * liveStride,
-                                        liveSelTy,
-                                        liveScale,
-                                    )
-                                    liveCommitPositions != null && i < liveCommitPositions.size -> liveCommitPositions[i]
-                                    else -> Triple(0f, 0f, 1f)
-                                }
                                 GridTab(
                                     id = tab.id,
                                     url = tab.content.url,
                                     title = tab.content.title.ifBlank {
                                         hostFromUrl(tab.content.url)
                                     },
-                                    snapshot = snapshot,
-                                    browseTranslationX = browseX,
+                                    snapshot = null,
+                                    browseBaseX = if (isHandoffLeaving) {
+                                        gridHandoffLeavingOffsetX + offsetX
+                                    } else {
+                                        (i - newSelIdx) * pageStride
+                                    },
                                     browseTopPadPx = browsePadPx,
-                                    dragTx = dragPos.first,
-                                    dragTy = dragPos.second,
-                                    dragScale = dragPos.third,
+                                    slotDelta = i - newSelIdx,
                                 )
                             }
                         }
@@ -2352,22 +2555,13 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         }
                     }
                     TabGridOverlay(
-                        progress = gridProgress,
-                        xProgress = xProgress,
-                        browseCornerDp = switchCornerRadiusDp,
+                        progress = { if (gridGestureActive) gridDragProgress else gridProgressState.value },
+                        xProgress = { if (gridGestureActive) 0f else gridXProgressState.value },
+                        carouselShift = { offsetX },
+                        dragOffsetPx = { gridDragPx },
                         containerSize = contentSize,
                         tabs = gridTabs,
                         selectedTabId = selectedTabId,
-                        isGesture = gridGestureActive,
-                        commitFromProgress = if (gridGestureActive) 0f else gridCommitFromProgress,
-                        cancelFromProgress = if (gridGestureActive) 0f else gridCancelFromProgress,
-                        newTabSelected = gridNewTabSelected,
-                        onCloseTab = { tabId ->
-                            components.tabRepository.removeTab(tabId)
-                        },
-                        onNewTab = {
-                            openNewTabFromGrid()
-                        },
                         onTabSelected = { tabId ->
                             // Switch the selected tab so the closing animation lands on the
                             // tapped cell — its carousel slot then becomes the centered (offset=0)
@@ -2399,6 +2593,32 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                                     }.toInt()
                                 }
                                 commitPendingGeckoSelection()
+                            }
+                        },
+                        pageStridePx = pageStride,
+                        selectedShiftBase = gridHandoffSelectedOffsetX,
+                        onNewTab = {
+                            openNewTabFromGrid()
+                        },
+                        onCloseTab = { tabId ->
+                            components.tabRepository.removeTab(tabId)
+                        },
+                        newTabSelected = gridNewTabSelected,
+                        browseCornerDp = switchCornerRadiusDp,
+                        isGesture = gridGestureActive,
+                        commitFromProgress = if (gridGestureActive) 0f else gridCommitFromProgress,
+                        cancelFromProgress = if (gridGestureActive) 0f else gridCancelFromProgress,
+                        releasePositions = gridCommitFromPositions,
+                        snapshotCacheVersion = snapshotCacheVersion,
+                        snapshotProvider = { tabId ->
+                            val tabIndex = tabsList.indexOfFirst { it.id == tabId }
+                            val tab = tabsList.getOrNull(tabIndex)
+                            if (tab == null || tab.content.url.isBlankPageUrl()) {
+                                null
+                            } else if (tabIndex == newSelIdx) {
+                                tabSwitchCurrentSnapshot ?: snapshotFor(tab.id, tab.content.url)
+                            } else {
+                                snapshotFor(tab.id, tab.content.url)
                             }
                         },
                     )
@@ -2494,7 +2714,7 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                     val gridOpenFraction =
                         (if (gridGestureActive) gridDragProgress else gridProgressState.value)
                             .coerceIn(0f, 1f)
-                    val maskAlpha = 1f - gridOpenFraction
+                    val maskAlpha = if (isVideoFullscreen || isInPipMode) 0f else (1f - gridOpenFraction).coerceIn(0f, 1f)
                     if (maskAlpha > 0.001f) {
                         val cornerMaskDp = with(density) { (topChromeInsetPx * 1.6f).toDp() }
                         val maskColor = MaterialTheme.colorScheme.background
@@ -2525,13 +2745,22 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                 AddressSheet(
                     query = state.editingText,
                     pageUrl = state.pageUrl,
-                    visible = state.mode == BarMode.Editing && !gridEngaged,
+                    visible = state.mode == BarMode.Editing && !gridEngaged && !isVideoFullscreen && !isInPipMode,
                     statusBarTopPad = with(density) { topChromeInsetPx.toDp() },
                     bottomInset = with(density) { bottomChromeInsetPx.toDp() },
                     backgroundSnapshot = currentPageSnapshot,
                     historyStorage = components.historyStorage,
                     bookmarksStorage = components.bookmarksStorage,
-                    onSubmit = { viewModel.onSubmitText(it) },
+                    onSubmit = { text ->
+                        if (text.trim().equals("debug:cache", ignoreCase = true) &&
+                            components.globalPreferencesStore.debugCacheHtml
+                        ) {
+                            selectedEngineSession?.extractCacheHtml()
+                            viewModel.onEditingCancel()
+                        } else {
+                            viewModel.onSubmitText(text)
+                        }
+                    },
                     onPreconnect = { components.speculativePreconnector.preconnect(it) },
                     onPreloadPage = { url ->
                         if (com.firebolt9907.luminabrowser.state.isPreloadAllowed(
@@ -2553,75 +2782,127 @@ fun LuminaRoot(viewModel: LuminaViewModel = viewModel()) {
                         }
                     },
                 )
-                BottomBarLayer(
-                    contentSize = contentSize,
-                    tabSwitchGapPx = tabSwitchGapPx,
-                    previousTab = previousTab,
-                    nextTab = nextTab,
-                    tabCount = tabCount,
-                    activeState = pendingActiveBarState ?: state,
-                    callbacks = callbacks,
-                    onPrimaryUrlTap = onPrimaryUrlTap,
-                    onDragStart = onPillDragStart,
-                    onDragDelta = onPillDragDelta,
-                    onDragEnd = onPillDragEnd,
-                    onReload = {
-                        selectedTabId?.let {
-                            components.sessionUseCases.reload.invoke(it)
-                        }
-                    },
-                    onReloadLongPress = {
-                        selectedTabId?.let {
-                            components.sessionUseCases.goForward.invoke(it, true)
-                        }
-                    },
-                    canGoForward = selectedContent?.canGoForward == true,
-                    onAaTap = { aaInitialTab = 0; showAa = true },
-                    onAaLongPress = {
-                        selectedTabId?.let { tabId ->
-                            val readerHost = hostFromUrl(selectedContent?.url.orEmpty())
-                            if (activeReaderTabs.contains(tabId)) {
-                                readerManager.setReaderActive(tabId, false)
-                                components.sitePreferencesStore.setReaderPreferred(readerHost, false)
-                                // Remember the opt-out so auto-engage stops for this host.
-                                components.sitePreferencesStore.setReaderAutoDisabled(readerHost, true)
-                            } else if (eligibleReaderTabs.contains(tabId)) {
-                                readerManager.setReaderActive(tabId, true)
-                                components.sitePreferencesStore.setReaderPreferred(readerHost, true)
-                                components.sitePreferencesStore.setReaderAutoDisabled(readerHost, false)
+                if (shouldShowUi) {
+                    // Per-frame pill inputs, resolved inside graphicsLayer blocks (draw phase).
+                    // Passing these as plain Floats recomposed this entire scope — and every
+                    // SafariBar — on each frame of a drag or commit spring, which both dropped
+                    // frames and let the pill visibly lag the draw-phase-translated snapshots.
+                    // During the commit spring the pills follow the incoming pane's animated
+                    // offset; the ghost-pill stride math then keeps the leaving tab's pill glued
+                    // to its departing snapshot instead of teleporting to its rest slot.
+                    val pillOffsetX = remember {
+                        {
+                            if (leavingSnapshotJob != null || commitAnimNewTab) {
+                                incomingSnapshotOffsetX
                             } else {
-                                readerManager.requestReaderActivation(tabId)
-                                components.sitePreferencesStore.setReaderPreferred(readerHost, true)
-                                components.sitePreferencesStore.setReaderAutoDisabled(readerHost, false)
-                                selectedEngineSession?.let { session ->
-                                    com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(
-                                        session, tabId
-                                    )
-                                }
+                                offsetX
                             }
                         }
-                    },
-                    offsetX = offsetXState,
-                    activeOffsetX = if (leavingSnapshotJob != null || commitAnimNewTab) {
-                        incomingSnapshotOffsetX
-                    } else {
-                        offsetX
-                    },
-                    onBottomInsetMeasured = { bottomChromeInsetPx = it },
-                    barCollapseProgressState = barCollapseProgressState,
-                    pillInteractive = !barCollapseCompact && !gridOpen,
-                    controlsEnabled = !gridEngaged,
-                    gridProgress = if (gridGestureActive) gridDragProgress else gridProgressState.value,
-                    showNewTabGhost = showNewTabPane,
-                    selectedTabId = selectedTabId,
-                    eligibleReaderTabs = eligibleReaderTabs,
-                    activeReaderTabs = activeReaderTabs,
-                    readerTheme = readerTheme,
-                    // Translate the pill fully off the bottom edge as the reader hides it. Distance is
-                    // the bar's measured bottom region plus a margin so it clears the screen entirely.
-                    readerHideOffsetPx = readerBarHidden.value *
-                        (bottomChromeInsetPx + with(density) { 48.dp.toPx() }),
-                )
+                    }
+                    val pillGridProgress = remember {
+                        { if (gridGestureActive) gridDragProgress else gridProgressState.value }
+                    }
+                    val pillReaderHideOffsetPx = remember(density) {
+                        // Translate the pill fully off the bottom edge as the reader hides it.
+                        // Distance is the bar's measured bottom region plus a margin so it
+                        // clears the screen entirely.
+                        { readerBarHidden.value * (bottomChromeInsetPx + with(density) { 48.dp.toPx() }) }
+                    }
+                    BottomBarLayer(
+                        contentSize = contentSize,
+                        tabSwitchGapPx = tabSwitchGapPx,
+                        previousTab = previousTab,
+                        nextTab = nextTab,
+                        tabCount = tabCount,
+                        activeState = pendingActiveBarState ?: state,
+                        callbacks = callbacks,
+                        onPrimaryUrlTap = onPrimaryUrlTap,
+                        onDragStart = onPillDragStart,
+                        onDragDelta = onPillDragDelta,
+                        onDragEnd = onPillDragEnd,
+                        onReload = {
+                            selectedTabId?.let {
+                                components.sessionUseCases.reload.invoke(it)
+                            }
+                        },
+                        onReloadLongPress = {
+                            selectedTabId?.let {
+                                components.sessionUseCases.goForward.invoke(it, true)
+                            }
+                        },
+                        canGoForward = selectedContent?.canGoForward == true,
+                        onAaTap = { aaInitialTab = 0; showAa = true },
+                        onAaLongPress = {
+                            selectedTabId?.let { tabId ->
+                                val currentUrl = selectedContent?.url.orEmpty()
+                                val readerHost = hostFromUrl(currentUrl)
+                                if (activeReaderTabs.contains(tabId)) {
+                                    val originalUrl = readerManager.getOriginalUrl(tabId)
+                                    if (originalUrl != null) {
+                                        readerManager.setRestoring(tabId, true)
+                                        selectedEngineSession?.loadUrl(originalUrl)
+                                        readerManager.setOriginalUrl(tabId, null)
+                                    }
+                                    readerManager.setReaderActive(tabId, false)
+                                    components.sitePreferencesStore.setReaderPreferred(readerHost, false)
+                                    components.sitePreferencesStore.setReaderAutoDisabled(readerHost, true)
+                                } else if (eligibleReaderTabs.contains(tabId)) {
+                                    if (readerManager.useGoogleCache.value && com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(currentUrl)) {
+                                        readerManager.requestReaderActivation(tabId)
+                                        readerManager.setOriginalUrl(tabId, currentUrl)
+                                        val cacheUrl = com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(currentUrl)
+                                        selectedEngineSession?.loadUrl(cacheUrl)
+                                    } else {
+                                        readerManager.setReaderActive(tabId, true)
+                                    }
+                                    components.sitePreferencesStore.setReaderPreferred(readerHost, true)
+                                    components.sitePreferencesStore.setReaderAutoDisabled(readerHost, false)
+                                } else {
+                                    readerManager.requestReaderActivation(tabId)
+                                    components.sitePreferencesStore.setReaderPreferred(readerHost, true)
+                                    components.sitePreferencesStore.setReaderAutoDisabled(readerHost, false)
+                                    selectedEngineSession?.let { session ->
+                                        if (readerManager.useGoogleCache.value && com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(currentUrl)) {
+                                            readerManager.setOriginalUrl(tabId, currentUrl)
+                                            val cacheUrl = com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(currentUrl)
+                                            session.loadUrl(cacheUrl)
+                                        } else {
+                                            com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(
+                                                session, tabId
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        activeOffsetX = pillOffsetX,
+                        onBottomInsetMeasured = { bottomChromeInsetPx = it },
+                        barCollapseProgressState = barCollapseProgressState,
+                        pillInteractive = !barCollapseCompact && !gridOpen,
+                        controlsEnabled = !gridEngaged,
+                        gridProgress = pillGridProgress,
+                        showNewTabGhost = showNewTabPane,
+                        selectedTabId = selectedTabId,
+                        eligibleReaderTabs = eligibleReaderTabs,
+                        activeReaderTabs = activeReaderTabs,
+                        readerTheme = readerTheme,
+                        readerHideOffsetPx = pillReaderHideOffsetPx,
+                        onSelectPreviousTab = { commitHorizontalRelease(0f, forceDirection = -1) },
+                        onSelectNextTab = { commitHorizontalRelease(0f, forceDirection = 1) },
+                    )
+                } else if (isVideoFullscreen && !isInPipMode) {
+                    com.firebolt9907.luminabrowser.ui.video.VideoFullscreenOverlay(
+                        engineSession = selectedEngineSession,
+                        onExitFullscreen = {
+                            selectedTabId?.let { id ->
+                                components.sessionUseCases.exitFullscreen.invoke(id)
+                            }
+                        },
+                        onEnterPip = {
+                            onRequestPipMode()
+                        }
+                    )
+                }
             }
         }
 
@@ -2783,37 +3064,43 @@ private fun BottomBarLayer(
     canGoForward: Boolean = false,
     onAaTap: () -> Unit,
     onAaLongPress: () -> Unit = {},
-    offsetX: androidx.compose.runtime.FloatState,
-    activeOffsetX: Float,
+    // Read only inside graphicsLayer blocks: these change on every frame of a drag, commit
+    // spring, or grid gesture, and must never be read during composition (see the call site).
+    activeOffsetX: () -> Float,
     onBottomInsetMeasured: (Int) -> Unit,
     barCollapseProgressState: Animatable<Float, AnimationVector1D>,
     pillInteractive: Boolean = true,
     controlsEnabled: Boolean = true,
-    gridProgress: Float = 0f,
+    gridProgress: () -> Float = { 0f },
     showNewTabGhost: Boolean = false,
     selectedTabId: String? = null,
     eligibleReaderTabs: Set<String> = emptySet(),
     activeReaderTabs: Set<String> = emptySet(),
     readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme = com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.System,
-    readerHideOffsetPx: Float = 0f,
+    readerHideOffsetPx: () -> Float = { 0f },
+    onSelectPreviousTab: () -> Unit = {},
+    onSelectNextTab: () -> Unit = {},
 ) {
     val barCollapseProgress = barCollapseProgressState.value
-    val pillAlpha = (1f - (gridProgress * 1.5f).coerceIn(0f, 1f)).coerceIn(0f, 1f)
+    val activeReaderActive = selectedTabId != null && activeReaderTabs.contains(selectedTabId)
     Box(
         modifier = Modifier
             .fillMaxSize()
             .imePadding()
-            .graphicsLayer { alpha = pillAlpha },
+            .graphicsLayer {
+                alpha = (1f - (gridProgress() * 1.5f).coerceIn(0f, 1f)).coerceIn(0f, 1f)
+            },
     ) {
         val width = contentSize.width.toFloat()
         val pageStride = width + tabSwitchGapPx
+        val density = LocalDensity.current
+        val pillStride = width - with(density) { 32.dp.toPx() }
         // Parallax: the full-width page panes slide by the full `pageStride` (width + inter-tab
-        // gap), but the pills are spaced only `width` apart (flush, no gap). Scaling the pill
-        // translations by width/pageStride makes the tab content move slightly more than the pill
+        // gap), but the pills are spaced only `pillStride` apart. Scaling the pill
+        // translations by pillStride/pageStride makes the tab content move slightly more than the pill
         // while dragging — Safari's depth effect — and still lands both at 0 on commit.
-        val pillParallax = if (pageStride > 0f) width / pageStride else 1f
-        val pillStride = pageStride * pillParallax // == width
-        if (previousTab != null && width > 0f) {
+        val pillParallax = if (pageStride > 0f) pillStride / pageStride else 1f
+        if (previousTab != null && width > 0f && !activeReaderActive) {
             val prevEligible = eligibleReaderTabs.contains(previousTab.id)
             val prevActive = activeReaderTabs.contains(previousTab.id)
             SafariBar(
@@ -2832,13 +3119,26 @@ private fun BottomBarLayer(
                 collapseProgress = barCollapseProgress,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .graphicsLayer { translationX = offsetX.floatValue * pillParallax - pillStride },
+                    // activeOffsetX (not the raw drag offset): during the commit spring the drag
+                    // offset has already snapped to 0, so a raw read would teleport this ghost to
+                    // its rest slot while its snapshot is still sliding. Following the animated
+                    // offset keeps the leaving tab's pill glued to its departing snapshot —
+                    // incoming − pageStride == leaving, so the stride math lands it exactly there.
+                    .graphicsLayer {
+                        translationX = activeOffsetX() * pillParallax - pillStride
+                        alpha = (1f - barCollapseProgress).coerceIn(0f, 1f)
+                    },
                 isReaderEligible = prevEligible,
                 isReaderActive = prevActive,
                 readerTheme = readerTheme,
+                onClick = {
+                    if (controlsEnabled) {
+                        onSelectPreviousTab()
+                    }
+                }
             )
         }
-        if (nextTab != null && width > 0f) {
+        if (nextTab != null && width > 0f && !activeReaderActive) {
             val nextEligible = eligibleReaderTabs.contains(nextTab.id)
             val nextActive = activeReaderTabs.contains(nextTab.id)
             SafariBar(
@@ -2857,13 +3157,21 @@ private fun BottomBarLayer(
                 collapseProgress = barCollapseProgress,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .graphicsLayer { translationX = offsetX.floatValue * pillParallax + pillStride },
+                    .graphicsLayer {
+                        translationX = activeOffsetX() * pillParallax + pillStride
+                        alpha = (1f - barCollapseProgress).coerceIn(0f, 1f)
+                    },
                 isReaderEligible = nextEligible,
                 isReaderActive = nextActive,
                 readerTheme = readerTheme,
+                onClick = {
+                    if (controlsEnabled) {
+                        onSelectNextTab()
+                    }
+                }
             )
         }
-        if (showNewTabGhost && nextTab == null && width > 0f) {
+        if (showNewTabGhost && nextTab == null && width > 0f && !activeReaderActive) {
             SafariBar(
                 state = BarUiState(
                     displayUrl = "",
@@ -2886,7 +3194,15 @@ private fun BottomBarLayer(
                 collapseProgress = 0f,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .graphicsLayer { translationX = offsetX.floatValue * pillParallax + pillStride },
+                    .graphicsLayer {
+                        translationX = activeOffsetX() * pillParallax + pillStride
+                        alpha = (1f - barCollapseProgress).coerceIn(0f, 1f)
+                    },
+                onClick = {
+                    if (controlsEnabled) {
+                        onSelectNextTab()
+                    }
+                }
             )
         }
         val activeEligible = selectedTabId != null && eligibleReaderTabs.contains(selectedTabId)
@@ -2910,8 +3226,8 @@ private fun BottomBarLayer(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .graphicsLayer {
-                    translationX = activeOffsetX * pillParallax
-                    translationY = readerHideOffsetPx
+                    translationX = activeOffsetX() * pillParallax
+                    translationY = readerHideOffsetPx()
                 },
             onBottomInsetMeasured = onBottomInsetMeasured,
             collapseProgress = barCollapseProgress,
@@ -3118,6 +3434,34 @@ private fun String?.isBlankPageUrl(): Boolean = isNullOrBlank() || this == "abou
 // committing to the adjacent tab, snappier when snapping back to the current one.
 private fun switchSpring(velocity: Float, stiffness: Float) =
     spring<Float>(dampingRatio = dampingForVelocity(velocity), stiffness = stiffness)
+
+/**
+ * A memory-light RGB_565 copy for the in-memory snapshot maps — half the heap of the ARGB_8888
+ * captureThumbnail output, and opaque web pages lose nothing visually (the disk cache stores 565
+ * for the same reason). Falls back to the original if the copy fails (OOM).
+ */
+private fun Bitmap.toResidentSnapshot(): Bitmap {
+    if (config == Bitmap.Config.RGB_565) return this
+    return runCatching { copy(Bitmap.Config.RGB_565, false) }.getOrNull() ?: this
+}
+
+/** Fraction of a raw drag applied at the very edge of an overscroll; falls to 0 as you pull further. */
+private const val EdgeRubberBandTension = 0.55f
+
+/**
+ * iOS-style edge rubber-band. When there is no tab to swipe to, the page still follows the finger —
+ * but with resistance that grows as you pull further from rest (asymptotically walling off), and it
+ * tracks the finger 1:1 on the way back. This replaces a dead hard-stop with Safari's elastic pull,
+ * and pairs with the existing spring-back in [commitHorizontalRelease] for the release bounce.
+ * [current] and the result stay on the overscrolled side (the caller coerces to be safe).
+ */
+private fun rubberBand(current: Float, delta: Float, dimension: Float): Float {
+    if (dimension <= 0f) return current
+    val outward = (current == 0f && delta != 0f) || sign(delta) == sign(current)
+    if (!outward) return current + delta // returning toward rest: 1:1 finger tracking
+    val pulled = (abs(current) / dimension).coerceIn(0f, 1f)
+    return current + delta * (1f - pulled) * EdgeRubberBandTension
+}
 
 private fun dampingForVelocity(velocity: Float): Float {
     val v = abs(velocity)

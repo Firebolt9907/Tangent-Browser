@@ -73,7 +73,11 @@ class LuminaBrowserComponents(application: Application) {
             scope,
             searchEngine = { globalPreferencesStore.searchEngine },
         )
-    val tabSnapshotCache = TabSnapshotCache(application.cacheDir)
+    // Persist tab thumbnails in filesDir, not cacheDir: cacheDir is disposable storage that Android
+    // evicts under storage pressure (common on space-constrained devices), which wiped restored
+    // tabs' thumbnails between sessions. filesDir survives until we prune it ourselves (the cache
+    // still self-bounds via maxEntries), so thumbnails persist across app restarts / force-stops.
+    val tabSnapshotCache = TabSnapshotCache(application.filesDir)
     val sitePreferencesStore = SitePreferencesStore(application)
     val addonController = AddonController(engine, scope)
     val loginsStorage = PlacesLoginsStorage(application)
@@ -95,11 +99,11 @@ class LuminaBrowserComponents(application: Application) {
 
     fun applyEngineSettings() {
         val prefs = globalPreferencesStore
-        engine.settings.trackingProtectionPolicy = trackingPolicyOf(prefs)
-        engine.settings.javaScriptCanOpenWindowsAutomatically = !prefs.blockPopUps
-        engine.settings.javascriptEnabled = prefs.javaScriptEnabled
-        engine.settings.httpsOnlyMode = httpsModeOf(prefs)
-        engine.settings.globalPrivacyControlEnabled = prefs.globalPrivacyControl
+        runCatching { engine.settings.trackingProtectionPolicy = trackingPolicyOf(prefs) }
+        runCatching { engine.settings.javaScriptCanOpenWindowsAutomatically = !prefs.blockPopUps }
+        runCatching { engine.settings.javascriptEnabled = prefs.javaScriptEnabled }
+        runCatching { engine.settings.httpsOnlyMode = httpsModeOf(prefs) }
+        runCatching { engine.settings.globalPrivacyControlEnabled = prefs.globalPrivacyControl }
     }
 
     private val _browserState = MutableStateFlow(store.state)

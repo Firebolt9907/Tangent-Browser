@@ -1,5 +1,6 @@
 package com.firebolt9907.luminabrowser.ui.customtab
 
+import android.app.Activity
 import android.content.Intent
 import androidx.activity.BackEventCompat
 import androidx.activity.compose.PredictiveBackHandler
@@ -28,9 +29,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChromeReaderMode
+import androidx.compose.material.icons.automirrored.filled.ChromeReaderMode
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,12 +57,16 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.firebolt9907.luminabrowser.LuminaApplication
 import com.firebolt9907.luminabrowser.state.compactHost
 import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import mozilla.components.browser.state.action.EngineAction
 
@@ -83,6 +88,9 @@ fun CustomTabRoot(
     hasCloseAnimation: Boolean,
     onOpenInLumina: (String) -> Unit,
     onClose: () -> Unit,
+    isInPipMode: Boolean = false,
+    onFullScreenChanged: (Boolean) -> Unit = {},
+    onRequestPipMode: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val components = (context.applicationContext as LuminaApplication).components
@@ -105,6 +113,21 @@ fun CustomTabRoot(
     val readerActive = customTabId != null && activeReaderTabs.contains(customTabId)
     val article = customTabId?.let { tabArticles[it] }
 
+    var isVideoFullscreen by remember { mutableStateOf(false) }
+
+    val window = (context as? Activity)?.window
+    if (window != null) {
+        val controller = remember(window) { WindowCompat.getInsetsController(window, window.decorView) }
+        LaunchedEffect(isVideoFullscreen) {
+            if (isVideoFullscreen) {
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
     // Reader appearance (theme / font size / font) lives in the Context-less ReaderManager
     // singleton, which the main browser hydrates from GlobalPreferencesStore. A Custom Tab runs in
     // its own task and may launch without MainActivity ever having done that, so the reader overlay
@@ -120,14 +143,22 @@ fun CustomTabRoot(
             ?.let { readerManager.setTheme(it) }
         readerManager.setFontSize(prefs.readerFontSize)
         readerManager.setFontName(prefs.readerFontName)
+        readerManager.setUseGoogleCache(prefs.useGoogleCache)
     }
 
-    // A custom tab may arrive without a live engine session (lazy creation); ask the store to make
-    // one so ContentHost can render it. Mirrors the CreateEngineSessionAction path in LuminaRoot.
-    LaunchedEffect(customTabId, session == null) {
+    // Guarantee the custom tab session has a live engine session. Dispatching CreateEngineSessionAction
+    // can be lost or delayed, so retry until the session actually exists in the live store state.
+    LaunchedEffect(customTabId) {
         val id = customTabId ?: return@LaunchedEffect
-        if (customTab != null && customTab.engineState.engineSession == null) {
-            components.store.dispatch(EngineAction.CreateEngineSessionAction(id))
+        var attempts = 0
+        while (attempts < 6) {
+            val tab = components.store.state.customTabs.firstOrNull { it.id == id }
+            if (tab != null) {
+                if (tab.engineState.engineSession != null) return@LaunchedEffect
+                components.store.dispatch(EngineAction.CreateEngineSessionAction(id))
+            }
+            attempts++
+            delay(300)
         }
     }
 
@@ -201,6 +232,10 @@ fun CustomTabRoot(
     }
 
     LuminaBrowserTheme {
+        BackHandler(enabled = isVideoFullscreen) {
+            customTabId?.let { components.sessionUseCases.exitFullscreen.invoke(it) }
+        }
+
         // Lowest-priority back handler (registered first, so the reader/history handlers below win
         // whenever they're enabled): when the activity resolved a close animation (CCT caller exit
         // bundle, or our own fallback for Google-app/Discover launches), Back must route through
@@ -210,7 +245,7 @@ fun CustomTabRoot(
         // overrideActivityTransition + no callback to get the system's predictive preview: tried,
         // and on this cross-task return to the icon-less, recents-excluded Discover task the
         // system plays nothing at all (hard cut, worse than the canned animation).
-        PredictiveBackHandler(enabled = hasCloseAnimation) { progress ->
+        PredictiveBackHandler(enabled = hasCloseAnimation && !isVideoFullscreen) { progress ->
             var startTouchY = Float.NaN
             try {
                 progress.collect { backEvent ->
@@ -239,12 +274,12 @@ fun CustomTabRoot(
         // overlay before touching page history. When reader was auto-engaged on launch, we register
         // no handler so Back falls through to the system and finishes the activity (native exit to
         // the caller); the taskbar button is the way to reach the underlying web page.
-        BackHandler(enabled = readerActive && !readerAutoActivated) {
+        BackHandler(enabled = readerActive && !readerAutoActivated && !isVideoFullscreen) {
             customTabId?.let { readerManager.setReaderActive(it, false) }
         }
         // In-page history back with a predictive slide. Disabled at the first page (no history) and
         // while reader is up, so Back there falls through to the system → native exit to the caller.
-        PredictiveBackHandler(enabled = canGoBack && !readerActive) { progress ->
+        PredictiveBackHandler(enabled = canGoBack && !readerActive && !isVideoFullscreen) { progress ->
             try {
                 progress.collect { backEvent -> backSlide = backEvent.progress.coerceIn(0f, 1f) }
                 animate(backSlide, 1f, animationSpec = tween(180)) { v, _ -> backSlide = v }
@@ -255,6 +290,8 @@ fun CustomTabRoot(
                 backSlide = 0f
             }
         }
+
+        val shouldShowUi = !isVideoFullscreen && !isInPipMode
 
         Surface(
             modifier = Modifier.fillMaxSize(),
@@ -280,7 +317,7 @@ fun CustomTabRoot(
                     }
                     .onSizeChanged { contentSize = it },
             ) {
-                if (session != null && customTabId != null) {
+                if (session != null) {
                     com.firebolt9907.luminabrowser.ui.content.ContentHost(
                         engine = components.engine,
                         engineSession = session,
@@ -288,14 +325,19 @@ fun CustomTabRoot(
                             translationX = backSlide * size.width * 0.5f
                             alpha = 1f - backSlide * 0.2f
                         },
-                        topChromeInsetPx = statusBarTopPx,
-                        bottomChromeInsetPx = barHeightPx,
-                        tabId = customTabId,
+                        topChromeInsetPx = if (isVideoFullscreen) 0 else statusBarTopPx,
+                        bottomChromeInsetPx = if (isVideoFullscreen) 0 else barHeightPx,
+                        tabId = customTabId!!,
                         pageUrl = url,
                         snapshotCache = components.tabSnapshotCache,
                         sitePermissionController = components.sitePermissionController,
+                        sitePreferencesStore = components.sitePreferencesStore,
                         onFirefoxAuthRedirect = components.firefoxSyncController::handleOAuthRedirect,
                         onPageScrollDelta = ::onPageScrollDelta,
+                        onFullScreenChange = { enabled ->
+                            isVideoFullscreen = enabled
+                            onFullScreenChanged(enabled)
+                        },
                         // The system PredictiveBackHandler above owns the back gesture here, so the
                         // ContentHost's own edge-drag predictive back stays off.
                         canStartPredictiveBack = false,
@@ -304,67 +346,111 @@ fun CustomTabRoot(
 
                 PromptHandler(engineSession = session)
 
-                AnimatedVisibility(
-                    visible = readerActive && article != null,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    article?.let {
-                        com.firebolt9907.luminabrowser.ui.reader.ReaderView(
-                            article = it,
-                            theme = readerTheme,
-                            fontSizePercent = readerFontSize,
-                            fontName = readerFontName,
-                            modifier = Modifier.fillMaxSize(),
-                            topPadding = with(density) { statusBarTopPx.toDp() },
-                            bottomPadding = barHeightDp,
-                            // Hide the bottom taskbar on scroll-down (reveal on scroll-up), same as
-                            // the web page — reader scroll deltas drive the same barHidden animation.
-                            onScrollDelta = ::onPageScrollDelta,
-                        )
-                    }
-                }
-
-                CustomTabBottomBar(
-                    domain = compactHost(url),
-                    barHeight = barHeightDp,
-                    readerActive = readerActive,
-                    onToggleReader = {
-                        val id = customTabId
-                        if (id != null) {
-                            when {
-                                // Already reading → back to the web page.
-                                readerManager.isReaderActive(id) ->
-                                    readerManager.setReaderActive(id, false)
-                                // Extracted and ready → just switch it on. This is a deliberate user
-                                // tap, so Back should now dismiss the overlay rather than close the tab.
-                                eligibleReaderTabs.contains(id) -> {
-                                    readerAutoActivated = false
-                                    readerManager.setReaderActive(id, true)
+                if (shouldShowUi) {
+                    AnimatedVisibility(
+                        visible = readerActive && article != null,
+                        enter = slideInVertically { it } + fadeIn(),
+                        exit = slideOutVertically { it } + fadeOut(),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        article?.let {
+                            com.firebolt9907.luminabrowser.ui.reader.ReaderView(
+                                article = it,
+                                theme = readerTheme,
+                                fontSizePercent = readerFontSize,
+                                fontName = readerFontName,
+                                modifier = Modifier.fillMaxSize(),
+                                topPadding = with(density) { statusBarTopPx.toDp() },
+                                bottomPadding = barHeightDp,
+                                // Hide the bottom taskbar on scroll-down (reveal on scroll-up), same as
+                                // the web page — reader scroll deltas drive the same barHidden animation.
+                                onScrollDelta = ::onPageScrollDelta,
+                                onLinkClick = { href ->
+                                    val lowHref = href.trim().lowercase()
+                                    if (lowHref.startsWith("http://") || lowHref.startsWith("https://")) {
+                                        customTabId?.let { id ->
+                                            readerManager.setReaderActive(id, false)
+                                        }
+                                        session?.loadUrl(href)
+                                    } else {
+                                        try {
+                                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(href))
+                                            context.startActivity(intent)
+                                        } catch (e: Exception) {
+                                            // ignore
+                                        }
+                                    }
                                 }
-                                // Not extracted yet → arm activation and force an extraction pass so
-                                // pages that aren't auto-detected (SPAs, late-loading content) can
-                                // still be opened in reader on demand.
-                                else -> {
-                                    readerAutoActivated = false
-                                    readerManager.requestReaderActivation(id)
-                                    session?.let {
-                                        com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor
-                                            .extractReaderContent(it, id)
+                            )
+                        }
+                    }
+
+                    CustomTabBottomBar(
+                        domain = compactHost(url),
+                        barHeight = barHeightDp,
+                        readerActive = readerActive,
+                        onToggleReader = {
+                            val id = customTabId
+                            if (id != null) {
+                                when {
+                                    readerManager.isReaderActive(id) -> {
+                                        val originalUrl = readerManager.getOriginalUrl(id)
+                                        if (originalUrl != null) {
+                                            readerManager.setRestoring(id, true)
+                                            session?.loadUrl(originalUrl)
+                                            readerManager.setOriginalUrl(id, null)
+                                        }
+                                        readerManager.setReaderActive(id, false)
+                                    }
+                                    eligibleReaderTabs.contains(id) -> {
+                                        readerAutoActivated = false
+                                        if (readerManager.useGoogleCache.value && com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(url)) {
+                                            readerManager.requestReaderActivation(id)
+                                            readerManager.setOriginalUrl(id, url)
+                                            val cacheUrl = com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(url)
+                                            session?.loadUrl(cacheUrl)
+                                        } else {
+                                            readerManager.setReaderActive(id, true)
+                                        }
+                                    }
+                                    else -> {
+                                        readerAutoActivated = false
+                                        readerManager.requestReaderActivation(id)
+                                        session?.let {
+                                            if (readerManager.useGoogleCache.value && com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(url)) {
+                                                readerManager.setOriginalUrl(id, url)
+                                                val cacheUrl = com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(url)
+                                                it.loadUrl(cacheUrl)
+                                            } else {
+                                                com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor
+                                                    .extractReaderContent(it, id)
+                                            }
+                                        }
                                     }
                                 }
                             }
+                        },
+                        onShare = { shareUrl(context, url) },
+                        onOpenInLumina = { customTabId?.let(onOpenInLumina) },
+                        onClose = onClose,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .onSizeChanged { if (it.height > 0) barTotalHeightPx = it.height }
+                            .graphicsLayer { translationY = barHidden.value * barTotalHeightPx },
+                    )
+                } else if (isVideoFullscreen && !isInPipMode) {
+                    com.firebolt9907.luminabrowser.ui.video.VideoFullscreenOverlay(
+                        engineSession = session,
+                        onExitFullscreen = {
+                            customTabId?.let { id ->
+                                components.sessionUseCases.exitFullscreen.invoke(id)
+                            }
+                        },
+                        onEnterPip = {
+                            onRequestPipMode()
                         }
-                    },
-                    onShare = { shareUrl(context, url) },
-                    onOpenInLumina = { customTabId?.let(onOpenInLumina) },
-                    onClose = onClose,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .onSizeChanged { if (it.height > 0) barTotalHeightPx = it.height }
-                        .graphicsLayer { translationY = barHidden.value * barTotalHeightPx },
-                )
+                    )
+                }
             }
         }
     }
@@ -407,7 +493,7 @@ private fun CustomTabBottomBar(
             )
             IconButton(onClick = onToggleReader) {
                 Icon(
-                    Icons.Default.ChromeReaderMode,
+                    Icons.AutoMirrored.Filled.ChromeReaderMode,
                     contentDescription = if (readerActive) "Exit reader mode" else "Reader mode",
                     tint = if (readerActive) {
                         MaterialTheme.colorScheme.primary
@@ -421,7 +507,7 @@ private fun CustomTabBottomBar(
             }
             IconButton(onClick = onOpenInLumina) {
                 Icon(
-                    Icons.Default.OpenInNew,
+                    Icons.AutoMirrored.Filled.OpenInNew,
                     contentDescription = "Open in Lumina",
                     modifier = Modifier.size(24.dp),
                 )
@@ -436,5 +522,9 @@ private fun shareUrl(context: android.content.Context, url: String) {
         type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, url)
     }
-    context.startActivity(Intent.createChooser(send, null))
+    try {
+        context.startActivity(Intent.createChooser(send, null))
+    } catch (_: android.content.ActivityNotFoundException) {
+        android.widget.Toast.makeText(context, "No app available to share", android.widget.Toast.LENGTH_SHORT).show()
+    }
 }

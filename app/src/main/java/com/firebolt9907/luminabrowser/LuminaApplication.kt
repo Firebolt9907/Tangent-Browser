@@ -49,6 +49,12 @@ class LuminaApplication : Application() {
      */
     private val backgroundKeepAliveObserver = object : DefaultLifecycleObserver {
         override fun onStop(owner: LifecycleOwner) {
+            // Free the TextToSpeech engine (and its bound system service) on the deterministic
+            // background transition. onTrimMemory's TRIM_MEMORY_* levels are unreliable — and
+            // deprecated on Android 14+ — so relying on them alone can leave the engine bound for the
+            // whole app lifetime after a single "Listen to Page". releaseIfIdle() no-ops while
+            // actively reading, so background playback is unaffected.
+            com.firebolt9907.luminabrowser.ui.reader.PageSpeaker.releaseIfIdle()
             if (componentsLazy.isInitialized() &&
                 components.globalPreferencesStore.keepAliveInBackground
             ) {

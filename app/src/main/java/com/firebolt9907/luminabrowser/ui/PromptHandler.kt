@@ -15,6 +15,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -83,16 +84,39 @@ fun PromptHandler(engineSession: EngineSession?) {
             )
         }
         is PromptRequest.Alert -> {
-            request.onConfirm(true)
-            promptRequest = null
+            JsAlertDialog(
+                title = request.title,
+                message = request.message,
+                onConfirm = { request.onConfirm(false); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
         }
         is PromptRequest.Confirm -> {
-            request.onConfirmPositiveButton(true)
-            promptRequest = null
+            JsConfirmDialog(
+                title = request.title,
+                message = request.message,
+                positiveLabel = request.positiveButtonTitle.ifBlank { "OK" },
+                negativeLabel = request.negativeButtonTitle.ifBlank { "Cancel" },
+                onPositive = { request.onConfirmPositiveButton(false); promptRequest = null },
+                onNegative = { request.onConfirmNegativeButton(false); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
         }
         is PromptRequest.BeforeUnload -> {
-            request.onLeave()
-            promptRequest = null
+            BeforeUnloadDialog(
+                onLeave = { request.onLeave(); promptRequest = null },
+                onStay = { request.onStay(); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
+        is PromptRequest.TextPrompt -> {
+            JsTextPromptDialog(
+                title = request.title,
+                label = request.inputLabel,
+                initialValue = request.inputValue,
+                onConfirm = { value -> request.onConfirm(false, value); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
         }
         is PromptRequest.SingleChoice -> {
             SingleChoiceDialog(
@@ -119,6 +143,90 @@ fun PromptHandler(engineSession: EngineSession?) {
             android.util.Log.w("PromptHandler", "Unhandled prompt: ${request?.javaClass?.simpleName}")
         }
     }
+}
+
+/** JS `alert()` — a message the page wants to show. Single OK, matching Safari. */
+@Composable
+private fun JsAlertDialog(
+    title: String,
+    message: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = title.takeIf { it.isNotBlank() }?.let { { Text(it) } },
+        text = { Text(message) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("OK") } },
+    )
+}
+
+/** JS `confirm()` — a yes/no question. Previously auto-answered "yes"; now actually asks. */
+@Composable
+private fun JsConfirmDialog(
+    title: String,
+    message: String,
+    positiveLabel: String,
+    negativeLabel: String,
+    onPositive: () -> Unit,
+    onNegative: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = title.takeIf { it.isNotBlank() }?.let { { Text(it) } },
+        text = { Text(message) },
+        confirmButton = { TextButton(onClick = onPositive) { Text(positiveLabel) } },
+        dismissButton = { TextButton(onClick = onNegative) { Text(negativeLabel) } },
+    )
+}
+
+/** The `beforeunload` "leave this page?" guard — previously auto-left (risking unsaved data). */
+@Composable
+private fun BeforeUnloadDialog(
+    onLeave: () -> Unit,
+    onStay: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Leave this page?") },
+        text = { Text("Changes you made may not be saved.") },
+        confirmButton = { TextButton(onClick = onLeave) { Text("Leave") } },
+        dismissButton = { TextButton(onClick = onStay) { Text("Stay") } },
+    )
+}
+
+/** JS `prompt()` — a message plus a text field. Previously unhandled (the page got nothing back). */
+@Composable
+private fun JsTextPromptDialog(
+    title: String,
+    label: String,
+    initialValue: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var value by remember { mutableStateOf(initialValue) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = title.takeIf { it.isNotBlank() }?.let { { Text(it) } },
+        text = {
+            Column {
+                if (label.isNotBlank()) {
+                    Text(label)
+                    Spacer(Modifier.height(8.dp))
+                }
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(value) }) { Text("OK") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable

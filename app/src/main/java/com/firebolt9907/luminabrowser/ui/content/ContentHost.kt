@@ -90,6 +90,15 @@ fun ContentHost(
     val firstPaintCoverColor = MaterialTheme.colorScheme.background.toArgb()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var isSafeToSnapshot by remember(tabId, engineSession) { mutableStateOf(!tabIsLoading && engineSession != null) }
+    // Recovery net: the callback-driven toggles below can leave this stuck `false` even though the
+    // page is fully loaded — e.g. when a load-complete callback is swallowed by the
+    // `javascript:`-spacer suppression, or when re-binding a tab that finished loading in the
+    // background (no fresh FCP / load-complete callback ever fires). That would block every future
+    // snapshot for the tab. The store's `tabIsLoading` is the authoritative "done" signal, so
+    // whenever it reports the tab is idle, snapshots are safe again.
+    LaunchedEffect(tabId, tabIsLoading, engineSession) {
+        if (!tabIsLoading && engineSession != null) isSafeToSnapshot = true
+    }
     val touchSlopPx = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     val predictiveBackEdgeWidthPx = with(density) { 24.dp.toPx() }
     val topChromeInsetCssPx = with(density) {

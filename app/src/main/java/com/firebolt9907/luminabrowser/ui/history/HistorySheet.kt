@@ -38,6 +38,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -48,6 +49,7 @@ import mozilla.components.concept.storage.HistoryStorage
 import mozilla.components.concept.storage.VisitInfo
 import mozilla.components.concept.storage.VisitType
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -95,6 +97,14 @@ fun HistorySheet(
             visits.filter {
                 it.url.lowercase().contains(q) || it.title.orEmpty().lowercase().contains(q)
             }
+        }
+    }
+
+    // Group visits by calendar day (Today / Yesterday / date) for iOS-style sectioned history.
+    // filtered is newest-first, so groupBy's insertion order keeps the sections newest-first too.
+    val grouped = remember(filtered) {
+        filtered.groupBy { visit ->
+            Instant.ofEpochMilli(visit.visitTime).atZone(ZoneId.systemDefault()).toLocalDate()
         }
     }
 
@@ -163,35 +173,40 @@ fun HistorySheet(
 
                 else -> {
                     LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                        items(filtered, key = { it.visitTime }) { visit ->
-                            ListItem(
-                                modifier = Modifier.clickable { onOpenUrl(visit.url) },
-                                headlineContent = {
-                                    Text(
-                                        text = visit.title?.takeIf { it.isNotBlank() } ?: visit.url,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                supportingContent = {
-                                    Text(
-                                        text = "${visit.url}  ·  ${formatVisitTime(visit.visitTime)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                trailingContent = {
-                                    IconButton(onClick = {
-                                        scope.launch {
-                                            runCatching { historyStorage.deleteVisitsFor(visit.url) }
-                                            reload()
+                        grouped.forEach { (date, dayVisits) ->
+                            item(key = "header-$date") {
+                                DateSectionHeader(dayLabel(date))
+                            }
+                            items(dayVisits, key = { it.visitTime }) { visit ->
+                                ListItem(
+                                    modifier = Modifier.clickable { onOpenUrl(visit.url) },
+                                    headlineContent = {
+                                        Text(
+                                            text = visit.title?.takeIf { it.isNotBlank() } ?: visit.url,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    supportingContent = {
+                                        Text(
+                                            text = "${visit.url}  ·  ${formatVisitTime(visit.visitTime)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    trailingContent = {
+                                        IconButton(onClick = {
+                                            scope.launch {
+                                                runCatching { historyStorage.deleteVisitsFor(visit.url) }
+                                                reload()
+                                            }
+                                        }) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Remove")
                                         }
-                                    }) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Remove")
-                                    }
-                                },
-                            )
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -226,9 +241,36 @@ fun HistorySheet(
 
 // DateTimeFormatter is immutable and thread-safe, unlike the shared SimpleDateFormat it replaces.
 // The pattern is locale-independent; the locale is bound per call so a runtime locale change is
-// reflected rather than frozen at class-load time.
-private val timeFormat = DateTimeFormatter.ofPattern("MMM d, h:mm a")
+// reflected rather than frozen at class-load time. Rows show only the clock time now that the
+// calendar day lives in the section header above them.
+private val timeFormat = DateTimeFormatter.ofPattern("h:mm a")
+private val dayHeaderFormat = DateTimeFormatter.ofPattern("EEEE, MMMM d")
+private val dayHeaderFormatWithYear = DateTimeFormatter.ofPattern("MMMM d, yyyy")
 
 private fun formatVisitTime(epochMillis: Long): String =
     timeFormat.withLocale(Locale.getDefault())
         .format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))
+
+/** "Today" / "Yesterday" / a weekday-and-date (adding the year only when it isn't the current one). */
+private fun dayLabel(date: LocalDate): String {
+    val today = LocalDate.now()
+    return when {
+        date == today -> "Today"
+        date == today.minusDays(1) -> "Yesterday"
+        date.year == today.year -> date.format(dayHeaderFormat.withLocale(Locale.getDefault()))
+        else -> date.format(dayHeaderFormatWithYear.withLocale(Locale.getDefault()))
+    }
+}
+
+@Composable
+private fun DateSectionHeader(label: String) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp, bottom = 4.dp),
+    )
+}

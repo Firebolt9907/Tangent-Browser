@@ -173,6 +173,7 @@ fun SafariBar(
             }
 
             if (isToolbarVisible) {
+                val hasPage = state.pageUrl.isNotBlank() && state.pageUrl != "about:blank"
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -185,56 +186,36 @@ fun SafariBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceAround
                 ) {
-                    IconButton(
+                    BottomToolbarButton(
+                        icon = Icons.Default.ContentCopy,
+                        contentDescription = "Copy link",
                         onClick = onCopyTap,
-                        enabled = controlsEnabled && state.pageUrl.isNotBlank() && state.pageUrl != "about:blank"
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy link",
-                            tint = if (controlsEnabled && state.pageUrl.isNotBlank() && state.pageUrl != "about:blank") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                        )
-                    }
-                    IconButton(
+                        enabled = controlsEnabled && hasPage,
+                    )
+                    BottomToolbarButton(
+                        icon = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Forward",
                         onClick = onForwardTap,
-                        enabled = controlsEnabled && canGoForward
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Forward",
-                            tint = if (controlsEnabled && canGoForward) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                        )
-                    }
-                    IconButton(
+                        enabled = controlsEnabled && canGoForward,
+                    )
+                    BottomToolbarButton(
+                        icon = Icons.Default.Share,
+                        contentDescription = "Share",
                         onClick = onShareTap,
-                        enabled = controlsEnabled && state.pageUrl.isNotBlank() && state.pageUrl != "about:blank"
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = "Share",
-                            tint = if (controlsEnabled && state.pageUrl.isNotBlank() && state.pageUrl != "about:blank") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                        )
-                    }
-                    IconButton(
+                        enabled = controlsEnabled && hasPage,
+                    )
+                    BottomToolbarButton(
+                        icon = Icons.Outlined.BookmarkBorder,
+                        contentDescription = "Bookmarks",
                         onClick = onBookmarksTap,
-                        enabled = controlsEnabled
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.BookmarkBorder,
-                            contentDescription = "Bookmarks",
-                            tint = if (controlsEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                        )
-                    }
-                    IconButton(
+                        enabled = controlsEnabled,
+                    )
+                    BottomToolbarButton(
+                        icon = Icons.Outlined.Layers,
+                        contentDescription = "Tabs",
                         onClick = onTabsTap,
-                        enabled = controlsEnabled
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Layers,
-                            contentDescription = "Tabs",
-                            tint = if (controlsEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                        )
-                    }
+                        enabled = controlsEnabled,
+                    )
                 }
             }
         }
@@ -246,6 +227,31 @@ fun SafariBar(
                 .onGloballyPositioned { coordinates ->
                     onBottomInsetMeasured(coordinates.size.height.coerceAtLeast(0))
                 },
+        )
+    }
+}
+
+/**
+ * A single action in the SafariBar's bottom toolbar. Centralizes the enabled/disabled
+ * tint so every button reads the same — active buttons use the accent color, disabled
+ * ones fade to a muted onSurface tone (iOS-style, subtler than full-opacity gray).
+ */
+@Composable
+private fun BottomToolbarButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    enabled: Boolean,
+) {
+    IconButton(onClick = onClick, enabled = enabled) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = if (enabled) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+            },
         )
     }
 }

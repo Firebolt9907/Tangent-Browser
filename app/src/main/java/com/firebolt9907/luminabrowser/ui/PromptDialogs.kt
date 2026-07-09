@@ -122,6 +122,24 @@ internal fun JsTextPromptDialog(
     )
 }
 
+/**
+ * The "confirm form resubmission" prompt shown when reloading/navigating to a page that would
+ * re-POST data. Previously unhandled, which could leave a reload stuck waiting on an answer.
+ */
+@Composable
+internal fun RepostDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Confirm form resubmission") },
+        text = { Text("To reload this page, the information you previously submitted will be sent again.") },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Resend") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 /** HTTP basic/digest auth — previously unhandled, so password-protected sites couldn't be opened. */
 @Composable
 internal fun AuthenticationDialog(

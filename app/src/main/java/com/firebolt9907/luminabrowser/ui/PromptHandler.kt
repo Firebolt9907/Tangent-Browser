@@ -174,6 +174,12 @@ fun PromptHandler(engineSession: EngineSession?) {
                 }
             }
         }
+        is PromptRequest.Repost -> {
+            RepostDialog(
+                onConfirm = { request.onConfirm(); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
         else -> {
             android.util.Log.w("PromptHandler", "Unhandled prompt: ${request?.javaClass?.simpleName}")
         }

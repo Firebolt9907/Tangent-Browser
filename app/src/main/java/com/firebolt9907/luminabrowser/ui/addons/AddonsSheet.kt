@@ -44,6 +44,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -111,7 +112,7 @@ internal fun AddonsManagerSheetContent(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Icon(Icons.Default.Extension, contentDescription = null)
-            Text("Add-ons", style = MaterialTheme.typography.titleLarge)
+            Text("Add-ons", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             if (state.isBusy) {
                 CircularProgressIndicator(
@@ -302,7 +303,7 @@ private fun AddonPermissionSheetContent(
             .padding(bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text(prompt.title, style = MaterialTheme.typography.titleLarge)
+        Text(prompt.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         if (permissionGroups.isEmpty()) {
             Text(
                 text = "This add-on does not request additional permissions.",

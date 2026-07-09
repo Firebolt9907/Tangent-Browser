@@ -31,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -74,7 +75,7 @@ fun SyncedTabsSheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Icon(Icons.Default.CloudSync, contentDescription = null)
-                Text("Firefox Sync", style = MaterialTheme.typography.titleLarge)
+                Text("Firefox Sync", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 if (state.isBusy) {
                     CircularProgressIndicator(

@@ -51,6 +51,7 @@ import android.os.PersistableBundle
 import android.widget.Toast
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -102,7 +103,7 @@ fun PasswordsSheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Icon(Icons.Default.Lock, contentDescription = null)
-                Text("Passwords", style = MaterialTheme.typography.titleLarge)
+                Text("Passwords", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             }
 
             Spacer(Modifier.height(12.dp))

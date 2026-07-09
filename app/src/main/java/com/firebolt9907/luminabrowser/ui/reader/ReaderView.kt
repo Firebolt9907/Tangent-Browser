@@ -56,18 +56,13 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.ui.draw.shadow
 
 @Composable
 fun ReaderView(
@@ -748,140 +743,23 @@ fun ReaderView(
             )
         }
 
-        // Floating Table of Contents Button
-        AnimatedVisibility(
-            visible = headings.size >= 2 && isTOCButtonVisible && !capturing,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = statusBarTop + 8.dp, end = 16.dp)
-        ) {
-            IconButton(
-                onClick = { showTOC = true },
-                modifier = Modifier
-                    .size(40.dp)
-                    .shadow(4.dp, CircleShape)
-                    .background(
-                        color = codeBackgroundColor,
-                        shape = CircleShape
-                    )
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Menu,
-                    contentDescription = "Table of Contents",
-                    tint = textColor
-                )
-            }
-        }
-
-        // Table of Contents Dialog (styled like a bottom sheet)
-        if (showTOC) {
-            val coroutineScope = rememberCoroutineScope()
-            Dialog(
-                onDismissRequest = { showTOC = false },
-                properties = DialogProperties(usePlatformDefaultWidth = false)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.4f))
-                        .clickable(
-                            onClick = { showTOC = false },
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ),
-                    contentAlignment = Alignment.BottomCenter
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .fillMaxHeight(0.6f)
-                            .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                            .background(backgroundColor)
-                            .clickable(
-                                onClick = {},
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            )
-                            .padding(bottom = navBarBottom)
-                    ) {
-                        // Header
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Table of Contents",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = fontFamily,
-                                color = textColor
-                            )
-                            IconButton(onClick = { showTOC = false }) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Close",
-                                    tint = textColor
-                                )
-                            }
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .background(borderColor)
-                        )
-
-                        // Outline List
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                                .verticalScroll(rememberScrollState())
-                                .padding(horizontal = 20.dp, vertical = 12.dp)
-                        ) {
-                            headings.forEach { heading ->
-                                val indent = when (heading.level) {
-                                    1 -> 0.dp
-                                    2 -> 16.dp
-                                    3 -> 32.dp
-                                    else -> 48.dp
-                                }
-                                val textStyle = when (heading.level) {
-                                    1 -> TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                                    2 -> TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                                    else -> TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Normal)
-                                }
-
-                                Text(
-                                    text = heading.text,
-                                    style = textStyle,
-                                    fontFamily = fontFamily,
-                                    color = textColor,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            showTOC = false
-                                            val offset = headingOffsets[heading]
-                                            if (offset != null) {
-                                                coroutineScope.launch {
-                                                    val target = (offset - statusBarTopPx - with(density) { 16.dp.toPx() }).coerceAtLeast(0f)
-                                                    scrollState.animateScrollTo(target.toInt())
-                                                }
-                                            }
-                                        }
-                                        .padding(start = indent, top = 12.dp, bottom = 12.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        ReaderTableOfContents(
+            headings = headings,
+            headingOffsets = headingOffsets,
+            showTOC = showTOC,
+            onShowTOC = { showTOC = true },
+            onDismiss = { showTOC = false },
+            isButtonVisible = isTOCButtonVisible && !capturing,
+            scrollState = scrollState,
+            statusBarTop = statusBarTop,
+            statusBarTopPx = statusBarTopPx,
+            navBarBottom = navBarBottom,
+            density = density,
+            fontFamily = fontFamily,
+            textColor = textColor,
+            backgroundColor = backgroundColor,
+            borderColor = borderColor,
+            codeBackgroundColor = codeBackgroundColor,
+        )
     }
 }

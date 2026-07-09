@@ -104,6 +104,125 @@ class LuminaBrowserComponents(application: Application) {
         runCatching { engine.settings.javascriptEnabled = prefs.javaScriptEnabled }
         runCatching { engine.settings.httpsOnlyMode = httpsModeOf(prefs) }
         runCatching { engine.settings.globalPrivacyControlEnabled = prefs.globalPrivacyControl }
+
+        // Cookie banner auto-dismissal
+        val cookieMode = when (prefs.cookieBannerHandlingMode) {
+            1 -> mozilla.components.concept.engine.EngineSession.CookieBannerHandlingMode.REJECT_ALL
+            2 -> mozilla.components.concept.engine.EngineSession.CookieBannerHandlingMode.REJECT_OR_ACCEPT_ALL
+            else -> mozilla.components.concept.engine.EngineSession.CookieBannerHandlingMode.DISABLED
+        }
+        runCatching { engine.settings.cookieBannerHandlingMode = cookieMode }
+        runCatching { engine.settings.cookieBannerHandlingModePrivateBrowsing = cookieMode }
+
+        // Query parameter stripping
+        runCatching { engine.settings.queryParameterStripping = prefs.queryParameterStripping }
+        runCatching { engine.settings.queryParameterStrippingPrivateBrowsing = prefs.queryParameterStripping }
+
+        // Media autoplay requiring user gesture
+        runCatching { engine.settings.mediaPlaybackRequiresUserGesture = prefs.mediaPlaybackRequiresUserGesture }
+
+        // Cookie partitioning (dFPI / TCP)
+        runCatching { engine.settings.cookieBehaviorOptInPartitioning = prefs.cookieBehaviorOptInPartitioning }
+        runCatching { engine.settings.cookieBehaviorOptInPartitioningPBM = prefs.cookieBehaviorOptInPartitioning }
+
+        // Fingerprinting protection
+        runCatching { engine.settings.fingerprintingProtection = prefs.fingerprintingProtection }
+        runCatching { engine.settings.fingerprintingProtectionPrivateBrowsing = prefs.fingerprintingProtection }
+
+        // DNS over HTTPS (DoH)
+        val dohMode = when (prefs.dohSettingsMode) {
+            1 -> mozilla.components.concept.engine.Engine.DohSettingsMode.DEFAULT
+            2 -> mozilla.components.concept.engine.Engine.DohSettingsMode.INCREASED
+            3 -> mozilla.components.concept.engine.Engine.DohSettingsMode.MAX
+            else -> mozilla.components.concept.engine.Engine.DohSettingsMode.OFF
+        }
+        runCatching { engine.settings.dohSettingsMode = dohMode }
+
+        // Enterprise Roots
+        runCatching { engine.settings.enterpriseRootsEnabled = prefs.enterpriseRootsEnabled }
+
+        // Force User Scalable Content (Force Zoom)
+        runCatching { engine.settings.forceUserScalableContent = prefs.forceUserScalableContent }
+
+        // Font size factor
+        runCatching { engine.settings.fontSizeFactor = prefs.fontSizeFactor }
+
+        // Login Autofill
+        runCatching { engine.settings.loginAutofillEnabled = prefs.loginAutofillEnabled }
+
+        // Web Fonts
+        runCatching { engine.settings.webFontsEnabled = prefs.webFontsEnabled }
+
+        // DOM Storage
+        runCatching { engine.settings.domStorageEnabled = prefs.domStorageEnabled }
+
+        // Suspend Media When Inactive
+        runCatching { engine.settings.suspendMediaWhenInactive = prefs.suspendMediaWhenInactive }
+
+        // Scrollbars
+        runCatching {
+            engine.settings.verticalScrollBarEnabled = prefs.scrollBarsEnabled
+            engine.settings.horizontalScrollBarEnabled = prefs.scrollBarsEnabled
+        }
+
+        // Allow File Access
+        runCatching { engine.settings.allowFileAccess = prefs.allowFileAccess }
+
+        // Post-Quantum Key Exchange
+        runCatching { engine.settings.postQuantumKeyExchangeEnabled = prefs.postQuantumKeyExchangeEnabled }
+
+        // Safe Browsing V5
+        runCatching { engine.settings.safeBrowsingV5Enabled = prefs.safeBrowsingV5Enabled }
+
+        // Automatic Font Size Adjustment
+        runCatching { engine.settings.automaticFontSizeAdjustment = prefs.automaticFontSizeAdjustment }
+
+        // Automatic Language Adjustment
+        runCatching { engine.settings.automaticLanguageAdjustment = prefs.automaticLanguageAdjustment }
+
+        // Cookie Banner Subframes Dismissal
+        runCatching { engine.settings.cookieBannerHandlingGlobalRulesSubFrames = prefs.cookieBannerHandlingGlobalRulesSubFrames }
+
+        // Email Tracker Blocking
+        runCatching { engine.settings.emailTrackerBlockingPrivateBrowsing = prefs.emailTrackerBlockingPrivateBrowsing }
+
+        // Custom DNS over HTTPS (DoH) Provider URL
+        runCatching {
+            engine.settings.dohProviderUrl = prefs.dohProviderUrl
+        }
+
+        // Local Network Access (LNA) Blocking
+        runCatching {
+            engine.settings.lnaBlockingEnabled = prefs.lnaBlockingEnabled
+            engine.settings.lnaFeatureEnabled = prefs.lnaBlockingEnabled
+        }
+
+        // Allow File Access from File URLs (File-to-File cross-access)
+        runCatching {
+            engine.settings.allowFileAccessFromFileURLs = prefs.allowFileAccessFromFileURLs
+            engine.settings.allowUniversalAccessFromFileURLs = prefs.allowFileAccessFromFileURLs
+        }
+
+        // Custom Blocked Ports Override (Banned Ports)
+        runCatching {
+            engine.settings.bannedPorts = prefs.bannedPorts
+        }
+
+        // Platform-Independent Math (Fdlibm)
+        runCatching {
+            engine.settings.fdlibmMathEnabled = prefs.fdlibmMathEnabled
+        }
+
+        // Query Parameter Stripping custom lists
+        runCatching {
+            engine.settings.queryParameterStrippingStripList = prefs.queryParameterStrippingStripList
+            engine.settings.queryParameterStrippingAllowList = prefs.queryParameterStrippingAllowList
+        }
+
+        // CRLite Channel
+        runCatching {
+            engine.settings.crliteChannel = prefs.crliteChannel
+        }
     }
 
     private val _browserState = MutableStateFlow(store.state)
@@ -114,6 +233,7 @@ class LuminaBrowserComponents(application: Application) {
     }
 
     init {
+        applyEngineSettings()
         storeSubscription.resume()
         backgroundTabSuspender.start()
         tabRepository.restoreOrSeedBlank(TAB_MAX_AGE_MILLIS)
@@ -223,5 +343,5 @@ private fun buildDefaultSettings(
     javascriptEnabled = prefs.javaScriptEnabled,
     httpsOnlyMode = httpsModeOf(prefs),
     globalPrivacyControlEnabled = prefs.globalPrivacyControl,
-    loginAutofillEnabled = true,
+    loginAutofillEnabled = prefs.loginAutofillEnabled,
 )

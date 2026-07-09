@@ -21,6 +21,8 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 import kotlin.math.abs
 
@@ -38,6 +40,7 @@ internal fun BarPill(
     containerColor: Color? = null,
     onClick: (() -> Unit)? = null,
     exponent: Float = 3.0f,
+    shadowElevation: Dp = 0.dp,
     content: @Composable () -> Unit,
 ) {
     val currentOnStart by rememberUpdatedState(onDragStart)
@@ -119,10 +122,16 @@ internal fun BarPill(
         Modifier
     }
 
+    val shadowModifier = Modifier.shadow(
+        elevation = shadowElevation,
+        shape = RoundedCornerShape(cornerRadius),
+        clip = false
+    )
+
     Surface(
-        modifier = modifier.then(sizing).then(gestureModifier).then(clickModifier),
+        modifier = modifier.then(sizing).then(shadowModifier).then(gestureModifier).then(clickModifier),
         shape = SquircleShape(cornerRadius, exponent = exponent),
-        color = containerColor ?: MaterialTheme.colorScheme.surfaceContainer,
+        color = containerColor ?: MaterialTheme.colorScheme.surfaceContainerHighest,
         tonalElevation = 6.dp,
     ) {
         content()

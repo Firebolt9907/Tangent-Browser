@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -61,8 +63,22 @@ fun SheetCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .padding(horizontal = 16.dp, vertical = 4.dp),
         content = content,
+    )
+}
+
+/**
+ * A hairline separator between rows inside a [SheetCard]. Inset to the card's content padding so it
+ * reads as a grouped-list divider (the iOS / Material-3 settings convention) rather than a full-bleed
+ * rule. Place between rows, not before the first or after the last.
+ */
+@Composable
+fun SheetRowDivider(modifier: Modifier = Modifier) {
+    HorizontalDivider(
+        modifier = modifier,
+        thickness = Dp.Hairline,
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
     )
 }

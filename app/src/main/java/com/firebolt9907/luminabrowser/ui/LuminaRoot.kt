@@ -1,5 +1,6 @@
 package com.firebolt9907.luminabrowser.ui
 
+import android.content.Intent
 import android.app.Activity
 import android.graphics.Bitmap
 import androidx.activity.ExperimentalActivityApi
@@ -54,9 +55,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -104,6 +109,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -115,6 +121,9 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.firebolt9907.luminabrowser.LuminaApplication
@@ -147,6 +156,7 @@ import com.firebolt9907.luminabrowser.ui.bookmarks.BookmarksSheet
 import com.firebolt9907.luminabrowser.ui.downloads.DownloadsSheet
 import com.firebolt9907.luminabrowser.ui.history.HistorySheet
 import com.firebolt9907.luminabrowser.ui.passwords.PasswordsSheet
+import com.firebolt9907.luminabrowser.ui.sync.HandoffCard
 import com.firebolt9907.luminabrowser.ui.sync.SyncedTabsSheet
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 import mozilla.components.concept.engine.EngineSession
@@ -214,10 +224,12 @@ fun LuminaRoot(
     onRequestPipMode: () -> Unit = {},
 ) {
     val appContext = LocalContext.current.applicationContext
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     val components = (appContext as LuminaApplication).components
     val state by viewModel.state.collectAsStateWithLifecycle()
     val browserState by components.browserState.collectAsStateWithLifecycle()
     val addonsState by components.addonController.state.collectAsStateWithLifecycle()
+    val firefoxSyncState by components.firefoxSyncController.state.collectAsStateWithLifecycle()
 
     var isVideoFullscreen by remember { mutableStateOf(false) }
 
@@ -264,6 +276,7 @@ fun LuminaRoot(
 
     // Find-in-page state. The match counts are pushed by the engine session's onFindResult.
     var findInPageActive by remember { mutableStateOf(false) }
+    var showBottomToolbar by remember { mutableStateOf(components.globalPreferencesStore.showBottomToolbar) }
     var findQuery by remember { mutableStateOf("") }
     var findActiveMatch by remember { mutableIntStateOf(0) }
     var findTotalMatches by remember { mutableIntStateOf(0) }
@@ -307,6 +320,10 @@ fun LuminaRoot(
 
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
+    val imeInsets = WindowInsets.ime
+    val isKeyboardVisible by remember(density, imeInsets) {
+        derivedStateOf { imeInsets.getBottom(density) > 0 }
+    }
     // Upward travel required before a pill drag engages the grid gesture. Without a slop, a
     // pixel of vertical wobble during a horizontal tab swipe flips gridGestureActive for the
     // rest of the gesture, silently switching rendering from the cheap two-pane overlay to the
@@ -434,6 +451,7 @@ fun LuminaRoot(
     var pullRefreshing by remember { mutableStateOf(false) }
     // One-shot guard so the threshold haptic fires once per crossing, not every drag frame.
     var pullThresholdHapticFired by remember { mutableStateOf(false) }
+    var newTabThresholdHapticFired by remember { mutableStateOf(false) }
     val pendingPageScrollDelta = remember { floatArrayOf(0f) }
     val recentTabSnapshots = remember { mutableStateMapOf<String, Bitmap>() }
     val recentPageSnapshots = remember { mutableStateMapOf<String, Bitmap>() }
@@ -444,6 +462,7 @@ fun LuminaRoot(
     val lastObservedUrlByTab = remember { mutableStateMapOf<String, String>() }
     val previousObservedUrlByTab = remember { mutableStateMapOf<String, String>() }
     val barCollapseProgressState = remember { Animatable(0f) }
+    var barCollapseProgress by remember { mutableFloatStateOf(0f) }
     // Reader-mode pill auto-hide: 0 = pill shown, 1 = pill fully translated off the bottom edge.
     // Driven by reader scroll direction (separate from the web-page compact collapse above).
     val readerBarHidden = remember { Animatable(0f) }
@@ -526,6 +545,29 @@ fun LuminaRoot(
             findTotalMatches = 0
             if (findQuery.isNotBlank()) selectedEngineSession?.findAll(findQuery)
         }
+    }
+
+    // Handoff: on every foreground, quietly refresh synced tabs and surface a banner when a tab
+    // was active on another device within the last five minutes (network sync is debounced inside
+    // the controller). ON_RESUME also fires on first launch, covering the cold-start case.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                components.firefoxSyncController.checkForHandoffTab()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Retire the banner on its own once the 5-minute freshness window lapses, even with no new
+    // sync results coming in to displace it.
+    LaunchedEffect(firefoxSyncState.handoffTab) {
+        val handoff = firefoxSyncState.handoffTab ?: return@LaunchedEffect
+        val remainingMs = handoff.lastUsed + 5L * 60L * 1000L - System.currentTimeMillis()
+        if (remainingMs > 0) delay(remainingMs)
+        components.firefoxSyncController.expireHandoff(handoff)
     }
 
     LaunchedEffect(components.firefoxSyncController) {
@@ -845,6 +887,7 @@ fun LuminaRoot(
         barCollapsePx = 0f
         barCollapseCompact = false
         barCollapseProgressTarget = 0f
+        barCollapseProgress = 0f
         scope.launch { barCollapseProgressState.snapTo(0f) }
     }
 
@@ -862,9 +905,7 @@ fun LuminaRoot(
         if (abs(barCollapseProgressTarget - target) < 0.003f) return
         barCollapseProgressTarget = target
         barCollapseAnimationJob?.cancel()
-        barCollapseAnimationJob = scope.launch {
-            barCollapseProgressState.snapTo(target)
-        }
+        barCollapseProgress = target
     }
 
     fun animateBarCollapseProgress(target: Float) {
@@ -872,15 +913,17 @@ fun LuminaRoot(
         barCollapseProgressTarget = target
         barCollapseAnimationJob?.cancel()
         barCollapseAnimationJob = scope.launch {
+            barCollapseProgressState.snapTo(barCollapseProgress)
             barCollapseProgressState.animateTo(
                 targetValue = target,
                 animationSpec = LuminaMotion.BarCollapse,
-            )
+            ) {
+                barCollapseProgress = value
+            }
         }
     }
 
     fun handlePageScrollDelta(delta: Float) {
-        android.util.Log.d("LuminaPill", "handlePageScrollDelta: delta=$delta, active=$userScrollInteractionActive")
         if (!userScrollInteractionActive) return
         val nextCollapsePx = (barCollapsePx + delta).coerceIn(0f, BarCollapseDistancePx)
         if (abs(nextCollapsePx - barCollapsePx) < 0.5f) return
@@ -1010,9 +1053,21 @@ fun LuminaRoot(
                 rubberBand(offsetX, delta, width).coerceAtMost(0f)
             else -> proposed
         }
+        if (canCreateTabFromRightEdge && nextTabId == null && offsetX < 0f) {
+            val threshold = width * 0.35f
+            if (abs(offsetX) >= threshold) {
+                if (!newTabThresholdHapticFired) {
+                    newTabThresholdHapticFired = true
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+            } else {
+                newTabThresholdHapticFired = false
+            }
+        }
     }
 
     fun commitHorizontalRelease(velocity: Float, forceDirection: Int? = null) {
+        newTabThresholdHapticFired = false
         if (offsetX == 0f && forceDirection == null) {
             resetTabSwitchSnapshot()
             return
@@ -1028,14 +1083,15 @@ fun LuminaRoot(
             current < 0f && nextTabId != null && (pastDistance || pastVelocity) -> 1
             else -> 0
         }
+        val newTabThreshold = width * 0.35f
         val shouldCreateTab = forceDirection == null && current < 0f &&
             nextTabId == null &&
             canCreateTabFromRightEdge &&
-            (pastDistance || pastVelocity)
+            (abs(current) >= newTabThreshold)
         switchAnimationJob?.cancel()
         switchAnimationJob = null
         if ((direction != 0 || shouldCreateTab) && width > 0f) {
-            val side = -direction.toFloat()
+            val side = if (shouldCreateTab) -1f else -direction.toFloat()
             val target = side * pageStride
             val leavingBitmap = tabSwitchCurrentSnapshot ?: snapshotFor(selectedTabId, currentUrl)
             val incomingBitmap: Bitmap?
@@ -1622,7 +1678,6 @@ fun LuminaRoot(
     }
 
     LaunchedEffect(selectedContent?.loading) {
-        android.util.Log.d("LuminaPill", "LaunchedEffect(loading) run: loading=${selectedContent?.loading}")
         userScrollInteractionActive = false
         if (selectedContent?.loading == false) {
             resetPullRefresh()
@@ -1868,7 +1923,7 @@ fun LuminaRoot(
                     engine = components.engine,
                     engineSession = selectedEngineSession,
                     topChromeInsetPx = if (isVideoFullscreen) 0 else topChromeInsetPx,
-                    bottomChromeInsetPx = if (isVideoFullscreen) 0 else bottomChromeInsetPx,
+                    bottomChromeInsetPx = if (isVideoFullscreen || (isKeyboardVisible && state.mode != BarMode.Editing)) 0 else bottomChromeInsetPx,
                     tabId = actualSelectedTabId,
                     pageUrl = actualSelectedContent?.url.orEmpty(),
                     snapshotCache = components.tabSnapshotCache,
@@ -1921,7 +1976,6 @@ fun LuminaRoot(
                     },
                     onPageScrollDelta = ::enqueuePageScrollDelta,
                     onPageTouch = {
-                        android.util.Log.d("LuminaPill", "onPageTouch callback triggered: setting active=true")
                         userScrollInteractionActive = true
                     },
                     onTopOverscrollPull = { distance ->
@@ -2002,7 +2056,7 @@ fun LuminaRoot(
                         },
                     topPaddingFixActive = currentSitePrefs.topPaddingFix,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
-                    barCollapseProgressState = barCollapseProgressState,
+                    barCollapseProgress = barCollapseProgress,
                     tabIsLoading = actualSelectedContent?.loading == true,
                 )
                 if (selectedContent?.url.isBlankPageUrl() && shouldShowUi) {
@@ -2622,10 +2676,7 @@ fun LuminaRoot(
                             }
                         },
                     )
-                    // Floating action toolbar pinned to the bottom of the all-tabs page. zIndex
-                    // lifts it above the (full-screen) bottom-bar layer that's composed after the
-                    // grid, so its buttons actually receive taps instead of the invisible pill.
-                    Surface(
+                    Column(
                         modifier = Modifier
                             .zIndex(2f)
                             .align(Alignment.BottomCenter)
@@ -2634,60 +2685,88 @@ fun LuminaRoot(
                             .graphicsLayer {
                                 alpha = ((gridProgress - 0.35f) / 0.35f).coerceIn(0f, 1f)
                             },
-                        shape = RoundedCornerShape(28.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        tonalElevation = 3.dp,
-                        shadowElevation = 6.dp,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        val toolbarEnabled = !gridGestureActive && gridProgress > 0.65f
-                        FilledTonalIconButton(
-                            onClick = { openNewTabFromGrid() },
-                            enabled = toolbarEnabled,
+                        val handoff = firefoxSyncState.handoffTab
+                        AnimatedVisibility(
+                            visible = handoff != null,
+                            enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
+                            exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(),
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = "New Tab")
+                            var lastHandoff by remember { mutableStateOf(handoff) }
+                            if (handoff != null) lastHandoff = handoff
+                            lastHandoff?.let { tab ->
+                                HandoffCard(
+                                    tab = tab,
+                                    onOpen = {
+                                        components.firefoxSyncController.dismissHandoff()
+                                        viewModel.onOpenNewTab(url = tab.url, title = tab.title, selectTab = true)
+                                        closeGrid(animateBack = true)
+                                    },
+                                    onDismiss = {
+                                        components.firefoxSyncController.dismissHandoff()
+                                    }
+                                )
+                            }
                         }
-                        FilledTonalIconButton(
-                            onClick = { showSyncedTabs = true },
-                            enabled = toolbarEnabled,
+
+                        Surface(
+                            shape = RoundedCornerShape(28.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            tonalElevation = 3.dp,
+                            shadowElevation = 6.dp,
                         ) {
-                            Icon(Icons.Default.CloudSync, contentDescription = "Synced Tabs")
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                val toolbarEnabled = !gridGestureActive && gridProgress > 0.65f
+                                FilledTonalIconButton(
+                                    onClick = { openNewTabFromGrid() },
+                                    enabled = toolbarEnabled,
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "New Tab")
+                                }
+                                FilledTonalIconButton(
+                                    onClick = { showSyncedTabs = true },
+                                    enabled = toolbarEnabled,
+                                ) {
+                                    Icon(Icons.Default.CloudSync, contentDescription = "Synced Tabs")
+                                }
+                                FilledTonalIconButton(
+                                    onClick = { showPasswords = true },
+                                    enabled = toolbarEnabled,
+                                ) {
+                                    Icon(Icons.Default.Lock, contentDescription = "Passwords")
+                                }
+                                FilledTonalIconButton(
+                                    onClick = { showHistory = true },
+                                    enabled = toolbarEnabled,
+                                ) {
+                                    Icon(Icons.Default.History, contentDescription = "History")
+                                }
+                                FilledTonalIconButton(
+                                    onClick = { showBookmarks = true },
+                                    enabled = toolbarEnabled,
+                                ) {
+                                    Icon(Icons.Outlined.BookmarkBorder, contentDescription = "Bookmarks")
+                                }
+                                FilledTonalIconButton(
+                                    onClick = { showDownloads = true },
+                                    enabled = toolbarEnabled,
+                                ) {
+                                    Icon(Icons.Default.Download, contentDescription = "Downloads")
+                                }
+                                FilledTonalIconButton(
+                                    onClick = { showSettings = true },
+                                    enabled = toolbarEnabled,
+                                ) {
+                                    Icon(Icons.Default.Settings, contentDescription = "Settings")
+                                }
+                            }
                         }
-                        FilledTonalIconButton(
-                            onClick = { showPasswords = true },
-                            enabled = toolbarEnabled,
-                        ) {
-                            Icon(Icons.Default.Lock, contentDescription = "Passwords")
-                        }
-                        FilledTonalIconButton(
-                            onClick = { showHistory = true },
-                            enabled = toolbarEnabled,
-                        ) {
-                            Icon(Icons.Default.History, contentDescription = "History")
-                        }
-                        FilledTonalIconButton(
-                            onClick = { showBookmarks = true },
-                            enabled = toolbarEnabled,
-                        ) {
-                            Icon(Icons.Outlined.BookmarkBorder, contentDescription = "Bookmarks")
-                        }
-                        FilledTonalIconButton(
-                            onClick = { showDownloads = true },
-                            enabled = toolbarEnabled,
-                        ) {
-                            Icon(Icons.Default.Download, contentDescription = "Downloads")
-                        }
-                        FilledTonalIconButton(
-                            onClick = { showSettings = true },
-                            enabled = toolbarEnabled,
-                        ) {
-                            Icon(Icons.Default.Settings, contentDescription = "Settings")
-                        }
-                    }
                     }
                 }
                 // Arc/Zen-style refresh line: a horizontal primary-coloured line that fills from the
@@ -2877,7 +2956,7 @@ fun LuminaRoot(
                         },
                         activeOffsetX = pillOffsetX,
                         onBottomInsetMeasured = { bottomChromeInsetPx = it },
-                        barCollapseProgressState = barCollapseProgressState,
+                        barCollapseProgress = barCollapseProgress,
                         pillInteractive = !barCollapseCompact && !gridOpen,
                         controlsEnabled = !gridEngaged,
                         gridProgress = pillGridProgress,
@@ -2889,7 +2968,35 @@ fun LuminaRoot(
                         readerHideOffsetPx = pillReaderHideOffsetPx,
                         onSelectPreviousTab = { commitHorizontalRelease(0f, forceDirection = -1) },
                         onSelectNextTab = { commitHorizontalRelease(0f, forceDirection = 1) },
+                        showBottomToolbar = showBottomToolbar,
+                        onCopyTap = {
+                            val currentUrl = selectedContent?.url.orEmpty()
+                            if (currentUrl.isNotBlank() && currentUrl != "about:blank") {
+                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(currentUrl))
+                                android.widget.Toast.makeText(appContext, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onForwardTap = { selectedTabId?.let { components.sessionUseCases.goForward.invoke(it, true) } },
+                        onShareTap = {
+                            val currentUrl = selectedContent?.url.orEmpty()
+                            if (currentUrl.isNotBlank() && currentUrl != "about:blank") {
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, currentUrl)
+                                    val currentTitle = selectedContent?.title.orEmpty()
+                                    if (currentTitle.isNotBlank()) putExtra(Intent.EXTRA_SUBJECT, currentTitle)
+                                }
+                                try {
+                                    appContext.startActivity(Intent.createChooser(shareIntent, null).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    })
+                                } catch (_: Exception) {}
+                            }
+                        },
+                        onBookmarksTap = { showBookmarks = true },
+                        onTabsTap = { openGrid(initialVelocityProgressPerSec = 0f) },
                     )
+
                 } else if (isVideoFullscreen && !isInPipMode) {
                     com.firebolt9907.luminabrowser.ui.video.VideoFullscreenOverlay(
                         engineSession = selectedEngineSession,
@@ -2918,7 +3025,10 @@ fun LuminaRoot(
             SettingsSheet(
                 globalPrefsStore = components.globalPreferencesStore,
                 onDismiss = { showSettings = false },
-                onSettingChanged = { components.applyEngineSettings() },
+                onSettingChanged = {
+                    components.applyEngineSettings()
+                    showBottomToolbar = components.globalPreferencesStore.showBottomToolbar
+                },
                 onClearSitePermissions = {
                     components.sitePermissionController.clearRememberedDecisions()
                 },
@@ -3068,7 +3178,7 @@ private fun BottomBarLayer(
     // spring, or grid gesture, and must never be read during composition (see the call site).
     activeOffsetX: () -> Float,
     onBottomInsetMeasured: (Int) -> Unit,
-    barCollapseProgressState: Animatable<Float, AnimationVector1D>,
+    barCollapseProgress: Float = 0f,
     pillInteractive: Boolean = true,
     controlsEnabled: Boolean = true,
     gridProgress: () -> Float = { 0f },
@@ -3080,18 +3190,78 @@ private fun BottomBarLayer(
     readerHideOffsetPx: () -> Float = { 0f },
     onSelectPreviousTab: () -> Unit = {},
     onSelectNextTab: () -> Unit = {},
+    showBottomToolbar: Boolean = false,
+    onCopyTap: () -> Unit = {},
+    onForwardTap: () -> Unit = {},
+    onShareTap: () -> Unit = {},
+    onBookmarksTap: () -> Unit = {},
+    onTabsTap: () -> Unit = {},
 ) {
-    val barCollapseProgress = barCollapseProgressState.value
     val activeReaderActive = selectedTabId != null && activeReaderTabs.contains(selectedTabId)
+    val density = LocalDensity.current
+    val imeInsets = WindowInsets.ime
+    val isKeyboardVisible by remember(density, imeInsets) {
+        derivedStateOf { imeInsets.getBottom(density) > 0 }
+    }
+    val hideForKeyboard = isKeyboardVisible && activeState.mode != BarMode.Editing
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .imePadding()
             .graphicsLayer {
-                alpha = (1f - (gridProgress() * 1.5f).coerceIn(0f, 1f)).coerceIn(0f, 1f)
+                val baseAlpha = (1f - (gridProgress() * 1.5f).coerceIn(0f, 1f)).coerceIn(0f, 1f)
+                alpha = if (hideForKeyboard) 0f else baseAlpha
             },
     ) {
-        val width = contentSize.width.toFloat()
+        if (!hideForKeyboard) {
+            val isToolbarVisible = showBottomToolbar && activeState.mode != BarMode.Editing
+            val barHeight = if (activeState.mode == BarMode.Editing) {
+                72.dp
+            } else {
+                56.dp
+            }
+            val toolbarHeight = if (showBottomToolbar && activeState.mode != BarMode.Editing) 48.dp else 0.dp
+            val navBarHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+            val bottomPadding = navBarHeight.coerceAtLeast(24.dp)
+            val totalHeight = barHeight + bottomPadding + toolbarHeight
+            val scrimHeight = 160.dp
+            
+            val totalHeightPx = with(density) { totalHeight.toPx() }
+            val scrimHeightPx = with(density) { scrimHeight.toPx() }
+            val fadeStartFraction = if (scrimHeightPx > 0f) {
+                (1f - (totalHeightPx / scrimHeightPx)).coerceIn(0f, 1f)
+            } else {
+                0.5f
+            }
+
+            if (isToolbarVisible) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .requiredHeight(scrimHeight)
+                        .align(Alignment.BottomCenter)
+                        .graphicsLayer {
+                            val collapse = barCollapseProgress
+                            val readerHide = readerHideOffsetPx()
+                            alpha = (1f - collapse).coerceIn(0f, 1f)
+                            translationY = (toolbarHeight.toPx() + bottomPadding.toPx()) * collapse + readerHide
+                        }
+                        .background(
+                            Brush.verticalGradient(
+                                *arrayOf(
+                                    0.0f to Color.Transparent,
+                                    (fadeStartFraction * 0.5f) to MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f),
+                                    (fadeStartFraction * 0.75f) to MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.9f),
+                                    fadeStartFraction to MaterialTheme.colorScheme.surfaceContainer,
+                                    1.0f to MaterialTheme.colorScheme.surfaceContainer
+                                )
+                            )
+                        )
+                )
+            }
+
+            val width = contentSize.width.toFloat()
         val pageStride = width + tabSwitchGapPx
         val density = LocalDensity.current
         val pillStride = width - with(density) { 32.dp.toPx() }
@@ -3119,15 +3289,10 @@ private fun BottomBarLayer(
                 collapseProgress = barCollapseProgress,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    // activeOffsetX (not the raw drag offset): during the commit spring the drag
-                    // offset has already snapped to 0, so a raw read would teleport this ghost to
-                    // its rest slot while its snapshot is still sliding. Following the animated
-                    // offset keeps the leaving tab's pill glued to its departing snapshot —
-                    // incoming − pageStride == leaving, so the stride math lands it exactly there.
                     .graphicsLayer {
-                        translationX = activeOffsetX() * pillParallax - pillStride
                         alpha = (1f - barCollapseProgress).coerceIn(0f, 1f)
                     },
+                pillTranslationX = activeOffsetX() * pillParallax - pillStride,
                 isReaderEligible = prevEligible,
                 isReaderActive = prevActive,
                 readerTheme = readerTheme,
@@ -3135,7 +3300,10 @@ private fun BottomBarLayer(
                     if (controlsEnabled) {
                         onSelectPreviousTab()
                     }
-                }
+                },
+                showBottomToolbar = showBottomToolbar,
+                onCopyTap = {},
+                canGoForward = previousTab.content.canGoForward,
             )
         }
         if (nextTab != null && width > 0f && !activeReaderActive) {
@@ -3158,9 +3326,9 @@ private fun BottomBarLayer(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .graphicsLayer {
-                        translationX = activeOffsetX() * pillParallax + pillStride
                         alpha = (1f - barCollapseProgress).coerceIn(0f, 1f)
                     },
+                pillTranslationX = activeOffsetX() * pillParallax + pillStride,
                 isReaderEligible = nextEligible,
                 isReaderActive = nextActive,
                 readerTheme = readerTheme,
@@ -3168,7 +3336,10 @@ private fun BottomBarLayer(
                     if (controlsEnabled) {
                         onSelectNextTab()
                     }
-                }
+                },
+                showBottomToolbar = showBottomToolbar,
+                onCopyTap = {},
+                canGoForward = nextTab.content.canGoForward,
             )
         }
         if (showNewTabGhost && nextTab == null && width > 0f && !activeReaderActive) {
@@ -3195,14 +3366,17 @@ private fun BottomBarLayer(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .graphicsLayer {
-                        translationX = activeOffsetX() * pillParallax + pillStride
                         alpha = (1f - barCollapseProgress).coerceIn(0f, 1f)
                     },
+                pillTranslationX = activeOffsetX() * pillParallax + pillStride,
                 onClick = {
                     if (controlsEnabled) {
                         onSelectNextTab()
                     }
-                }
+                },
+                showBottomToolbar = showBottomToolbar,
+                onCopyTap = {},
+                canGoForward = false,
             )
         }
         val activeEligible = selectedTabId != null && eligibleReaderTabs.contains(selectedTabId)
@@ -3226,15 +3400,22 @@ private fun BottomBarLayer(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .graphicsLayer {
-                    translationX = activeOffsetX() * pillParallax
                     translationY = readerHideOffsetPx()
                 },
+            pillTranslationX = activeOffsetX() * pillParallax,
             onBottomInsetMeasured = onBottomInsetMeasured,
             collapseProgress = barCollapseProgress,
             isReaderEligible = activeEligible,
             isReaderActive = activeActive,
             readerTheme = readerTheme,
+            showBottomToolbar = showBottomToolbar,
+            onCopyTap = onCopyTap,
+            onForwardTap = onForwardTap,
+            onShareTap = onShareTap,
+            onBookmarksTap = onBookmarksTap,
+            onTabsTap = onTabsTap,
         )
+        }
     }
 }
 

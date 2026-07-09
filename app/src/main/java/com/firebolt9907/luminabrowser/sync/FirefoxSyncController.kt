@@ -4,6 +4,10 @@ import android.app.Application
 import android.net.Uri
 import androidx.core.net.toUri
 import com.firebolt9907.luminabrowser.R
+import com.firebolt9907.luminabrowser.sync.zen.Sync15StorageClient
+import com.firebolt9907.luminabrowser.sync.zen.ZEN_WORKSPACES_COLLECTION
+import com.firebolt9907.luminabrowser.sync.zen.ZenWorkspaceRecords
+import com.firebolt9907.luminabrowser.sync.zen.ZenWorkspacesSnapshot
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -37,11 +41,18 @@ import mozilla.components.service.fxa.manager.FxaAccountManager
 import mozilla.components.service.fxa.sync.GlobalSyncableStoreProvider
 import mozilla.components.service.fxa.sync.SyncReason
 import mozilla.components.service.fxa.sync.SyncStatusObserver
+import mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient
 import mozilla.components.support.base.observer.ObserverRegistry
 
 private const val FxAClientId = "3c49430b43dfba77"
 private const val FxARedirectUrl = "https://accounts.firefox.com/oauth/success/$FxAClientId"
 private const val MaxActiveTabAgeMs = 21L * 24L * 60L * 60L * 1000L
+
+/** A remote tab counts as a handoff candidate if it was used on the other device this recently. */
+private const val HandoffWindowMs = 5L * 60L * 1000L
+
+/** Minimum spacing between the network syncs that back foreground handoff checks. */
+private const val HandoffSyncDebounceMs = 60_000L
 
 class FirefoxSyncController(
     private val application: Application,
@@ -70,6 +81,8 @@ class FirefoxSyncController(
         crashReporter = crashReporter,
     )
 
+    private val sync15StorageClient = Sync15StorageClient(HttpURLConnectionClient())
+
     private val remoteTabsStorage = RemoteTabsStorage(application, crashReporter)
     private val syncedTabsStorage = SyncedTabsStorage(
         accountManager = accountManager,
@@ -85,6 +98,8 @@ class FirefoxSyncController(
     val events: SharedFlow<FirefoxSyncEvent> = _events.asSharedFlow()
 
     @Volatile private var authInFlight = false
+    @Volatile private var lastHandoffSyncAtMs = 0L
+    @Volatile private var dismissedHandoffKey: String? = null
 
     init {
         GlobalSyncableStoreProvider.configureStore(SyncEngine.Tabs to lazy { remoteTabsStorage })
@@ -184,9 +199,27 @@ class FirefoxSyncController(
                         isError = false,
                     )
                 }
+                updateHandoffFromDevices(devices)
             }.onFailure { throwable ->
                 setError("Could not sync tabs: ${throwable.readableMessage()}")
             }
+            refreshZenWorkspaces()
+        }
+    }
+
+    /**
+     * Best-effort read of Zen browser's `workspaces` Sync collection (spaces + containers).
+     * Zen's engine is not in their stable channel yet, so absence of the collection (404 →
+     * empty snapshot) is the common case; failures keep the previous snapshot and are never
+     * surfaced as sync errors.
+     */
+    private suspend fun refreshZenWorkspaces() {
+        val account = accountManager.authenticatedAccount() ?: return
+        runCatching {
+            val records = sync15StorageClient.fetchCollection(account, ZEN_WORKSPACES_COLLECTION)
+            ZenWorkspaceRecords.parse(records)
+        }.onSuccess { snapshot ->
+            _state.update { it.copy(zenWorkspaces = snapshot) }
         }
     }
 
@@ -204,8 +237,70 @@ class FirefoxSyncController(
                     if (devices.isNotEmpty()) {
                         _state.update { it.copy(devices = devices, isError = false) }
                     }
+                    updateHandoffFromDevices(devices)
                 }
         }
+    }
+
+    /**
+     * Foreground handoff check: quietly sync the tabs engine (no busy/message churn — this runs on
+     * every app resume, so it must never flash sync UI), then surface the most recently used tab
+     * from another device as a handoff candidate if it was active within [HandoffWindowMs].
+     * The network sync is debounced to [HandoffSyncDebounceMs]; inside the debounce window the
+     * candidate is still re-evaluated from local storage so an expired banner clears promptly.
+     */
+    fun checkForHandoffTab() {
+        scope.launch {
+            if (accountManager.authenticatedAccount() == null) return@launch
+            val now = System.currentTimeMillis()
+            if (now - lastHandoffSyncAtMs >= HandoffSyncDebounceMs) {
+                lastHandoffSyncAtMs = now
+                runCatching { awaitSync(listOf(SyncEngine.Tabs)) }
+            }
+            runCatching { readSyncedDevices() }.onSuccess { devices ->
+                if (devices.isNotEmpty()) {
+                    _state.update { it.copy(devices = devices) }
+                }
+                updateHandoffFromDevices(devices)
+            }
+        }
+    }
+
+    /** Hide the handoff banner and keep this device+URL pair from resurfacing it. */
+    fun dismissHandoff() {
+        _state.value.handoffTab?.let { dismissedHandoffKey = it.dismissKey }
+        _state.update { it.copy(handoffTab = null) }
+    }
+
+    /** Drop [handoff] from state once its window lapses, without blocking future candidates. */
+    fun expireHandoff(handoff: FirefoxHandoffTab) {
+        _state.update { current ->
+            if (current.handoffTab == handoff) current.copy(handoffTab = null) else current
+        }
+    }
+
+    private fun updateHandoffFromDevices(devices: List<FirefoxSyncedDevice>) {
+        val cutoff = System.currentTimeMillis() - HandoffWindowMs
+        // Tabs already open locally aren't worth handing off (this also naturally retires the
+        // banner right after the user accepts it). No upper bound on lastUsed: a remote clock
+        // slightly ahead of ours must not disqualify an otherwise-fresh tab.
+        val localUrls = store.state.tabs.mapTo(HashSet()) { it.content.url }
+        val handoff = devices.asSequence()
+            .flatMap { device -> device.tabs.asSequence().map { tab -> device to tab } }
+            .filter { (_, tab) -> tab.lastUsed >= cutoff && tab.url !in localUrls }
+            .maxByOrNull { (_, tab) -> tab.lastUsed }
+            ?.let { (device, tab) ->
+                FirefoxHandoffTab(
+                    deviceId = device.id,
+                    deviceName = device.name,
+                    deviceType = device.type,
+                    title = tab.title,
+                    url = tab.url,
+                    lastUsed = tab.lastUsed,
+                )
+            }
+            ?.takeIf { it.dismissKey != dismissedHandoffKey }
+        _state.update { it.copy(handoffTab = handoff) }
     }
 
     /** Read the constellation's other devices (Send Tab targets) into UI state. */
@@ -362,10 +457,26 @@ data class FirefoxSyncUiState(
     val accountEmail: String? = null,
     val devices: List<FirefoxSyncedDevice> = emptyList(),
     val targetDevices: List<FirefoxTargetDevice> = emptyList(),
+    val handoffTab: FirefoxHandoffTab? = null,
+    val zenWorkspaces: ZenWorkspacesSnapshot = ZenWorkspacesSnapshot.EMPTY,
     val isBusy: Boolean = false,
     val message: String? = null,
     val isError: Boolean = false,
 )
+
+/** A tab freshly active on another device, offered for continuation on this one. */
+data class FirefoxHandoffTab(
+    val deviceId: String,
+    val deviceName: String,
+    val deviceType: String,
+    val title: String,
+    val url: String,
+    val lastUsed: Long,
+) {
+    // lastUsed is deliberately excluded: dismissing a tab the other device is still actively
+    // using must stick even as its timestamp keeps advancing on later syncs.
+    val dismissKey: String get() = "$deviceId|$url"
+}
 
 data class FirefoxSyncedDevice(
     val id: String,

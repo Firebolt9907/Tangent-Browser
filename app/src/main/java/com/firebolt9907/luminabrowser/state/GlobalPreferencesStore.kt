@@ -61,6 +61,10 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("keepAliveInBackground", false)
         set(value) { prefs.edit { putBoolean("keepAliveInBackground", value) } }
 
+    var showBottomToolbar: Boolean
+        get() = prefs.getBoolean("showBottomToolbar", false)
+        set(value) { prefs.edit { putBoolean("showBottomToolbar", value) } }
+
     // Reader-view appearance, persisted so the user's choices survive app restarts. Theme is stored
     // by enum name; an unknown/missing value falls back to the caller's default.
     var readerThemeName: String?
@@ -111,6 +115,124 @@ class GlobalPreferencesStore(context: Context) {
         set(value) {
             prefs.edit { putInt("httpCacheSizeMb", value.coerceIn(MIN_HTTP_CACHE_MB, MAX_HTTP_CACHE_MB)) }
         }
+
+    // 0 = Disabled, 1 = Reject all, 2 = Reject or accept all
+    var cookieBannerHandlingMode: Int
+        get() = prefs.getInt("cookieBannerHandlingMode", 0)
+        set(value) { prefs.edit { putInt("cookieBannerHandlingMode", value) } }
+
+    var queryParameterStripping: Boolean
+        get() = prefs.getBoolean("queryParameterStripping", true)
+        set(value) { prefs.edit { putBoolean("queryParameterStripping", value) } }
+
+    var mediaPlaybackRequiresUserGesture: Boolean
+        get() = prefs.getBoolean("mediaPlaybackRequiresUserGesture", true)
+        set(value) { prefs.edit { putBoolean("mediaPlaybackRequiresUserGesture", value) } }
+
+    var cookieBehaviorOptInPartitioning: Boolean
+        get() = prefs.getBoolean("cookieBehaviorOptInPartitioning", true)
+        set(value) { prefs.edit { putBoolean("cookieBehaviorOptInPartitioning", value) } }
+
+    var fingerprintingProtection: Boolean
+        get() = prefs.getBoolean("fingerprintingProtection", false)
+        set(value) { prefs.edit { putBoolean("fingerprintingProtection", value) } }
+
+    // 0 = Off, 1 = Default, 2 = Increased, 3 = Max
+    var dohSettingsMode: Int
+        get() = prefs.getInt("dohSettingsMode", 0)
+        set(value) { prefs.edit { putInt("dohSettingsMode", value) } }
+
+    var enterpriseRootsEnabled: Boolean
+        get() = prefs.getBoolean("enterpriseRootsEnabled", false)
+        set(value) { prefs.edit { putBoolean("enterpriseRootsEnabled", value) } }
+
+    var forceUserScalableContent: Boolean
+        get() = prefs.getBoolean("forceUserScalableContent", false)
+        set(value) { prefs.edit { putBoolean("forceUserScalableContent", value) } }
+
+    var fontSizeFactor: Float
+        get() = prefs.getFloat("fontSizeFactor", 1.0f)
+        set(value) { prefs.edit { putFloat("fontSizeFactor", value) } }
+
+    var loginAutofillEnabled: Boolean
+        get() = prefs.getBoolean("loginAutofillEnabled", true)
+        set(value) { prefs.edit { putBoolean("loginAutofillEnabled", value) } }
+
+    var webFontsEnabled: Boolean
+        get() = prefs.getBoolean("webFontsEnabled", true)
+        set(value) { prefs.edit { putBoolean("webFontsEnabled", value) } }
+
+    var domStorageEnabled: Boolean
+        get() = prefs.getBoolean("domStorageEnabled", true)
+        set(value) { prefs.edit { putBoolean("domStorageEnabled", value) } }
+
+    var suspendMediaWhenInactive: Boolean
+        get() = prefs.getBoolean("suspendMediaWhenInactive", true)
+        set(value) { prefs.edit { putBoolean("suspendMediaWhenInactive", value) } }
+
+    var scrollBarsEnabled: Boolean
+        get() = prefs.getBoolean("scrollBarsEnabled", true)
+        set(value) { prefs.edit { putBoolean("scrollBarsEnabled", value) } }
+
+    var allowFileAccess: Boolean
+        get() = prefs.getBoolean("allowFileAccess", false)
+        set(value) { prefs.edit { putBoolean("allowFileAccess", value) } }
+
+    var postQuantumKeyExchangeEnabled: Boolean
+        get() = prefs.getBoolean("postQuantumKeyExchangeEnabled", true)
+        set(value) { prefs.edit { putBoolean("postQuantumKeyExchangeEnabled", value) } }
+
+    var safeBrowsingV5Enabled: Boolean
+        get() = prefs.getBoolean("safeBrowsingV5Enabled", true)
+        set(value) { prefs.edit { putBoolean("safeBrowsingV5Enabled", value) } }
+
+    var automaticFontSizeAdjustment: Boolean
+        get() = prefs.getBoolean("automaticFontSizeAdjustment", true)
+        set(value) { prefs.edit { putBoolean("automaticFontSizeAdjustment", value) } }
+
+    var automaticLanguageAdjustment: Boolean
+        get() = prefs.getBoolean("automaticLanguageAdjustment", true)
+        set(value) { prefs.edit { putBoolean("automaticLanguageAdjustment", value) } }
+
+    var cookieBannerHandlingGlobalRulesSubFrames: Boolean
+        get() = prefs.getBoolean("cookieBannerHandlingGlobalRulesSubFrames", true)
+        set(value) { prefs.edit { putBoolean("cookieBannerHandlingGlobalRulesSubFrames", value) } }
+
+    var emailTrackerBlockingPrivateBrowsing: Boolean
+        get() = prefs.getBoolean("emailTrackerBlockingPrivateBrowsing", true)
+        set(value) { prefs.edit { putBoolean("emailTrackerBlockingPrivateBrowsing", value) } }
+
+    var dohProviderUrl: String
+        get() = prefs.getString("dohProviderUrl", "") ?: ""
+        set(value) { prefs.edit { putString("dohProviderUrl", value) } }
+
+    var lnaBlockingEnabled: Boolean
+        get() = prefs.getBoolean("lnaBlockingEnabled", true)
+        set(value) { prefs.edit { putBoolean("lnaBlockingEnabled", value) } }
+
+    var allowFileAccessFromFileURLs: Boolean
+        get() = prefs.getBoolean("allowFileAccessFromFileURLs", false)
+        set(value) { prefs.edit { putBoolean("allowFileAccessFromFileURLs", value) } }
+
+    var bannedPorts: String
+        get() = prefs.getString("bannedPorts", "") ?: ""
+        set(value) { prefs.edit { putString("bannedPorts", value) } }
+
+    var fdlibmMathEnabled: Boolean
+        get() = prefs.getBoolean("fdlibmMathEnabled", false)
+        set(value) { prefs.edit { putBoolean("fdlibmMathEnabled", value) } }
+
+    var queryParameterStrippingStripList: String
+        get() = prefs.getString("queryParameterStrippingStripList", "") ?: ""
+        set(value) { prefs.edit { putString("queryParameterStrippingStripList", value) } }
+
+    var queryParameterStrippingAllowList: String
+        get() = prefs.getString("queryParameterStrippingAllowList", "") ?: ""
+        set(value) { prefs.edit { putString("queryParameterStrippingAllowList", value) } }
+
+    var crliteChannel: String
+        get() = prefs.getString("crliteChannel", "") ?: ""
+        set(value) { prefs.edit { putString("crliteChannel", value) } }
 
     companion object {
         const val DEFAULT_HTTP_CACHE_MB = 512

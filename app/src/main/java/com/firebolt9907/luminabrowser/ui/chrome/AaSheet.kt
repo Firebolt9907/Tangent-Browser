@@ -32,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -60,7 +61,6 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
@@ -71,8 +71,17 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -210,7 +219,11 @@ fun AaSheet(
     pageIcon: android.graphics.Bitmap? = null,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
-    val sheetState = rememberModalBottomSheetState()
+    // Always open fully expanded (no partially-expanded detent). Otherwise the sheet's own drag
+    // gesture competes with the inner list's scroll: the first up-drag gets consumed to expand the
+    // sheet (reading as an overscroll bounce) instead of scrolling the content, so scrolling from
+    // the top feels inconsistent — sometimes it scrolls, sometimes the sheet just animates.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     // iOS-style scaled-page backdrop behind the sheet. Driven by the sheet's own show/hide target so
     // the page scales down on open and back up on dismiss; read lazily so it doesn't recompose here.
@@ -247,24 +260,39 @@ fun AaSheet(
             )
         }
 
-        when (selectedTab) {
-            0 -> PageTabContent(
-                host = host,
-                store = store,
-                globalPrefsStore = globalPrefsStore,
-                onDismiss = onDismiss,
-                onFindInPage = onFindInPage,
-                pageUrl = pageUrl,
-                pageTitle = pageTitle,
-                tabId = tabId,
-                engineSession = engineSession,
-                bookmarksStorage = bookmarksStorage,
-                pageIcon = pageIcon,
-            )
-            1 -> {
-                val addonState by addonController.state.collectAsStateWithLifecycle()
-                var installText by rememberSaveable { mutableStateOf("") }
-                AddonsManagerSheetContent(
+        // Hoisted above AnimatedContent so the add-on state and a half-typed install URL survive
+        // switching to the Page tab and back (AnimatedContent disposes the outgoing tab's content).
+        val addonState by addonController.state.collectAsStateWithLifecycle()
+        var installText by rememberSaveable { mutableStateOf("") }
+        AnimatedContent(
+            targetState = selectedTab,
+            transitionSpec = {
+                // Slide toward the tab that was tapped (matching the PrimaryTabRow indicator); the
+                // sheet-height difference between tabs is smoothed by the default SizeTransform.
+                val forward = targetState > initialState
+                val enter = if (forward) slideInHorizontally(tween(220)) { it / 5 }
+                    else slideInHorizontally(tween(220)) { -it / 5 }
+                val exit = if (forward) slideOutHorizontally(tween(180)) { -it / 5 }
+                    else slideOutHorizontally(tween(180)) { it / 5 }
+                (enter + fadeIn(tween(220))) togetherWith (exit + fadeOut(tween(180)))
+            },
+            label = "aaTabContent",
+        ) { tab ->
+            when (tab) {
+                0 -> PageTabContent(
+                    host = host,
+                    store = store,
+                    globalPrefsStore = globalPrefsStore,
+                    onDismiss = onDismiss,
+                    onFindInPage = onFindInPage,
+                    pageUrl = pageUrl,
+                    pageTitle = pageTitle,
+                    tabId = tabId,
+                    engineSession = engineSession,
+                    bookmarksStorage = bookmarksStorage,
+                    pageIcon = pageIcon,
+                )
+                else -> AddonsManagerSheetContent(
                     state = addonState,
                     installText = installText,
                     onInstallTextChange = { installText = it },
@@ -645,7 +673,12 @@ private fun PageTabContent(
                 }
             }
 
-            if (isActive) {
+            AnimatedVisibility(
+                visible = isActive,
+                enter = expandVertically(animationSpec = tween(220)) + fadeIn(tween(220)),
+                exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(tween(180)),
+            ) {
+                Column {
                 Spacer(Modifier.height(12.dp))
                 SectionCard {
                     Row(
@@ -663,7 +696,7 @@ private fun PageTabContent(
                             val optionBorderColor = when {
                                 readerTheme == themeOption -> MaterialTheme.colorScheme.primary
                                 themeOption == ReaderTheme.System -> MaterialTheme.colorScheme.outlineVariant
-                                else -> Color.LightGray
+                                else -> MaterialTheme.colorScheme.outline
                             }
                             val borderWidth = if (readerTheme == themeOption) 3.dp else 1.5.dp
                             val themeLabel = "${themeOption.name} reader theme"
@@ -746,6 +779,7 @@ private fun PageTabContent(
                             }
                         }
                     }
+                }
                 }
             }
         }
@@ -1148,7 +1182,7 @@ private fun SectionCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .padding(16.dp),
         content = content,
     )
@@ -1172,6 +1206,13 @@ private fun CollapsibleSection(
     onToggle: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // Rotate one chevron rather than hard-swapping up/down icons, and animate the body's
+    // expand/collapse (and the sheet-height change) instead of popping it in and out.
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(220),
+        label = "collapsibleChevron",
+    )
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -1188,14 +1229,21 @@ private fun CollapsibleSection(
                 modifier = Modifier.weight(1f),
             )
             Icon(
-                imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                imageVector = Icons.Default.KeyboardArrowDown,
                 contentDescription = if (expanded) "Collapse" else "Expand",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.rotate(chevronRotation),
             )
         }
-        if (expanded) {
-            Spacer(Modifier.height(8.dp))
-            content()
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(animationSpec = tween(220)) + fadeIn(tween(220)),
+            exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(tween(180)),
+        ) {
+            Column {
+                Spacer(Modifier.height(8.dp))
+                content()
+            }
         }
     }
 }

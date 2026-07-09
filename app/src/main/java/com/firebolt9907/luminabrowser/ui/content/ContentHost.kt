@@ -81,7 +81,7 @@ fun ContentHost(
     onFirefoxAuthRedirect: (String) -> Boolean = { false },
     topPaddingFixActive: Boolean = false,
     pageZoomFactor: Float = 1.0f,
-    barCollapseProgressState: Animatable<Float, AnimationVector1D>? = null,
+    barCollapseProgress: Float = 0f,
     tabIsLoading: Boolean = false,
 ) {
     val context = LocalContext.current
@@ -170,9 +170,9 @@ fun ContentHost(
     // actual nav bar height varies by device. Use the real inset so fixed-bottom web elements
     // land exactly at the pill's top edge rather than above it.
     val navBarPx = WindowInsets.navigationBars.getBottom(density)
-    val barPaddingPx = with(density) { 24.dp.roundToPx() }
+    val barPaddingPx = navBarPx.coerceAtLeast(with(density) { 24.dp.roundToPx() })
     val compactPillPx = with(density) { 44.dp.roundToPx() }
-    val collapseProgress = barCollapseProgressState?.value ?: 0f
+    val collapseProgress = barCollapseProgress
     val expandedClippingPx = (bottomChromeInsetPx - barPaddingPx + navBarPx).coerceAtLeast(0)
     val currentClippingPx = lerp(
         expandedClippingPx.toFloat(),

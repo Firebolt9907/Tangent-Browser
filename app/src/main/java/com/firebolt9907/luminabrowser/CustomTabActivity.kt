@@ -163,6 +163,9 @@ class CustomTabActivity : ComponentActivity(), ActivityDelegate {
             statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
         )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
         app.components.sitePermissionController.requestAppPermissions = { permissions, onResult ->
             val toRequest = permissions.filter {
                 checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED

@@ -23,14 +23,23 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -43,7 +52,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
@@ -208,6 +216,14 @@ fun TabGridOverlay(
     if (containerSize.width <= 0 || containerSize.height <= 0 || tabs.isEmpty()) return
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
+    val coroutineScope = rememberCoroutineScope()
+    val swipeOffsets = remember { mutableStateMapOf<String, Float>() }
+
+    LaunchedEffect(tabs) {
+        val currentIds = tabs.map { it.id }.toSet()
+        swipeOffsets.keys.retainAll(currentIds)
+    }
+
     val sideMarginPx = with(density) { GridSideMarginDp.toPx() }
     val topMarginPx = with(density) { GridTopMarginDp.toPx() }
     // Add the system navigation-bar inset so the last row scrolls clear of the gesture bar / taskbar
@@ -215,6 +231,8 @@ fun TabGridOverlay(
     val navBarPx = WindowInsets.navigationBars.getBottom(density)
     val bottomMarginPx = with(density) { GridBottomMarginDp.toPx() } + navBarPx
     val gapPx = with(density) { GridGapDp.toPx() }
+    val horizontalGapPx = gapPx
+    val verticalGapPx = with(density) { 36.dp.toPx() } // extra space for domain name/label below the card
     // Cell clip radius is in the card's *unscaled* (full-container) space and is then shrunk by the
     // cell's scale (~0.44), so this is intentionally large to land at a generous on-screen radius.
     // The radius lerps from the browse-mode value (matching the horizontal-switch overlay) inside
@@ -236,7 +254,7 @@ fun TabGridOverlay(
     // At the grid cell, on-screen card height = cellH = cellW*4/3, and the card is drawn at
     // scale = cellW/containerW, so the visible page slice = cellH / scale = containerW*4/3.
     val croppedPageHeightPx = if (containerW > 0f) containerW * 4f / 3f else containerH
-    val rawContentHeightPx = topMarginPx + rows * cellH + (rows - 1).coerceAtLeast(0) * gapPx + bottomMarginPx
+    val rawContentHeightPx = topMarginPx + rows * cellH + (rows - 1).coerceAtLeast(0) * verticalGapPx + bottomMarginPx
     val contentHeightPx = rawContentHeightPx.coerceAtLeast(containerH)
     val contentHeightDp = with(density) { contentHeightPx.toDp() }
 
@@ -252,8 +270,8 @@ fun TabGridOverlay(
             index = selectedIndex,
             containerSize = containerSize,
             columns = GridColumns,
-            horizontalGapPx = gapPx,
-            verticalGapPx = gapPx,
+            horizontalGapPx = horizontalGapPx,
+            verticalGapPx = verticalGapPx,
             sideMarginPx = sideMarginPx,
             topMarginPx = topMarginPx,
         )
@@ -303,8 +321,8 @@ fun TabGridOverlay(
             index = selectedIndex,
             containerSize = containerSize,
             columns = GridColumns,
-            horizontalGapPx = gapPx,
-            verticalGapPx = gapPx,
+            horizontalGapPx = horizontalGapPx,
+            verticalGapPx = verticalGapPx,
             sideMarginPx = sideMarginPx,
             topMarginPx = topMarginPx,
         )
@@ -343,7 +361,11 @@ fun TabGridOverlay(
                 // Go opaque very quickly (fully opaque at ~5% progress) so GeckoView never shows
                 // through the squircle corners during the gesture ramp-up.
                 .graphicsLayer { alpha = (progress() * 20f).coerceIn(0f, 1f) }
-                .background(MaterialTheme.colorScheme.background),
+                // surfaceDim is the darkest surface tone — using it as the overview backdrop makes
+                // every card (surface / surfaceContainer) read as raised against it, in both light
+                // and dark, without needing a cast shadow (the cards' CardCropShape is a generic
+                // squircle path, on which elevation shadows don't render reliably).
+                .background(MaterialTheme.colorScheme.surfaceDim),
         )
         Box(
             modifier = Modifier
@@ -368,8 +390,8 @@ fun TabGridOverlay(
                         index = index,
                         containerSize = containerSize,
                         columns = GridColumns,
-                        horizontalGapPx = gapPx,
-                        verticalGapPx = gapPx,
+                        horizontalGapPx = horizontalGapPx,
+                        verticalGapPx = verticalGapPx,
                         sideMarginPx = sideMarginPx,
                         topMarginPx = topMarginPx,
                     )
@@ -391,6 +413,8 @@ fun TabGridOverlay(
                         if (tab.url.isBlankTabUrl()) "New tab page"
                         else tab.title.ifBlank { hostLabel(tab.url).ifEmpty { tab.url } }
                     }
+                    val swipeOffset = swipeOffsets[tab.id] ?: 0f
+                    val swipeAlpha = (1f - abs(swipeOffset) / (cell.width * 0.8f)).coerceIn(0f, 1f)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -451,11 +475,12 @@ fun TabGridOverlay(
                                     }
                                 }
                                 transformOrigin = TransformOrigin(0f, 0f)
-                                translationX = tx
+                                translationX = tx + swipeOffset
                                 translationY = ty
                                 scaleX = scale
                                 scaleY = scale
                                 clip = true
+                                alpha = swipeAlpha
                                 shape = CardCropShape(
                                     radiusPx = lerp(browseCornerPx, gridCornerPx, p),
                                     // Local (pre-scale) visible height of the card. At fullscreen
@@ -480,6 +505,54 @@ fun TabGridOverlay(
                             ) {
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 onTabSelected(tab.id)
+                            }
+                            .pointerInput(scrollEnabled, tabs.size) {
+                                if (!scrollEnabled || tabs.size <= 1) return@pointerInput
+                                detectHorizontalDragGestures(
+                                    onDragStart = {},
+                                    onDragEnd = {
+                                        coroutineScope.launch {
+                                            val targetOffset = swipeOffsets[tab.id] ?: 0f
+                                            val threshold = cell.width * 0.4f
+                                            if (abs(targetOffset) > threshold) {
+                                                val endValue = if (targetOffset > 0) cell.width * 1.5f else -cell.width * 1.5f
+                                                animate(
+                                                    initialValue = targetOffset,
+                                                    targetValue = endValue,
+                                                    animationSpec = tween(durationMillis = 200)
+                                                ) { value, _ ->
+                                                    swipeOffsets[tab.id] = value
+                                                }
+                                                onCloseTab(tab.id)
+                                            } else {
+                                                animate(
+                                                    initialValue = targetOffset,
+                                                    targetValue = 0f,
+                                                    animationSpec = tween(durationMillis = 200)
+                                                ) { value, _ ->
+                                                    swipeOffsets[tab.id] = value
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onDragCancel = {
+                                        coroutineScope.launch {
+                                            val targetOffset = swipeOffsets[tab.id] ?: 0f
+                                            animate(
+                                                initialValue = targetOffset,
+                                                targetValue = 0f,
+                                                animationSpec = tween(durationMillis = 200)
+                                            ) { value, _ ->
+                                                swipeOffsets[tab.id] = value
+                                            }
+                                        }
+                                    },
+                                    onHorizontalDrag = { change, dragAmount ->
+                                        change.consume()
+                                        val current = swipeOffsets[tab.id] ?: 0f
+                                        swipeOffsets[tab.id] = current + dragAmount
+                                    }
+                                )
                             },
                     ) {
                         if (tab.url.isBlankTabUrl()) {
@@ -615,8 +688,8 @@ fun TabGridOverlay(
                             index = index,
                             containerSize = containerSize,
                             columns = GridColumns,
-                            horizontalGapPx = gapPx,
-                            verticalGapPx = gapPx,
+                            horizontalGapPx = horizontalGapPx,
+                            verticalGapPx = verticalGapPx,
                             sideMarginPx = sideMarginPx,
                             topMarginPx = topMarginPx,
                         )
@@ -640,11 +713,13 @@ fun TabGridOverlay(
                             val highlightShape = remember(cellScale) {
                                 SquircleShape(with(density) { (gridCornerPx * cellScale).toDp() })
                             }
+                            val swipeOffset = swipeOffsets[tab.id] ?: 0f
                             Box(
                                 modifier = Modifier
                                     .graphicsLayer {
-                                        translationX = cell.left
+                                        translationX = cell.left + swipeOffset
                                         translationY = cell.top
+                                        alpha = (1f - abs(swipeOffset) / (cell.width * 0.8f)).coerceIn(0f, 1f)
                                     }
                                     .size(width = cellWidthDp, height = cellHeightDp)
                                     .border(3.dp, MaterialTheme.colorScheme.primary, highlightShape),
@@ -652,23 +727,24 @@ fun TabGridOverlay(
                         }
                         val host = remember(tab.url) { hostLabel(tab.url) }
                         if (host.isNotEmpty()) {
-                            val pillLeftPx = cell.left + with(density) { 8.dp.toPx() }
-                            val pillTopPx = cell.top + cell.height - with(density) { 32.dp.toPx() }
+                            val swipeOffset = swipeOffsets[tab.id] ?: 0f
+                            val labelTopPx = cell.top + cell.height + with(density) { 6.dp.toPx() }
+                            val cellWidthDp = with(density) { cell.width.toDp() }
                             Box(
                                 modifier = Modifier
                                     .graphicsLayer {
-                                        translationX = pillLeftPx
-                                        translationY = pillTopPx
-                                        alpha = progress().coerceIn(0f, 1f)
+                                        translationX = cell.left + swipeOffset
+                                        translationY = labelTopPx
+                                        alpha = progress().coerceIn(0f, 1f) * (1f - abs(swipeOffset) / (cell.width * 0.8f)).coerceIn(0f, 1f)
                                     }
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color.Black.copy(alpha = 0.55f))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                                    .width(cellWidthDp),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     text = host,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = FontWeight.Medium,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -688,12 +764,13 @@ fun TabGridOverlay(
                             // (Material touch-target guideline) and centered on the dot so it's not
                             // easy to mis-tap. The extra 8dp per side keeps the dot in the same spot.
                             val touchExtraPx = with(density) { 8.dp.toPx() }
+                            val swipeOffset = swipeOffsets[tab.id] ?: 0f
                             Box(
                                 modifier = Modifier
                                     .graphicsLayer {
-                                        translationX = closeLeftPx - touchExtraPx
+                                        translationX = closeLeftPx - touchExtraPx + swipeOffset
                                         translationY = closeTopPx - touchExtraPx
-                                        alpha = progress().coerceIn(0f, 1f)
+                                        alpha = progress().coerceIn(0f, 1f) * (1f - abs(swipeOffset) / (cell.width * 0.8f)).coerceIn(0f, 1f)
                                     }
                                     .size(44.dp)
                                     .clip(CircleShape)
@@ -703,19 +780,23 @@ fun TabGridOverlay(
                                     },
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(28.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.Black.copy(alpha = 0.55f)),
-                                    contentAlignment = Alignment.Center,
+                                Surface(
+                                    modifier = Modifier.size(28.dp),
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    shadowElevation = 3.dp,
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Close tab",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(16.dp),
-                                    )
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Close tab",
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -729,8 +810,8 @@ fun TabGridOverlay(
                             index = tabs.size,
                             containerSize = containerSize,
                             columns = GridColumns,
-                            horizontalGapPx = gapPx,
-                            verticalGapPx = gapPx,
+                            horizontalGapPx = horizontalGapPx,
+                            verticalGapPx = verticalGapPx,
                             sideMarginPx = sideMarginPx,
                             topMarginPx = topMarginPx,
                         )
@@ -793,8 +874,8 @@ fun TabGridOverlay(
                         index = tabs.size,
                         containerSize = containerSize,
                         columns = GridColumns,
-                        horizontalGapPx = gapPx,
-                        verticalGapPx = gapPx,
+                        horizontalGapPx = horizontalGapPx,
+                        verticalGapPx = verticalGapPx,
                         sideMarginPx = sideMarginPx,
                         topMarginPx = topMarginPx,
                     )

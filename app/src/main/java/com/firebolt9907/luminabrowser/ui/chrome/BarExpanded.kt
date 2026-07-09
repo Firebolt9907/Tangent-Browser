@@ -68,8 +68,6 @@ internal fun BarExpanded(
     val isInsecure = !state.blankNewTabPreview &&
         state.pageUrl.startsWith("http://", ignoreCase = true)
     val controlsWidth = lerp(48.dp, 0.dp, progress)
-    val tabChipWidth = lerp(36.dp, 0.dp, progress)
-    val tabChipSpacing = lerp(8.dp, 0.dp, progress)
     val blankPreview = state.blankNewTabPreview
 
     val containerColor = if (isReaderActive) {
@@ -107,6 +105,7 @@ internal fun BarExpanded(
             containerColor = containerColor,
             onClick = onClick,
             exponent = lerp(3.0f, 2.0f, progress),
+            shadowElevation = lerp(6.dp, 0.dp, progress),
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 8.dp),
@@ -182,17 +181,7 @@ internal fun BarExpanded(
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center,
                     )
-                    if (!blankPreview) {
-                        Spacer(Modifier.width(tabChipSpacing))
-                        Box(
-                            modifier = Modifier
-                                .width(tabChipWidth)
-                                .clipToBounds()
-                                .graphicsLayer { alpha = controlsProgress },
-                        ) {
-                            TabCountChip(count = state.tabCount)
-                        }
-                    }
+
                 }
                 if (!blankPreview) {
                     Box(

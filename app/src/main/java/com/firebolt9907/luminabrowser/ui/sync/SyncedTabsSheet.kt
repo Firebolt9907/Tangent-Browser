@@ -40,6 +40,7 @@ import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import com.firebolt9907.luminabrowser.sync.FirefoxSyncController
 import com.firebolt9907.luminabrowser.sync.FirefoxSyncedDevice
 import com.firebolt9907.luminabrowser.sync.FirefoxSyncedTab
+import com.firebolt9907.luminabrowser.ui.components.Favicon
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -274,6 +275,7 @@ private fun SyncedTabRow(
 ) {
     ListItem(
         modifier = Modifier.clickable(onClick = onOpen),
+        leadingContent = { Favicon(tab.url) },
         headlineContent = {
             Text(
                 text = tab.title,

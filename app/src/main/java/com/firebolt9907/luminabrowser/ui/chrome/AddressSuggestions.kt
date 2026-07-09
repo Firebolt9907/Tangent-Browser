@@ -22,9 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -49,6 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.state.AddressSuggestion
+import com.firebolt9907.luminabrowser.ui.components.Favicon
 import com.firebolt9907.luminabrowser.state.AddressSuggestionKind
 import com.firebolt9907.luminabrowser.state.SearchEngine
 import com.firebolt9907.luminabrowser.state.addressSuggestions
@@ -353,11 +352,6 @@ private fun SuggestionRow(
     suggestion: AddressSuggestion,
     onClick: () -> Unit,
 ) {
-    val icon = when (suggestion.kind) {
-        AddressSuggestionKind.Search -> Icons.Default.Search
-        AddressSuggestionKind.History -> Icons.Default.History
-        AddressSuggestionKind.Bookmark -> Icons.Outlined.BookmarkBorder
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -368,12 +362,18 @@ private fun SuggestionRow(
             .padding(horizontal = 22.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
-        )
+        // A search row shows the magnifying glass; a concrete URL suggestion shows the site's
+        // favicon (with a globe fallback), the way Safari renders history/bookmark completions.
+        if (suggestion.kind == AddressSuggestionKind.Search) {
+            Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        } else {
+            Favicon(suggestion.url, size = 20.dp)
+        }
         Spacer(Modifier.size(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             if (suggestion.kind == AddressSuggestionKind.Search) {

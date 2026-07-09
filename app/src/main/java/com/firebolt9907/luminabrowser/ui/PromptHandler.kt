@@ -3,6 +3,7 @@ package com.firebolt9907.luminabrowser.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,6 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.prompt.Choice
@@ -168,6 +171,18 @@ fun PromptHandler(engineSession: EngineSession?) {
                 onDismiss = { request.onDismiss(); promptRequest = null },
             )
         }
+        is PromptRequest.Authentication -> {
+            AuthenticationDialog(
+                title = request.title,
+                message = request.message,
+                initialUsername = request.userName,
+                initialPassword = request.password,
+                onlyPassword = request.onlyShowPassword,
+                previousFailed = request.previousFailed,
+                onConfirm = { user, pass -> request.onConfirm(user, pass); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
         is PromptRequest.File -> {
             // Launch the system document picker once per request; the result callbacks above route
             // the selection back to Gecko. Only MIME-type entries (containing "/") are valid picker
@@ -271,6 +286,63 @@ private fun JsTextPromptDialog(
             }
         },
         confirmButton = { TextButton(onClick = { onConfirm(value) }) { Text("OK") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** HTTP basic/digest auth — previously unhandled, so password-protected sites couldn't be opened. */
+@Composable
+private fun AuthenticationDialog(
+    title: String,
+    message: String,
+    initialUsername: String,
+    initialPassword: String,
+    onlyPassword: Boolean,
+    previousFailed: Boolean,
+    onConfirm: (String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var username by remember { mutableStateOf(initialUsername) }
+    var password by remember { mutableStateOf(initialPassword) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title.ifBlank { "Sign In" }) },
+        text = {
+            Column {
+                if (message.isNotBlank()) {
+                    Text(message, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(12.dp))
+                }
+                if (previousFailed) {
+                    Text(
+                        "The username or password was incorrect.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                if (!onlyPassword) {
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = { Text("Username") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(username, password) }) { Text("Sign In") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

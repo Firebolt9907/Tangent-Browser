@@ -1,6 +1,5 @@
 package com.firebolt9907.luminabrowser.addons
 
-import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -457,33 +456,5 @@ private fun WebExtension.displayName(): String =
 private fun Throwable.readableMessage(): String =
     message ?: javaClass.simpleName
 
-private fun String.toAddonInstallUrl(): String? {
-    val trimmed = trim()
-    if (trimmed.isEmpty()) return null
-    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-        val uri = trimmed.toUri()
-        val path = uri.path.orEmpty()
-        if (path.endsWith(".xpi")) return trimmed
-        val segments = uri.pathSegments
-        val addonIndex = segments.indexOf("addon")
-        // Guard against indexOf returning -1: addonIndex + 1 would then be 0, silently picking the
-        // first path segment as the slug and building a bogus install URL for a non-/addon/ page.
-        val slug = if (addonIndex >= 0) segments.getOrNull(addonIndex + 1) else null
-        if (uri.host?.endsWith("addons.mozilla.org") == true && !slug.isNullOrBlank()) {
-            return slug.toAmoLatestXpiUrl()
-        }
-        return trimmed
-    }
-    return trimmed.trim('/').takeIf { it.isNotBlank() }?.toAmoLatestXpiUrl()
-}
-
-private fun String.toAmoLatestXpiUrl(): String =
-    "https://addons.mozilla.org/firefox/downloads/latest/$this/latest.xpi"
-
-private fun String.isAddonDownloadUrl(): Boolean {
-    val uri = this.toUri()
-    val path = uri.path.orEmpty()
-    return path.endsWith(".xpi", ignoreCase = true) ||
-        (uri.host?.endsWith("addons.mozilla.org") == true &&
-            path.contains("/firefox/downloads/latest/"))
-}
+// AMO/.xpi install-URL helpers (toAddonInstallUrl, toAmoLatestXpiUrl, isAddonDownloadUrl) live in
+// AddonInstallUrls.kt.

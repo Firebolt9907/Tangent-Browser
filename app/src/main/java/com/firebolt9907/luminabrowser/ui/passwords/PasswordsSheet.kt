@@ -62,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
+import com.firebolt9907.luminabrowser.ui.components.Favicon
 import com.firebolt9907.luminabrowser.sync.PlacesLoginsStorage
 import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.Login
@@ -237,6 +238,7 @@ private fun PasswordRow(
     val context = LocalContext.current
 
     ListItem(
+        leadingContent = { Favicon(login.origin) },
         headlineContent = {
             Text(
                 text = login.origin.takeLastWhile { it != '/' }

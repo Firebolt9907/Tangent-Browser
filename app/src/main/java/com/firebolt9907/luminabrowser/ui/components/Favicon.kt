@@ -34,7 +34,14 @@ fun Favicon(
     size: Dp = 24.dp,
 ) {
     val host = remember(url) {
+        // Prefer the parsed authority; fall back to treating the string itself as a host so a bare
+        // origin like "github.com" (no scheme, e.g. a saved-login origin) still resolves.
         runCatching { url.toUri().host }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: url.trim()
+                .substringAfter("://")
+                .substringBefore('/')
+                .substringBefore('?')
+                .takeIf { it.contains('.') && !it.contains(' ') }
     }
     if (host == null) {
         GlobeGlyph(size, modifier)

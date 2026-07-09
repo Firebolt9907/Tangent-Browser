@@ -1,5 +1,7 @@
 package com.firebolt9907.luminabrowser.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,12 +23,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.prompt.Choice
@@ -35,6 +39,31 @@ import mozilla.components.concept.engine.prompt.PromptRequest
 @Composable
 fun PromptHandler(engineSession: EngineSession?) {
     var promptRequest by remember { mutableStateOf<PromptRequest?>(null) }
+    val context = LocalContext.current
+
+    // File-upload (<input type=file>) plumbing. The active File request is held here so the
+    // activity-result callbacks can route the chosen document(s) back to Gecko (or dismiss on
+    // cancel). Uses OpenDocument, which grants a persistable read grant on the returned Uri.
+    var fileRequest by remember { mutableStateOf<PromptRequest.File?>(null) }
+    fun clearFileRequest() { fileRequest = null; promptRequest = null }
+    val pickSingleFile = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val req = fileRequest
+        clearFileRequest()
+        if (req != null) {
+            if (uri != null) req.onSingleFileSelected(context, uri) else req.onDismiss()
+        }
+    }
+    val pickMultipleFiles = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        val req = fileRequest
+        clearFileRequest()
+        if (req != null) {
+            if (uris.isNotEmpty()) req.onMultipleFilesSelected(context, uris.toTypedArray()) else req.onDismiss()
+        }
+    }
 
     DisposableEffect(engineSession) {
         if (engineSession == null) return@DisposableEffect onDispose {}
@@ -138,6 +167,23 @@ fun PromptHandler(engineSession: EngineSession?) {
                 onConfirm = { choice -> request.onConfirm(choice); promptRequest = null },
                 onDismiss = { request.onDismiss(); promptRequest = null },
             )
+        }
+        is PromptRequest.File -> {
+            // Launch the system document picker once per request; the result callbacks above route
+            // the selection back to Gecko. Only MIME-type entries (containing "/") are valid picker
+            // filters — HTML `accept` can also list extensions, which we drop in favor of "*/*".
+            LaunchedEffect(request) {
+                fileRequest = request
+                val types = request.mimeTypes
+                    .filter { it.contains("/") }
+                    .toTypedArray()
+                    .ifEmpty { arrayOf("*/*") }
+                if (request.isMultipleFilesSelection) {
+                    pickMultipleFiles.launch(types)
+                } else {
+                    pickSingleFile.launch(types)
+                }
+            }
         }
         else -> {
             android.util.Log.w("PromptHandler", "Unhandled prompt: ${request?.javaClass?.simpleName}")

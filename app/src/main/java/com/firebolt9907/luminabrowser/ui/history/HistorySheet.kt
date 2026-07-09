@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
+import com.firebolt9907.luminabrowser.ui.components.Favicon
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
 import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.HistoryStorage
@@ -180,6 +181,7 @@ fun HistorySheet(
                             items(dayVisits, key = { it.visitTime }) { visit ->
                                 ListItem(
                                     modifier = Modifier.clickable { onOpenUrl(visit.url) },
+                                    leadingContent = { Favicon(visit.url) },
                                     headlineContent = {
                                         Text(
                                             text = visit.title?.takeIf { it.isNotBlank() } ?: visit.url,

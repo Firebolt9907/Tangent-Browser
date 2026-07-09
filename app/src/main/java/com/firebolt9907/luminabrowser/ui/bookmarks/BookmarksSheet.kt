@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
+import com.firebolt9907.luminabrowser.ui.components.Favicon
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
 import kotlinx.coroutines.launch
 import mozilla.appservices.places.BookmarkRoot
@@ -185,6 +186,7 @@ fun BookmarksSheet(
                             val url = node.url.orEmpty()
                             ListItem(
                                 modifier = Modifier.clickable { onOpenUrl(url) },
+                                leadingContent = { Favicon(url) },
                                 headlineContent = {
                                     Text(
                                         text = node.title?.takeIf { it.isNotBlank() } ?: url,

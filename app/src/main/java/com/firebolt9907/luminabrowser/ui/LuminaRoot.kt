@@ -72,18 +72,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.CircularProgressIndicator
@@ -3501,88 +3495,6 @@ private class BarCallbacks(
     val onEditingSubmit: () -> Unit,
     val onEditingCancel: () -> Unit,
 )
-
-@Composable
-private fun SitePermissionDialog(
-    controller: com.firebolt9907.luminabrowser.permissions.SitePermissionController,
-) {
-    val request by controller.contentRequest.collectAsStateWithLifecycle()
-    val current = request ?: return
-    val host = remember(current.uri) {
-        runCatching { current.uri?.toUri()?.host }.getOrNull()
-            ?.takeIf { it.isNotBlank() }
-            ?: current.uri?.takeIf { it.isNotBlank() }
-            ?: "This site"
-    }
-    val what = remember(current) { describeContentPermissions(current.permissions) }
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = { controller.rejectCurrent() },
-        icon = {
-            androidx.compose.material3.Icon(
-                imageVector = permissionIcon(current.permissions),
-                contentDescription = null,
-            )
-        },
-        title = { androidx.compose.material3.Text("Allow $what?") },
-        text = { androidx.compose.material3.Text("$host wants to use your $what.") },
-        confirmButton = {
-            androidx.compose.material3.TextButton(onClick = { controller.grantCurrent() }) {
-                androidx.compose.material3.Text("Allow")
-            }
-        },
-        dismissButton = {
-            androidx.compose.material3.TextButton(onClick = { controller.rejectCurrent() }) {
-                androidx.compose.material3.Text("Block")
-            }
-        },
-    )
-}
-
-private fun permissionIcon(
-    permissions: List<mozilla.components.concept.engine.permission.Permission>,
-): androidx.compose.ui.graphics.vector.ImageVector {
-    permissions.forEach { perm ->
-        when (perm) {
-            is mozilla.components.concept.engine.permission.Permission.ContentGeoLocation ->
-                return Icons.Filled.LocationOn
-            is mozilla.components.concept.engine.permission.Permission.ContentVideoCamera,
-            is mozilla.components.concept.engine.permission.Permission.ContentVideoCapture ->
-                return Icons.Filled.Videocam
-            is mozilla.components.concept.engine.permission.Permission.ContentAudioCapture,
-            is mozilla.components.concept.engine.permission.Permission.ContentAudioMicrophone ->
-                return Icons.Filled.Mic
-            is mozilla.components.concept.engine.permission.Permission.ContentNotification ->
-                return Icons.Filled.Notifications
-            is mozilla.components.concept.engine.permission.Permission.ContentPersistentStorage ->
-                return Icons.Filled.Storage
-            is mozilla.components.concept.engine.permission.Permission.ContentAutoPlayAudible,
-            is mozilla.components.concept.engine.permission.Permission.ContentAutoPlayInaudible ->
-                return Icons.Filled.PlayArrow
-            else -> Unit
-        }
-    }
-    return Icons.Filled.Lock
-}
-
-private fun describeContentPermissions(
-    permissions: List<mozilla.components.concept.engine.permission.Permission>,
-): String {
-    val labels = permissions.map { perm ->
-        when (perm) {
-            is mozilla.components.concept.engine.permission.Permission.ContentGeoLocation -> "location"
-            is mozilla.components.concept.engine.permission.Permission.ContentVideoCamera,
-            is mozilla.components.concept.engine.permission.Permission.ContentVideoCapture -> "camera"
-            is mozilla.components.concept.engine.permission.Permission.ContentAudioCapture,
-            is mozilla.components.concept.engine.permission.Permission.ContentAudioMicrophone -> "microphone"
-            is mozilla.components.concept.engine.permission.Permission.ContentNotification -> "notifications"
-            is mozilla.components.concept.engine.permission.Permission.ContentPersistentStorage -> "persistent storage"
-            is mozilla.components.concept.engine.permission.Permission.ContentAutoPlayAudible,
-            is mozilla.components.concept.engine.permission.Permission.ContentAutoPlayInaudible -> "autoplay media"
-            else -> "this device feature"
-        }
-    }.distinct()
-    return if (labels.isEmpty()) "this device feature" else labels.joinToString(" and ")
-}
 
 private enum class SnapshotRequestPurpose {
     PredictiveBack,

@@ -31,7 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
+import com.firebolt9907.luminabrowser.ui.components.SheetHeader
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -70,22 +70,20 @@ fun SyncedTabsSheet(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Icon(Icons.Default.CloudSync, contentDescription = null)
-                Text("Firefox Sync", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                if (state.isBusy) {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .width(22.dp)
-                            .height(22.dp),
-                        strokeWidth = 2.dp,
-                    )
-                }
-            }
+            SheetHeader(
+                title = "Firefox Sync",
+                leadingIcon = { Icon(Icons.Default.CloudSync, contentDescription = null) },
+                trailing = {
+                    if (state.isBusy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .width(22.dp)
+                                .height(22.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                },
+            )
 
             Spacer(Modifier.height(12.dp))
 

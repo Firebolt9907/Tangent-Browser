@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -17,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -26,23 +29,35 @@ import androidx.compose.ui.unit.dp
  * cards. Presentation only — behavior stays in each sheet.
  */
 
-/** Consistent sheet title row: a large title with an optional trailing action (e.g. "Clear all"). */
+/**
+ * Consistent sheet title row: an optional leading icon, a large bold title, and an optional trailing
+ * action (e.g. a "Clear all" button or a busy spinner). Every sheet's header goes through this so the
+ * icon spacing, title weight, and trailing alignment stay identical across surfaces.
+ */
 @Composable
 fun SheetHeader(
     title: String,
     modifier: Modifier = Modifier,
+    leadingIcon: (@Composable () -> Unit)? = null,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        // iOS-18 large-title weight — bold rather than the M3 default Normal.
+        if (leadingIcon != null) {
+            leadingIcon()
+            Spacer(Modifier.width(10.dp))
+        }
+        // iOS-18 large-title weight — bold rather than the M3 default Normal. Weighted so the
+        // trailing content sits flush right (and a long title ellipsizes rather than shoving it off).
         Text(
             text = title,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
         Row(verticalAlignment = Alignment.CenterVertically, content = trailing)
     }

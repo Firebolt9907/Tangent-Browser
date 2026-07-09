@@ -51,7 +51,7 @@ import android.os.PersistableBundle
 import android.widget.Toast
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
+import com.firebolt9907.luminabrowser.ui.components.SheetHeader
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -98,13 +98,10 @@ fun PasswordsSheet(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Icon(Icons.Default.Lock, contentDescription = null)
-                Text("Passwords", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            }
+            SheetHeader(
+                title = "Passwords",
+                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+            )
 
             Spacer(Modifier.height(12.dp))
 

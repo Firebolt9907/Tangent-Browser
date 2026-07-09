@@ -44,6 +44,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.firebolt9907.luminabrowser.ui.components.SheetHeader
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -107,22 +108,20 @@ internal fun AddonsManagerSheetContent(
             .padding(horizontal = 20.dp)
             .padding(bottom = 28.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Icon(Icons.Default.Extension, contentDescription = null)
-            Text("Add-ons", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.weight(1f))
-            if (state.isBusy) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .width(22.dp)
-                        .height(22.dp),
-                    strokeWidth = 2.dp,
-                )
-            }
-        }
+        SheetHeader(
+            title = "Add-ons",
+            leadingIcon = { Icon(Icons.Default.Extension, contentDescription = null) },
+            trailing = {
+                if (state.isBusy) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .width(22.dp)
+                            .height(22.dp),
+                        strokeWidth = 2.dp,
+                    )
+                }
+            },
+        )
 
         Spacer(Modifier.height(16.dp))
 

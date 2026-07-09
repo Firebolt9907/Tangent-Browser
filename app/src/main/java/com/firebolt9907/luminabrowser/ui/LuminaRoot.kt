@@ -3219,8 +3219,11 @@ private fun BottomBarLayer(
             val navBarHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
             val bottomPadding = navBarHeight.coerceAtLeast(24.dp)
             val totalHeight = barHeight + bottomPadding + toolbarHeight
-            val scrimHeight = 160.dp
-            
+            // Tall scrim so the transparent→opaque descent happens over a long, gentle distance
+            // (the fade spans scrimHeight − totalHeight above the bar; the bottom `totalHeight`
+            // stays fully opaque to back the bar/toolbar).
+            val scrimHeight = 240.dp
+
             val totalHeightPx = with(density) { totalHeight.toPx() }
             val scrimHeightPx = with(density) { scrimHeight.toPx() }
             val fadeStartFraction = if (scrimHeightPx > 0f) {
@@ -3228,6 +3231,9 @@ private fun BottomBarLayer(
             } else {
                 0.5f
             }
+            // A lower tone than the pill (surfaceContainerHighest) so the pill has clear contrast
+            // against the scrim instead of blending into it.
+            val scrimColor = MaterialTheme.colorScheme.surfaceContainerLow
 
             if (isToolbarVisible) {
                 Box(
@@ -3245,10 +3251,11 @@ private fun BottomBarLayer(
                             Brush.verticalGradient(
                                 *arrayOf(
                                     0.0f to Color.Transparent,
-                                    (fadeStartFraction * 0.5f) to MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f),
-                                    (fadeStartFraction * 0.75f) to MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.9f),
-                                    fadeStartFraction to MaterialTheme.colorScheme.surfaceContainer,
-                                    1.0f to MaterialTheme.colorScheme.surfaceContainer
+                                    (fadeStartFraction * 0.35f) to scrimColor.copy(alpha = 0.25f),
+                                    (fadeStartFraction * 0.6f) to scrimColor.copy(alpha = 0.55f),
+                                    (fadeStartFraction * 0.82f) to scrimColor.copy(alpha = 0.85f),
+                                    fadeStartFraction to scrimColor,
+                                    1.0f to scrimColor
                                 )
                             )
                         )

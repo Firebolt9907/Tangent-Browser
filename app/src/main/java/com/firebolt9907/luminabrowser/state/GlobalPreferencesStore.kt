@@ -91,6 +91,12 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("readerSiteRules", true)
         set(value) { prefs.edit { putBoolean("readerSiteRules", value) } }
 
+    // Epoch-ms of the last time the remote reader-rules file was checked, used to throttle the
+    // background refresh (see ReaderRules). 0 = never checked.
+    var readerRulesLastCheckMs: Long
+        get() = prefs.getLong("readerRulesLastCheckMs", 0L)
+        set(value) { prefs.edit { putLong("readerRulesLastCheckMs", value) } }
+
     // Hidden debug toggle: when on, typing "debug:cache" in the address bar opens the
     // Google Cache page's parsed HTML in a new tab so the user can inspect what GeckoView
     // actually received (useful for diagnosing paywall-bypass consistency issues).

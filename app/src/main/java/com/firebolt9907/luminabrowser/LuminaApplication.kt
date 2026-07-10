@@ -16,14 +16,15 @@ class LuminaApplication : Application() {
         super.onCreate()
         AppServicesInitializer.init(AppServicesInitializer.Config(null))
         RustHttpConfig.setClient(lazy { HttpURLConnectionClient() })
-        // Load per-site reader overrides (assets/reader_rules.json) once, off the components graph so
-        // reader extraction has them before the first page loads. Reading the toggle here uses a
-        // lightweight SharedPreferences wrapper (process-singleton store) and does NOT force the heavy
-        // components graph to init.
-        com.firebolt9907.luminabrowser.ui.reader.ReaderRules.setEnabled(
-            com.firebolt9907.luminabrowser.state.GlobalPreferencesStore(this).readerSiteRules
-        )
+        // Load per-site reader overrides (assets/reader_rules.json + cached remote file) once, off the
+        // components graph so reader extraction has them before the first page loads. Reading the
+        // toggle here uses a lightweight SharedPreferences wrapper (process-singleton store) and does
+        // NOT force the heavy components graph to init. refreshIfDue then pulls newer rules from GitHub
+        // on a background thread (throttled, and only when the toggle is on).
+        val readerPrefs = com.firebolt9907.luminabrowser.state.GlobalPreferencesStore(this)
+        com.firebolt9907.luminabrowser.ui.reader.ReaderRules.setEnabled(readerPrefs.readerSiteRules)
         com.firebolt9907.luminabrowser.ui.reader.ReaderRules.init(this)
+        com.firebolt9907.luminabrowser.ui.reader.ReaderRules.refreshIfDue(this, readerPrefs)
         ProcessLifecycleOwner.get().lifecycle.addObserver(backgroundKeepAliveObserver)
     }
 

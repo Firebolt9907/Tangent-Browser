@@ -61,6 +61,21 @@ class ReaderRulesTest {
     }
 
     @Test
+    fun `parseRuleset reads the version and defaults it to zero`() {
+        assertEquals(3, ReaderRules.parseRuleset("""{ "version": 3, "rules": [] }""").version)
+        assertEquals(0, ReaderRules.parseRuleset("""{ "rules": [] }""").version)
+    }
+
+    @Test
+    fun `parseRuleset carries the sanitized compact array alongside the version`() {
+        val ruleset = ReaderRules.parseRuleset(
+            """{ "version": 5, "rules": [ { "match": "example.com", "include": ".article" } ] }"""
+        )
+        assertEquals(5, ruleset.version)
+        assertEquals(".article", JSONArray(ruleset.compactJson).getJSONObject(0).getJSONArray("include").getString(0))
+    }
+
+    @Test
     fun `bundled default is loaded lazily and starts empty without init`() {
         // Without a Context-backed init (as in this JVM test), the cache is the safe no-override value.
         assertEquals("[]", ReaderRules.cached())

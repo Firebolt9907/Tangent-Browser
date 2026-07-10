@@ -54,6 +54,7 @@ fun SettingsSheet(
     onSettingChanged: () -> Unit,
     onClearSitePermissions: () -> Unit = {},
 ) {
+    val context = LocalContext.current
     var trackingProtection by remember { mutableStateOf(globalPrefsStore.trackingProtection) }
     var blockPopUps by remember { mutableStateOf(globalPrefsStore.blockPopUps) }
     var javaScriptEnabled by remember { mutableStateOf(globalPrefsStore.javaScriptEnabled) }
@@ -666,12 +667,22 @@ fun SettingsSheet(
             )
             SettingsToggle(
                 title = "Per-site reader tweaks",
-                subtitle = "Use built-in per-site rules to fix articles that don't parse cleanly. Runs locally; turn off to use only the generic reader.",
+                subtitle = "Fixes articles that don't parse cleanly, using per-site rules that update " +
+                    "from GitHub so new sites work without an app update. Runs locally — the update " +
+                    "downloads the full rule list and never reveals which sites you visit. Turn off " +
+                    "to use only the generic reader (and skip the update check entirely).",
                 checked = readerSiteRules,
                 onCheckedChange = {
                     readerSiteRules = it
                     globalPrefsStore.readerSiteRules = it
                     com.firebolt9907.luminabrowser.ui.reader.ReaderRules.setEnabled(it)
+                    // Turning it on: pull the latest rules right away rather than waiting for the
+                    // next throttled startup check.
+                    if (it) {
+                        com.firebolt9907.luminabrowser.ui.reader.ReaderRules.refreshIfDue(
+                            context, globalPrefsStore, force = true,
+                        )
+                    }
                     onSettingChanged()
                 },
             )
@@ -681,7 +692,6 @@ fun SettingsSheet(
 
         SheetSectionHeader("Site permissions")
         Spacer(Modifier.height(8.dp))
-        val context = LocalContext.current
         SheetCard {
             Row(
                 modifier = Modifier

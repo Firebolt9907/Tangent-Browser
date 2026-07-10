@@ -1,7 +1,6 @@
 package com.firebolt9907.luminabrowser.ui.customtab
 
 import android.app.Activity
-import android.content.Intent
 import androidx.activity.BackEventCompat
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.BackHandler
@@ -65,6 +64,7 @@ import com.firebolt9907.luminabrowser.LuminaApplication
 import com.firebolt9907.luminabrowser.state.compactHost
 import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
 import com.firebolt9907.luminabrowser.ui.reader.toggleReader
+import com.firebolt9907.luminabrowser.ui.shareUrl
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -400,7 +400,7 @@ fun CustomTabRoot(
                                 }
                             }
                         },
-                        onShare = { shareUrl(context, url) },
+                        onShare = { shareUrl(context, url, customTab?.content?.title) },
                         onOpenInLumina = { customTabId?.let(onOpenInLumina) },
                         onClose = onClose,
                         modifier = Modifier
@@ -486,15 +486,3 @@ private fun CustomTabBottomBar(
     }
 }
 
-private fun shareUrl(context: android.content.Context, url: String) {
-    if (url.isBlank()) return
-    val send = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_TEXT, url)
-    }
-    try {
-        context.startActivity(Intent.createChooser(send, null))
-    } catch (_: android.content.ActivityNotFoundException) {
-        android.widget.Toast.makeText(context, "No app available to share", android.widget.Toast.LENGTH_SHORT).show()
-    }
-}

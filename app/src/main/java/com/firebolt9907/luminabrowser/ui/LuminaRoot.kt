@@ -3026,20 +3026,7 @@ fun LuminaRoot(
                         },
                         onForwardTap = { selectedTabId?.let { components.sessionUseCases.goForward.invoke(it, true) } },
                         onShareTap = {
-                            val currentUrl = selectedContent?.url.orEmpty()
-                            if (currentUrl.isNotBlank() && currentUrl != "about:blank") {
-                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_TEXT, currentUrl)
-                                    val currentTitle = selectedContent?.title.orEmpty()
-                                    if (currentTitle.isNotBlank()) putExtra(Intent.EXTRA_SUBJECT, currentTitle)
-                                }
-                                try {
-                                    appContext.startActivity(Intent.createChooser(shareIntent, null).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    })
-                                } catch (_: Exception) {}
-                            }
+                            shareUrl(appContext, selectedContent?.url.orEmpty(), selectedContent?.title)
                         },
                         onBookmarksTap = { showBookmarks = true },
                         onTabsTap = { openGrid(initialVelocityProgressPerSec = 0f) },

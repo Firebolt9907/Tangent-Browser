@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import com.firebolt9907.luminabrowser.ui.reader.ReaderTheme
 import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
 import com.firebolt9907.luminabrowser.ui.reader.toggleReader
+import com.firebolt9907.luminabrowser.ui.shareUrl
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -293,17 +294,7 @@ private fun PageTabContent(
 
     // ---- Shared action handlers (reused by the quick-action tiles and secondary rows) ----
     fun doShare() {
-        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, pageUrl)
-            // Title becomes the subject line in apps that use one (email, etc.).
-            if (pageTitle.isNotBlank()) putExtra(Intent.EXTRA_SUBJECT, pageTitle)
-        }
-        try {
-            context.startActivity(Intent.createChooser(shareIntent, null))
-        } catch (_: ActivityNotFoundException) {
-            Toast.makeText(context, "No app available to share", Toast.LENGTH_SHORT).show()
-        }
+        shareUrl(context, pageUrl, pageTitle)
         onDismiss()
     }
 

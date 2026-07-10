@@ -43,6 +43,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
@@ -3317,31 +3318,13 @@ private fun BottomBarLayer(
         // adjacent pills peeking at the screen edges are just visual noise behind the sheet.
         val showNeighborPills = activeState.mode != BarMode.Editing
         if (previousTab != null && width > 0f && !activeReaderActive && showNeighborPills) {
-            val prevEligible = eligibleReaderTabs.contains(previousTab.id)
-            val prevActive = activeReaderTabs.contains(previousTab.id)
-            SafariBar(
+            GhostSafariBar(
                 state = ghostBarState(previousTab, tabCount, activeState.mode),
-                onUrlTap = {},
-                onAaTap = {},
-                onEditingTextChange = {},
-                onEditingSubmit = {},
-                onEditingCancel = {},
-                onDragStart = {},
-                onDragDelta = { _ -> },
-                onDragEnd = { _, _ -> },
-                onReload = {},
-                interactive = false,
-                controlsEnabled = false,
-                collapseProgress = barCollapseProgress,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .graphicsLayer {
-                        alpha = (1f - barCollapseProgress).coerceIn(0f, 1f)
-                    },
+                barCollapseProgress = barCollapseProgress,
                 pillTranslationX = prevTx,
                 pillScale = prevScale,
-                isReaderEligible = prevEligible,
-                isReaderActive = prevActive,
+                isReaderEligible = eligibleReaderTabs.contains(previousTab.id),
+                isReaderActive = activeReaderTabs.contains(previousTab.id),
                 readerTheme = readerTheme,
                 onClick = {
                     if (controlsEnabled) {
@@ -3349,36 +3332,17 @@ private fun BottomBarLayer(
                     }
                 },
                 showBottomToolbar = showBottomToolbar,
-                onCopyTap = {},
                 canGoForward = previousTab.content.canGoForward,
             )
         }
         if (nextTab != null && width > 0f && !activeReaderActive && showNeighborPills) {
-            val nextEligible = eligibleReaderTabs.contains(nextTab.id)
-            val nextActive = activeReaderTabs.contains(nextTab.id)
-            SafariBar(
+            GhostSafariBar(
                 state = ghostBarState(nextTab, tabCount, activeState.mode),
-                onUrlTap = {},
-                onAaTap = {},
-                onEditingTextChange = {},
-                onEditingSubmit = {},
-                onEditingCancel = {},
-                onDragStart = {},
-                onDragDelta = { _ -> },
-                onDragEnd = { _, _ -> },
-                onReload = {},
-                interactive = false,
-                controlsEnabled = false,
-                collapseProgress = barCollapseProgress,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .graphicsLayer {
-                        alpha = (1f - barCollapseProgress).coerceIn(0f, 1f)
-                    },
+                barCollapseProgress = barCollapseProgress,
                 pillTranslationX = nextTx,
                 pillScale = nextScale,
-                isReaderEligible = nextEligible,
-                isReaderActive = nextActive,
+                isReaderEligible = eligibleReaderTabs.contains(nextTab.id),
+                isReaderActive = activeReaderTabs.contains(nextTab.id),
                 readerTheme = readerTheme,
                 onClick = {
                     if (controlsEnabled) {
@@ -3386,12 +3350,11 @@ private fun BottomBarLayer(
                     }
                 },
                 showBottomToolbar = showBottomToolbar,
-                onCopyTap = {},
                 canGoForward = nextTab.content.canGoForward,
             )
         }
         if (showNewTabGhost && nextTab == null && width > 0f && !activeReaderActive && showNeighborPills) {
-            SafariBar(
+            GhostSafariBar(
                 state = BarUiState(
                     displayUrl = "",
                     tabCount = tabCount,
@@ -3399,23 +3362,8 @@ private fun BottomBarLayer(
                     editingText = "",
                     blankNewTabPreview = true,
                 ),
-                onUrlTap = {},
-                onAaTap = {},
-                onEditingTextChange = {},
-                onEditingSubmit = {},
-                onEditingCancel = {},
-                onDragStart = {},
-                onDragDelta = { _ -> },
-                onDragEnd = { _, _ -> },
-                onReload = {},
-                interactive = false,
-                controlsEnabled = false,
+                barCollapseProgress = barCollapseProgress,
                 collapseProgress = 0f,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .graphicsLayer {
-                        alpha = (1f - barCollapseProgress).coerceIn(0f, 1f)
-                    },
                 pillTranslationX = ghostTx,
                 pillScale = ghostScale,
                 onClick = {
@@ -3424,8 +3372,6 @@ private fun BottomBarLayer(
                     }
                 },
                 showBottomToolbar = showBottomToolbar,
-                onCopyTap = {},
-                canGoForward = false,
             )
         }
         val activeEligible = selectedTabId != null && eligibleReaderTabs.contains(selectedTabId)
@@ -3525,6 +3471,58 @@ private fun PullRefreshLine(
             )
         }
     }
+}
+
+/**
+ * A non-interactive SafariBar used for the tab-switch peek previews — the previous/next neighbor
+ * pills and the blank new-tab ghost. All input callbacks are no-ops (the only interaction is
+ * [onClick] on the pill itself), and the whole bar fades out with the collapse progress. Was
+ * copy-pasted three times before being extracted; keep the ghosts on this one wrapper.
+ */
+@Composable
+private fun BoxScope.GhostSafariBar(
+    state: BarUiState,
+    barCollapseProgress: Float,
+    pillTranslationX: () -> Float,
+    pillScale: () -> Float,
+    onClick: () -> Unit,
+    showBottomToolbar: Boolean,
+    collapseProgress: Float = barCollapseProgress,
+    isReaderEligible: Boolean = false,
+    isReaderActive: Boolean = false,
+    readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme =
+        com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.System,
+    canGoForward: Boolean = false,
+) {
+    SafariBar(
+        state = state,
+        onUrlTap = {},
+        onAaTap = {},
+        onEditingTextChange = {},
+        onEditingSubmit = {},
+        onEditingCancel = {},
+        onDragStart = {},
+        onDragDelta = { _ -> },
+        onDragEnd = { _, _ -> },
+        onReload = {},
+        interactive = false,
+        controlsEnabled = false,
+        collapseProgress = collapseProgress,
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .graphicsLayer {
+                alpha = (1f - barCollapseProgress).coerceIn(0f, 1f)
+            },
+        pillTranslationX = pillTranslationX,
+        pillScale = pillScale,
+        isReaderEligible = isReaderEligible,
+        isReaderActive = isReaderActive,
+        readerTheme = readerTheme,
+        onClick = onClick,
+        showBottomToolbar = showBottomToolbar,
+        onCopyTap = {},
+        canGoForward = canGoForward,
+    )
 }
 
 private fun ghostBarState(

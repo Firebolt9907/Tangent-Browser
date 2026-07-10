@@ -4,10 +4,18 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -98,6 +106,40 @@ fun SheetHeader(
         )
         Row(verticalAlignment = Alignment.CenterVertically, content = trailing)
     }
+}
+
+/**
+ * The in-sheet search box (Bookmarks, History, Passwords). Autocorrect and auto-capitalization are
+ * off — these are filter queries, not prose — and a clear button appears once there's input.
+ */
+@Composable
+fun SheetSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = modifier.fillMaxWidth(),
+        singleLine = true,
+        placeholder = { Text(placeholder) },
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+        trailingIcon = if (query.isNotEmpty()) {
+            {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(Icons.Default.Clear, contentDescription = "Clear search")
+                }
+            }
+        } else {
+            null
+        },
+        keyboardOptions = KeyboardOptions(
+            autoCorrectEnabled = false,
+            capitalization = KeyboardCapitalization.None,
+        ),
+    )
 }
 
 /** A small muted section label used above a group of related controls. */

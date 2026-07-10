@@ -12,6 +12,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -31,6 +33,11 @@ import mozilla.components.concept.sync.DeviceCapability
 import mozilla.components.concept.sync.DeviceConfig
 import mozilla.components.concept.sync.DeviceType
 import mozilla.components.concept.sync.FxAEntryPoint
+import mozilla.components.concept.push.PushProcessor
+import mozilla.components.feature.accounts.push.FxaPushSupportFeature
+import mozilla.components.feature.accounts.push.SendTabFeature
+import mozilla.components.feature.push.AutoPushFeature
+import mozilla.components.feature.push.PushConfig
 import mozilla.components.feature.syncedtabs.storage.SyncedTabsStorage
 import mozilla.components.service.fxa.FxaAuthData
 import mozilla.components.service.fxa.PeriodicSyncConfig
@@ -51,14 +58,36 @@ private const val MaxActiveTabAgeMs = 21L * 24L * 60L * 60L * 1000L
 /** A remote tab counts as a handoff candidate if it was used on the other device this recently. */
 private const val HandoffWindowMs = 5L * 60L * 1000L
 
-/** Minimum spacing between the network syncs that back foreground handoff checks. */
+/**
+ * Minimum spacing between the network syncs that back a *resume-triggered* handoff check. Kept
+ * loose because ON_RESUME fires often and, absent a push, there's no evidence anything changed.
+ */
 private const val HandoffSyncDebounceMs = 60_000L
+
+/**
+ * Minimum spacing for a *push-triggered* handoff check. A push means a remote device actually
+ * changed its tabs, so we sync almost immediately (iCloud-Handoff-grade latency) — the small floor
+ * only collapses a burst of rapid tab switches on the other device into a single sync.
+ */
+private const val PushSyncDebounceMs = 5_000L
+
+/**
+ * Cadence of the in-app periodic sync while the browser is foregrounded. This is the *fallback*
+ * path: when FxA push is configured (see [FirefoxSyncController.initPush]) remote tab changes
+ * arrive near-instantly and trigger a sync, so this timer only has to catch anything a dropped or
+ * undelivered push missed — hence a relaxed interval rather than Firefox's 600s active cadence.
+ * When the app is backgrounded the loop stops and the 4-hour WorkManager [PeriodicSyncConfig] and
+ * background push take over.
+ */
+private const val ForegroundSyncIntervalMs = 30L * 60L * 1000L
 
 class FirefoxSyncController(
     private val application: Application,
     private val store: BrowserStore,
     private val scope: CoroutineScope,
     private val loginsStorage: PlacesLoginsStorage? = null,
+    /** Opens a tab another device pushed here via "Send tab". Null disables Send-Tab receipt. */
+    private val onSendTabReceived: ((url: String, title: String) -> Unit)? = null,
 ) {
     private val crashReporter = object : CrashReporting {
         override fun submitCaughtException(throwable: Throwable): Job = Job()
@@ -97,9 +126,15 @@ class FirefoxSyncController(
     private val _events = MutableSharedFlow<FirefoxSyncEvent>(extraBufferCapacity = 4)
     val events: SharedFlow<FirefoxSyncEvent> = _events.asSharedFlow()
 
+    /** Engines this account syncs: passwords ride along only when a logins store was provided. */
+    private val syncEngines: List<SyncEngine> =
+        if (loginsStorage != null) listOf(SyncEngine.Tabs, SyncEngine.Passwords) else listOf(SyncEngine.Tabs)
+
     @Volatile private var authInFlight = false
     @Volatile private var lastHandoffSyncAtMs = 0L
     @Volatile private var dismissedHandoffKey: String? = null
+    @Volatile private var foregroundSyncJob: Job? = null
+    @Volatile private var pushFeature: AutoPushFeature? = null
 
     init {
         GlobalSyncableStoreProvider.configureStore(SyncEngine.Tabs to lazy { remoteTabsStorage })
@@ -118,7 +153,66 @@ class FirefoxSyncController(
             }.onFailure { throwable ->
                 setError("Firefox Sync is unavailable: ${throwable.readableMessage()}")
             }
+            // Isolated so a push-setup failure never surfaces as a sync error: push is a fast-path
+            // optimization layered over the foreground polling fallback, not a hard dependency.
+            runCatching { initPush() }
         }
+    }
+
+    /**
+     * Wire up FxA push so a remote device's tab change (or a "Send tab") re-syncs this device
+     * near-instantly instead of waiting for the foreground poll — the same mechanism vanilla
+     * Firefox uses. No-op unless a real `google-services.json` was supplied at build time: the
+     * Google Services plugin generates a `gcm_defaultSenderId` string resource, which we look up by
+     * name (a compile-time `R.string` reference would break the no-Firebase build) and bail on when
+     * absent. Idempotent; all failures are swallowed.
+     */
+    private fun initPush() {
+        if (pushFeature != null) return
+        val senderId = firebaseSenderId() ?: return
+        val push = AutoPushFeature(
+            context = application,
+            service = LuminaFirebasePushService(),
+            config = PushConfig(senderId = senderId),
+            crashReporter = crashReporter,
+        )
+        PushProcessor.install(push)
+        push.initialize()
+
+        // Binds push to the account: subscribes the FxA push scope, delivers Send-Tab commands, and
+        // processes incoming account events. The returned Job doesn't need awaiting.
+        FxaPushSupportFeature(
+            context = application,
+            accountManager = accountManager,
+            pushFeature = push,
+            crashReporter = crashReporter,
+        ).initialize()
+
+        // Deliberate "send tab to this device" → open each received tab (no-op if the host didn't
+        // provide an opener).
+        SendTabFeature(accountManager) { _, tabs ->
+            onSendTabReceived?.let { open -> tabs.forEach { tab -> open(tab.url, tab.title) } }
+        }
+
+        // Any push for this account (a remote device uploaded/changed its open tabs) → sync almost
+        // immediately and re-evaluate the handoff candidate. The short PushSyncDebounceMs floor
+        // (vs the 60s resume debounce) is what makes this feel like iCloud Handoff while still
+        // collapsing a burst of rapid remote tab switches into one sync.
+        push.register(object : AutoPushFeature.Observer {
+            override fun onMessageReceived(scope: String, message: ByteArray?) {
+                checkForHandoffTab(PushSyncDebounceMs)
+            }
+        })
+        pushFeature = push
+    }
+
+    /** The FCM sender id the Google Services plugin generates, or null when Firebase isn't set up. */
+    private fun firebaseSenderId(): String? {
+        val resId = application.resources.getIdentifier(
+            "gcm_defaultSenderId", "string", application.packageName,
+        )
+        if (resId == 0) return null
+        return application.getString(resId).takeIf { it.isNotBlank() }
     }
 
     fun beginSignIn(openUrl: (String) -> Unit) {
@@ -182,13 +276,7 @@ class FirefoxSyncController(
                 accountManager.authenticatedAccount()?.deviceConstellation()?.refreshDevices()
                 refreshTargetDevices()
 
-                awaitSync(
-                    if (loginsStorage != null) {
-                        listOf(SyncEngine.Tabs, SyncEngine.Passwords)
-                    } else {
-                        listOf(SyncEngine.Tabs)
-                    },
-                )
+                awaitSync(syncEngines)
 
                 val devices = readSyncedDevices()
                 _state.update {
@@ -243,27 +331,52 @@ class FirefoxSyncController(
     }
 
     /**
-     * Foreground handoff check: quietly sync the tabs engine (no busy/message churn — this runs on
-     * every app resume, so it must never flash sync UI), then surface the most recently used tab
-     * from another device as a handoff candidate if it was active within [HandoffWindowMs].
-     * The network sync is debounced to [HandoffSyncDebounceMs]; inside the debounce window the
-     * candidate is still re-evaluated from local storage so an expired banner clears promptly.
+     * Handoff check: quietly sync the tabs engine (no busy/message churn — this runs on every app
+     * resume, so it must never flash sync UI), then surface the most recently used tab from another
+     * device as a handoff candidate if it was active within [HandoffWindowMs]. The network sync is
+     * debounced to [minSyncSpacingMs]; inside the debounce window the candidate is still
+     * re-evaluated from local storage so an expired banner clears promptly.
+     *
+     * [minSyncSpacingMs] is [HandoffSyncDebounceMs] for the routine resume check and the shorter
+     * [PushSyncDebounceMs] when a push tells us a remote device just changed its tabs (handoff).
      */
-    fun checkForHandoffTab() {
+    fun checkForHandoffTab(minSyncSpacingMs: Long = HandoffSyncDebounceMs) {
         scope.launch {
             if (accountManager.authenticatedAccount() == null) return@launch
             val now = System.currentTimeMillis()
-            if (now - lastHandoffSyncAtMs >= HandoffSyncDebounceMs) {
+            if (now - lastHandoffSyncAtMs >= minSyncSpacingMs) {
                 lastHandoffSyncAtMs = now
                 runCatching { awaitSync(listOf(SyncEngine.Tabs)) }
             }
-            runCatching { readSyncedDevices() }.onSuccess { devices ->
-                if (devices.isNotEmpty()) {
-                    _state.update { it.copy(devices = devices) }
-                }
-                updateHandoffFromDevices(devices)
+            refreshDevicesFromStorage()
+        }
+    }
+
+    /**
+     * Begin (or reuse) the foreground periodic sync loop. Call from ON_RESUME. Every
+     * [ForegroundSyncIntervalMs] it runs a quiet full sync (tabs + passwords, no busy/message
+     * churn) and refreshes the synced-tab list, handoff candidate, and Zen workspaces — mirroring
+     * vanilla Firefox's behaviour of re-syncing on a timer while the browser is in active use.
+     * Idempotent: an already-running loop is left alone. Cancelled by [stopForegroundPeriodicSync].
+     */
+    fun startForegroundPeriodicSync() {
+        if (foregroundSyncJob?.isActive == true) return
+        foregroundSyncJob = scope.launch {
+            while (isActive) {
+                delay(ForegroundSyncIntervalMs)
+                if (accountManager.authenticatedAccount() == null) continue
+                lastHandoffSyncAtMs = System.currentTimeMillis()
+                runCatching { awaitSync(syncEngines) }
+                refreshDevicesFromStorage()
+                refreshZenWorkspaces()
             }
         }
+    }
+
+    /** Stop the foreground periodic sync loop. Call from ON_PAUSE. */
+    fun stopForegroundPeriodicSync() {
+        foregroundSyncJob?.cancel()
+        foregroundSyncJob = null
     }
 
     /** Hide the handoff banner and keep this device+URL pair from resurfacing it. */
@@ -276,6 +389,18 @@ class FirefoxSyncController(
     fun expireHandoff(handoff: FirefoxHandoffTab) {
         _state.update { current ->
             if (current.handoffTab == handoff) current.copy(handoffTab = null) else current
+        }
+    }
+
+    /**
+     * Read local synced-device storage into UI state (quietly — no busy/message churn) and
+     * re-evaluate the handoff candidate. Shared by the resume/push handoff check and the
+     * foreground periodic loop.
+     */
+    private suspend fun refreshDevicesFromStorage() {
+        runCatching { readSyncedDevices() }.onSuccess { devices ->
+            if (devices.isNotEmpty()) _state.update { it.copy(devices = devices) }
+            updateHandoffFromDevices(devices)
         }
     }
 
@@ -311,7 +436,7 @@ class FirefoxSyncController(
             FirefoxTargetDevice(
                 id = device.id,
                 name = device.displayName,
-                type = device.deviceType.name.lowercase().replaceFirstChar(Char::titlecase),
+                type = device.deviceType.displayLabel(),
             )
         }
         _state.update { it.copy(targetDevices = targets) }
@@ -392,7 +517,7 @@ class FirefoxSyncController(
             FirefoxSyncedDevice(
                 id = deviceTabs.device.id,
                 name = deviceTabs.device.displayName,
-                type = deviceTabs.device.deviceType.name.lowercase().replaceFirstChar(Char::titlecase),
+                type = deviceTabs.device.deviceType.displayLabel(),
                 tabs = deviceTabs.tabs.mapNotNull { tab ->
                     val active = runCatching { tab.active() }.getOrNull() ?: return@mapNotNull null
                     FirefoxSyncedTab(
@@ -523,3 +648,7 @@ private fun String.oauthValues(): Map<String, String> {
 
 private fun Throwable.readableMessage(): String =
     message ?: javaClass.simpleName
+
+/** Human label for a constellation device type, e.g. MOBILE → "Mobile". */
+private fun DeviceType.displayLabel(): String =
+    name.lowercase().replaceFirstChar(Char::titlecase)

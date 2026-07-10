@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -30,8 +29,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -46,6 +43,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
+import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
 import kotlinx.coroutines.Dispatchers
@@ -82,7 +81,6 @@ private val DownloadEntry.isActive: Boolean
 @Composable
 fun DownloadsSheet(
     onDismiss: () -> Unit,
-    bottomInsetDp: Dp = 0.dp,
 ) {
     val context = LocalContext.current
     var downloads by remember { mutableStateOf<List<DownloadEntry>>(emptyList()) }
@@ -99,48 +97,37 @@ fun DownloadsSheet(
         }
     }
 
-    ModalBottomSheet(
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        onDismissRequest = onDismiss,
-        contentWindowInsets = { WindowInsets(bottom = bottomInsetDp) },
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 12.dp),
-        ) {
-            SheetHeader("Downloads") {
-                if (downloads.isNotEmpty()) {
-                    TextButton(onClick = { showClearConfirm = true }) {
-                        Text("Clear all")
-                    }
+    LuminaModalSheet(onDismissRequest = onDismiss, bottomPadding = 12.dp) {
+        SheetHeader("Downloads") {
+            if (downloads.isNotEmpty()) {
+                TextButton(onClick = { showClearConfirm = true }) {
+                    Text("Clear all")
                 }
             }
+        }
 
-            Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(12.dp))
 
-            if (downloads.isEmpty()) {
-                EmptyState(
-                    icon = Icons.Default.Download,
-                    title = "No downloads yet",
-                    description = "Files you download will show up here.",
-                )
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                    items(downloads, key = { it.id }) { entry ->
-                        DownloadRow(
-                            entry = entry,
-                            onOpen = { openDownload(context, entry) },
-                            onRemove = {
-                                // remove() hits the DownloadManager content provider and can throw;
-                                // guard it so a failure can't crash the sheet. The row is dropped
-                                // from the UI regardless so the action still feels responsive.
-                                runCatching { downloadManager(context)?.remove(entry.id) }
-                                downloads = downloads.filterNot { it.id == entry.id }
-                            },
-                        )
-                    }
+        if (downloads.isEmpty()) {
+            EmptyState(
+                icon = Icons.Default.Download,
+                title = "No downloads yet",
+                description = "Files you download will show up here.",
+            )
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                items(downloads, key = { it.id }) { entry ->
+                    DownloadRow(
+                        entry = entry,
+                        onOpen = { openDownload(context, entry) },
+                        onRemove = {
+                            // remove() hits the DownloadManager content provider and can throw;
+                            // guard it so a failure can't crash the sheet. The row is dropped
+                            // from the UI regardless so the action still feels responsive.
+                            runCatching { downloadManager(context)?.remove(entry.id) }
+                            downloads = downloads.filterNot { it.id == entry.id }
+                        },
+                    )
                 }
             }
         }
@@ -182,6 +169,7 @@ private fun DownloadRow(
     onRemove: () -> Unit,
 ) {
     val completed = entry.status == DownloadManager.STATUS_SUCCESSFUL
+    val haptics = rememberLuminaHaptics()
     ListItem(
         modifier = Modifier.clickable(enabled = completed) { onOpen() },
         leadingContent = {
@@ -224,7 +212,10 @@ private fun DownloadRow(
             }
         },
         trailingContent = {
-            IconButton(onClick = onRemove) {
+            IconButton(onClick = {
+                haptics.remove()
+                onRemove()
+            }) {
                 Icon(Icons.Default.Delete, contentDescription = "Remove")
             }
         },

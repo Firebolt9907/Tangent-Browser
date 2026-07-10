@@ -2,6 +2,12 @@ package com.firebolt9907.luminabrowser.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -28,6 +34,37 @@ import androidx.compose.ui.unit.dp
  * Downloads, Passwords, Sync, Add-ons) reads with the same header, section labels, and grouped
  * cards. Presentation only — behavior stays in each sheet.
  */
+
+/**
+ * The modal container every content sheet opens in: `skipPartiallyExpanded` so the first upward
+ * drag scrolls the inner list instead of expanding a half-detent (a nested-scroll bug each sheet
+ * used to fix separately), zero window insets, and the standard padded content column.
+ * [scrollable] adds a vertical scroll for static-content sheets (Settings); list sheets bring
+ * their own LazyColumn. Behavior stays in each sheet — this is just the shared shell.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LuminaModalSheet(
+    onDismissRequest: () -> Unit,
+    bottomPadding: Dp = 28.dp,
+    scrollable: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    ModalBottomSheet(
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        onDismissRequest = onDismissRequest,
+        contentWindowInsets = { WindowInsets(0.dp) },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                .padding(horizontal = 20.dp)
+                .padding(bottom = bottomPadding),
+            content = content,
+        )
+    }
+}
 
 /**
  * Consistent sheet title row: an optional leading icon, a large bold title, and an optional trailing

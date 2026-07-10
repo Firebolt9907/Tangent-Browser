@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -24,8 +23,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import com.firebolt9907.luminabrowser.ui.components.Favicon
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
@@ -61,7 +59,6 @@ fun HistorySheet(
     historyStorage: HistoryStorage,
     onOpenUrl: (String) -> Unit,
     onDismiss: () -> Unit,
-    bottomInsetDp: Dp = 0.dp,
 ) {
     val scope = rememberCoroutineScope()
     var visits by remember { mutableStateOf<List<VisitInfo>>(emptyList()) }
@@ -109,106 +106,95 @@ fun HistorySheet(
         }
     }
 
-    ModalBottomSheet(
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        onDismissRequest = onDismiss,
-        contentWindowInsets = { WindowInsets(bottom = bottomInsetDp) },
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 12.dp),
-        ) {
-            SheetHeader("History") {
-                if (visits.isNotEmpty()) {
-                    TextButton(onClick = { showClearConfirm = true }) {
-                        Text("Clear all")
+    LuminaModalSheet(onDismissRequest = onDismiss, bottomPadding = 12.dp) {
+        SheetHeader("History") {
+            if (visits.isNotEmpty()) {
+                TextButton(onClick = { showClearConfirm = true }) {
+                    Text("Clear all")
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("Search history") },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(Icons.Default.Clear, contentDescription = "Clear search")
                     }
+                }
+            },
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        when {
+            loading -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 40.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator()
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            filtered.isEmpty() -> {
+                EmptyState(
+                    icon = Icons.Default.History,
+                    title = if (searchQuery.isBlank()) "No history yet" else "No matches",
+                    description = if (searchQuery.isBlank()) {
+                        "Pages you visit will show up here."
+                    } else {
+                        null
+                    },
+                )
+            }
 
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("Search history") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear search")
+            else -> {
+                LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                    grouped.forEach { (date, dayVisits) ->
+                        item(key = "header-$date") {
+                            DateSectionHeader(dayLabel(date))
                         }
-                    }
-                },
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            when {
-                loading -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 40.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator()
-                    }
-                }
-
-                filtered.isEmpty() -> {
-                    EmptyState(
-                        icon = Icons.Default.History,
-                        title = if (searchQuery.isBlank()) "No history yet" else "No matches",
-                        description = if (searchQuery.isBlank()) {
-                            "Pages you visit will show up here."
-                        } else {
-                            null
-                        },
-                    )
-                }
-
-                else -> {
-                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                        grouped.forEach { (date, dayVisits) ->
-                            item(key = "header-$date") {
-                                DateSectionHeader(dayLabel(date))
-                            }
-                            items(dayVisits, key = { it.visitTime }) { visit ->
-                                ListItem(
-                                    modifier = Modifier.clickable { onOpenUrl(visit.url) },
-                                    leadingContent = { Favicon(visit.url) },
-                                    headlineContent = {
-                                        Text(
-                                            text = visit.title?.takeIf { it.isNotBlank() } ?: visit.url,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    },
-                                    supportingContent = {
-                                        Text(
-                                            text = "${visit.url}  ·  ${formatVisitTime(visit.visitTime)}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    },
-                                    trailingContent = {
-                                        IconButton(onClick = {
-                                            scope.launch {
-                                                runCatching { historyStorage.deleteVisitsFor(visit.url) }
-                                                reload()
-                                            }
-                                        }) {
-                                            Icon(Icons.Default.Delete, contentDescription = "Remove")
+                        items(dayVisits, key = { it.visitTime }) { visit ->
+                            ListItem(
+                                modifier = Modifier.clickable { onOpenUrl(visit.url) },
+                                leadingContent = { Favicon(visit.url) },
+                                headlineContent = {
+                                    Text(
+                                        text = visit.title?.takeIf { it.isNotBlank() } ?: visit.url,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
+                                supportingContent = {
+                                    Text(
+                                        text = "${visit.url}  ·  ${formatVisitTime(visit.visitTime)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
+                                trailingContent = {
+                                    IconButton(onClick = {
+                                        scope.launch {
+                                            runCatching { historyStorage.deleteVisitsFor(visit.url) }
+                                            reload()
                                         }
-                                    },
-                                )
-                            }
+                                    }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Remove")
+                                    }
+                                },
+                            )
                         }
                     }
                 }

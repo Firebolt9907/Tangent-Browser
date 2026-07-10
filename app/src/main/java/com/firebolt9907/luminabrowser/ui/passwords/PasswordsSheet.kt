@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -30,8 +29,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -51,6 +48,8 @@ import android.os.PersistableBundle
 import android.widget.Toast
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
+import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
@@ -72,9 +71,9 @@ import mozilla.components.concept.storage.Login
 fun PasswordsSheet(
     loginsStorage: PlacesLoginsStorage,
     onDismiss: () -> Unit,
-    bottomInsetDp: Dp = 0.dp,
 ) {
     val scope = rememberCoroutineScope()
+    val haptics = rememberLuminaHaptics()
     var logins by remember { mutableStateOf<List<Login>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
@@ -88,95 +87,84 @@ fun PasswordsSheet(
         loading = false
     }
 
-    ModalBottomSheet(
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        onDismissRequest = onDismiss,
-        contentWindowInsets = { WindowInsets(bottom = bottomInsetDp) },
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-        ) {
-            SheetHeader(
-                title = "Passwords",
-                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-            )
+    LuminaModalSheet(onDismissRequest = onDismiss) {
+        SheetHeader(
+            title = "Passwords",
+            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+        )
 
-            Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(12.dp))
 
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Search passwords...") },
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                trailingIcon = if (searchQuery.isNotEmpty()) {
-                    {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear search")
-                        }
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text("Search passwords...") },
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            trailingIcon = if (searchQuery.isNotEmpty()) {
+                {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(Icons.Default.Clear, contentDescription = "Clear search")
                     }
-                } else null,
-                keyboardOptions = KeyboardOptions(
-                    autoCorrectEnabled = false,
-                    capitalization = KeyboardCapitalization.None,
-                ),
-                modifier = Modifier.fillMaxWidth(),
+                }
+            } else null,
+            keyboardOptions = KeyboardOptions(
+                autoCorrectEnabled = false,
+                capitalization = KeyboardCapitalization.None,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(vertical = 24.dp),
             )
+        } else {
+            val filtered = if (searchQuery.isBlank()) logins else logins.filter {
+                it.origin.contains(searchQuery, ignoreCase = true) ||
+                    it.username.contains(searchQuery, ignoreCase = true)
+            }
+
+            if (filtered.isEmpty()) {
+                if (searchQuery.isNotBlank()) {
+                    EmptyState(
+                        icon = Icons.Default.Search,
+                        title = "No matching passwords",
+                        description = "No saved logins match \"$searchQuery\".",
+                    )
+                } else {
+                    EmptyState(
+                        icon = Icons.Default.Lock,
+                        title = "No saved passwords",
+                        description = "Logins you save will appear here. Add one with the button below.",
+                    )
+                }
+            } else {
+                LazyColumn(modifier = Modifier.height(320.dp)) {
+                    items(filtered, key = { it.guid }) { login ->
+                        PasswordRow(
+                            login = login,
+                            onDelete = { showDeleteConfirm = login.guid },
+                        )
+                    }
+                }
+            }
 
             Spacer(Modifier.height(8.dp))
 
-            if (loading) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .padding(vertical = 24.dp),
-                )
-            } else {
-                val filtered = if (searchQuery.isBlank()) logins else logins.filter {
-                    it.origin.contains(searchQuery, ignoreCase = true) ||
-                        it.username.contains(searchQuery, ignoreCase = true)
-                }
-
-                if (filtered.isEmpty()) {
-                    if (searchQuery.isNotBlank()) {
-                        EmptyState(
-                            icon = Icons.Default.Search,
-                            title = "No matching passwords",
-                            description = "No saved logins match \"$searchQuery\".",
-                        )
-                    } else {
-                        EmptyState(
-                            icon = Icons.Default.Lock,
-                            title = "No saved passwords",
-                            description = "Logins you save will appear here. Add one with the button below.",
-                        )
-                    }
-                } else {
-                    LazyColumn(modifier = Modifier.height(320.dp)) {
-                        items(filtered, key = { it.guid }) { login ->
-                            PasswordRow(
-                                login = login,
-                                onDelete = { showDeleteConfirm = login.guid },
-                            )
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = { showAddDialog = true },
+                    modifier = Modifier.weight(1f),
                 ) {
-                    OutlinedButton(
-                        onClick = { showAddDialog = true },
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text("Add Password")
-                    }
+                    Text("Add Password")
                 }
             }
         }
@@ -209,6 +197,7 @@ fun PasswordsSheet(
             },
             confirmButton = {
                 TextButton(onClick = {
+                    haptics.remove()
                     scope.launch {
                         runCatching {
                             loginsStorage.delete(guid)

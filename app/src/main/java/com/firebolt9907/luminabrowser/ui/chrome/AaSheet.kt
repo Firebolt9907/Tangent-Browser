@@ -307,55 +307,52 @@ private fun PageTabContent(
         onDismiss()
     }
 
-    fun doBookmark() {
+    // Shared save-to-bookmarks shell (plain bookmark + reading list): run [saveOp] off the sheet,
+    // buzz + toast the outcome, and close immediately — the write finishes in the background.
+    fun saveToBookmarks(
+        successMessage: String,
+        failureMessage: String,
+        saveOp: suspend (storage: BookmarksStorage, url: String, title: String) -> Unit,
+    ) {
         val storage = bookmarksStorage ?: return
         val url = pageUrl
         val title = pageTitle.ifBlank { url }
         bookmarkScope.launch {
-            val ok = runCatching {
-                storage.addItem(
-                    parentGuid = BookmarkRoot.Mobile.id,
-                    url = url,
-                    title = title,
-                    position = null,
-                ).getOrThrow()
-            }.isSuccess
+            val ok = runCatching { saveOp(storage, url, title) }.isSuccess
             if (ok) haptics.create()
             Toast.makeText(
                 context,
-                if (ok) "Bookmarked" else "Couldn't add bookmark",
+                if (ok) successMessage else failureMessage,
                 Toast.LENGTH_SHORT,
             ).show()
         }
         onDismiss()
     }
 
-    fun doReadingList() {
-        val storage = bookmarksStorage ?: return
-        val url = pageUrl
-        val title = pageTitle.ifBlank { url }
-        bookmarkScope.launch {
-            val ok = runCatching {
-                val root = storage.getTree(BookmarkRoot.Mobile.id, recursive = false).getOrNull()
-                val folderGuid = root?.children
-                    ?.firstOrNull { it.type == BookmarkNodeType.FOLDER && it.title == READING_LIST_FOLDER }
-                    ?.guid
-                    ?: storage.addFolder(BookmarkRoot.Mobile.id, READING_LIST_FOLDER, null).getOrThrow()
-                storage.addItem(
-                    parentGuid = folderGuid,
-                    url = url,
-                    title = title,
-                    position = null,
-                ).getOrThrow()
-            }.isSuccess
-            if (ok) haptics.create()
-            Toast.makeText(
-                context,
-                if (ok) "Added to Reading List" else "Couldn't add to Reading List",
-                Toast.LENGTH_SHORT,
-            ).show()
-        }
-        onDismiss()
+    fun doBookmark() = saveToBookmarks("Bookmarked", "Couldn't add bookmark") { storage, url, title ->
+        storage.addItem(
+            parentGuid = BookmarkRoot.Mobile.id,
+            url = url,
+            title = title,
+            position = null,
+        ).getOrThrow()
+    }
+
+    fun doReadingList() = saveToBookmarks(
+        "Added to Reading List",
+        "Couldn't add to Reading List",
+    ) { storage, url, title ->
+        val root = storage.getTree(BookmarkRoot.Mobile.id, recursive = false).getOrNull()
+        val folderGuid = root?.children
+            ?.firstOrNull { it.type == BookmarkNodeType.FOLDER && it.title == READING_LIST_FOLDER }
+            ?.guid
+            ?: storage.addFolder(BookmarkRoot.Mobile.id, READING_LIST_FOLDER, null).getOrThrow()
+        storage.addItem(
+            parentGuid = folderGuid,
+            url = url,
+            title = title,
+            position = null,
+        ).getOrThrow()
     }
 
     fun doAddToHomeScreen() {

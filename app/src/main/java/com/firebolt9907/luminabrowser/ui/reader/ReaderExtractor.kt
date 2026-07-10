@@ -1,6 +1,7 @@
 package com.firebolt9907.luminabrowser.ui.reader
 
 import android.util.Log
+import com.firebolt9907.luminabrowser.ui.content.loadJavascriptUrl
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.browser.engine.gecko.GeckoEngineSession
 import org.mozilla.geckoview.GeckoSession
@@ -48,13 +49,7 @@ object ReaderExtractor {
     }
 
     fun extractReaderContent(engineSession: EngineSession, tabId: String) {
-        engineSession.loadUrl(
-            url = buildReaderExtractorScript(),
-            flags = EngineSession.LoadUrlFlags.select(
-                EngineSession.LoadUrlFlags.ALLOW_JAVASCRIPT_URL,
-                EngineSession.LoadUrlFlags.LOAD_FLAGS_REPLACE_HISTORY,
-            ),
-        )
+        engineSession.loadJavascriptUrl(buildReaderExtractorScript())
     }
 
     /**
@@ -222,8 +217,10 @@ object ReaderExtractor {
                     const h = img.naturalHeight || img.height || 0;
                     /* Skip icons, spacers and tracking pixels. */
                     if (w && h && w < 150 && h < 150) return null;
-                    const cap = (img.getAttribute('alt') || img.getAttribute('title') || '').trim();
-                    const block = { type: 'img', src: src, caption: cap || null };
+                    /* Do NOT use the img's alt/title as a caption: many sites stuff filenames,
+                       SEO keywords or boilerplate into alt, which reads as noise below the image.
+                       Only a real <figcaption> (set in figureBlock) becomes a visible caption. */
+                    const block = { type: 'img', src: src, caption: null };
                     /* Carry intrinsic dimensions so the reader can reserve aspect-ratio space and
                        avoid layout shift as each image streams in. */
                     if (w > 0 && h > 0) { block.w = w; block.h = h; }

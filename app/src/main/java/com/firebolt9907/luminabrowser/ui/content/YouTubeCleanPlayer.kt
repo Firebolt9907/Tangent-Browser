@@ -34,11 +34,5 @@ internal fun EngineSession.injectYouTubeCleanPlayer() {
         document.addEventListener('fullscreenchange',function(){setClean(!!document.fullscreenElement);},true);
         })()
     """.trimIndent().replace("\n", "")
-    loadUrl(
-        url = script,
-        flags = EngineSession.LoadUrlFlags.select(
-            EngineSession.LoadUrlFlags.ALLOW_JAVASCRIPT_URL,
-            EngineSession.LoadUrlFlags.LOAD_FLAGS_REPLACE_HISTORY,
-        ),
-    )
+    loadJavascriptUrl(script)
 }

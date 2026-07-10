@@ -20,13 +20,7 @@ internal fun EngineSession.injectViewportSpacers(
     topPx: Int,
     skipHeaderInsets: Boolean = false,
 ) {
-    loadUrl(
-        url = buildViewportSpacerScript(topPx, skipHeaderInsets),
-        flags = EngineSession.LoadUrlFlags.select(
-            EngineSession.LoadUrlFlags.ALLOW_JAVASCRIPT_URL,
-            EngineSession.LoadUrlFlags.LOAD_FLAGS_REPLACE_HISTORY,
-        ),
-    )
+    loadJavascriptUrl(buildViewportSpacerScript(topPx, skipHeaderInsets))
 }
 
 /**
@@ -69,11 +63,5 @@ internal fun EngineSession.injectPageZoom(factor: Float) {
     val script = """
         javascript:(()=>{try{if(document.documentElement){document.documentElement.style.zoom=${literal};}}catch(e){}})()
     """.trimIndent().replace("\n", "")
-    loadUrl(
-        url = script,
-        flags = EngineSession.LoadUrlFlags.select(
-            EngineSession.LoadUrlFlags.ALLOW_JAVASCRIPT_URL,
-            EngineSession.LoadUrlFlags.LOAD_FLAGS_REPLACE_HISTORY,
-        ),
-    )
+    loadJavascriptUrl(script)
 }

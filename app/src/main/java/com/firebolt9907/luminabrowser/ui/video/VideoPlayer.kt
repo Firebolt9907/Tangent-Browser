@@ -6,6 +6,7 @@ import android.view.KeyEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.firebolt9907.luminabrowser.ui.content.loadJavascriptUrl
 import mozilla.components.concept.engine.EngineSession
 
 /**
@@ -135,13 +136,7 @@ fun handleVolumeKeyForVideo(context: Context, event: KeyEvent): Boolean {
  */
 object VideoPlayerController {
     private fun run(session: EngineSession, body: String) {
-        session.loadUrl(
-            url = "javascript:(()=>{try{var v=document.querySelector('video');if(v){$body}}catch(e){}})()",
-            flags = EngineSession.LoadUrlFlags.select(
-                EngineSession.LoadUrlFlags.ALLOW_JAVASCRIPT_URL,
-                EngineSession.LoadUrlFlags.LOAD_FLAGS_REPLACE_HISTORY,
-            ),
-        )
+        session.loadJavascriptUrl("javascript:(()=>{try{var v=document.querySelector('video');if(v){$body}}catch(e){}})()")
     }
 
     fun play(session: EngineSession) = run(session, "v.play();")

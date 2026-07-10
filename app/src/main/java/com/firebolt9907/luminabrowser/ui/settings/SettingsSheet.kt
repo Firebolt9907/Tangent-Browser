@@ -667,10 +667,10 @@ fun SettingsSheet(
             )
             SettingsToggle(
                 title = "Per-site reader tweaks",
-                subtitle = "Fixes articles that don't parse cleanly, using per-site rules that update " +
-                    "from GitHub so new sites work without an app update. Runs locally — the update " +
-                    "downloads the full rule list and never reveals which sites you visit. Turn off " +
-                    "to use only the generic reader (and skip the update check entirely).",
+                subtitle = "Fixes articles that don't parse cleanly, using per-site rules. Updates " +
+                    "arrive from GitHub — signature-verified and downloaded in full — so new sites " +
+                    "work without an app update, and the update never reveals which sites you visit. " +
+                    "Turn off to use only the rules built into this app version (no update check).",
                 checked = readerSiteRules,
                 onCheckedChange = {
                     readerSiteRules = it

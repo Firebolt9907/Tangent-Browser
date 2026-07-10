@@ -1,12 +1,19 @@
 package com.firebolt9907.luminabrowser
 
 import com.firebolt9907.luminabrowser.ui.reader.ReaderRules
+import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
+import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
+import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
+import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
+import org.bouncycastle.crypto.signers.Ed25519Signer
 import org.json.JSONArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.security.SecureRandom
+import java.util.Base64
 
 /**
  * Covers [ReaderRules.parse] — the sanitizer that turns the bundled reader_rules.json into the
@@ -73,6 +80,49 @@ class ReaderRulesTest {
         )
         assertEquals(5, ruleset.version)
         assertEquals(".article", JSONArray(ruleset.compactJson).getJSONObject(0).getJSONArray("include").getString(0))
+    }
+
+    private class Signer {
+        val priv: Ed25519PrivateKeyParameters
+        val pubB64: String
+        init {
+            val gen = Ed25519KeyPairGenerator().apply {
+                init(Ed25519KeyGenerationParameters(SecureRandom()))
+            }
+            val kp = gen.generateKeyPair()
+            priv = kp.private as Ed25519PrivateKeyParameters
+            pubB64 = Base64.getEncoder().encodeToString((kp.public as Ed25519PublicKeyParameters).encoded)
+        }
+        fun sign(payload: ByteArray): String {
+            val s = Ed25519Signer().apply { init(true, priv) }
+            s.update(payload, 0, payload.size)
+            return Base64.getEncoder().encodeToString(s.generateSignature())
+        }
+    }
+
+    @Test
+    fun `verifyEd25519 accepts a genuine signature and rejects tampering`() {
+        val signer = Signer()
+        val payload = """{ "version": 2, "rules": [] }""".toByteArray(Charsets.UTF_8)
+        val sig = signer.sign(payload)
+
+        assertTrue("genuine signature verifies", ReaderRules.verifyEd25519(payload, sig, signer.pubB64))
+        assertFalse(
+            "tampered payload is rejected",
+            ReaderRules.verifyEd25519("""{ "version": 3, "rules": [] }""".toByteArray(Charsets.UTF_8), sig, signer.pubB64),
+        )
+        assertFalse(
+            "a different key is rejected",
+            ReaderRules.verifyEd25519(payload, sig, Signer().pubB64),
+        )
+    }
+
+    @Test
+    fun `verifyEd25519 treats a blank key or signature (the default) as untrusted`() {
+        val payload = "anything".toByteArray(Charsets.UTF_8)
+        assertFalse("no embedded key means no trust", ReaderRules.verifyEd25519(payload, "c2ln", ""))
+        assertFalse("no signature means no trust", ReaderRules.verifyEd25519(payload, "", Signer().pubB64))
+        assertFalse("garbage base64 never throws", ReaderRules.verifyEd25519(payload, "!!!!", "!!!!"))
     }
 
     @Test

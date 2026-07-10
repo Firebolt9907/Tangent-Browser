@@ -109,6 +109,9 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
+    // Ed25519 signature verification for the remote reader-rules channel (platform Ed25519 is API 33+
+    // only; minSdk is 26, so use BouncyCastle's low-level primitive for uniform coverage).
+    implementation(libs.bouncycastle.prov)
     testImplementation(libs.junit)
     // Real org.json for JVM unit tests (Android's bundled org.json is a throwing stub under
     // unit tests); lets ReaderExtractor.parseArticleJson be tested off-device.

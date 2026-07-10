@@ -60,6 +60,7 @@ import com.firebolt9907.luminabrowser.LuminaApplication
 import com.firebolt9907.luminabrowser.state.compactHost
 import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
 import com.firebolt9907.luminabrowser.ui.reader.hydrateAppearanceFromPrefs
+import com.firebolt9907.luminabrowser.ui.reader.openReaderLink
 import com.firebolt9907.luminabrowser.ui.reader.toggleReader
 import com.firebolt9907.luminabrowser.ui.shareUrl
 import com.firebolt9907.luminabrowser.ui.SyncSystemBarsWithFullscreen
@@ -347,20 +348,7 @@ fun CustomTabRoot(
                                 // the web page — reader scroll deltas drive the same barHidden animation.
                                 onScrollDelta = ::onPageScrollDelta,
                                 onLinkClick = { href ->
-                                    val lowHref = href.trim().lowercase()
-                                    if (lowHref.startsWith("http://") || lowHref.startsWith("https://")) {
-                                        customTabId?.let { id ->
-                                            readerManager.setReaderActive(id, false)
-                                        }
-                                        session?.loadUrl(href)
-                                    } else {
-                                        try {
-                                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(href))
-                                            context.startActivity(intent)
-                                        } catch (e: Exception) {
-                                            // ignore
-                                        }
-                                    }
+                                    readerManager.openReaderLink(context, customTabId, session, href)
                                 }
                             )
                         }

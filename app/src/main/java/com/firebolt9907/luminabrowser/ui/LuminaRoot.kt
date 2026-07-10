@@ -140,6 +140,7 @@ import com.firebolt9907.luminabrowser.ui.grid.GridTopMarginDp
 import com.firebolt9907.luminabrowser.ui.grid.TabGridOverlay
 import com.firebolt9907.luminabrowser.ui.grid.gridCellRect
 import com.firebolt9907.luminabrowser.ui.reader.hydrateAppearanceFromPrefs
+import com.firebolt9907.luminabrowser.ui.reader.openReaderLink
 import com.firebolt9907.luminabrowser.ui.reader.toggleReader
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 import com.firebolt9907.luminabrowser.ui.bookmarks.BookmarksSheet
@@ -2236,20 +2237,7 @@ fun LuminaRoot(
                             }
                         },
                         onLinkClick = { href ->
-                            val lowHref = href.trim().lowercase()
-                            if (lowHref.startsWith("http://") || lowHref.startsWith("https://")) {
-                                selectedTabId?.let { id ->
-                                    readerManager.setReaderActive(id, false)
-                                }
-                                selectedEngineSession?.loadUrl(href)
-                            } else {
-                                try {
-                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(href))
-                                    context.startActivity(intent)
-                                } catch (e: Exception) {
-                                    // ignore
-                                }
-                            }
+                            readerManager.openReaderLink(context, selectedTabId, selectedEngineSession, href)
                         }
                     )
                     }

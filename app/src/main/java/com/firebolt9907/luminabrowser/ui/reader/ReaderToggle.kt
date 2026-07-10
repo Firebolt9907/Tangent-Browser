@@ -1,6 +1,34 @@
 package com.firebolt9907.luminabrowser.ui.reader
 
+import android.content.Context
+import android.content.Intent
+import androidx.core.net.toUri
 import mozilla.components.concept.engine.EngineSession
+
+/**
+ * Handles a link tapped inside the reader overlay — shared by both reader surfaces (main browser
+ * and Custom Tab). Web links drop out of reader and load in the underlying page session; any other
+ * scheme (mailto:, tel:, market:, …) is handed to the system, silently ignored when nothing
+ * handles it.
+ */
+fun ReaderManager.openReaderLink(
+    context: Context,
+    tabId: String?,
+    engineSession: EngineSession?,
+    href: String,
+) {
+    val lowHref = href.trim().lowercase()
+    if (lowHref.startsWith("http://") || lowHref.startsWith("https://")) {
+        tabId?.let { setReaderActive(it, false) }
+        engineSession?.loadUrl(href)
+    } else {
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, href.toUri()))
+        } catch (_: Exception) {
+            // No app handles the scheme — drop the tap.
+        }
+    }
+}
 
 /**
  * The shared reader on/off state machine behind every toggle surface — the main browser's pill

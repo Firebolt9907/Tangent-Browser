@@ -12,6 +12,13 @@
  *   content -> app : { type: "article", article: {...} }  when an article is found
  *                    { type: "none" }                      when the page isn't readable
  *   app -> content : { action: "extract" }                 re-run extraction on demand
+ *
+ * NOTE: this isolated-world path is currently dormant (the live extractor is the javascript:-URL
+ * one built in ReaderExtractor.buildReaderExtractorScript). The per-site rules engine (include /
+ * strip overrides) lives there and in ReaderRules.kt. If this content-script path is ever
+ * activated, mirror that engine here — fetch the compact ruleset (browser.runtime.getURL +
+ * fetch of reader_rules.json) and apply the same include (content-root override) and strip
+ * (subtree exclusion) logic, so both paths stay behaviourally identical.
  */
 (function () {
   var port;

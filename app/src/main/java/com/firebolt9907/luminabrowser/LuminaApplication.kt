@@ -16,6 +16,14 @@ class LuminaApplication : Application() {
         super.onCreate()
         AppServicesInitializer.init(AppServicesInitializer.Config(null))
         RustHttpConfig.setClient(lazy { HttpURLConnectionClient() })
+        // Load per-site reader overrides (assets/reader_rules.json) once, off the components graph so
+        // reader extraction has them before the first page loads. Reading the toggle here uses a
+        // lightweight SharedPreferences wrapper (process-singleton store) and does NOT force the heavy
+        // components graph to init.
+        com.firebolt9907.luminabrowser.ui.reader.ReaderRules.setEnabled(
+            com.firebolt9907.luminabrowser.state.GlobalPreferencesStore(this).readerSiteRules
+        )
+        com.firebolt9907.luminabrowser.ui.reader.ReaderRules.init(this)
         ProcessLifecycleOwner.get().lifecycle.addObserver(backgroundKeepAliveObserver)
     }
 

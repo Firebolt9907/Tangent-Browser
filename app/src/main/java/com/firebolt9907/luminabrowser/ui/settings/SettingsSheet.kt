@@ -65,6 +65,7 @@ fun SettingsSheet(
     var httpCacheSizeMb by remember { mutableStateOf(globalPrefsStore.httpCacheSizeMb) }
     var preloadMode by remember { mutableStateOf(globalPrefsStore.preloadMode) }
     var useGoogleCache by remember { mutableStateOf(globalPrefsStore.useGoogleCache) }
+    var readerSiteRules by remember { mutableStateOf(globalPrefsStore.readerSiteRules) }
     var cookieBannerHandlingMode by remember { mutableStateOf(globalPrefsStore.cookieBannerHandlingMode) }
     var queryParameterStripping by remember { mutableStateOf(globalPrefsStore.queryParameterStripping) }
     var mediaPlaybackRequiresUserGesture by remember { mutableStateOf(globalPrefsStore.mediaPlaybackRequiresUserGesture) }
@@ -660,6 +661,17 @@ fun SettingsSheet(
                     useGoogleCache = it
                     globalPrefsStore.useGoogleCache = it
                     com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.setUseGoogleCache(it)
+                    onSettingChanged()
+                },
+            )
+            SettingsToggle(
+                title = "Per-site reader tweaks",
+                subtitle = "Use built-in per-site rules to fix articles that don't parse cleanly. Runs locally; turn off to use only the generic reader.",
+                checked = readerSiteRules,
+                onCheckedChange = {
+                    readerSiteRules = it
+                    globalPrefsStore.readerSiteRules = it
+                    com.firebolt9907.luminabrowser.ui.reader.ReaderRules.setEnabled(it)
                     onSettingChanged()
                 },
             )

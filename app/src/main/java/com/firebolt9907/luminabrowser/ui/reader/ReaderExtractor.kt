@@ -49,7 +49,7 @@ object ReaderExtractor {
     }
 
     fun extractReaderContent(engineSession: EngineSession, tabId: String) {
-        engineSession.loadJavascriptUrl(buildReaderExtractorScript())
+        engineSession.loadJavascriptUrl(buildReaderExtractorScript(ReaderRules.cached()))
     }
 
     /**
@@ -61,8 +61,14 @@ object ReaderExtractor {
      * loaded as a javascript: URL. Do NOT use `//` line comments anywhere inside it — once
      * newlines are stripped, a `//` comments out the entire rest of the script (including the
      * final prompt() bridge call), silently breaking all reader extraction. Use /* */ instead.
+     *
+     * [rulesJson] is the compact per-site override array from [ReaderRules] (see that file). It is
+     * inlined verbatim as `var __luminaRules = <rulesJson>;` and matched against `location.hostname`
+     * inside the script, so a matching rule's `include` selector can force the article container and
+     * its `strip` selectors can exclude out-of-article regions. The default "[]" means no overrides
+     * — behaviour identical to the pure heuristic — which is what the pinned unit tests exercise.
      */
-    internal fun buildReaderExtractorScript(): String {
+    internal fun buildReaderExtractorScript(rulesJson: String = "[]"): String {
         return """
             javascript:(function() {
                 function luminaExtract() {
@@ -91,6 +97,18 @@ object ReaderExtractor {
                     return null;
                 }
                 function findArticleElement() {
+                    /* Per-site override (from ReaderRules): an `include` selector names the real
+                       article container for sites the heuristic gets wrong (fails to trigger, grabs
+                       only images, or over-captures a too-broad wrapper). First visible match with
+                       any text wins and short-circuits all scoring below. */
+                    if (__rule && __rule.include) {
+                        const incs = Array.isArray(__rule.include) ? __rule.include : [__rule.include];
+                        for (let isel of incs) {
+                            let inc = null;
+                            try { inc = document.querySelector(isel); } catch (e) {}
+                            if (inc && isVisible(inc) && inc.textContent.trim().length > 0) return inc;
+                        }
+                    }
                     /* schema.org's [itemprop="articleBody"] marks the article body exactly, so when
                        a page provides it (NewsArticle / BlogPosting microdata, very common on news
                        and blog CMSes) it's the highest-precision signal — prefer it over the
@@ -103,6 +121,7 @@ object ReaderExtractor {
                     let bestScore = 0;
                     const articles = document.querySelectorAll('article');
                     for (let art of articles) {
+                        if (isStripped(art)) continue;
                         const pCount = art.querySelectorAll('p').length;
                         const textLen = art.textContent.length;
                         const score = pCount * 100 + textLen;
@@ -129,6 +148,7 @@ object ReaderExtractor {
                     }
                     for (let p of document.querySelectorAll('p')) {
                         if (!isVisible(p)) continue;
+                        if (isStripped(p)) continue;
                         const text = p.textContent.trim();
                         if (text.length < 25) continue;
                         let base = 1 + Math.min(Math.floor(text.length / 100), 3);
@@ -335,7 +355,7 @@ object ReaderExtractor {
                     return linkLen / total;
                 }
                 function keep(el) {
-                    return isVisible(el) && !isBoilerplate(el);
+                    return isVisible(el) && !isBoilerplate(el) && !isStripped(el);
                 }
                 /* textContent naively includes the source of inline <script>/<style> children (e.g.
                    CNN embeds an image-fallback script inside the byline). Strip those, and collapse
@@ -431,6 +451,40 @@ object ReaderExtractor {
                     }
                     let t = (src.textContent || '').replace(/\r\n?/g, '\n');
                     return t.replace(/^\n+/, '').replace(/\s+${'$'}/, '');
+                }
+                /* Per-site override table (declarative data, never code — see ReaderRules.kt). Inlined
+                   as the full compact array; the matching rule is picked here by hostname so Kotlin
+                   needs no per-URL plumbing and the same table drives any future isolated-world path.
+                   Empty array (the default) makes every check below a no-op. */
+                var __luminaRules = $rulesJson;
+                function luminaHost() {
+                    try { return location.hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return ''; }
+                }
+                function luminaMatchedRule() {
+                    const host = luminaHost();
+                    if (!host) return null;
+                    for (let r of __luminaRules) {
+                        let pats = r && r.match;
+                        if (!pats) continue;
+                        if (!Array.isArray(pats)) pats = [pats];
+                        for (let pat of pats) {
+                            pat = String(pat).toLowerCase().replace(/^\*\./, '').replace(/^www\./, '');
+                            if (!pat) continue;
+                            if (host === pat || host.endsWith('.' + pat)) return r;
+                        }
+                    }
+                    return null;
+                }
+                var __rule = luminaMatchedRule();
+                var __stripRoots = [];
+                if (__rule && __rule.strip) {
+                    let ssel = Array.isArray(__rule.strip) ? __rule.strip.join(',') : __rule.strip;
+                    try { __stripRoots = Array.prototype.slice.call(document.querySelectorAll(ssel)); } catch (e) {}
+                }
+                function isStripped(el) {
+                    if (!__stripRoots.length || !el || el.nodeType !== 1) return false;
+                    for (let sr of __stripRoots) { if (sr === el || sr.contains(el)) return true; }
+                    return false;
                 }
                 const articleEl = findArticleElement();
                 if (!articleEl) return;

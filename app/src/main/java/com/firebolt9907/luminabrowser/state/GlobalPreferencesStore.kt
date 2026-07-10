@@ -83,6 +83,14 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("useGoogleCache", false)
         set(value) { prefs.edit { putBoolean("useGoogleCache", value) } }
 
+    // Per-site reader overrides (assets/reader_rules.json): include/strip selectors that force the
+    // article container / drop out-of-article regions on specific hosts. Purely local DOM shaping,
+    // but exposed as a toggle so a privacy-conscious user can fall back to the pure heuristic — and
+    // so a future remote rules channel (which would reveal visited hosts) can be opted out of.
+    var readerSiteRules: Boolean
+        get() = prefs.getBoolean("readerSiteRules", true)
+        set(value) { prefs.edit { putBoolean("readerSiteRules", value) } }
+
     // Hidden debug toggle: when on, typing "debug:cache" in the address bar opens the
     // Google Cache page's parsed HTML in a new tab so the user can inspect what GeckoView
     // actually received (useful for diagnosing paywall-bypass consistency issues).

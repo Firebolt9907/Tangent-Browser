@@ -76,4 +76,28 @@ class ReaderExtractorScriptTest {
     fun `two builds are deterministic`() {
         assertTrue(script == ReaderExtractor.buildReaderExtractorScript())
     }
+
+    @Test
+    fun `inlines the per-site rules table and its include and strip machinery`() {
+        assertTrue("inlines the rules array", script.contains("var __luminaRules ="))
+        assertTrue("matches a rule by hostname", script.contains("luminaMatchedRule"))
+        assertTrue("honours include overrides", script.contains("__rule.include"))
+        assertTrue("honours strip filters", script.contains("__rule.strip"))
+        assertTrue("gates blocks on strip", script.contains("isStripped(el)"))
+    }
+
+    @Test
+    fun `default build inlines an empty rules array`() {
+        assertTrue("default has no overrides", script.contains("var __luminaRules = [];"))
+    }
+
+    @Test
+    fun `a real ruleset is inlined verbatim and stays flatten-safe`() {
+        val rules =
+            """[{"match":["example.com"],"include":[".article-body"],"strip":[".ad","aside"]}]"""
+        val withRules = ReaderExtractor.buildReaderExtractorScript(rules)
+        assertTrue("rules inlined verbatim", withRules.contains("var __luminaRules = $rules;"))
+        assertFalse("still a single line", withRules.contains("\n"))
+        assertFalse("a `//` would eat the flattened script", withRules.contains("//"))
+    }
 }

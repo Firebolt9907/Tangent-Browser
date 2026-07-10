@@ -31,7 +31,7 @@ import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import com.firebolt9907.luminabrowser.ui.components.Favicon
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.delay
@@ -63,6 +63,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.animation.Crossfade
+import androidx.compose.material.icons.filled.Warning
+
 
 @Composable
 fun ReaderView(
@@ -198,8 +203,8 @@ fun ReaderView(
                 "register callback: target=${captureTarget?.javaClass?.simpleName} host=${hostView.javaClass.simpleName}",
             )
             captureTarget?.setScrollCaptureCallback(callback)
-            captureTarget?.scrollCaptureHint = android.view.View.SCROLL_CAPTURE_HINT_INCLUDE
-            hostView.scrollCaptureHint = android.view.View.SCROLL_CAPTURE_HINT_EXCLUDE
+            captureTarget?.scrollCaptureHint = android.view.View.SCROLL_CAPTURE_HINT_INCLUDE or android.view.View.SCROLL_CAPTURE_HINT_EXCLUDE_DESCENDANTS
+            hostView.scrollCaptureHint = android.view.View.SCROLL_CAPTURE_HINT_EXCLUDE_DESCENDANTS
             onDispose {
                 captureTarget?.setScrollCaptureCallback(null)
                 captureTarget?.scrollCaptureHint = android.view.View.SCROLL_CAPTURE_HINT_AUTO
@@ -315,8 +320,8 @@ fun ReaderView(
                             .fillMaxWidth()
                             .height(1.dp)
                             .background(borderColor)
-                            .padding(bottom = 16.dp)
                     )
+                    Spacer(Modifier.height(16.dp))
                     // Author name — larger and bolder than the old muted italic line.
                     article.byline?.let { byline ->
                         Text(
@@ -357,8 +362,12 @@ fun ReaderView(
                 }
             }
 
+            val groupedBlocks = remember(article.blocks) {
+                groupBlocksForRendering(article.blocks)
+            }
+
             // Article Content
-            article.blocks.forEach { block ->
+            groupedBlocks.forEach { block ->
                 when (block) {
                     is ReaderBlock.Paragraph -> {
                         if (block.links.isNotEmpty()) {
@@ -565,7 +574,7 @@ fun ReaderView(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 // Indent nested list items so sub-lists read as a hierarchy.
-                                .padding(start = 16.dp + (block.depth * 20).dp, bottom = 10.dp)
+                                .padding(start = 16.dp + (block.depth * 20).dp, bottom = 18.dp)
                         ) {
                             // Nested unordered items use a hollow bullet to distinguish levels.
                             val prefix = if (block.ordered) "${block.index + 1}. " else if (block.depth > 0) "◦ " else "• "
@@ -605,7 +614,7 @@ fun ReaderView(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 12.dp)
+                                .padding(top = 12.dp, bottom = 24.dp)
                         ) {
                             val imageRequest = readerImageRequest(context, block.src, article.sourceUrl)
                             // Reserve the image's intrinsic aspect ratio (when known) so the
@@ -642,17 +651,146 @@ fun ReaderView(
                         }
                         } // if (!imageFailed)
                     }
+                    is CarouselBlock -> {
+                        val images = block.images
+                        val pagerState = rememberPagerState(pageCount = { images.size })
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 12.dp, bottom = 24.dp)
+                        ) {
+                            val aspectRatios = images.mapNotNull { img ->
+                                if (img.width != null && img.height != null && img.width > 0 && img.height > 0) {
+                                    img.width.toFloat() / img.height.toFloat()
+                                } else {
+                                    null
+                                }
+                            }
+                            val carouselAspectRatio = aspectRatios.firstOrNull() ?: 1.5f
+                            
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(carouselAspectRatio)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(codeBackgroundColor)
+                            ) {
+                                HorizontalPager(
+                                    state = pagerState,
+                                    modifier = Modifier.fillMaxSize()
+                                ) { pageIndex ->
+                                    val img = images[pageIndex]
+                                    val context = LocalContext.current
+                                    var imageFailed by remember(img.src) { mutableStateOf(false) }
+                                    
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clickable { zoomedImage = img.src },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (imageFailed) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.Center,
+                                                modifier = Modifier.padding(16.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Warning,
+                                                    contentDescription = "Failed to load image",
+                                                    tint = mutedTextColor,
+                                                    modifier = Modifier.size(48.dp)
+                                                )
+                                                Spacer(Modifier.height(8.dp))
+                                                Text(
+                                                    text = "Image failed to load",
+                                                    fontSize = (14.sp * scale),
+                                                    color = mutedTextColor,
+                                                    fontFamily = fontFamily
+                                                )
+                                            }
+                                        } else {
+                                            AsyncImage(
+                                                model = readerImageRequest(context, img.src, article.sourceUrl),
+                                                contentDescription = img.caption,
+                                                contentScale = ContentScale.Fit,
+                                                onError = { imageFailed = true },
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Page Counter Pill (Top Right)
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(12.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color.Black.copy(alpha = 0.6f))
+                                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = "${pagerState.currentPage + 1} / ${images.size}",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = fontFamily
+                                    )
+                                }
+
+                                // Interactive Pill Dot Indicator (Bottom Center)
+                                Row(
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .padding(bottom = 12.dp)
+                                        .background(
+                                            color = Color.Black.copy(alpha = 0.3f),
+                                            shape = RoundedCornerShape(10.dp)
+                                        )
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    repeat(images.size) { index ->
+                                        val active = pagerState.currentPage == index
+                                        val width = if (active) 12.dp else 6.dp
+                                        val color = if (active) Color.White else Color.White.copy(alpha = 0.5f)
+                                        Box(
+                                            modifier = Modifier
+                                                .padding(horizontal = 2.5.dp)
+                                                .size(width = width, height = 6.dp)
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(color)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Dynamic Caption Crossfade Below Image
+                            val currentImage = images[pagerState.currentPage]
+                            Crossfade(targetState = currentImage.caption) { caption ->
+                                caption?.let { text ->
+                                    Text(
+                                        text = text,
+                                        fontSize = (13.sp * scale),
+                                        lineHeight = (18.sp * scale),
+                                        fontStyle = FontStyle.Italic,
+                                        fontFamily = fontFamily,
+                                        color = mutedTextColor,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 8.dp, start = 4.dp, end = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
             // Site attribution footer — "Article provided by [favicon] TechCrunch".
-            val attributionHost = remember(article.sourceUrl) {
-                article.sourceUrl?.let { url ->
-                    runCatching {
-                        java.net.URI(url).host?.removePrefix("www.")?.lowercase()
-                    }.getOrNull()
-                }
-            }
+            val attributionHost = remember(article.sourceUrl) { readerHost(article.sourceUrl) }
             if (attributionHost != null) {
                 Spacer(Modifier.height(32.dp))
                 Box(
@@ -667,21 +805,7 @@ fun ReaderView(
                         .padding(top = 16.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val context = LocalContext.current
-                    val faviconUrl = remember(attributionHost) {
-                        "https://$attributionHost/favicon.ico"
-                    }
-                    AsyncImage(
-                        model = ImageRequest.Builder(context)
-                            .data(faviconUrl)
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = attributionHost,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .size(16.dp)
-                            .clip(RoundedCornerShape(3.dp)),
-                    )
+                    Favicon(url = "https://$attributionHost", size = 16.dp)
                     Spacer(Modifier.width(6.dp))
                     Text(
                         text = "Article provided by",
@@ -763,3 +887,33 @@ fun ReaderView(
         )
     }
 }
+
+private data class CarouselBlock(val images: List<ReaderBlock.Image>)
+
+private fun groupBlocksForRendering(blocks: List<ReaderBlock>): List<Any> {
+    val result = mutableListOf<Any>()
+    val tempImages = mutableListOf<ReaderBlock.Image>()
+
+    val flushImages = {
+        if (tempImages.isNotEmpty()) {
+            if (tempImages.size == 1) {
+                result.add(tempImages[0])
+            } else {
+                result.add(CarouselBlock(tempImages.toList()))
+            }
+            tempImages.clear()
+        }
+    }
+
+    for (block in blocks) {
+        if (block is ReaderBlock.Image) {
+            tempImages.add(block)
+        } else {
+            flushImages()
+            result.add(block)
+        }
+    }
+    flushImages()
+    return result
+}
+

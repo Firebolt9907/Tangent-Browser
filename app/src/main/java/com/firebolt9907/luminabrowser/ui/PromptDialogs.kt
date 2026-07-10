@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -197,18 +198,23 @@ internal fun AuthenticationDialog(
     )
 }
 
+/**
+ * A tap-to-pick list dialog used by both identity-credential steps (provider selection and
+ * account/passkey selection) — they were identical apart from the title.
+ */
 @Composable
-internal fun IdentityCredentialProviderDialog(
-    providers: List<String>,
+internal fun IdentityCredentialListDialog(
+    title: String,
+    items: List<String>,
     onConfirm: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select credential provider") },
+        title = { Text(title) },
         text = {
             Column {
-                providers.forEachIndexed { index, name ->
+                items.forEachIndexed { index, name ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -216,37 +222,6 @@ internal fun IdentityCredentialProviderDialog(
                             .padding(vertical = 12.dp),
                     ) {
                         Text(name, style = MaterialTheme.typography.bodyLarge)
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-    )
-}
-
-@Composable
-internal fun IdentityCredentialAccountDialog(
-    accounts: List<String>,
-    providerName: String,
-    onConfirm: (Int) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Select passkey") },
-        text = {
-            Column {
-                accounts.forEachIndexed { index, account ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onConfirm(index) }
-                            .padding(vertical = 12.dp),
-                    ) {
-                        Text(account, style = MaterialTheme.typography.bodyLarge)
                     }
                 }
             }
@@ -283,12 +258,13 @@ internal fun IdentityCredentialPrivacyPolicyDialog(
     )
 }
 
+/** The shared bottom-sheet shell for the three `<select>`/choice pickers below. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun SingleChoiceDialog(
-    choices: List<Choice>,
-    onConfirm: (Choice) -> Unit,
+private fun ChoiceSheet(
+    title: String?,
     onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -298,23 +274,35 @@ internal fun SingleChoiceDialog(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
         ) {
-            Text(
-                text = "Choose an option",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
-            ChoiceItems(choices, indicator = { choice, onClick ->
-                RadioButton(
-                    selected = choice.selected,
-                    onClick = onClick,
-                    enabled = choice.enable,
+            if (title != null) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(bottom = 8.dp),
                 )
-            }, onSelect = onConfirm)
+            }
+            content()
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun SingleChoiceDialog(
+    choices: List<Choice>,
+    onConfirm: (Choice) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ChoiceSheet(title = "Choose an option", onDismiss = onDismiss) {
+        ChoiceItems(choices, indicator = { choice, onClick ->
+            RadioButton(
+                selected = choice.selected,
+                onClick = onClick,
+                enabled = choice.enable,
+            )
+        }, onSelect = onConfirm)
+    }
+}
+
 @Composable
 internal fun MultipleChoiceDialog(
     choices: List<Choice>,
@@ -323,62 +311,40 @@ internal fun MultipleChoiceDialog(
 ) {
     val selected = remember { mutableStateOf(choices.filter { it.selected }.toMutableSet()) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-        ) {
-            Text(
-                text = "Select options",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(bottom = 8.dp),
+    ChoiceSheet(title = "Select options", onDismiss = onDismiss) {
+        ChoiceItems(choices, indicator = { choice, onClick ->
+            Checkbox(
+                checked = choice in selected.value,
+                onCheckedChange = { checked ->
+                    if (checked) selected.value.add(choice)
+                    else selected.value.remove(choice)
+                },
+                enabled = choice.enable,
             )
-            ChoiceItems(choices, indicator = { choice, onClick ->
-                Checkbox(
-                    checked = choice in selected.value,
-                    onCheckedChange = { checked ->
-                        if (checked) selected.value.add(choice)
-                        else selected.value.remove(choice)
-                    },
-                    enabled = choice.enable,
-                )
-            }, onSelect = { choice ->
-                if (choice in selected.value) selected.value.remove(choice)
-                else selected.value.add(choice)
-            })
-            Spacer(Modifier.height(16.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextButton(onClick = onDismiss) { Text("Cancel") }
-                Spacer(Modifier.width(8.dp))
-                TextButton(onClick = { onConfirm(selected.value.toTypedArray()) }) { Text("OK") }
-            }
+        }, onSelect = { choice ->
+            if (choice in selected.value) selected.value.remove(choice)
+            else selected.value.add(choice)
+        })
+        Spacer(Modifier.height(16.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = { onConfirm(selected.value.toTypedArray()) }) { Text("OK") }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun MenuChoiceDialog(
     choices: List<Choice>,
     onConfirm: (Choice) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-        ) {
-            ChoiceItems(choices, indicator = { _, _ -> }, onSelect = onConfirm)
-        }
+    ChoiceSheet(title = null, onDismiss = onDismiss) {
+        ChoiceItems(choices, indicator = { _, _ -> }, onSelect = onConfirm)
     }
 }
 

@@ -66,18 +66,19 @@ fun PromptHandler(engineSession: EngineSession?) {
 
     when (val request = promptRequest) {
         is PromptRequest.IdentityCredential.SelectProvider -> {
-            IdentityCredentialProviderDialog(
-                providers = request.providers.map { it.name },
+            IdentityCredentialListDialog(
+                title = "Select credential provider",
+                items = request.providers.map { it.name },
                 onConfirm = { index -> request.onConfirm(request.providers[index]); promptRequest = null },
                 onDismiss = { request.onDismiss(); promptRequest = null },
             )
         }
         is PromptRequest.IdentityCredential.SelectAccount -> {
-            IdentityCredentialAccountDialog(
-                accounts = request.accounts.map {
+            IdentityCredentialListDialog(
+                title = "Select passkey",
+                items = request.accounts.map {
                     listOfNotNull(it.name, it.email).filter { it.isNotBlank() }.joinToString(" — ")
                 },
-                providerName = request.provider.name,
                 onConfirm = { index -> request.onConfirm(request.accounts[index]); promptRequest = null },
                 onDismiss = { request.onDismiss(); promptRequest = null },
             )

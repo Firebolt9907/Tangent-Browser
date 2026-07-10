@@ -2270,11 +2270,8 @@ fun LuminaRoot(
                             nextTab?.content?.url
                         }
                         val adjacentPad = topPadDpFor(adjacentUrl)
-                        val img = remember(bitmap) { bitmap.asImageBitmap() }
-                        Image(
-                            bitmap = img,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
+                        SnapshotImage(
+                            bitmap = bitmap,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(top = adjacentPad)
@@ -2307,11 +2304,8 @@ fun LuminaRoot(
                                 .background(MaterialTheme.colorScheme.background),
                         )
                     } else {
-                        val img = remember(movingCurrentSnapshot) { movingCurrentSnapshot.asImageBitmap() }
-                        Image(
-                            bitmap = img,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
+                        SnapshotImage(
+                            bitmap = movingCurrentSnapshot,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(top = currentPad)
@@ -2327,11 +2321,8 @@ fun LuminaRoot(
                             .background(MaterialTheme.colorScheme.background),
                     )
                     (activePredictiveBackSnapshot ?: predictiveBackSnapshot)?.let { bitmap ->
-                        val img = remember(bitmap) { bitmap.asImageBitmap() }
-                        Image(
-                            bitmap = img,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
+                        SnapshotImage(
+                            bitmap = bitmap,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
@@ -2358,11 +2349,8 @@ fun LuminaRoot(
                         )
                     }
                     gestureCurrentSnapshot?.let { bitmap ->
-                        val img = remember(bitmap) { bitmap.asImageBitmap() }
-                        Image(
-                            bitmap = img,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
+                        SnapshotImage(
+                            bitmap = bitmap,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
@@ -2390,11 +2378,8 @@ fun LuminaRoot(
                 }
                 stickyIncomingSnapshot?.let { bitmap ->
                     val pad = with(density) { stickyIncomingTopPadPx.toDp() }
-                    val img = remember(bitmap) { bitmap.asImageBitmap() }
-                    Image(
-                        bitmap = img,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
+                    SnapshotImage(
+                        bitmap = bitmap,
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(top = pad)
@@ -2408,11 +2393,8 @@ fun LuminaRoot(
                     val fadingBitmap = fadingCoverBitmap
                     val pad = with(density) { fadingCoverTopPadPx.toDp() }
                     if (fadingBitmap != null) {
-                        val img = remember(fadingBitmap) { fadingBitmap.asImageBitmap() }
-                        Image(
-                            bitmap = img,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
+                        SnapshotImage(
+                            bitmap = fadingBitmap,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(top = pad)
@@ -2438,11 +2420,8 @@ fun LuminaRoot(
                     )
                     incomingSnapshotBitmap?.let { bitmap ->
                         val pad = with(density) { incomingSnapshotTopPadPx.toDp() }
-                        val img = remember(bitmap) { bitmap.asImageBitmap() }
-                        Image(
-                            bitmap = img,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
+                        SnapshotImage(
+                            bitmap = bitmap,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(top = pad)
@@ -2478,11 +2457,8 @@ fun LuminaRoot(
                         )
                     }
                     leavingSnapshotBitmap?.let { bitmap ->
-                        val img = remember(bitmap) { bitmap.asImageBitmap() }
-                        Image(
-                            bitmap = img,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
+                        SnapshotImage(
+                            bitmap = bitmap,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(top = leavingPad)
@@ -2492,11 +2468,8 @@ fun LuminaRoot(
                     }
                 }
                 stickyBackCoverSnapshot?.let { bitmap ->
-                    val img = remember(bitmap) { bitmap.asImageBitmap() }
-                    Image(
-                        bitmap = img,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
+                    SnapshotImage(
+                        bitmap = bitmap,
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(switchPaneShape),
@@ -3471,6 +3444,23 @@ private fun PullRefreshLine(
             )
         }
     }
+}
+
+/**
+ * A page-snapshot overlay layer — the remember(asImageBitmap) + cropped Image idiom every
+ * switch/predictive-back/sticky-cover overlay uses. Call sites pass their full modifier chain
+ * (fillMaxSize/padding/graphicsLayer/clip) unchanged: the draw-phase transform contracts live at
+ * the call sites, not here.
+ */
+@Composable
+private fun SnapshotImage(bitmap: android.graphics.Bitmap, modifier: Modifier = Modifier) {
+    val img = remember(bitmap) { bitmap.asImageBitmap() }
+    Image(
+        bitmap = img,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = modifier,
+    )
 }
 
 /**

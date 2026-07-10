@@ -53,9 +53,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -64,6 +62,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -121,10 +120,17 @@ fun TabGridOverlay(
     releasePositions: List<Triple<Float, Float, Float>>? = null,
     snapshotCacheVersion: Int = 0,
     snapshotProvider: (String) -> Bitmap? = { null },
+    /**
+     * Measured height (px) of the floating bottom controls — nav-bar inset + toolbar + the handoff
+     * banner when shown. The last row's bottom clearance is derived from this so it tracks button vs
+     * gesture navigation and the banner's presence. 0 until first measured; falls back to a static
+     * estimate for that first frame.
+     */
+    bottomControlsHeightPx: Int = 0,
 ) {
     if (containerSize.width <= 0 || containerSize.height <= 0 || tabs.isEmpty()) return
     val density = LocalDensity.current
-    val haptics = LocalHapticFeedback.current
+    val haptics = rememberLuminaHaptics()
     val coroutineScope = rememberCoroutineScope()
     val swipeOffsets = remember { mutableStateMapOf<String, Float>() }
 
@@ -135,10 +141,18 @@ fun TabGridOverlay(
 
     val sideMarginPx = with(density) { GridSideMarginDp.toPx() }
     val topMarginPx = with(density) { GridTopMarginDp.toPx() }
-    // Add the system navigation-bar inset so the last row scrolls clear of the gesture bar / taskbar
-    // instead of being tucked under it.
     val navBarPx = WindowInsets.navigationBars.getBottom(density)
-    val bottomMarginPx = with(density) { GridBottomMarginDp.toPx() } + navBarPx
+    // Clear the last row of the floating bottom controls. `bottomControlsHeightPx` already includes
+    // the nav-bar inset (the controls are laid out inside navigationBarsPadding), so it adapts to
+    // button vs gesture navigation and grows when the handoff banner is showing — plus a small gap
+    // for breathing room. Before the controls are first measured, fall back to a static estimate
+    // (constant margin + nav bar) so the very first opened frame isn't under-padded.
+    val bottomGapPx = with(density) { GridBottomMarginDp.toPx() }
+    val bottomMarginPx = if (bottomControlsHeightPx > 0) {
+        bottomControlsHeightPx + bottomGapPx
+    } else {
+        bottomGapPx + navBarPx
+    }
     val gapPx = with(density) { GridGapDp.toPx() }
     val horizontalGapPx = gapPx
     val verticalGapPx = with(density) { 36.dp.toPx() } // extra space for domain name/label below the card
@@ -412,7 +426,7 @@ fun TabGridOverlay(
                                 enabled = cellsClickable,
                                 onClickLabel = "Switch to this tab",
                             ) {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                haptics.select()
                                 onTabSelected(tab.id)
                             }
                             .pointerInput(scrollEnabled, tabs.size) {
@@ -684,7 +698,7 @@ fun TabGridOverlay(
                                     .size(44.dp)
                                     .clip(CircleShape)
                                     .clickable(enabled = cellsClickable) {
-                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        haptics.remove()
                                         onCloseTab(tab.id)
                                     },
                                 contentAlignment = Alignment.Center,
@@ -744,7 +758,7 @@ fun TabGridOverlay(
                                 }
                                 .background(MaterialTheme.colorScheme.surfaceContainer)
                                 .clickable(enabled = cellsClickable) {
-                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    haptics.create()
                                     onNewTab()
                                 },
                             contentAlignment = Alignment.Center,

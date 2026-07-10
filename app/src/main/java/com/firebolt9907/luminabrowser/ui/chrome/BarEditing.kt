@@ -93,8 +93,11 @@ internal fun BarEditing(
             .fillMaxWidth()
             .padding(horizontal = 20.dp),
         shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        // A distinctly lighter fill than the address sheet (`surface`) behind it, so the input reads
+        // as its own raised pill floating above the suggestions rather than blending into the sheet.
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
         tonalElevation = 6.dp,
+        shadowElevation = 8.dp,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),

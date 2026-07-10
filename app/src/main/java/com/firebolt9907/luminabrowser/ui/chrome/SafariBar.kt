@@ -75,7 +75,8 @@ fun SafariBar(
     onShareTap: () -> Unit = {},
     onBookmarksTap: () -> Unit = {},
     onTabsTap: () -> Unit = {},
-    pillTranslationX: Float = 0f,
+    pillTranslationX: () -> Float = { 0f },
+    pillScale: () -> Float = { 1f },
     modifier: Modifier = Modifier,
 ) {
     val isToolbarVisible = showBottomToolbar && interactive && state.mode != BarMode.Editing
@@ -108,7 +109,10 @@ fun SafariBar(
                 modifier = Modifier
                     .graphicsLayer {
                         val toolbarHeightPx = toolbarHeight.toPx()
-                        translationX = pillTranslationX
+                        val scale = pillScale()
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = pillTranslationX()
                         translationY = -toolbarHeightPx * (1f - collapseProgress)
                     },
                 transitionSpec = {

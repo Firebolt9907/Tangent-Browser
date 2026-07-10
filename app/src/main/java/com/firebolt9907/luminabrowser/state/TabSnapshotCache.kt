@@ -20,7 +20,13 @@ import kotlinx.coroutines.launch
  */
 class TabSnapshotCache(
     cacheDir: File,
-    private val maxEntries: Int = 16,
+    // Disk LRU size. Must comfortably exceed both the in-memory cap below AND the number of tabs a
+    // user realistically keeps open — the all-tabs grid renders one thumbnail per tab from disk, and
+    // `pruneDisk` deletes every JPEG beyond this many. A too-small value (this was 16, i.e. *below*
+    // the memory cap) permanently strands older tabs' thumbnails: the file is gone, the disk decode
+    // misses, and the key is parked in `missedDiskKeys` so it is never retried. Each entry is a
+    // ≤1080px-wide JPEG (~100–250 KB), so a few hundred is only tens of MB on disk.
+    private val maxEntries: Int = 256,
     // Resident bitmaps dominate the app's heap, so the in-memory LRU is capped well below the disk
     // LRU. Evicted entries reload transparently from disk on the next [get]. Keep enough for the
     // foreground tab plus its immediate neighbours (used as predictive-back / tab-switch covers).

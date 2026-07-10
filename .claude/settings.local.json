@@ -35,5 +35,8 @@
       "Bash(./gradlew :app:compileReleaseKotlin -q)",
       "Bash(./gradlew :app:installRelease)"
     ]
+  },
+  "worktree": {
+    "bgIsolation": "none"
   }
 }

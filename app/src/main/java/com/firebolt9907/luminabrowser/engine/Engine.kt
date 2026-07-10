@@ -81,7 +81,15 @@ class LuminaBrowserComponents(application: Application) {
     val sitePreferencesStore = SitePreferencesStore(application)
     val addonController = AddonController(engine, scope)
     val loginsStorage = PlacesLoginsStorage(application)
-    val firefoxSyncController = FirefoxSyncController(application, store, scope, loginsStorage)
+    val firefoxSyncController = FirefoxSyncController(
+        application,
+        store,
+        scope,
+        loginsStorage,
+        // A tab pushed here via Firefox "Send tab" opens as a new selected tab (goes through the
+        // single normalizeUrl entry point in GeckoTabRepository).
+        onSendTabReceived = { url, title -> tabRepository.addTab(url = url, title = title) },
+    )
     val sitePermissionController =
         com.firebolt9907.luminabrowser.permissions.SitePermissionController(application)
     // Bounds live GeckoSessions to the foreground tab + a few recent ones so many open tabs stay
@@ -309,6 +317,12 @@ private fun buildRuntime(application: Application, prefs: GlobalPreferencesStore
  *   origin pulls and, the moment a navigation to that origin starts, preconnects/prefetches them
  *   from local history. This is what makes a *revisited* site load noticeably faster (the browser
  *   is already fetching the CSS/JS/images before the HTML finishes parsing).
+ * - The remaining `content.*`/`gfx.*`/`media.*`/`image.*`/`network.*` block ports Betterfox's
+ *   "Fastfox" performance tuning (yokoffing/Betterfox), filtered to prefs that make sense on mobile
+ *   GeckoView: reflow batching, larger Skia font / media / image caches, higher connection ceilings
+ *   with request pacing off, and fatter DNS + TLS-token caches so revisits skip DNS/handshake cost.
+ *   Desktop-only mousewheel/scroll-physics ("Smoothfox") prefs are intentionally excluded — touch
+ *   scrolling is driven by APZ and those prefs would fight it.
  */
 private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesStore): String? = try {
     val capacityKb = prefs.httpCacheSizeMb.toLong() * 1024L
@@ -326,6 +340,42 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           network.http.http3.enable: true
           network.http.max-persistent-connections-per-server: 10
           network.dns.disablePrefetch: false
+          # --- Betterfox "Fastfox" (mobile-appropriate subset) ---
+          # General: batch layout notifications during load into ~100ms slices so a busy
+          # page reflows fewer times while parsing (fewer, larger paints = faster to done).
+          content.notify.interval: 100000
+          # GFX: give Skia a larger in-process font cache so repeated glyph rasterization
+          # (common on text-heavy pages / infinite scroll) hits the cache instead of redrawing.
+          gfx.content.skia-font-cache-size: 20
+          # Autoplay activation policy: block audible autoplay even after the page is interacted
+          # with. Policy 2 ("user gesture activation") means only a gesture *directly on the media
+          # element* lifts the autoplay block — the default policy 0 ("sticky activation") lets any
+          # tap/scroll to read an article count as activation, which then unmutes a lurking article/
+          # ad video. This only takes effect while autoplay is blocked (the "Block autoplaying media"
+          # setting / mediaPlaybackRequiresUserGesture=true); muted autoplay and tap-to-play are
+          # unaffected. Pairs with SitePermissionController rejecting ContentAutoPlayAudible.
+          media.autoplay.blocking_policy: 2
+          # Media cache: larger in-memory media buffer + more aggressive readahead so audio/
+          # video streams buffer further ahead and re-seek without re-fetching.
+          media.memory_cache_max_size: 65536
+          media.cache_readahead_limit: 7200
+          media.cache_resume_threshold: 3600
+          # Image cache: decode images in larger chunks so large images appear sooner.
+          image.mem.decode_bytes_at_a_time: 32768
+          # Network: raise connection ceilings and stop artificially pacing request bursts so
+          # asset-heavy pages open all their sockets up front instead of trickling requests.
+          network.http.max-connections: 1800
+          network.http.max-urgent-start-excessive-connections-per-host: 5
+          network.http.pacing.requests.enabled: false
+          # Network caching: keep far more resolved DNS entries and TLS session tokens around so
+          # revisits skip the DNS round-trip and resume TLS (0-RTT) instead of a full handshake.
+          network.dnsCacheEntries: 10000
+          network.dnsCacheExpiration: 3600
+          network.ssl_tokens_cache_capacity: 10240
+          # Speculative loading: allow DNS prefetch to fire from HTTPS pages and honor
+          # <link rel=prefetch> hints so likely next-hops are warmed before the tap.
+          network.dns.disablePrefetchFromHTTPS: false
+          network.prefetch-next: true
         """.trimIndent() + "\n",
     )
     file.absolutePath

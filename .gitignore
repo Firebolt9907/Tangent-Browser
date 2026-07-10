@@ -13,3 +13,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Firebase Cloud Messaging config for FxA push. Local-only: the build degrades gracefully to the
+# foreground sync-poll fallback when absent (see AGENTS.md → FxA push). Remove this line if you
+# want push to build on CI / other machines.
+/app/google-services.json

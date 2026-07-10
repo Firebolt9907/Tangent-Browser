@@ -42,6 +42,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -59,19 +60,18 @@ import com.firebolt9907.luminabrowser.ui.components.EmptyState
 fun AddonsSheet(
     controller: AddonController,
     onDismiss: () -> Unit,
-    bottomInsetDp: Dp = 0.dp,
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
     val pendingPrompt = state.pendingPrompt
 
     ModalBottomSheet(
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        onDismissRequest = {
-            pendingPrompt?.let { controller.respondToPrompt(it.id, false) }
-            onDismiss()
-        },
-        contentWindowInsets = { WindowInsets(bottom = bottomInsetDp) },
-    ) {
+         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+         onDismissRequest = {
+             pendingPrompt?.let { controller.respondToPrompt(it.id, false) }
+             onDismiss()
+         },
+         contentWindowInsets = { WindowInsets(0.dp) },
+     ) {
         if (pendingPrompt != null) {
             AddonPermissionSheetContent(
                 prompt = pendingPrompt,
@@ -203,6 +203,7 @@ private fun AddonRow(
     onUninstall: () -> Unit,
 ) {
     var pendingRemoval by remember { mutableStateOf(false) }
+    val haptics = rememberLuminaHaptics()
     ListItem(
         headlineContent = {
             Text(
@@ -228,7 +229,10 @@ private fun AddonRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(
                     checked = addon.isEnabled,
-                    onCheckedChange = onEnabledChange,
+                    onCheckedChange = {
+                        haptics.toggle(it)
+                        onEnabledChange(it)
+                    },
                 )
                 if (addon.isEnabled && addon.hasQuickSettings) {
                     IconButton(onClick = onOpenQuickSettings) {
@@ -254,6 +258,7 @@ private fun AddonRow(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        haptics.remove()
                         pendingRemoval = false
                         onUninstall()
                     },

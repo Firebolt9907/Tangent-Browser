@@ -4,6 +4,16 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// FCM push (instant remote-tab / Send-Tab delivery) is opt-in: the Google Services plugin is only
+// applied when a real google-services.json is present. Without it the app still builds and runs —
+// push stays inactive and FirefoxSyncController falls back to its foreground polling loop. Drop a
+// Firebase config for applicationId "com.firebolt9907.luminabrowser" into app/google-services.json
+// to activate push. See AGENTS.md / IMPLEMENTATION.md.
+val firebaseConfigured = file("google-services.json").exists()
+if (firebaseConfigured) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "com.firebolt9907.luminabrowser"
     compileSdk = 36
@@ -76,6 +86,7 @@ dependencies {
     implementation(libs.mozilla.concept.engine)
     implementation(libs.mozilla.concept.sync)
     implementation(libs.mozilla.concept.storage)
+    implementation(libs.mozilla.concept.push)
     implementation(libs.mozilla.feature.session)
     implementation(libs.mozilla.feature.downloads)
     implementation(libs.mozilla.feature.tabs)
@@ -83,6 +94,9 @@ dependencies {
     implementation(libs.mozilla.feature.syncedtabs)
     implementation(libs.mozilla.lib.fetch.httpurlconnection)
     implementation(libs.mozilla.service.firefox.accounts)
+    implementation(libs.mozilla.feature.push)
+    implementation(libs.mozilla.feature.accounts.push)
+    implementation(libs.mozilla.lib.push.firebase)
     implementation(libs.mozilla.support.appservices)
     implementation(libs.mozilla.appservices.logins)
     implementation(libs.mozilla.telemetry.glean)

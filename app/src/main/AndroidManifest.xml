@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Semantic haptics (LuminaHaptics) drive the Vibrator directly for soft-rumble/tick textures. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Required by AndroidDownloadManager on API 28 and below to write to shared Downloads. -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -136,6 +138,20 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.support.customtabs.action.CustomTabsService" />
+            </intent-filter>
+        </service>
+
+        <!--
+          FxA push transport (Firebase Cloud Messaging). Delivers Send-Tab and remote-tab-change
+          notifications so the account re-syncs the moment another device changes its open tabs,
+          instead of waiting for the foreground poll. Inert unless a real google-services.json is
+          supplied at build time (see FirefoxSyncController.initPush / app/build.gradle.kts).
+        -->
+        <service
+            android:name=".sync.LuminaFirebasePushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
 

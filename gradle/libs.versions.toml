@@ -15,6 +15,7 @@ mozillaComponents = "147.0.4"
 androidxCredentials = "1.5.0"
 glean = "66.2.0"
 coil = "2.7.0"
+googleServices = "4.4.2"
 
 [libraries]
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
@@ -44,6 +45,7 @@ mozilla-browser-storage-sync = { group = "org.mozilla.components", name = "brows
 mozilla-concept-engine = { group = "org.mozilla.components", name = "concept-engine", version.ref = "mozillaComponents" }
 mozilla-concept-sync = { group = "org.mozilla.components", name = "concept-sync", version.ref = "mozillaComponents" }
 mozilla-concept-storage = { group = "org.mozilla.components", name = "concept-storage", version.ref = "mozillaComponents" }
+mozilla-concept-push = { group = "org.mozilla.components", name = "concept-push", version.ref = "mozillaComponents" }
 mozilla-feature-session = { group = "org.mozilla.components", name = "feature-session", version.ref = "mozillaComponents" }
 mozilla-feature-downloads = { group = "org.mozilla.components", name = "feature-downloads", version.ref = "mozillaComponents" }
 mozilla-feature-tabs = { group = "org.mozilla.components", name = "feature-tabs", version.ref = "mozillaComponents" }
@@ -51,6 +53,9 @@ mozilla-feature-customtabs = { group = "org.mozilla.components", name = "feature
 mozilla-feature-syncedtabs = { group = "org.mozilla.components", name = "feature-syncedtabs", version.ref = "mozillaComponents" }
 mozilla-lib-fetch-httpurlconnection = { group = "org.mozilla.components", name = "lib-fetch-httpurlconnection", version.ref = "mozillaComponents" }
 mozilla-service-firefox-accounts = { group = "org.mozilla.components", name = "service-firefox-accounts", version.ref = "mozillaComponents" }
+mozilla-feature-push = { group = "org.mozilla.components", name = "feature-push", version.ref = "mozillaComponents" }
+mozilla-feature-accounts-push = { group = "org.mozilla.components", name = "feature-accounts-push", version.ref = "mozillaComponents" }
+mozilla-lib-push-firebase = { group = "org.mozilla.components", name = "lib-push-firebase", version.ref = "mozillaComponents" }
 mozilla-support-appservices = { group = "org.mozilla.components", name = "support-appservices", version.ref = "mozillaComponents" }
 mozilla-appservices-logins = { group = "org.mozilla.appservices", name = "logins", version = "147.0.1" }
 mozilla-telemetry-glean = { group = "org.mozilla.telemetry", name = "glean", version.ref = "glean" }
@@ -61,3 +66,4 @@ androidx-credentials-play-services-auth = { group = "androidx.credentials", name
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }

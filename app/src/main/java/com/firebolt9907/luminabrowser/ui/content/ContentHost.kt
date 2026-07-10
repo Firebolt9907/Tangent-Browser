@@ -49,6 +49,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+// How long to wait after an SPA (pushState) navigation before re-arming `isSafeToSnapshot`. Short
+// enough that on-demand captures (grid open / tab-switch) work almost immediately, long enough that
+// the re-arm lands after the transitional (outgoing) frame is gone rather than during it.
+private const val SpaSettleCaptureDelayMs = 350L
+
 @SuppressLint("ClickableViewAccessibility")
 @Composable
 fun ContentHost(
@@ -83,6 +88,7 @@ fun ContentHost(
     pageZoomFactor: Float = 1.0f,
     barCollapseProgress: Float = 0f,
     tabIsLoading: Boolean = false,
+    keyboardInsetPx: Int = 0,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -183,11 +189,21 @@ fun ContentHost(
     val compactPillPx = with(density) { 44.dp.roundToPx() }
     val collapseProgress = barCollapseProgress
     val expandedClippingPx = (bottomChromeInsetPx - barPaddingPx + navBarPx).coerceAtLeast(0)
-    val currentClippingPx = lerp(
+    // The amount of the bottom chrome currently obscuring the page: the full reserve when the bar is
+    // expanded, shrinking toward the compact-pill footprint as it collapses.
+    val currentObscuredPx = lerp(
         expandedClippingPx.toFloat(),
         (compactPillPx + navBarPx).toFloat(),
         collapseProgress,
     ).roundToInt().coerceAtLeast(0)
+    // GeckoView's dynamic-toolbar clipping baseline is `setDynamicToolbarMaxHeight` (the *max*
+    // reserve). `setVerticalClipping` is the CURRENT offset from that baseline, and must be 0 when
+    // the bar is fully shown and negative as it hides — passing the positive obscured height here
+    // makes Gecko reserve the toolbar twice, so the dynamic viewport (dvh / visualViewport) ends up
+    // one toolbar-height *shorter* than the small viewport (svh). See mozilla-components'
+    // EngineViewClippingBehavior: "the values should be negative because the baseline for clipping
+    // is bottom toolbar height."
+    val currentClippingPx = currentObscuredPx - expandedClippingPx
     SideEffect {
         if (bottomChromeInsetPx > 0) {
             engineView.setDynamicToolbarMaxHeight(expandedClippingPx)
@@ -258,7 +274,13 @@ fun ContentHost(
     }
 
     LaunchedEffect(engineView, currentSnapshotRequestId, tabId, pageUrl, engineSession) {
-        if (currentSnapshotRequestId <= 0 || tabId == null || engineSession == null || !isSafeToSnapshot) return@LaunchedEffect
+        // Deliberately NOT gated on `isSafeToSnapshot`: this fires only for explicit, user-initiated
+        // requests (predictive-back start, tab-switch drag, grid open) that need a snapshot of
+        // exactly what is on screen right now. After a same-document (SPA) navigation
+        // `isSafeToSnapshot` sits false until the delayed re-arm, and gating here on it meant the
+        // current page's live capture was skipped — so the gesture/grid cover fell back to the tab's
+        // previous (stale) bitmap, showing the previous page as if it were the current one.
+        if (currentSnapshotRequestId <= 0 || tabId == null || engineSession == null) return@LaunchedEffect
         val capturedUrl = pageUrl
         engineView.captureThumbnail { bitmap: android.graphics.Bitmap? ->
             if (bitmap != null) {
@@ -301,6 +323,8 @@ fun ContentHost(
         }
     }
 
+
+
     DisposableEffect(engineSession, topChromeInsetCssPx, tabId, topPaddingFixActive) {
         if (engineSession == null) {
             onDispose { }
@@ -312,11 +336,36 @@ fun ContentHost(
             var readerExtractedForCurrentLoad = false
             var currentUrl = pageUrl
             var capturedLeavingUrl: String? = null
+            // True while a genuine document load is in flight (real navigation), so the delayed
+            // SPA-settle pass below can tell a pushState navigation apart from a real load and stay
+            // out of the latter's way. Set by onLoadRequest / onLoadingStateChange.
+            var realLoadInProgress = false
+            val hostView = engineView.asView()
+            var spaSettleRunnable: Runnable? = null
             fun captureLeavingPage() {
                 if (currentUrl.isBlank() || currentUrl == "about:blank") return
                 if (capturedLeavingUrl == currentUrl) return
                 capturedLeavingUrl = currentUrl
                 captureSnapshot(capturingUrl = currentUrl)
+            }
+            // Re-arm snapshotting after an SPA (history.pushState) navigation. Such navigations fire
+            // ONLY onLocationChange — no loading-state toggle, no FCP — so nothing else flips
+            // `isSafeToSnapshot` back to true; left stuck false it would block the NEXT leaving-page
+            // capture and break the predictive-back chain, and block the on-demand current-page
+            // capture the grid/tab-switch relies on. We deliberately do NOT capture the arriving page
+            // proactively here: the client-side route often hasn't repainted yet, so a speculative
+            // capture stores the OUTGOING page's pixels under the new URL (the current tab then shows
+            // the previous page's thumbnail). The current page is instead captured live, on demand,
+            // when it's actually needed — grid open / tab-switch — by which point it has rendered.
+            // Skips when a real load is in flight; that path re-arms via its own callbacks.
+            fun scheduleSpaSnapshotRearm() {
+                spaSettleRunnable?.let(hostView::removeCallbacks)
+                val runnable = Runnable {
+                    spaSettleRunnable = null
+                    if (!realLoadInProgress) isSafeToSnapshot = true
+                }
+                spaSettleRunnable = runnable
+                hostView.postDelayed(runnable, SpaSettleCaptureDelayMs)
             }
             fun injectSpacer(force: Boolean = false) {
                 if (topChromeInsetCssPx <= 0) return
@@ -380,8 +429,14 @@ fun ContentHost(
                     android.util.Log.d("ReaderDbg", "onLocationChange tab=$tabId url=$url")
                     if (handleFirefoxAuthRedirect(url)) return
                     if (!url.startsWith("javascript:", ignoreCase = true)) {
-                        isSafeToSnapshot = false
                         val navigatedAway = url != currentUrl
+                        // Capture the page being left NOW, before `currentUrl` moves and before
+                        // `isSafeToSnapshot` is cleared. For an SPA (pushState) navigation this is the
+                        // only callback that fires, so it is the sole chance to snapshot the outgoing
+                        // page under its own URL — without it the previous history entry has no snapshot
+                        // and predictive-back reveals a blank cover (e.g. navigating through reddit web).
+                        if (navigatedAway) captureLeavingPage()
+                        isSafeToSnapshot = false
                         currentUrl = url
                         capturedLeavingUrl = null
                         injectedForCurrentLoad = false
@@ -395,6 +450,7 @@ fun ContentHost(
                                 com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.clearReaderState(tabId)
                             }
                         }
+                        scheduleSpaSnapshotRearm()
                     }
                 }
 
@@ -418,12 +474,14 @@ fun ContentHost(
                         return
                     }
                     if (loading) {
+                        realLoadInProgress = true
                         isSafeToSnapshot = false
                         captureLeavingPage()
                         injectedForCurrentLoad = false
                         amoInstallerInjectedForCurrentLoad = false
                         readerExtractedForCurrentLoad = false
                     } else {
+                        realLoadInProgress = false
                         isSafeToSnapshot = true
                         injectSpacer()
                         injectAmoInstaller(currentUrl)
@@ -471,6 +529,7 @@ fun ContentHost(
                 ) {
                     if (handleFirefoxAuthRedirect(url)) return
                     if (!triggeredByRedirect && currentUrl.isNotBlank() && currentUrl != url) {
+                        realLoadInProgress = true
                         captureLeavingPage()
                     }
                     if (installAddonRequest(url)) return
@@ -541,7 +600,10 @@ fun ContentHost(
             injectSpacer(force = true)
             injectAmoInstaller(currentUrl, force = true)
             triggerInitialReaderCheck()
-            onDispose { engineSession.unregister(observer) }
+            onDispose {
+                spaSettleRunnable?.let(hostView::removeCallbacks)
+                engineSession.unregister(observer)
+            }
         }
     }
 
@@ -550,12 +612,20 @@ fun ContentHost(
         engineSession.injectPageZoom(pageZoomFactor)
     }
 
+    // When a web-content keyboard is showing, shrink the EngineView so its bottom edge sits at the
+    // keyboard top. Edge-to-edge suppresses the window-level `adjustResize`, so GeckoView would
+    // otherwise stay full-height and Gecko's own IME handling pushes the focused input off-screen
+    // (the page shifts down by ~the keyboard height). Physically resizing the view gives Gecko the
+    // correct viewport height, so it re-centers / scrolls the focused input into the visible area.
+    val keyboardPad = with(density) { keyboardInsetPx.coerceAtLeast(0).toDp() }
     val engineModifier = if (topPaddingFixActive) {
         modifier
             .fillMaxSize()
-            .padding(top = with(density) { topChromeInsetPx.toDp() })
+            .padding(top = with(density) { topChromeInsetPx.toDp() }, bottom = keyboardPad)
     } else {
-        modifier.fillMaxSize()
+        modifier
+            .fillMaxSize()
+            .padding(bottom = keyboardPad)
     }
     AndroidView(
         factory = { pullContainer },
@@ -671,4 +741,3 @@ private fun android.content.Context.findActivity(): android.app.Activity? {
     }
     return null
 }
-

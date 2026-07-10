@@ -165,6 +165,63 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `click-through (pointer-events none) header with interactive children is still inset (youtube_com)`() {
+        // m.youtube.com's fixed masthead (ytm-mobile-topbar-renderer) is `pointer-events:none` so
+        // taps fall through its transparent regions; the real buttons inside re-enable
+        // `pointer-events:auto`. The old guard lumped `pointerEvents==='none'` in with
+        // display/visibility/opacity and skipped the whole header, so its buttons never got top
+        // padding and sat under the status bar. A pointer-events:none element must only be excluded
+        // when it is a true click-through scrim — i.e. it has NO interactive descendants.
+        val s = script()
+        assertFalse(
+            "pointer-events:none must not be a blanket exclusion anymore",
+            s.contains("opacity==='0'||cs.pointerEvents==='none')return false"),
+        )
+        assertTrue(
+            "pointer-events:none only excludes when there's no interactive content",
+            s.contains("cs.pointerEvents==='none'&&!el.querySelector("),
+        )
+        assertTrue(
+            "interactive-content probe covers real header controls",
+            s.contains("'a,button,input,select,textarea,[role=\"button\"],[role=\"link\"],[tabindex],[onclick]'"),
+        )
+    }
+
+    @Test
+    fun `out-of-flow top-band elements (absolute or fixed corner clusters) are shifted below the bar (google_com)`() {
+        // Google's homepage sign-in / apps cluster is position:absolute pinned to the top corner, so
+        // the flow spacer never moves it and isCandidate's 30%-width filter rejects it — it sat under
+        // the status bar. Any small fixed/absolute element painting inside the [0,topPx) band is now
+        // translated down by topPx (bandShift). Verified in a headless-Chrome harness against a
+        // reproduction of the cluster: it moved from top=0 to top=48.
+        val s = script()
+        assertTrue(
+            "absolute elements are now scanned, not just fixed/sticky",
+            s.contains("pos!=='fixed'&&pos!=='sticky'&&pos!=='absolute'"),
+        )
+        assertTrue("only elements intruding into the status-bar band are shifted", s.contains("rect.top<=topPx-2"))
+        assertTrue("the shift is a topPx translateY", s.contains("translateY('+topPx+'px)"))
+        assertTrue("original transform is saved and restored on collapse", s.contains("luminaOrigTransform"))
+        assertTrue("band shift is height-bounded so full overlays aren't translated", s.contains("rect.height<=160"))
+    }
+
+    @Test
+    fun `full-screen fixed overlay with top content is padded so its search input clears the bar (google_com search)`() {
+        // Tapping Google's search box opens a full-screen position:fixed overlay with the input at
+        // its top. It's too tall to be a header (isCandidate rejects it) and too tall for bandShift,
+        // so the input stayed under the status bar. A top-pinned fixed/absolute layer taller than the
+        // header cap, covering the width, whose in-flow content paints in the band now gets
+        // padding-top:topPx (applyOverlay). This also covers full-height fixed app-shell roots.
+        val s = script()
+        assertTrue(
+            "collects top-pinned oversized layers as overlays",
+            s.contains("rect.height>headerCap&&rect.width>=window.innerWidth*0.6"),
+        )
+        assertTrue("only pads overlays that actually have in-flow content in the band", s.contains("overlayHasBandContent"))
+        assertTrue("the overlay branch pads rather than translates", s.contains("function applyOverlay("))
+    }
+
+    @Test
     fun `scroll-padding-top targets both html and body scroll roots (iter 41)`() {
         // Anchor jumps must land below the inset header whether html OR body is the scroll
         // container; scroll-padding only affects where anchored scrolls land, never layout, so

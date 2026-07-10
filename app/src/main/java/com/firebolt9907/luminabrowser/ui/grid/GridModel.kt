@@ -23,7 +23,10 @@ import kotlin.math.min
 
 val GridSideMarginDp = 16.dp
 val GridTopMarginDp = 64.dp
-val GridBottomMarginDp = 32.dp
+// Breathing-room gap between the last grid row and the top of the floating bottom controls. The
+// controls' full measured height (which already includes the nav-bar inset, and the handoff banner
+// when shown) is added on top of this in Grid.kt, so this is only the gap — not the whole clearance.
+val GridBottomMarginDp = 24.dp
 val GridGapDp = 14.dp
 const val GridColumns = 2
 

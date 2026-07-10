@@ -59,6 +59,44 @@ Exit animation (two paths — do not collapse them):
 
 (Shared intent-URL parsing lives in `IntentUrls.kt`; used by both activities.)
 
+## Firefox Sync — three sync triggers (do not collapse)
+
+`FirefoxSyncController` (in `sync/`) keeps synced tabs fresh via three layered mechanisms. They are
+complementary; removing one degrades a different scenario:
+
+1. **Background WorkManager** — `SyncConfig.periodicSyncConfig = PeriodicSyncConfig(240, 5)`. Runs
+   every 4 hours even when the app is backgrounded/dead. The slow baseline.
+2. **Foreground poll** — `startForegroundPeriodicSync()` / `stopForegroundPeriodicSync()`, driven by
+   `LuminaRoot`'s lifecycle observer (ON_RESUME start, ON_PAUSE / onDispose stop). A quiet full sync
+   every `ForegroundSyncIntervalMs` (30 min). This is the **fallback** for missed pushes — it was
+   10 min before push existed; keep it relaxed while push is the fast path.
+3. **FxA push (fast path)** — `initPush()`. When another device changes its open tabs, the FxA/sync
+   server sends an FCM push and this device re-syncs near-instantly (this is how vanilla Firefox
+   does it, and how "Send tab" is instant).
+
+### FxA push is opt-in via `google-services.json`
+
+- Transport is **Firebase Cloud Messaging**. `AutoPushFeature` + `FxaPushSupportFeature` +
+  `SendTabFeature` are wired in `initPush()`; the FCM entry point is `sync/LuminaFirebasePushService`
+  (manifest `com.google.firebase.MESSAGING_EVENT` service). `PushProcessor.install(autoPushFeature)`
+  is what routes system-delivered FCM messages to the feature.
+- **The whole thing is inert without a real `app/google-services.json`.** The Google Services Gradle
+  plugin is applied conditionally (`if (file("google-services.json").exists())` in
+  `app/build.gradle.kts`), and `initPush()` looks up the generated `gcm_defaultSenderId` string **by
+  name at runtime** (`resources.getIdentifier`) and bails when absent — a compile-time `R.string`
+  reference would break the no-Firebase build. So: **do not add a hard `R.string.gcm_defaultSenderId`
+  reference**, and do not make push a hard dependency; sync must keep working via triggers 1–2 when
+  Firebase isn't configured. `google-services.json` is gitignored (contains the FCM API key).
+- To enable push: create a Firebase project with package `com.firebolt9907.luminabrowser`, download
+  its `google-services.json` into `app/`, rebuild. No code change needed.
+- A push observer calls `checkForHandoffTab(PushSyncDebounceMs)` — a **5s** floor, vs the 60s
+  `HandoffSyncDebounceMs` used by the routine ON_RESUME check. The short push floor is deliberate:
+  the app is used as an iCloud-Handoff clone against Zen (Firefox-family, so it uploads real Sync
+  tab records), and a push means the remote device genuinely just changed tabs, so we sync almost
+  immediately while still collapsing rapid remote tab-switch bursts into one sync. Received Send-Tab
+  tabs open via the `onSendTabReceived` lambda wired in `Engine.kt` → `tabRepository.addTab` (stays
+  on the single `normalizeUrl` path, invariant #9).
+
 ## Critical invariants — do not violate
 
 ### 1. Single EngineView per foreground activity / single rebind site

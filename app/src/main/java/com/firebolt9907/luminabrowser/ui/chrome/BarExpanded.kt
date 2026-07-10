@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
@@ -137,13 +138,22 @@ internal fun BarExpanded(
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text(
-                                text = "aA",
-                                style = MaterialTheme.typography.labelLarge.copy(
-                                    fontWeight = if (isReaderEligible) FontWeight.Bold else FontWeight.Normal
-                                ),
-                                color = aAColor
-                            )
+                            if (isReaderActive) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                                    contentDescription = null,
+                                    tint = aAColor,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            } else {
+                                Text(
+                                    text = "aA",
+                                    style = MaterialTheme.typography.labelLarge.copy(
+                                        fontWeight = if (isReaderEligible) FontWeight.Bold else FontWeight.Normal
+                                    ),
+                                    color = aAColor
+                                )
+                            }
                         }
                     }
                 }

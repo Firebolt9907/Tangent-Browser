@@ -116,19 +116,10 @@ fun AddressSheet(
         if (!dragging && imeBottomPx > kbHeightPx) kbHeightPx = imeBottomPx
     }
 
-    // Auto-dismiss when the keyboard collapses while the sheet is still open (e.g. the Back button
-    // hides the IME on its first press) so a single Back closes both. Only after the keyboard has
-    // actually been shown, and never mid-drag (the drag owns its own collapse/dismiss).
-    var kbWasShown by remember { mutableStateOf(false) }
-    LaunchedEffect(visible) { if (!visible) kbWasShown = false }
-    LaunchedEffect(imeBottomPx, dragging, visible) {
-        if (!visible || dragging) return@LaunchedEffect
-        if (imeBottomPx > 1f) {
-            kbWasShown = true
-        } else if (kbWasShown) {
-            onDismiss()
-        }
-    }
+    // Note: we intentionally do NOT auto-dismiss the sheet when the keyboard collapses. Pressing
+    // Back while editing hides the IME (the IME window consumes that first Back in onKeyPreIme,
+    // before it reaches the app) and leaves the suggestions sheet open — the standard Android
+    // two-stage pattern. A second Back then closes the sheet via LuminaRoot's editing BackHandler.
     val fallbackTravelPx = with(density) { 320.dp.toPx() }
     val travelPx = if (kbHeightPx > 0f) kbHeightPx else fallbackTravelPx
 
@@ -302,7 +293,14 @@ fun AddressSheet(
                     modifier = Modifier
                         .fillMaxWidth()
                         // Clear the keyboard plus the floating editing pill that sits at its top.
-                        .padding(bottom = with(density) { kbHeightPx.toDp() } + bottomInset + 64.dp),
+                        // While dragging, hold the frozen peak (the sheet translates as one piece);
+                        // otherwise track the live IME height so that when Back hides the keyboard
+                        // the list reflows down to the pill instead of leaving a keyboard-tall gap.
+                        .padding(
+                            bottom = with(density) {
+                                (if (dragging) kbHeightPx else imeBottomPx).toDp()
+                            } + bottomInset + 64.dp,
+                        ),
                 ) {
                     rows.forEach { suggestion ->
                         SuggestionRow(

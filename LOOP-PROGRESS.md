@@ -566,7 +566,15 @@ Checklist (unchecked = not yet processed):
       isCandidate. Only the top-right account/apps bar is `position:absolute` (the tracked
       deferred absolute-root class — high double-pad risk, not fixed blind). No code change;
       pinned the spacer-sort/span invariant google relies on in ViewportSpacerScriptTest.
-- [ ] 2. youtube.com
+- [x] 2. youtube.com (m.youtube.com) — works as-is. Structure (verified from live mobile HTML):
+      `ytm-mobile-topbar-renderer` is `position:fixed;top:0;left:0;right:0` (~48px, full width) →
+      caught by isCandidate → applyFixed grows it into the safe area. The app shell offsets its
+      scroll content by the ORIGINAL header height (`ytm-app{padding-top:48px}`); our body spacer
+      pushes that content down by topPx while applyFixed grows the (border-box) header box by the
+      same topPx, so header-bottom and content-top stay flush. The `.player-container.sticky-player`
+      (fixed, top:48px) is correctly excluded by the `rect.top>=topPx-1` already-safe guard. No
+      script change; pinned the applyFixed border-box height-growth + top-clamp invariant youtube
+      relies on in ViewportSpacerScriptTest (youtube_com).
 - [ ] 3. facebook.com
 - [ ] 4. instagram.com
 - [ ] 5. x.com (twitter.com)

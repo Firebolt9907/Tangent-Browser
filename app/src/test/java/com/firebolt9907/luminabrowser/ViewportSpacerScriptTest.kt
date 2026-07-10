@@ -154,6 +154,17 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `block-flow spacer sorts first and spans full width so centered app-shell content is pushed (google_com)`() {
+        // google.com's homepage + search results are a flex/grid body with centered content; the
+        // spacer div is only guaranteed to push that content down if it always sorts to the very
+        // first slot (order) and spans every grid column (grid-column), regardless of source order.
+        val s = script()
+        assertTrue("spacer must sort before all real children", s.contains("order:-2147483647!important"))
+        assertTrue("spacer must span all grid columns", s.contains("grid-column:1 / -1!important"))
+        assertTrue("and take full width so it can't collapse", s.contains("width:100%!important"))
+    }
+
+    @Test
     fun `scroll-padding-top targets both html and body scroll roots (iter 41)`() {
         // Anchor jumps must land below the inset header whether html OR body is the scroll
         // container; scroll-padding only affects where anchored scrolls land, never layout, so

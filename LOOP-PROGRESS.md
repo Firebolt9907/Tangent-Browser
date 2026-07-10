@@ -552,6 +552,42 @@ higher bar. **Work is uncommitted** — ready for the user to review/commit when
   Keyed on `block.src` so it resets correctly when the article changes. File: `ReaderView.kt`.
   `:app:compileReleaseKotlin` GREEN. Not device-verified.
 
+## Top-visited-sites verification loop (overnight, one site per iteration)
+Goal: walk the globally most-visited sites and confirm the top-padding injection
+(`buildViewportSpacerScript`) handles each site's real header/layout; fix reusably (never
+hostname-specific) where it doesn't, pin a regression test per site, commit+push per site.
+Staging rule: only `git add` the specific files touched this iteration (a code-quality agent runs
+concurrently) — never `git add -A`.
+
+Checklist (unchecked = not yet processed):
+- [x] 1. google.com — works as-is. Homepage + search results are a flex/grid body with
+      normal-flow centered content → the spacer div (order:-min, grid-column:1/-1, width:100%)
+      pushes it below the status bar; the mobile search-results sticky header is caught by
+      isCandidate. Only the top-right account/apps bar is `position:absolute` (the tracked
+      deferred absolute-root class — high double-pad risk, not fixed blind). No code change;
+      pinned the spacer-sort/span invariant google relies on in ViewportSpacerScriptTest.
+- [ ] 2. youtube.com
+- [ ] 3. facebook.com
+- [ ] 4. instagram.com
+- [ ] 5. x.com (twitter.com)
+- [ ] 6. whatsapp.com (web.whatsapp.com)
+- [ ] 7. wikipedia.org
+- [ ] 8. reddit.com
+- [ ] 9. chatgpt.com
+- [ ] 10. amazon.com
+- [ ] 11. yahoo.com
+- [ ] 12. yandex.com
+- [ ] 13. tiktok.com
+- [ ] 14. baidu.com
+- [ ] 15. netflix.com
+- [ ] 16. bing.com
+- [ ] 17. linkedin.com
+- [ ] 18. live.com / office.com
+- [ ] 19. pinterest.com
+- [ ] 20. twitch.tv
+
+Notes per site:
+
 - **[Reader] Iter 57** — Byline bio-card guard. The author selector
   (`[class*="author"]`, `[itemprop="author"]`, …) sometimes matches an author BIO card — a whole
   paragraph — so the header rendered a block of prose instead of a byline. Now if the extracted

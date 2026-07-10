@@ -54,6 +54,10 @@ private fun refererFor(sourceUrl: String?, imageSrc: String): String? {
  * which aren't "read" at prose speed. Returns 0 for trivially short extractions so the header line
  * is suppressed rather than showing a meaningless "1 min read" on a stub.
  */
+// Compiled once — the word split runs per prose block, so a long article would otherwise
+// recompile this for every paragraph.
+private val whitespaceRegex = Regex("\\s+")
+
 internal fun estimateReadMinutes(article: ReaderArticle): Int {
     var words = 0
     for (block in article.blocks) {
@@ -67,7 +71,7 @@ internal fun estimateReadMinutes(article: ReaderArticle): Int {
             is ReaderBlock.Divider -> null
             is ReaderBlock.Image -> null
         } ?: continue
-        if (text.isNotBlank()) words += text.trim().split(Regex("\\s+")).size
+        if (text.isNotBlank()) words += text.trim().split(whitespaceRegex).size
     }
     if (words < 60) return 0
     return Math.max(1, Math.round(words / 220f))

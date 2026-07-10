@@ -217,8 +217,12 @@ internal fun normalizeUrl(input: String, engine: SearchEngine = SearchEngine.DEF
     return engine.searchUrl(trimmed)
 }
 
+// Compiled once: hasExplicitScheme runs per tab on every BrowserState emission (via
+// toLuminaTabs → compactHost → normalizeUrl), not just on user-typed input.
+private val explicitSchemeRegex = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
+
 private fun String.hasExplicitScheme(): Boolean =
-    !containsWhitespace() && Regex("^[A-Za-z][A-Za-z0-9+.-]*:").containsMatchIn(this)
+    !containsWhitespace() && explicitSchemeRegex.containsMatchIn(this)
 
 private fun String.looksLikeWebsite(): Boolean {
     if (containsWhitespace()) return false

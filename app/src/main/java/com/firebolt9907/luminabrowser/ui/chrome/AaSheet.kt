@@ -25,7 +25,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.size
@@ -82,7 +81,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.PrimaryTabRow
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -741,136 +739,60 @@ private fun PageTabContent(
             expanded = pageSettingsExpanded || isActive,
             onToggle = { pageSettingsExpanded = !pageSettingsExpanded },
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(
-                        enabled = canEdit,
-                        onClick = {
-                            topPaddingFix = !topPaddingFix
-                            persist(top = topPaddingFix)
-                            haptics.toggle(topPaddingFix)
-                        },
-                    ),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Add top padding for this site",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Text(
-                        text = "Use when site headers don't move into the safe area",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = topPaddingFix,
-                    onCheckedChange = null,
-                    enabled = canEdit,
-                )
-            }
+            AaToggleRow(
+                title = "Add top padding for this site",
+                subtitle = "Use when site headers don't move into the safe area",
+                checked = topPaddingFix,
+                enabled = canEdit,
+                onToggle = {
+                    topPaddingFix = !topPaddingFix
+                    persist(top = topPaddingFix)
+                    haptics.toggle(topPaddingFix)
+                },
+            )
 
             Spacer(Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(
-                        enabled = canEdit,
-                        onClick = {
-                            desktopMode = !desktopMode
-                            persist(desktop = desktopMode)
-                            engineSession?.toggleDesktopMode(desktopMode, reload = true)
-                            haptics.toggle(desktopMode)
-                        },
-                    ),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Request desktop site",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Text(
-                        text = "Load the desktop layout for this site",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = desktopMode,
-                    onCheckedChange = null,
-                    enabled = canEdit,
-                )
-            }
+            AaToggleRow(
+                title = "Request desktop site",
+                subtitle = "Load the desktop layout for this site",
+                checked = desktopMode,
+                enabled = canEdit,
+                onToggle = {
+                    desktopMode = !desktopMode
+                    persist(desktop = desktopMode)
+                    engineSession?.toggleDesktopMode(desktopMode, reload = true)
+                    haptics.toggle(desktopMode)
+                },
+            )
 
             Spacer(Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(
-                        enabled = canEdit,
-                        onClick = {
-                            useGoogleCache = !useGoogleCache
-                            globalPrefsStore.useGoogleCache = useGoogleCache
-                            readerManager.setUseGoogleCache(useGoogleCache)
-                            haptics.toggle(useGoogleCache)
-                        },
-                        onLongClick = { showDebugCacheToggle = !showDebugCacheToggle },
-                    ),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Bypass via Google Cache",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Text(
-                        text = "Load reader content from Google's scraper cache",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = useGoogleCache,
-                    onCheckedChange = null,
-                    enabled = canEdit,
-                )
-            }
+            AaToggleRow(
+                title = "Bypass via Google Cache",
+                subtitle = "Load reader content from Google's scraper cache",
+                checked = useGoogleCache,
+                enabled = canEdit,
+                onToggle = {
+                    useGoogleCache = !useGoogleCache
+                    globalPrefsStore.useGoogleCache = useGoogleCache
+                    readerManager.setUseGoogleCache(useGoogleCache)
+                    haptics.toggle(useGoogleCache)
+                },
+                onLongClick = { showDebugCacheToggle = !showDebugCacheToggle },
+            )
 
             if (showDebugCacheToggle) {
                 Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .combinedClickable(
-                            enabled = canEdit,
-                            onClick = {
-                                globalPrefsStore.debugCacheHtml = !globalPrefsStore.debugCacheHtml
-                            },
-                        ),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Debug: show parsed HTML",
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Text(
-                            text = "Type debug:cache in address bar to inspect raw HTML",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        checked = globalPrefsStore.debugCacheHtml,
-                        onCheckedChange = null,
-                        enabled = canEdit,
-                    )
-                }
+                AaToggleRow(
+                    title = "Debug: show parsed HTML",
+                    subtitle = "Type debug:cache in address bar to inspect raw HTML",
+                    checked = globalPrefsStore.debugCacheHtml,
+                    enabled = canEdit,
+                    onToggle = {
+                        globalPrefsStore.debugCacheHtml = !globalPrefsStore.debugCacheHtml
+                    },
+                )
             }
         }
 

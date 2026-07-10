@@ -7,9 +7,11 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -240,6 +243,47 @@ internal fun ActionRowContent(
         Text(
             text = text,
             fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+        )
+    }
+}
+
+/**
+ * A tap-anywhere toggle row for the aA sheet's Page Settings: title + explanation on the left, a
+ * stateless [Switch] on the right. The whole row is the tap target — the Switch gets
+ * `onCheckedChange = null` so it can't become a second, smaller one. [onLongClick] backs the
+ * hidden debug toggle on the Google-cache row. Was copy-pasted four times before extraction.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun AaToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onToggle: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(enabled = enabled, onClick = onToggle, onLongClick = onLongClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = null,
+            enabled = enabled,
         )
     }
 }

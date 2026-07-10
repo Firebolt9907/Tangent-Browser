@@ -1,3 +1,5 @@
+import java.util.concurrent.TimeUnit
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -123,3 +125,70 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
+
+/*
+ * Compile-time sync of the bundled reader-rules floor from a local clone of the rules repo (a plain
+ * sibling folder, NOT a git submodule). Before assets are packaged, this best-effort `git pull`s that
+ * clone and copies its reader_rules.json over app/src/main/assets/reader_rules.json — so every build
+ * bundles the latest rules as the trusted compile-time floor (the remote/signed channel handles
+ * post-release updates; this keeps the shipped baseline current).
+ *
+ * Point it at your clone via either:
+ *   - Gradle property:  -PluminaRulesRepo=/abs/path/to/lumina-reader-rules
+ *     (or put `luminaRulesRepo=/abs/path` in ~/.gradle/gradle.properties), or
+ *   - Env var:          LUMINA_RULES_REPO=/abs/path/to/lumina-reader-rules
+ *
+ * When unset (CI, other machines), the task no-ops and the checked-in asset is used — the build never
+ * fails for a missing folder or an offline `git pull`. The copy is skipped when contents are identical
+ * so routine builds don't churn the tracked asset.
+ */
+val syncReaderRules by tasks.registering {
+    group = "lumina"
+    description = "Pull the local reader-rules repo and copy reader_rules.json into assets (compile-time floor)."
+    doLast {
+        val repoPath = (project.findProperty("luminaRulesRepo") as String?)?.takeIf { it.isNotBlank() }
+            ?: System.getenv("LUMINA_RULES_REPO")?.takeIf { it.isNotBlank() }
+        if (repoPath == null) {
+            logger.lifecycle("[reader-rules] luminaRulesRepo/LUMINA_RULES_REPO not set; keeping checked-in asset.")
+            return@doLast
+        }
+        val repoDir = File(repoPath)
+        if (!repoDir.isDirectory) {
+            logger.warn("[reader-rules] '$repoPath' is not a directory; keeping checked-in asset.")
+            return@doLast
+        }
+        /* Best-effort refresh; never fail the build if offline or not a git checkout. */
+        try {
+            val proc = ProcessBuilder("git", "pull", "--ff-only")
+                .directory(repoDir)
+                .redirectErrorStream(true)
+                .start()
+            val finished = proc.waitFor(60, TimeUnit.SECONDS)
+            val out = proc.inputStream.bufferedReader().readText().trim()
+            if (!finished) {
+                proc.destroyForcibly()
+                logger.warn("[reader-rules] git pull timed out; using local copy.")
+            } else {
+                logger.lifecycle("[reader-rules] git pull: ${out.ifBlank { "(no output)" }}")
+            }
+        } catch (e: Exception) {
+            logger.warn("[reader-rules] git pull skipped (${e.message}); using local copy.")
+        }
+        val srcJson = File(repoDir, "reader_rules.json")
+        if (!srcJson.exists()) {
+            logger.warn("[reader-rules] ${srcJson.path} not found; keeping checked-in asset.")
+            return@doLast
+        }
+        val dest = layout.projectDirectory.file("src/main/assets/reader_rules.json").asFile
+        if (dest.exists() && dest.readText() == srcJson.readText()) {
+            logger.lifecycle("[reader-rules] bundled asset already up to date.")
+            return@doLast
+        }
+        srcJson.copyTo(dest, overwrite = true)
+        logger.lifecycle("[reader-rules] synced ${srcJson.path} -> ${dest.path}")
+    }
+}
+
+/* Run the sync before any variant's assets are merged, so the packaged APK gets the fresh floor. */
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
+    .configureEach { dependsOn(syncReaderRules) }

@@ -64,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.firebolt9907.luminabrowser.LuminaApplication
 import com.firebolt9907.luminabrowser.state.compactHost
 import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
+import com.firebolt9907.luminabrowser.ui.reader.toggleReader
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -112,6 +113,7 @@ fun CustomTabRoot(
     val readerFontName by readerManager.fontName.collectAsStateWithLifecycle()
     val readerActive = customTabId != null && activeReaderTabs.contains(customTabId)
     val article = customTabId?.let { tabArticles[it] }
+
 
     var isVideoFullscreen by remember { mutableStateOf(false) }
 
@@ -390,43 +392,11 @@ fun CustomTabRoot(
                         barHeight = barHeightDp,
                         readerActive = readerActive,
                         onToggleReader = {
-                            val id = customTabId
-                            if (id != null) {
-                                when {
-                                    readerManager.isReaderActive(id) -> {
-                                        val originalUrl = readerManager.getOriginalUrl(id)
-                                        if (originalUrl != null) {
-                                            readerManager.setRestoring(id, true)
-                                            session?.loadUrl(originalUrl)
-                                            readerManager.setOriginalUrl(id, null)
-                                        }
-                                        readerManager.setReaderActive(id, false)
-                                    }
-                                    eligibleReaderTabs.contains(id) -> {
-                                        readerAutoActivated = false
-                                        if (readerManager.useGoogleCache.value && com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(url)) {
-                                            readerManager.requestReaderActivation(id)
-                                            readerManager.setOriginalUrl(id, url)
-                                            val cacheUrl = com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(url)
-                                            session?.loadUrl(cacheUrl)
-                                        } else {
-                                            readerManager.setReaderActive(id, true)
-                                        }
-                                    }
-                                    else -> {
-                                        readerAutoActivated = false
-                                        readerManager.requestReaderActivation(id)
-                                        session?.let {
-                                            if (readerManager.useGoogleCache.value && com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(url)) {
-                                                readerManager.setOriginalUrl(id, url)
-                                                val cacheUrl = com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(url)
-                                                it.loadUrl(cacheUrl)
-                                            } else {
-                                                com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor
-                                                    .extractReaderContent(it, id)
-                                            }
-                                        }
-                                    }
+                            customTabId?.let { id ->
+                                // A manual turn-on means Back should dismiss the overlay rather
+                                // than exit the activity (see readerAutoActivated above).
+                                if (readerManager.toggleReader(id, url, session)) {
+                                    readerAutoActivated = false
                                 }
                             }
                         },

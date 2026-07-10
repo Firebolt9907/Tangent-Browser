@@ -9,6 +9,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
+import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import com.firebolt9907.luminabrowser.ui.reader.PageSpeaker
 import kotlinx.coroutines.launch
 import mozilla.appservices.places.BookmarkRoot
@@ -36,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.firebolt9907.luminabrowser.ui.reader.ReaderTheme
 import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
+import com.firebolt9907.luminabrowser.ui.reader.toggleReader
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -134,7 +136,6 @@ fun AaSheet(
     onFindInPage: () -> Unit = {},
     pageUrl: String = "",
     pageTitle: String = "",
-    bottomInsetDp: Dp = 0.dp,
     initialTab: Int = 0,
     tabId: String? = null,
     engineSession: mozilla.components.concept.engine.EngineSession? = null,
@@ -170,7 +171,7 @@ fun AaSheet(
         sheetState = sheetState,
         // The backdrop provides the dimming; the default scrim would paint over it.
         scrimColor = Color.Transparent,
-        contentWindowInsets = { WindowInsets(bottom = bottomInsetDp) },
+        contentWindowInsets = { WindowInsets(0.dp) },
     ) {
         PrimaryTabRow(selectedTabIndex = selectedTab) {
             Tab(
@@ -255,6 +256,7 @@ private fun PageTabContent(
     pageIcon: android.graphics.Bitmap? = null,
 ) {
     val context = LocalContext.current
+    val haptics = rememberLuminaHaptics()
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
     val bookmarkScope = rememberCoroutineScope()
@@ -329,6 +331,7 @@ private fun PageTabContent(
                     position = null,
                 ).getOrThrow()
             }.isSuccess
+            if (ok) haptics.create()
             Toast.makeText(
                 context,
                 if (ok) "Bookmarked" else "Couldn't add bookmark",
@@ -356,6 +359,7 @@ private fun PageTabContent(
                     position = null,
                 ).getOrThrow()
             }.isSuccess
+            if (ok) haptics.create()
             Toast.makeText(
                 context,
                 if (ok) "Added to Reading List" else "Couldn't add to Reading List",
@@ -525,42 +529,16 @@ private fun PageTabContent(
             TextButton(
                 onClick = {
                     val readerHost = hostFromUrl(pageUrl)
-                    if (isActive) {
-                        tabId?.let {
-                            val originalUrl = readerManager.getOriginalUrl(it)
-                            if (originalUrl != null) {
-                                readerManager.setRestoring(it, true)
-                                engineSession?.loadUrl(originalUrl)
-                                readerManager.setOriginalUrl(it, null)
-                            }
-                            readerManager.setReaderActive(it, false)
-                        }
-                        store.setReaderPreferred(readerHost, false)
-                        readerPreferred = false
-                    } else if (isEligible) {
-                        tabId?.let {
-                            if (readerManager.useGoogleCache.value && com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(pageUrl)) {
-                                readerManager.requestReaderActivation(it)
-                                readerManager.setOriginalUrl(it, pageUrl)
-                                val cacheUrl = com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(pageUrl)
-                                engineSession?.loadUrl(cacheUrl)
-                            } else {
-                                readerManager.setReaderActive(it, true)
-                            }
-                        }
-                        store.setReaderPreferred(readerHost, true)
-                        readerPreferred = true
+                    if (isActive || isEligible) {
+                        tabId?.let { readerManager.toggleReader(it, pageUrl, engineSession) }
+                        // Written even when tabId is null so the per-site preference still follows
+                        // the user's intent.
+                        store.setReaderPreferred(readerHost, !isActive)
+                        readerPreferred = !isActive
                     } else if (tabId != null && engineSession != null && !isPending) {
-                        readerManager.requestReaderActivation(tabId)
+                        readerManager.toggleReader(tabId, pageUrl, engineSession)
                         store.setReaderPreferred(readerHost, true)
                         readerPreferred = true
-                        if (readerManager.useGoogleCache.value && com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(pageUrl)) {
-                            readerManager.setOriginalUrl(tabId, pageUrl)
-                            val cacheUrl = com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(pageUrl)
-                            engineSession.loadUrl(cacheUrl)
-                        } else {
-                            com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
-                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -724,6 +702,7 @@ private fun PageTabContent(
                         val next = ((zoomFactor - 0.1f) * 100f).roundToInt() / 100f
                         zoomFactor = next.coerceIn(0.5f, 2.0f)
                         persist(zoom = zoomFactor)
+                        haptics.step()
                     },
                     enabled = canEdit && zoomFactor > 0.5f,
                 ) {
@@ -740,6 +719,7 @@ private fun PageTabContent(
                         val next = ((zoomFactor + 0.1f) * 100f).roundToInt() / 100f
                         zoomFactor = next.coerceIn(0.5f, 2.0f)
                         persist(zoom = zoomFactor)
+                        haptics.step()
                     },
                     enabled = canEdit && zoomFactor < 2.0f,
                 ) {
@@ -778,6 +758,7 @@ private fun PageTabContent(
                         onClick = {
                             topPaddingFix = !topPaddingFix
                             persist(top = topPaddingFix)
+                            haptics.toggle(topPaddingFix)
                         },
                     ),
                 verticalAlignment = Alignment.CenterVertically,
@@ -811,6 +792,7 @@ private fun PageTabContent(
                             desktopMode = !desktopMode
                             persist(desktop = desktopMode)
                             engineSession?.toggleDesktopMode(desktopMode, reload = true)
+                            haptics.toggle(desktopMode)
                         },
                     ),
                 verticalAlignment = Alignment.CenterVertically,
@@ -844,6 +826,7 @@ private fun PageTabContent(
                             useGoogleCache = !useGoogleCache
                             globalPrefsStore.useGoogleCache = useGoogleCache
                             readerManager.setUseGoogleCache(useGoogleCache)
+                            haptics.toggle(useGoogleCache)
                         },
                         onLongClick = { showDebugCacheToggle = !showDebugCacheToggle },
                     ),

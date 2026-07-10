@@ -1,15 +1,11 @@
 package com.firebolt9907.luminabrowser.ui
 
 import android.content.Intent
-import android.app.Activity
 import android.graphics.Bitmap
 import androidx.activity.ExperimentalActivityApi
 import androidx.core.net.toUri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
@@ -143,6 +139,7 @@ import com.firebolt9907.luminabrowser.ui.grid.GridTab
 import com.firebolt9907.luminabrowser.ui.grid.GridTopMarginDp
 import com.firebolt9907.luminabrowser.ui.grid.TabGridOverlay
 import com.firebolt9907.luminabrowser.ui.grid.gridCellRect
+import com.firebolt9907.luminabrowser.ui.reader.hydrateAppearanceFromPrefs
 import com.firebolt9907.luminabrowser.ui.reader.toggleReader
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 import com.firebolt9907.luminabrowser.ui.bookmarks.BookmarksSheet
@@ -226,18 +223,7 @@ fun LuminaRoot(
 
     var isVideoFullscreen by remember { mutableStateOf(false) }
 
-    val window = (LocalContext.current as? Activity)?.window
-    if (window != null) {
-        val controller = remember(window) { WindowCompat.getInsetsController(window, window.decorView) }
-        LaunchedEffect(isVideoFullscreen) {
-            if (isVideoFullscreen) {
-                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                controller.hide(WindowInsetsCompat.Type.systemBars())
-            } else {
-                controller.show(WindowInsetsCompat.Type.systemBars())
-            }
-        }
-    }
+    SyncSystemBarsWithFullscreen(isVideoFullscreen)
 
     val readerManager = remember { com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance }
     val activeReaderTabs by readerManager.activeReaderTabs.collectAsStateWithLifecycle()
@@ -253,14 +239,7 @@ fun LuminaRoot(
     // first (replayed) emission would overwrite the saved value with the default.
     LaunchedEffect(Unit) {
         val prefs = components.globalPreferencesStore
-        prefs.readerThemeName
-            ?.let { name ->
-                runCatching { com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.valueOf(name) }.getOrNull()
-            }
-            ?.let { readerManager.setTheme(it) }
-        readerManager.setFontSize(prefs.readerFontSize)
-        readerManager.setFontName(prefs.readerFontName)
-        readerManager.setUseGoogleCache(prefs.useGoogleCache)
+        readerManager.hydrateAppearanceFromPrefs(prefs)
         launch { readerManager.theme.collect { prefs.readerThemeName = it.name } }
         launch { readerManager.fontSize.collect { prefs.readerFontSize = it } }
         launch { readerManager.fontName.collect { prefs.readerFontName = it } }

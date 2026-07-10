@@ -1,5 +1,6 @@
 package com.firebolt9907.luminabrowser.ui.reader
 
+import com.firebolt9907.luminabrowser.state.GlobalPreferencesStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -159,6 +160,21 @@ class ReaderManager {
     companion object {
         val instance = ReaderManager()
     }
+}
+
+/**
+ * Loads the persisted reader appearance (theme / font size / font / Google-cache toggle) into the
+ * Context-less [ReaderManager] singleton. Both browser surfaces call this on launch — the main
+ * browser (which also mirrors changes back to the store) and Custom Tabs, which may start in their
+ * own task without MainActivity ever having hydrated the manager.
+ */
+fun ReaderManager.hydrateAppearanceFromPrefs(prefs: GlobalPreferencesStore) {
+    prefs.readerThemeName
+        ?.let { name -> runCatching { ReaderTheme.valueOf(name) }.getOrNull() }
+        ?.let { setTheme(it) }
+    setFontSize(prefs.readerFontSize)
+    setFontName(prefs.readerFontName)
+    setUseGoogleCache(prefs.useGoogleCache)
 }
 
 fun shouldRedirectToGoogleCache(url: String): Boolean {

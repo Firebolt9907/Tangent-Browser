@@ -1,6 +1,5 @@
 package com.firebolt9907.luminabrowser.ui.customtab
 
-import android.app.Activity
 import androidx.activity.BackEventCompat
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.BackHandler
@@ -56,15 +55,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.firebolt9907.luminabrowser.LuminaApplication
 import com.firebolt9907.luminabrowser.state.compactHost
 import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
+import com.firebolt9907.luminabrowser.ui.reader.hydrateAppearanceFromPrefs
 import com.firebolt9907.luminabrowser.ui.reader.toggleReader
 import com.firebolt9907.luminabrowser.ui.shareUrl
+import com.firebolt9907.luminabrowser.ui.SyncSystemBarsWithFullscreen
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -117,18 +115,7 @@ fun CustomTabRoot(
 
     var isVideoFullscreen by remember { mutableStateOf(false) }
 
-    val window = (context as? Activity)?.window
-    if (window != null) {
-        val controller = remember(window) { WindowCompat.getInsetsController(window, window.decorView) }
-        LaunchedEffect(isVideoFullscreen) {
-            if (isVideoFullscreen) {
-                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                controller.hide(WindowInsetsCompat.Type.systemBars())
-            } else {
-                controller.show(WindowInsetsCompat.Type.systemBars())
-            }
-        }
-    }
+    SyncSystemBarsWithFullscreen(isVideoFullscreen)
 
     // Reader appearance (theme / font size / font) lives in the Context-less ReaderManager
     // singleton, which the main browser hydrates from GlobalPreferencesStore. A Custom Tab runs in
@@ -137,15 +124,7 @@ fun CustomTabRoot(
     // values so the auto-reader honors the settings chosen in the main window. Read-only: this
     // surface has no reader-appearance controls, so there is nothing to mirror back to disk.
     LaunchedEffect(Unit) {
-        val prefs = components.globalPreferencesStore
-        prefs.readerThemeName
-            ?.let { name ->
-                runCatching { com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.valueOf(name) }.getOrNull()
-            }
-            ?.let { readerManager.setTheme(it) }
-        readerManager.setFontSize(prefs.readerFontSize)
-        readerManager.setFontName(prefs.readerFontName)
-        readerManager.setUseGoogleCache(prefs.useGoogleCache)
+        readerManager.hydrateAppearanceFromPrefs(components.globalPreferencesStore)
     }
 
     // Guarantee the custom tab session has a live engine session. Dispatching CreateEngineSessionAction

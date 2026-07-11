@@ -23,7 +23,10 @@ function bandProbeSrc(topPx) {
     const SPACER = 'lumina-top-scroll-spacer';
     function opaque(c){ return c && c !== 'transparent' && !/rgba\\(0, 0, 0, 0\\)/.test(c) && !/^rgba\\(.*,\\s*0\\)$/.test(c); }
     const hits = [];
-    const all = document.querySelectorAll('*');
+    // Descend into open shadow roots, mirroring the injected script's collect(): web-component
+    // headers live in shadow DOM and querySelectorAll('*') does not pierce it.
+    function collectDeep(root, out){ (root.querySelectorAll ? root.querySelectorAll('*') : []).forEach(el => { out.push(el); if (el.shadowRoot) collectDeep(el.shadowRoot, out); }); return out; }
+    const all = collectDeep(document, []);
     all.forEach(el => {
       if (el.id === SPACER) return;
       const tag = el.tagName.toLowerCase();
@@ -77,7 +80,10 @@ function bandProbeSrc(topPx) {
       // or an off-screen a11y skip-link (Etsy's "Skip to Content"). Keep only self-or-descendant.
       const sx = Math.min(Math.max(Math.round(r.left + r.width / 2), 2), window.innerWidth - 2);
       const sy = Math.min(Math.max(Math.round((Math.max(0, r.top) + Math.min(band, r.bottom)) / 2), 2), band - 1);
-      const hit = document.elementFromPoint(sx, sy);
+      // Shadow-piercing elementFromPoint: document.elementFromPoint returns the shadow HOST, so
+      // descend through shadow roots to the real top painted node (else a shadow header reads occluded).
+      let hit = document.elementFromPoint(sx, sy);
+      while (hit && hit.shadowRoot) { const inner = hit.shadowRoot.elementFromPoint(sx, sy); if (!inner || inner === hit) break; hit = inner; }
       if (!hit || !(hit === el || el.contains(hit))) return;
       // a painting element whose TOP edge is >= band is fine (it just extends up? no—top<band means it's in band)
       const interactive = !!el.closest('a,button,input,select,textarea,[role="button"],[role="link"],[tabindex],[onclick]');

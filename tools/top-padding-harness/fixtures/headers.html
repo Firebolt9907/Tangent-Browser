@@ -67,6 +67,29 @@ const cases = {
     const after=document.createElement('div');after.style.height='1500px';
     document.getElementById('content').append(nav,spacer,tgt,after);
   },
+  // 10. Header inside an OPEN shadow root (collect() must descend into shadow DOM).
+  shadowHeader(){
+    const host=document.createElement('div');document.body.insertBefore(host,document.body.firstChild);
+    const sr=host.attachShadow({mode:'open'});
+    const h=document.createElement('header');h.style.cssText='position:fixed;top:0;left:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc;display:flex;align-items:center;gap:12px;padding:0 12px;box-sizing:border-box';
+    h.innerHTML='<div style="width:28px;height:28px;background:#e00;border-radius:6px"></div><span style="font-weight:600">Shadow header</span>';
+    sr.appendChild(h);
+  },
+  // 12. Header that starts display:none and is revealed after a tick (observer must re-inset).
+  revealedHeader(){
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:fixed;top:0;left:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc;display:none';
+    h.innerHTML='<div class="logo"></div><span class="txt">Revealed header</span>';
+    document.body.appendChild(h);
+    setTimeout(()=>{h.style.display='flex';},1500);
+  },
+  // 13. Stacked sticky sub-nav: a main sticky bar + a second sticky bar directly under it.
+  stickySubnav(){
+    const main=document.createElement('header');main.className='bar';main.style.cssText='position:sticky;top:0;height:48px;background:#fff;border-bottom:1px solid #ccc';
+    main.innerHTML='<div class="logo"></div><span class="txt">Main</span>';
+    const sub=document.createElement('nav');sub.className='bar';sub.style.cssText='position:sticky;top:0;height:40px;background:#f3f3f3;border-bottom:1px solid #ddd';
+    sub.innerHTML='<span class="txt">Sub-nav A</span><span class="txt">B</span><span class="txt">C</span>';
+    document.body.insertBefore(sub,document.body.firstChild);document.body.insertBefore(main,document.body.firstChild);
+  },
   // 8. Sticky header INSIDE a nested overflow-scroll container (not body scroll) — Spotify-like.
   nestedScrollSticky(){
     document.getElementById('content').style.display='none';

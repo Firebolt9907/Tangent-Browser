@@ -245,6 +245,29 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `header-inset scheduling is a non-starvable pending-flag debounce (figma_com)`() {
+        // On a mutation-heavy SPA (figma.com), the old schedule() did
+        // cancelAnimationFrame(pending) + requestAnimationFrame(applyHeaderInsets) on EVERY
+        // MutationObserver hit. Continuous mutations cancelled the pending frame before it could
+        // run, so applyHeaderInsets NEVER executed and fixed headers were never inset. The fix is a
+        // pending-flag debounce: once a frame is queued, further schedule() calls are no-ops until
+        // it fires, so the pass can't be perpetually starved.
+        val s = script()
+        assertTrue(
+            "schedule guards on a pending flag so it can't be re-cancelled forever",
+            s.contains("function schedule(){if(window.__luminaHeaderInsetPending)return;window.__luminaHeaderInsetPending=true;"),
+        )
+        assertTrue(
+            "the queued frame clears the pending flag before running the pass",
+            s.contains("window.__luminaHeaderInsetPending=false;applyHeaderInsets()"),
+        )
+        assertFalse(
+            "must not go back to the starvable cancel+reschedule pattern",
+            s.contains("cancelAnimationFrame(window.__luminaHeaderInsetFrame"),
+        )
+    }
+
+    @Test
     fun `scroll-padding-top targets both html and body scroll roots (iter 41)`() {
         // Anchor jumps must land below the inset header whether html OR body is the scroll
         // container; scroll-padding only affects where anchored scrolls land, never layout, so

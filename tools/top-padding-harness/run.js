@@ -33,8 +33,12 @@ function bandProbeSrc(topPx) {
       if (cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity) === 0) return;
       const r = el.getBoundingClientRect();
       if (r.width < 3 || r.height < 3) return;
-      // must actually intersect the band with visible area
+      // must actually intersect the band with a MEANINGFUL visible slice. An element whose text is
+      // centred above the viewport but whose box pokes a few px into the top (e.g. Dropbox's
+      // "Skip to main content" skip-link at top=-44,bottom=4 — glyphs are at y~-20, only 4px of
+      // empty bottom padding shows) is not readable content. Require >=6px of in-band visible height.
       if (!(r.top < band - 1 && r.bottom > 1)) return;
+      if (Math.min(band, r.bottom) - Math.max(0, r.top) < 6) return;
       // classify ink
       const childEls = el.children.length;
       const directText = Array.from(el.childNodes).some(n => n.nodeType === 3 && n.textContent.trim().length);

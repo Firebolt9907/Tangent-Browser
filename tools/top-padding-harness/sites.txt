@@ -55,6 +55,12 @@ https://www.canva.com
 https://www.aljazeera.com
 https://www.lemonde.fr
 https://timesofindia.indiatimes.com
+https://www.dropbox.com
+https://vercel.com
+https://stripe.com
+https://slack.com
+https://gitlab.com
+https://www.atlassian.com
 # maps.google.com is intentionally omitted: it is a full-bleed map app whose raster tiles are
 # meant to run edge-to-edge under a translucent status bar; only its floating search header is a
 # candidate for inset, and the shipping script handles that when present.

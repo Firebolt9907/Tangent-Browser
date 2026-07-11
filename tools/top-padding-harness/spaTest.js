@@ -25,6 +25,7 @@ function bandProbeSrc(topPx) {
       const r=el.getBoundingClientRect();
       if(r.width<3||r.height<3)return;
       if(!(r.top<band-1&&r.bottom>1))return;
+      if(Math.min(band,r.bottom)-Math.max(0,r.top)<6)return; // ignore slivers (skip-links poking a few px in)
       const childEls=el.children.length;
       const directText=Array.from(el.childNodes).some(n=>n.nodeType===3&&n.textContent.trim().length);
       const isMedia=['img','svg','canvas','video','picture','image','use','path'].includes(tag);

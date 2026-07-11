@@ -59,6 +59,14 @@ const cases = {
     h.innerHTML='<div class="logo"></div><span class="txt">will-change header</span>';
     document.body.appendChild(h);
   },
+  // 9. Anchor-jump target: verifies scroll-padding-top lands #hash navigation BELOW the inset.
+  anchor(){
+    const nav=document.createElement('div');nav.innerHTML='<a id="jump" href="#target">jump</a>';
+    const spacer=document.createElement('div');spacer.style.height='1500px';
+    const tgt=document.createElement('h2');tgt.id='target';tgt.textContent='ANCHOR TARGET';
+    const after=document.createElement('div');after.style.height='1500px';
+    document.getElementById('content').append(nav,spacer,tgt,after);
+  },
   // 8. Sticky header INSIDE a nested overflow-scroll container (not body scroll) — Spotify-like.
   nestedScrollSticky(){
     document.getElementById('content').style.display='none';

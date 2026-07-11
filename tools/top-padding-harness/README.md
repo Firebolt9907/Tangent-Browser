@@ -35,6 +35,7 @@ node run.js https://gemini.google.com 48 --show  # headed, watch it
 node debug.js https://gemini.google.com 48       # dump positioned elements near the top
 node spaTest.js https://x.com 48                 # invariant #11: spacer self-heals across SPA nav
 node scrollTest.js https://medium.com 48         # scroll-activated sticky headers get inset
+node anchorTest.js https://en.wikipedia.org/wiki/CSS '#History'   # scroll-padding-top anchor jump
 ./fixtures.sh                                    # offline adversarial header fixtures (no network)
 ```
 
@@ -60,6 +61,10 @@ cleared it. Fast and stable — good as a first gate before the live sweeps.
   checks that no *pinned* header (fixed/sticky, sitting at the top and short enough to be a bar —
   not a full-page `sticky; top:auto` container) has readable content in the band. Normal scrolled
   flow content in the band is expected and ignored.
+- **`anchorTest.js`** — the `scroll-padding-top` half of the injection. Triggers an in-page anchor
+  jump (clicks a link, or sets `location.hash`) and asserts the target lands at `top >= topPx`,
+  i.e. below the inset rather than under the status bar. This is why the injected `<style>` sets
+  `html,body{scroll-padding-top:<topPx>}`.
 
 ## What PASS means
 

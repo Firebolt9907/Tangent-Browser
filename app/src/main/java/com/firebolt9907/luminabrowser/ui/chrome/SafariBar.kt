@@ -1,6 +1,8 @@
 package com.firebolt9907.luminabrowser.ui.chrome
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -46,6 +48,7 @@ private val BottomBarPadding = 24.dp
 private val BottomBarMaxHeight = 56.dp
 private val BottomBarEditingHeight = 72.dp
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun SafariBar(
     state: BarUiState,
@@ -104,7 +107,8 @@ fun SafariBar(
                 .padding(bottom = bottomPadding),
             contentAlignment = Alignment.BottomCenter,
         ) {
-            AnimatedContent(
+            SharedTransitionLayout {
+              AnimatedContent(
                 targetState = state.mode,
                 modifier = Modifier
                     .graphicsLayer {
@@ -127,6 +131,14 @@ fun SafariBar(
                 },
                 label = "SafariBarMode",
             ) { mode ->
+                // The address text is a shared element: its bounds animate from the pill's centered
+                // label into the editing field (and back), so the URL appears to physically glide
+                // between the two surfaces instead of cross-fading in place. `this` here is the
+                // AnimatedContentScope that drives the pairing across the Expanded/Editing swap.
+                val addressShared = Modifier.sharedBounds(
+                    rememberSharedContentState(key = "addressText"),
+                    animatedVisibilityScope = this,
+                )
                 when (mode) {
                     BarMode.Expanded -> BarExpanded(
                         state = state,
@@ -146,6 +158,7 @@ fun SafariBar(
                         isReaderActive = isReaderActive,
                         readerTheme = readerTheme,
                         onClick = onClick,
+                        addressSharedModifier = addressShared,
                     )
                     BarMode.Compact -> BarExpanded(
                         state = state,
@@ -165,6 +178,7 @@ fun SafariBar(
                         isReaderActive = isReaderActive,
                         readerTheme = readerTheme,
                         onClick = onClick,
+                        addressSharedModifier = addressShared,
                     )
                     BarMode.Editing -> BarEditing(
                         state,
@@ -172,8 +186,10 @@ fun SafariBar(
                         onEditingSubmit,
                         onEditingCancel,
                         controlsEnabled = controlsEnabled,
+                        addressSharedModifier = addressShared,
                     )
                 }
+              }
             }
 
             if (isToolbarVisible) {

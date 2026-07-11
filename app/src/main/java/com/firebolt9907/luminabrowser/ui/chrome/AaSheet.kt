@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -109,7 +110,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.firebolt9907.luminabrowser.addons.AddonController
 import com.firebolt9907.luminabrowser.addons.InstalledAddon
+import com.firebolt9907.luminabrowser.state.BarMode
+import com.firebolt9907.luminabrowser.state.BarUiState
 import com.firebolt9907.luminabrowser.state.GlobalPreferencesStore
+import com.firebolt9907.luminabrowser.state.compactHost
 import com.firebolt9907.luminabrowser.state.hostFromUrl
 import com.firebolt9907.luminabrowser.state.SitePreferences
 import com.firebolt9907.luminabrowser.state.SitePreferencesStore
@@ -164,6 +168,37 @@ fun AaSheet(
         statusBarTopPad = statusBarTopPad,
         onTap = onDismiss,
     )
+
+    // A static, non-interactive copy of the address pill drawn *above* the opaque backdrop but
+    // *below* the sheet. The real bottom-bar pill is hidden behind the backdrop while the sheet is
+    // up; this stand-in occupies the same spot so that dragging the sheet down far enough reveals a
+    // pill underneath (and the hand-off to the live pill on dismiss is seamless). It also means the
+    // pill never has to be "restored" after the sheet closes — it was always represented on screen.
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        SafariBar(
+            state = BarUiState(
+                displayUrl = if (pageUrl.isNotBlank()) compactHost(pageUrl) else host,
+                tabCount = 0,
+                mode = BarMode.Expanded,
+                editingText = "",
+                pageUrl = pageUrl,
+            ),
+            onUrlTap = {},
+            onAaTap = {},
+            onEditingTextChange = {},
+            onEditingSubmit = {},
+            onEditingCancel = {},
+            onDragStart = {},
+            onDragDelta = {},
+            onDragEnd = { _, _ -> },
+            onReload = {},
+            interactive = false,
+            controlsEnabled = false,
+        )
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,

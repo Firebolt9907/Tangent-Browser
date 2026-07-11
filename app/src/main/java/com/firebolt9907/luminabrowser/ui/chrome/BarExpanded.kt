@@ -3,6 +3,7 @@ package com.firebolt9907.luminabrowser.ui.chrome
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,9 +22,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -39,6 +42,7 @@ import androidx.compose.ui.util.lerp
 import com.firebolt9907.luminabrowser.state.BarMode
 import com.firebolt9907.luminabrowser.state.BarUiState
 import com.firebolt9907.luminabrowser.ui.reader.ReaderTheme
+import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 
 @Composable
@@ -61,9 +65,15 @@ internal fun BarExpanded(
     isReaderActive: Boolean = false,
     readerTheme: ReaderTheme = ReaderTheme.System,
     onClick: (() -> Unit)? = null,
+    // Applied to the address label so it can act as a shared element that morphs into the editing
+    // field (supplied by SafariBar's SharedTransitionLayout). Default no-op for previews/ghosts.
+    addressSharedModifier: Modifier = Modifier,
 ) {
     val progress = collapseProgress.coerceIn(0f, 1f)
     val controlsProgress = 1f - progress
+    // Splash (ripple) shape for the aA / reload chips — a squircle echoing the pill's own corner
+    // style so the touch feedback reads as part of the pill rather than a hard square.
+    val splashShape = remember { SquircleShape(radius = 16.dp, exponent = 3f) }
     // Flag plain-HTTP pages as not secure (modern-browser convention). https / internal pages
     // (about:, blank new tab) show nothing — only http:// is called out.
     val isInsecure = !state.blankNewTabPreview &&
@@ -128,6 +138,8 @@ internal fun BarExpanded(
                         Box(
                             modifier = Modifier
                                 .size(48.dp)
+                                .padding(4.dp)
+                                .clip(splashShape)
                                 .combinedClickable(
                                     onClick = onAaTap,
                                     onLongClick = onAaLongPress,
@@ -160,7 +172,16 @@ internal fun BarExpanded(
                 Row(
                     modifier = Modifier
                         .weight(1f)
+                        // Shared element: this address region's bounds are matched against the
+                        // editing field's (same "addressText" key) so the URL glides + morphs
+                        // between the pill and the editing modal instead of cross-fading in place.
+                        .then(addressSharedModifier)
+                        // No ripple on the address text itself — tapping it opens the editing
+                        // sheet (a full surface change), where a splash reads as noise. The aA /
+                        // reload chips keep their (now squircle) splash for button-like feedback.
                         .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
                             enabled = controlsEnabled,
                             onClickLabel = if (blankPreview) "Open a new tab" else "Edit address",
                             onClick = onUrlTap,
@@ -204,6 +225,8 @@ internal fun BarExpanded(
                         Box(
                             modifier = Modifier
                                 .size(48.dp)
+                                .padding(4.dp)
+                                .clip(splashShape)
                                 .combinedClickable(
                                     onClick = onReload,
                                     onLongClick = if (canGoForward) onReloadLongPress else null,

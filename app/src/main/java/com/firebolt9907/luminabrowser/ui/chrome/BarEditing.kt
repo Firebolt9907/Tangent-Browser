@@ -52,6 +52,9 @@ internal fun BarEditing(
     onEditingCancel: () -> Unit,
     modifier: Modifier = Modifier,
     controlsEnabled: Boolean = true,
+    // Applied to the editing field so it pairs with BarExpanded's address region as a shared
+    // element (supplied by SafariBar's SharedTransitionLayout). Default no-op for previews.
+    addressSharedModifier: Modifier = Modifier,
 ) {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -113,6 +116,9 @@ internal fun BarEditing(
                 enabled = controlsEnabled,
                 modifier = Modifier
                     .weight(1f)
+                    // Shared-element counterpart to BarExpanded's address region — its bounds
+                    // morph from the pill's URL label as the editing modal opens/closes.
+                    .then(addressSharedModifier)
                     .focusRequester(focusRequester)
                     .onFocusChanged { focusState ->
                         if (focusState.isFocused) selectAllText()

@@ -28,12 +28,28 @@ export CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 ## Use
 
 ```sh
-./verify.sh                     # sweep every URL in sites.txt at topPx=48
+./verify.sh                     # sweep every URL in sites.txt at topPx=48 (initial load)
 ./verify.sh 60                  # custom inset
 node run.js https://gemini.google.com 48         # one site, full before/after band dump
 node run.js https://gemini.google.com 48 --show  # headed, watch it
 node debug.js https://gemini.google.com 48       # dump positioned elements near the top
+node spaTest.js https://x.com 48                 # invariant #11: spacer self-heals across SPA nav
+node scrollTest.js https://medium.com 48         # scroll-activated sticky headers get inset
 ```
+
+### The three probes
+
+- **`run.js`** — initial page load. Fails if readable content/icons paint in the `[0, topPx)` band
+  after injection. `verify.sh` sweeps `sites.txt` with this one.
+- **`spaTest.js`** — AGENTS.md **invariant #11**. Injects once, drives a client-side (pushState)
+  navigation, and re-probes *without* re-injecting: the spacer div + `scroll-padding-top` must
+  persist and the scroll-top band stay clear. Full page loads are reported N/A (that's ContentHost's
+  re-inject path). Probes at scroll-top (content scrolling under a translucent bar is normal).
+- **`scrollTest.js`** — scroll-activated sticky/fixed headers. Uses real wheel events (down, then
+  up) so scroll-direction detection fires and a condensed/re-pinned header actually reveals; then
+  checks that no *pinned* header (fixed/sticky, sitting at the top and short enough to be a bar —
+  not a full-page `sticky; top:auto` container) has readable content in the band. Normal scrolled
+  flow content in the band is expected and ignored.
 
 ## What PASS means
 

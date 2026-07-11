@@ -72,6 +72,16 @@ https://react.dev
 https://tailwindcss.com
 https://news.ycombinator.com
 https://www.w3schools.com
+https://www.baidu.com
+https://www.naver.com
+https://www.qq.com
+https://www.163.com
+https://www.bilibili.com
+https://www.taobao.com
+https://www.reuters.com
+https://www.chase.com
+https://www.expedia.com
+https://www.khanacademy.org
 # maps.google.com is intentionally omitted: it is a full-bleed map app whose raster tiles are
 # meant to run edge-to-edge under a translucent status bar; only its floating search header is a
 # candidate for inset, and the shipping script handles that when present.

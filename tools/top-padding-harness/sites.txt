@@ -61,6 +61,17 @@ https://stripe.com
 https://slack.com
 https://gitlab.com
 https://www.atlassian.com
+https://chatgpt.com
+https://claude.ai
+https://accounts.google.com
+https://soundcloud.com
+https://www.tumblr.com
+https://mastodon.social
+https://developer.mozilla.org/en-US/docs/Web/CSS
+https://react.dev
+https://tailwindcss.com
+https://news.ycombinator.com
+https://www.w3schools.com
 # maps.google.com is intentionally omitted: it is a full-bleed map app whose raster tiles are
 # meant to run edge-to-edge under a translucent status bar; only its floating search header is a
 # candidate for inset, and the shipping script handles that when present.

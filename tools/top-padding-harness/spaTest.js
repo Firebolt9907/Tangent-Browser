@@ -16,7 +16,8 @@ function bandProbeSrc(topPx) {
   return `(() => {
     const band = ${topPx}, SPACER='lumina-top-scroll-spacer';
     function opaque(c){ return c && c!=='transparent' && !/rgba\\(0, 0, 0, 0\\)/.test(c) && !/^rgba\\(.*,\\s*0\\)$/.test(c); }
-    const hits=[]; document.querySelectorAll('*').forEach(el=>{
+    function collectDeep(root,out){(root.querySelectorAll?root.querySelectorAll('*'):[]).forEach(el=>{out.push(el);if(el.shadowRoot)collectDeep(el.shadowRoot,out);});return out;}
+    const hits=[]; collectDeep(document,[]).forEach(el=>{
       if(el.id===SPACER||el.closest('#'+SPACER))return;
       const tag=el.tagName.toLowerCase();
       if(['html','body','head','script','style'].includes(tag))return;

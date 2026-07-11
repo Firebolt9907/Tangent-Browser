@@ -23,8 +23,9 @@ function pinnedBandProbe(topPx) {
        25000px sticky element scrolled to top=-972) whose normal flow content near the top is just
        scrolled content, not a pinned header. */
     function pinnedAncestor(el){for(let n=el;n&&n!==document.documentElement;n=n.parentElement){const cs=getComputedStyle(n);if(cs.position==='fixed'||cs.position==='sticky'){const r=n.getBoundingClientRect();if(r.top<=2&&r.bottom>1&&r.bottom<=window.innerHeight)return n;}}return null;}
+    function collectDeep(root,out){(root.querySelectorAll?root.querySelectorAll('*'):[]).forEach(el=>{out.push(el);if(el.shadowRoot)collectDeep(el.shadowRoot,out);});return out;}
     const hits=[];
-    document.querySelectorAll('*').forEach(el=>{try{
+    collectDeep(document,[]).forEach(el=>{try{
       if(el.id===SPACER||(el.closest&&el.closest('#'+SPACER)))return;
       const tag=(el.tagName||'').toLowerCase();
       if(!tag||['html','body','head','script','style'].includes(tag))return;
@@ -46,7 +47,8 @@ function pinnedBandProbe(topPx) {
       // occlusion gate
       const sx=Math.min(Math.max(Math.round(r.left+r.width/2),2),window.innerWidth-2);
       const sy=Math.min(Math.max(Math.round((Math.max(0,r.top)+Math.min(band,r.bottom))/2),2),band-1);
-      const hit=document.elementFromPoint(sx,sy);
+      let hit=document.elementFromPoint(sx,sy);
+      while(hit&&hit.shadowRoot){const inner=hit.shadowRoot.elementFromPoint(sx,sy);if(!inner||inner===hit)break;hit=inner;}
       if(!hit||!(hit===el||el.contains(hit)))return;
       hits.push({tag,id:el.id||'',top:Math.round(r.top),text:(el.textContent||'').trim().replace(/\\s+/g,' ').slice(0,28),
                  pinTag:(pin.tagName||'').toLowerCase()+(pin.id?'#'+pin.id:''),pinPos:getComputedStyle(pin).position});

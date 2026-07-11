@@ -16,6 +16,16 @@ https://www.nytimes.com
 https://www.instagram.com
 https://www.linkedin.com
 https://stackoverflow.com
+https://www.apple.com
+https://www.twitch.tv
+https://vimeo.com
+https://www.theguardian.com
+https://www.bbc.com
+https://www.cnn.com
+https://www.ebay.com
+https://www.walmart.com
+https://github.com
+https://www.espn.com
 # maps.google.com is intentionally omitted: it is a full-bleed map app whose raster tiles are
 # meant to run edge-to-edge under a translucent status bar; only its floating search header is a
 # candidate for inset, and the shipping script handles that when present.

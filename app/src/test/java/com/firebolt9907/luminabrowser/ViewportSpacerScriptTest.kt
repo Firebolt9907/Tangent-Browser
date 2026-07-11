@@ -222,6 +222,29 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `absolutely-positioned content inside a chosen fixed header is still band-shifted (apple_com)`() {
+        // apple.com's `nav#globalnav` is position:fixed with ALL its content (globalnav-content +
+        // the Apple/search/bag icons) position:absolute anchored at top:0. applyFixed's padding-top
+        // never moves absolutely-positioned descendants, so the icons sat under the status bar.
+        // bandShift can move them, but the old top-intruder filter let the chosen header (nav) —
+        // itself an intruder that is never shifted — shield its descendants from bandShift. The
+        // fix: a chosen header (or a wrapper containing one) must NOT act as a shielding container.
+        val s = script()
+        assertTrue(
+            "chosen-ness is factored out so headers don't shield their padding-immune children",
+            s.contains("function isChosenEl("),
+        )
+        assertTrue(
+            "an intruder is only shielded by a NON-chosen containing intruder",
+            s.contains("o.el.contains(it.el)&&!isChosenEl(o.el)"),
+        )
+        assertTrue(
+            "a chosen header itself (or a wrapper of one) is never band-shifted",
+            s.contains("chosenEls.some(function(h){return h===it.el||it.el.contains(h)})"),
+        )
+    }
+
+    @Test
     fun `scroll-padding-top targets both html and body scroll roots (iter 41)`() {
         // Anchor jumps must land below the inset header whether html OR body is the scroll
         // container; scroll-padding only affects where anchored scrolls land, never layout, so

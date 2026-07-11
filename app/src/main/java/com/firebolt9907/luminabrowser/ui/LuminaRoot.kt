@@ -169,22 +169,33 @@ private const val PredictiveBackVelocityThresholdPxS = 900f
 private const val PredictiveBackCommitProgressThreshold = 0.33f
 private const val PredictiveBackCoverFallbackMs = 900L
 private const val PredictiveBackCoverMaxMs = 2500L
-private const val BarCollapseDistancePx = 360f
-private const val BarCollapseSettleDelayMs = 120L
+// Scroll travel (px) that flips the pill between expanded and compact. Two thresholds give
+// hysteresis so tiny scroll reversals don't flicker the state: scroll down past the snap threshold
+// to collapse, up past the (lower) expand threshold to expand. The accumulator is clamped to
+// [0, snap] so the pill stays responsive both ways — a compact pill expands after ~60 px of up-scroll
+// no matter how far you'd scrolled down.
 private const val BarCollapseSnapThresholdPx = 180f
 private const val BarExpandSnapThresholdPx = 120f
+// Pre-snap "indication": as the scroll accumulator approaches the threshold that would flip the
+// pill's state, the collapse progress is nudged this far toward the opposite state — a small,
+// eased *morph* preview (expanded starts shrinking toward compact, compact starts growing toward
+// expanded). Because it lives on the same progress value the snap animates, the flip continues
+// seamlessly from the indicated shape instead of popping back to the resting size.
+private const val BarCollapsePreviewMax = 0.12f
+// After scrolling stops mid-band, spring the preview back to its resting state so the indication
+// nudge doesn't linger; this is the idle delay before that settle runs.
+private const val BarCollapseIdleSettleMs = 140L
 // Min reader scroll travel (px) before the pill auto-hides/reveals, so tiny jitter doesn't toggle it.
 private const val ReaderBarHideSlopPx = 6f
 // Cap on the URL-keyed in-memory snapshot map so a long browsing session can't retain a
 // screen-sized bitmap for every page ever visited. Evicted entries still live in the disk cache.
 private const val MaxRecentPageSnapshots = 24
-private const val BarCollapsePreviewMaxProgress = 0.28f
 private const val CompactInteractionThreshold = 0.5f
-private val BarCollapseEasing = CubicBezierEasing(0.33f, 0f, 0.2f, 1f)
 // Decelerate-only curve for gesture-release slides (predictive back, grid dismiss): the motion
 // continues from the finger and eases into the target without re-accelerating, matching iOS's
 // interactive-pop settle. Default FastOutSlowIn eases in *and* out, which feels wrong mid-gesture.
 private val EaseOut = CubicBezierEasing(0f, 0f, 0.2f, 1f)
+
 private const val PredictiveBackDurationMs = 220
 private val TabSwitchGap = 64.dp
 private val PullRefreshThreshold = 96.dp
@@ -202,9 +213,16 @@ private object LuminaMotion {
     // Settle to a target and cancel-return. response ~0.42s, a hair more damped so it doesn't
     // overshoot back into the chrome.
     val GridSettle = spring<Float>(dampingRatio = 0.9f, stiffness = 240f)
-    // Toolbar collapse/expand. Safari's bar snaps crisply but does NOT bounce, so this stays just
-    // under critically damped — a quick settle with no visible overshoot.
-    val BarCollapse = spring<Float>(dampingRatio = 0.9f, stiffness = Spring.StiffnessMedium)
+    // Overview zoom-out (grid → fullscreen tab), the tap-to-select / back / new-tab exit. Mirrors
+    // GridOpen's stiffness so entry and exit feel symmetric, but critically damped (no bounce) so
+    // the zoom can't overshoot past the fullscreen tab into the chrome. Replaces a fixed 300ms
+    // tween whose linear ease-out read as mechanical next to the spring-driven open/pill motion.
+    val GridClose = spring<Float>(dampingRatio = 1f, stiffness = 260f)
+    // Toolbar collapse/expand — the single spring that drives both directions (Safari-style). No
+    // finger-tracking preview: crossing the scroll threshold animates the pill smoothly between the
+    // expanded and compact states with this one spring, so up and down feel identical. Near-critical
+    // damping (0.9) + a medium-low stiffness give a quick, smooth glide with no visible bounce.
+    val BarCollapse = spring<Float>(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow)
 }
 
 @OptIn(ExperimentalActivityApi::class)
@@ -902,11 +920,6 @@ fun LuminaRoot(
         pullThresholdHapticFired = false
     }
 
-    fun previewCollapseProgress(px: Float): Float {
-        val ratio = (px / BarCollapseSnapThresholdPx).coerceIn(0f, 1f)
-        return BarCollapsePreviewMaxProgress * BarCollapseEasing.transform(ratio)
-    }
-
     fun snapBarCollapseProgress(target: Float) {
         if (abs(barCollapseProgressTarget - target) < 0.003f) return
         barCollapseProgressTarget = target
@@ -931,7 +944,10 @@ fun LuminaRoot(
 
     fun handlePageScrollDelta(delta: Float) {
         if (!userScrollInteractionActive) return
-        val nextCollapsePx = (barCollapsePx + delta).coerceIn(0f, BarCollapseDistancePx)
+        // Accumulate scroll into a hysteresis window clamped to [0, snap]. Crossing a threshold
+        // springs the pill to the opposite state; within the band we show a small morph "preview"
+        // that tracks scroll and flows straight into that spring (see BarCollapsePreviewMax).
+        val nextCollapsePx = (barCollapsePx + delta).coerceIn(0f, BarCollapseSnapThresholdPx)
         if (abs(nextCollapsePx - barCollapsePx) < 0.5f) return
         barCollapsePx = nextCollapsePx
         barCollapseIdleJob?.cancel()
@@ -940,29 +956,30 @@ fun LuminaRoot(
                 barCollapseCompact = true
                 animateBarCollapseProgress(1f)
             }
-            barCollapseCompact && nextCollapsePx > BarExpandSnapThresholdPx -> {
-                Unit
-            }
             barCollapseCompact && nextCollapsePx <= BarExpandSnapThresholdPx -> {
                 barCollapseCompact = false
-                animateBarCollapseProgress(previewCollapseProgress(nextCollapsePx))
-                barCollapseIdleJob = scope.launch {
-                    delay(BarCollapseSettleDelayMs)
-                    if (!barCollapseCompact && barCollapsePx <= BarExpandSnapThresholdPx) {
-                        barCollapsePx = 0f
-                        animateBarCollapseProgress(0f)
-                    }
-                }
+                animateBarCollapseProgress(0f)
             }
-            else -> {
-                barCollapseCompact = false
-                snapBarCollapseProgress(previewCollapseProgress(nextCollapsePx))
+            // Within the hysteresis band: nudge a small preview morph toward the state a further
+            // scroll would flip to, so the pill visibly hints the impending change and the snap
+            // continues seamlessly from it. Skip while a commit spring is mid-flight so a committed
+            // flip is never yanked backward (that was the old "no animation on swipe up" jump).
+            barCollapseAnimationJob?.isActive != true -> {
+                val restProgress = if (barCollapseCompact) 1f else 0f
+                val target = if (barCollapseCompact) {
+                    val approach = ((BarCollapseSnapThresholdPx - barCollapsePx) /
+                        (BarCollapseSnapThresholdPx - BarExpandSnapThresholdPx)).coerceIn(0f, 1f)
+                    1f - BarCollapsePreviewMax * approach * approach
+                } else {
+                    val approach = (barCollapsePx / BarCollapseSnapThresholdPx).coerceIn(0f, 1f)
+                    BarCollapsePreviewMax * approach * approach
+                }
+                snapBarCollapseProgress(target)
+                // When scrolling stops mid-band, spring the preview back to its resting state.
                 barCollapseIdleJob = scope.launch {
-                    delay(BarCollapseSettleDelayMs)
-                    if (!barCollapseCompact && barCollapsePx < BarCollapseSnapThresholdPx) {
-                        barCollapsePx = 0f
-                        animateBarCollapseProgress(0f)
-                    }
+                    delay(BarCollapseIdleSettleMs)
+                    barCollapsePx = if (barCollapseCompact) BarCollapseSnapThresholdPx else 0f
+                    animateBarCollapseProgress(restProgress)
                 }
             }
         }
@@ -1296,8 +1313,10 @@ fun LuminaRoot(
         if (animateBack) gridWaitingForAfterClose = true
         gridAnimationJob = scope.launch {
             if (animateBack) {
-                // Fast ease-out: critically damped (no bounce), decelerates into the target.
-                val anim = tween<Float>(durationMillis = 300, easing = EaseOut)
+                // Spring the zoom-out closed so it matches the spring-driven open/settle (and the
+                // pill) instead of a mechanical fixed-duration tween. Both axes share the one spec
+                // so carousel→columns stays locked to the vertical progress, same as openGrid.
+                val anim = LuminaMotion.GridClose
                 coroutineScope {
                     launch { gridProgressState.animateTo(0f, animationSpec = anim) }
                     launch { gridXProgressState.animateTo(0f, animationSpec = anim) }
@@ -1499,7 +1518,7 @@ fun LuminaRoot(
             if (commit) {
                 barCollapseCompact = true
                 animateBarCollapseProgress(1f)
-                barCollapsePx = BarCollapseDistancePx
+                barCollapsePx = BarCollapseSnapThresholdPx
             } else {
                 barCollapseCompact = false
                 animateBarCollapseProgress(0f)

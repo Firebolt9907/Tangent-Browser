@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Verify the bundled reader_rules.json against real article DOM.
+
+The reader-mode agent loop adds per-site `include`/`strip` rules to
+`app/src/main/assets/reader_rules.json`. This tool goes a step past the load-time
+`ReaderBundledRulesTest` (which only checks that the JSON is well formed): it applies each rule's
+actual CSS selectors to a saved copy of that site's real article HTML and confirms the `include`
+selector resolves to a container with substantial article text and paragraph tags — i.e. that the
+extractor's `walk()` (which emits only <p>/<h*>/<li>/<blockquote>/... ) would actually get a body.
+
+It is intentionally a standalone dev script (like scripts/sign-reader-rules.py), not part of the
+app build. Requires: pip install beautifulsoup4 soupsieve
+
+Usage:
+    # 1. Save each site's article HTML into a fixtures dir, named <host>.html, e.g.
+    #      curl -A '<Googlebot UA>' https://www.bbc.com/news/articles/... > fixtures/bbc.com.html
+    # 2. Run:
+    #      python3 scripts/verify_reader_rules.py fixtures/
+
+    # A host with no fixture is reported as "no fixture" (skipped, not failed) so you can verify
+    # incrementally. Exit code is non-zero only if a rule that HAS a fixture matches no container —
+    # that is the real "broken include selector" signal.
+
+Verdicts:
+    OK    include resolved to >800 chars of text with >=1 <p>            (extractor will get a body)
+    THIN  matched but little text / no <p> in this fixture               (usually a client-rendered
+                                                                          SSR fixture whose body
+                                                                          hydrates later; refetch the
+                                                                          rendered DOM to be sure)
+    MISS  include selector matched nothing                               (FAIL: fix the selector)
+"""
+import json
+import os
+import sys
+
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    sys.exit("needs beautifulsoup4 + soupsieve: pip install beautifulsoup4 soupsieve")
+
+RULES_PATH = os.path.join(os.path.dirname(__file__), "..", "app", "src", "main", "assets", "reader_rules.json")
+
+
+def host_of(rule):
+    m = rule.get("match")
+    return (m[0] if isinstance(m, list) else m) or "?"
+
+
+def as_list(v):
+    if v is None:
+        return []
+    return v if isinstance(v, list) else [v]
+
+
+def fixture_for(host, fixtures_dir):
+    # Accept <host>.html or a bare-domain alias (host without a leading www.).
+    for name in (f"{host}.html", f"{host.replace('www.', '')}.html"):
+        p = os.path.join(fixtures_dir, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.exit("usage: verify_reader_rules.py <fixtures-dir>   (fixtures named <host>.html)")
+    fixtures_dir = sys.argv[1]
+    rules = json.load(open(RULES_PATH))["rules"]
+
+    print(f"{'host':24} {'inc':4} {'textLen':8} {'<p>':4} {'strip':6} verdict")
+    print("-" * 72)
+    failures = 0
+    verified = 0
+    for rule in rules:
+        host = host_of(rule)
+        fx = fixture_for(host, fixtures_dir)
+        if not fx:
+            print(f"{host:24} {'-':4} {'-':8} {'-':4} {'-':6} no fixture (skipped)")
+            continue
+        soup = BeautifulSoup(open(fx, encoding="utf-8", errors="replace").read(), "html.parser")
+
+        el = None
+        for sel in as_list(rule.get("include")):
+            try:
+                matches = soup.select(sel)
+            except Exception:
+                matches = []
+            # Mirror the extractor: first match with real text wins.
+            for cand in matches:
+                if len(cand.get_text(strip=True)) > 200:
+                    el = cand
+                    break
+            if el:
+                break
+
+        if el is None:
+            print(f"{host:24} {'NO':4} {'-':8} {'-':4} {'-':6} MISS *** include matched nothing")
+            failures += 1
+            continue
+
+        text_len = len(el.get_text(strip=True))
+        p_count = len(el.find_all("p"))
+        strip_hits = 0
+        for sel in as_list(rule.get("strip")):
+            try:
+                strip_hits += len(soup.select(sel))
+            except Exception:
+                pass
+        verdict = "OK" if text_len > 800 and p_count >= 1 else "THIN"
+        print(f"{host:24} {'yes':4} {text_len:<8} {p_count:<4} {strip_hits:<6} {verdict}")
+        verified += 1
+
+    print("-" * 72)
+    print(f"verified {verified} rule(s) against fixtures; {failures} MISS")
+    sys.exit(1 if failures else 0)
+
+
+if __name__ == "__main__":
+    main()

@@ -40,5 +40,7 @@ node debug.js https://gemini.google.com 48       # dump positioned elements near
 A site **passes** when no readable **text, icon, image, or interactive control** paints inside the
 `[0, topPx)` band after injection. A header/bar's own **opaque background** filling that strip is
 expected and desired (the translucent status bar sits over it), so background-only fills are not
-counted as failures. Full-bleed surfaces meant to run edge-to-edge (e.g. a map canvas) are omitted
-from `sites.txt` by design.
+counted as failures. Likewise a **large full-bleed top media surface** (a hero image, map, or video
+canvas — tall, ≥60% width, pinned to the very top) is meant to run edge-to-edge under a translucent
+status bar, so it is not counted either; the injected script deliberately leaves such surfaces
+alone (its `bandShift` is bounded to ≤160px). Only small media (logos/icons) count as band content.

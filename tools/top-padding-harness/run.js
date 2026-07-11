@@ -42,7 +42,11 @@ function bandProbeSrc(topPx) {
       const hasBg = opaque(cs.backgroundColor);
       const hasBorderTop = parseFloat(cs.borderTopWidth) > 0 && opaque(cs.borderTopColor);
       const bgImg = cs.backgroundImage && cs.backgroundImage !== 'none';
-      const inkLeaf = (directText && childEls === 0) || isMedia;
+      // A large full-bleed top media surface (hero image, map/video canvas) is meant to run
+      // edge-to-edge under a translucent status bar — the script deliberately leaves it (bandShift
+      // is bounded to height<=160). Only small media (logos/icons) count as band content.
+      const fullBleedMedia = isMedia && r.height > 160 && r.width >= window.innerWidth * 0.6 && r.top <= 2;
+      const inkLeaf = ((directText && childEls === 0) || isMedia) && !fullBleedMedia;
       // A background/border only counts as band content if it's a top-localized bar/strip — not a
       // full-page canvas or a giant decorative gradient that legitimately sits behind everything
       // (including the translucent status-bar area). Require it to START at/near the top and not

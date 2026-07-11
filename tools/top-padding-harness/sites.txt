@@ -1,0 +1,21 @@
+# Popular sites / subdomains the top-padding (viewport spacer) injection is verified against.
+# One URL per line; '#' comments and blank lines ignored. Run: ./verify.sh
+# A site PASSES when no readable text/icon/image paints in the [0, topPx) status-bar band
+# after injection (a header's own opaque background filling the strip is expected, not a defect).
+https://www.google.com
+https://gemini.google.com
+https://mail.google.com
+https://news.google.com
+https://translate.google.com
+https://en.wikipedia.org/wiki/Web_browser
+https://www.reddit.com
+https://www.amazon.com
+https://x.com
+https://www.bing.com
+https://www.nytimes.com
+https://www.instagram.com
+https://www.linkedin.com
+https://stackoverflow.com
+# maps.google.com is intentionally omitted: it is a full-bleed map app whose raster tiles are
+# meant to run edge-to-edge under a translucent status bar; only its floating search header is a
+# candidate for inset, and the shipping script handles that when present.

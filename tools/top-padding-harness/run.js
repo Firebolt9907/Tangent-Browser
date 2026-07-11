@@ -31,7 +31,19 @@ function bandProbeSrc(topPx) {
       if (el.closest('#'+SPACER)) return;
       const cs = getComputedStyle(el);
       if (cs.visibility === 'hidden' || cs.display === 'none' || parseFloat(cs.opacity) === 0) return;
-      const r = el.getBoundingClientRect();
+      let r = el.getBoundingClientRect();
+      // An <svg> root hit-tests its WHOLE box, but its box often has empty canvas padding around the
+      // artwork (e.g. Nike's swoosh: 78px-tall svg, actual path ink at y=68-88, box top=39). Using
+      // the box would flag empty canvas poking into the band as "visible ink". Tighten an svg to the
+      // union of its painted child geometry so we test the artwork's real bounds.
+      if (tag === 'svg') {
+        let it = Infinity, ib = -Infinity, il = Infinity, ir = -Infinity;
+        el.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line,image,text').forEach(g => {
+          const gr = g.getBoundingClientRect();
+          if (gr.width > 0 && gr.height > 0) { it = Math.min(it, gr.top); ib = Math.max(ib, gr.bottom); il = Math.min(il, gr.left); ir = Math.max(ir, gr.right); }
+        });
+        if (Number.isFinite(it)) r = { top: it, bottom: ib, left: il, right: ir, width: ir - il, height: ib - it };
+      }
       if (r.width < 3 || r.height < 3) return;
       // must actually intersect the band with a MEANINGFUL visible slice. An element whose text is
       // centred above the viewport but whose box pokes a few px into the top (e.g. Dropbox's

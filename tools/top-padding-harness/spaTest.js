@@ -22,7 +22,8 @@ function bandProbeSrc(topPx) {
       if(['html','body','head','script','style'].includes(tag))return;
       const cs=getComputedStyle(el);
       if(cs.visibility==='hidden'||cs.display==='none'||parseFloat(cs.opacity)===0)return;
-      const r=el.getBoundingClientRect();
+      let r=el.getBoundingClientRect();
+      if(tag==='svg'){let it=Infinity,ib=-Infinity,il=Infinity,ir=-Infinity;el.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line,image,text').forEach(g=>{const gr=g.getBoundingClientRect();if(gr.width>0&&gr.height>0){it=Math.min(it,gr.top);ib=Math.max(ib,gr.bottom);il=Math.min(il,gr.left);ir=Math.max(ir,gr.right);}});if(Number.isFinite(it))r={top:it,bottom:ib,left:il,right:ir,width:ir-il,height:ib-it};} // svg canvas overflow: test painted geometry, not the box
       if(r.width<3||r.height<3)return;
       if(!(r.top<band-1&&r.bottom>1))return;
       if(Math.min(band,r.bottom)-Math.max(0,r.top)<6)return; // ignore slivers (skip-links poking a few px in)

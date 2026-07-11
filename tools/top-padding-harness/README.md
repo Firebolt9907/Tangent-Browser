@@ -35,7 +35,17 @@ node run.js https://gemini.google.com 48 --show  # headed, watch it
 node debug.js https://gemini.google.com 48       # dump positioned elements near the top
 node spaTest.js https://x.com 48                 # invariant #11: spacer self-heals across SPA nav
 node scrollTest.js https://medium.com 48         # scroll-activated sticky headers get inset
+./fixtures.sh                                    # offline adversarial header fixtures (no network)
 ```
+
+### Offline fixtures
+
+`fixtures/headers.html` + `./fixtures.sh` run the script against deterministic, network-free
+adversarial header patterns that don't reliably occur in the wild: stacked promo+nav bars, a fixed
+header inside a `transform`/`will-change` ancestor (which changes the fixed containing block), RTL,
+a sticky header with absolutely-positioned content, a nested-scroll (non-body) sticky header, and a
+negative-`top` header. Each fixture puts real content in the band; a PASS means the injection
+cleared it. Fast and stable — good as a first gate before the live sweeps.
 
 ### The three probes
 

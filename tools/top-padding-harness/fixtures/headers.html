@@ -1,0 +1,75 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+  body{margin:0;font-family:sans-serif}
+  .tall{height:2500px;padding-top:120px}
+  .bar{display:flex;align-items:center;gap:12px;padding:0 12px;box-sizing:border-box}
+  .logo{width:28px;height:28px;background:#e00;border-radius:6px}
+  .txt{font-weight:600}
+</style></head><body>
+<!-- Each fixture is toggled by ?case=NAME so we can test one header pattern at a time on a clean body. -->
+<div class="tall" id="content">
+  <h1>Fixture body</h1>
+  <p>Scroll region. The header for the selected case is injected by script below.</p>
+</div>
+<script>
+const cases = {
+  // 1. Stacked promo bar + nav (both fixed, promo above nav).
+  stacked(){
+    const promo=document.createElement('div');promo.className='bar';promo.style.cssText='position:fixed;top:0;left:0;width:100%;height:40px;background:#2b6;color:#fff;z-index:20';
+    promo.innerHTML='<span class="txt">PROMO: free shipping</span>';
+    const nav=document.createElement('header');nav.className='bar';nav.style.cssText='position:fixed;top:40px;left:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc;z-index:19';
+    nav.innerHTML='<div class="logo"></div><span class="txt">BrandNav</span><button>Menu</button>';
+    document.body.append(promo,nav);
+  },
+  // 2. Fixed header inside an ancestor with transform (changes the fixed containing block!).
+  transformed(){
+    const wrap=document.createElement('div');wrap.style.cssText='transform:translateZ(0);position:relative';
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:fixed;top:0;left:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Transformed header</span>';
+    wrap.appendChild(h);document.body.appendChild(wrap);
+  },
+  // 3. RTL fixed header (logo on the right).
+  rtl(){
+    document.documentElement.setAttribute('dir','rtl');
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:fixed;top:0;right:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">رأس الصفحة</span>';
+    document.body.appendChild(h);
+  },
+  // 4. Fixed header with an existing translateY transform (bandShift/applyFixed must compose).
+  pretransformed(){
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:fixed;top:0;left:0;width:100%;height:56px;background:#fff;transform:translateY(0)';
+    h.innerHTML='<div class="logo"></div><span class="txt">Pre-transformed</span>';
+    document.body.appendChild(h);
+  },
+  // 5. Sticky header whose content is absolutely positioned (apple-style, but sticky).
+  stickyAbs(){
+    const h=document.createElement('header');h.style.cssText='position:sticky;top:0;height:56px;background:#fff;border-bottom:1px solid #ccc';
+    const inner=document.createElement('div');inner.className='bar';inner.style.cssText='position:absolute;top:0;left:0;width:100%;height:56px';
+    inner.innerHTML='<div class="logo"></div><span class="txt">Sticky+absolute inner</span>';
+    h.appendChild(inner);document.body.insertBefore(h,document.body.firstChild);
+  },
+  // 6. Fixed header with a negative top (common trick to hide the top border/shadow).
+  negativeTop(){
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:fixed;top:-1px;left:0;width:100%;height:57px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Negative-top header</span>';
+    document.body.appendChild(h);
+  },
+  // 7. Fixed header with will-change:transform (like transform, changes the containing block).
+  willChange(){
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:fixed;top:0;left:0;width:100%;height:56px;background:#fff;will-change:transform';
+    h.innerHTML='<div class="logo"></div><span class="txt">will-change header</span>';
+    document.body.appendChild(h);
+  },
+  // 8. Sticky header INSIDE a nested overflow-scroll container (not body scroll) — Spotify-like.
+  nestedScrollSticky(){
+    document.getElementById('content').style.display='none';
+    const sc=document.createElement('div');sc.style.cssText='position:absolute;inset:0;overflow-y:auto';
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:sticky;top:0;height:56px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Nested-scroll sticky</span>';
+    const body=document.createElement('div');body.className='tall';body.textContent='inner scroll content';
+    sc.append(h,body);document.body.appendChild(sc);
+  },
+};
+const c = new URLSearchParams(location.search).get('case');
+if (cases[c]) cases[c]();
+</script>
+</body></html>

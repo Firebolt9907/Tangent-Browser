@@ -54,6 +54,15 @@ function bandProbeSrc(topPx) {
       const bandLocalBg = (hasBg || bgImg || hasBorderTop) && r.top >= -8 && r.height <= window.innerHeight * 0.9;
       const paints = inkLeaf || bandLocalBg;
       if (!paints) return;
+      // Occlusion / real-visibility gate: an element whose bounding box overlaps the band is only a
+      // real defect if it is actually the TOP painted thing at its in-band location. Sample the
+      // centre of the element's band-intersection; if elementFromPoint returns an ancestor (e.g.
+      // <body>) or an unrelated element, this element isn't visible there — it's occluded, clipped,
+      // or an off-screen a11y skip-link (Etsy's "Skip to Content"). Keep only self-or-descendant.
+      const sx = Math.min(Math.max(Math.round(r.left + r.width / 2), 2), window.innerWidth - 2);
+      const sy = Math.min(Math.max(Math.round((Math.max(0, r.top) + Math.min(band, r.bottom)) / 2), 2), band - 1);
+      const hit = document.elementFromPoint(sx, sy);
+      if (!hit || !(hit === el || el.contains(hit))) return;
       // a painting element whose TOP edge is >= band is fine (it just extends up? no—top<band means it's in band)
       const interactive = !!el.closest('a,button,input,select,textarea,[role="button"],[role="link"],[tabindex],[onclick]');
       hits.push({ tag, id: el.id||'', cls: (el.className&&el.className.toString?el.className.toString():'').slice(0,40),

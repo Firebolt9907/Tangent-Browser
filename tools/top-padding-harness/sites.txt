@@ -90,6 +90,11 @@ https://www.tesla.com
 https://www.redbull.com
 https://www.gucci.com
 https://www.disneyplus.com
+https://www.hulu.com
+https://www.crunchyroll.com
+https://www.wix.com
+https://www.godaddy.com
+https://mailchimp.com
 # maps.google.com is intentionally omitted: it is a full-bleed map app whose raster tiles are
 # meant to run edge-to-edge under a translucent status bar; only its floating search header is a
 # candidate for inset, and the shipping script handles that when present.

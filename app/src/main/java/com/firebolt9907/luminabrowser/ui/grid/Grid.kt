@@ -372,7 +372,9 @@ fun TabGridOverlay(
                 tabs.forEach { tab ->
                     key(tab.id) {
                         val p = tab.recencyRank - scrollBucket
-                        if (p >= -2 && p <= DeckVisibleDepth.toInt() + 1) {
+                        // Only the prominently-visible cards (focus + the newer card + the nearest
+                        // older card) carry a caption; the faded deep stack does not.
+                        if (p >= -1 && p <= 1) {
                             GridCellChrome(
                                 tab = tab,
                                 containerW = containerW,
@@ -491,6 +493,9 @@ private fun GridTabCard(
                 val scale: Float
                 val tx: Float
                 val ty: Float
+                // Depth transparency for the deep left stack (iOS). 1 while the finger is down; in
+                // the deck it lerps in from opaque with the open progress so it never pops.
+                var deckAlpha = 1f
                 when {
                     isGesture -> {
                         // Finger-tracked carousel: cards shrink together toward the drag floor and
@@ -518,6 +523,7 @@ private fun GridTabCard(
                         scale = lerp(from.third, slot.scale, t)
                         tx = lerp(from.first, slot.tx, t)
                         ty = lerp(from.second, slot.ty, t)
+                        deckAlpha = lerp(1f, slot.alpha, t)
                     }
                     cancelFromProgress > 0f -> {
                         val from = releasePosition ?: Triple(0f, 0f, 1f)
@@ -535,10 +541,11 @@ private fun GridTabCard(
                         scale = lerp(1f, slot.scale, p)
                         tx = lerp(tab.browseBaseX + carouselShift(), slot.tx, xProgress())
                         ty = lerp(0f, slot.ty, p)
+                        deckAlpha = lerp(1f, slot.alpha, p)
                     }
                 }
-                // Swipe-to-close: an upward Y offset with a fade, read in the draw phase so
-                // dragging a card up never recomposes — it only re-draws this layer.
+                // Swipe-to-close: an upward Y offset, read in the draw phase so dragging a card up
+                // never recomposes — it only re-draws this layer.
                 val swipeOffset = swipeOffsets[tab.id] ?: 0f
                 transformOrigin = TransformOrigin(0f, 0f)
                 translationX = tx
@@ -546,9 +553,10 @@ private fun GridTabCard(
                 scaleX = scale
                 scaleY = scale
                 clip = true
-                // No fading anywhere (iOS app switcher has none): cards leave the deck by sliding
-                // off the viewport edges, and a swipe-to-close flies the card straight up off the
-                // top of the screen — never a cross-fade.
+                // The only alpha is the iOS depth transparency of the deep left stack: cards up to
+                // one slot left of the focus stay opaque, deeper ones fade. Cards still leave the
+                // deck by sliding off the edges / flying up on close — never a motion cross-fade.
+                alpha = deckAlpha
                 shape = CardCropShape(
                     radiusPx = lerp(browseCornerPx, deckCornerPx, p),
                     // Local (pre-scale) visible height of the card: full viewport at progress 0 (so
@@ -741,9 +749,9 @@ private fun GridTabCard(
 }
 
 /**
- * The host label drawn above each visible deck card, following its slot in the draw phase.
- * Skippable; the slot position, the swipe-to-close offset, and the open-state alpha are all
- * draw-phase layer reads.
+ * The caption drawn above each prominently-visible deck card — the page title with the site host
+ * beneath it, iOS-app-switcher style — following its slot in the draw phase. Skippable; the slot
+ * position, the swipe-to-close offset, and the open-state alpha are all draw-phase layer reads.
  */
 @Composable
 private fun GridCellChrome(
@@ -756,10 +764,18 @@ private fun GridCellChrome(
     swipeOffsets: SnapshotStateMap<String, Float>,
 ) {
     val host = remember(tab.url) { hostLabel(tab.url) }
-    if (host.isEmpty()) return
+    val title = remember(tab.url, tab.title) {
+        when {
+            tab.url.isBlankTabUrl() -> "New Tab"
+            tab.title.isNotBlank() -> tab.title
+            host.isNotEmpty() -> host
+            else -> tab.url
+        }
+    }
     val density = LocalDensity.current
+    // The caption tracks the widest (focused) card so it stays put and legible; text is centred.
     val labelWidthDp = with(density) { (containerW * DeckFrontScale).toDp() }
-    Box(
+    Column(
         modifier = Modifier
             .graphicsLayer {
                 val slot = deckSlot(
@@ -767,24 +783,35 @@ private fun GridCellChrome(
                     containerW, containerH, croppedPageHeightPx,
                 )
                 val swipeOffset = swipeOffsets[tab.id] ?: 0f
-                // Centre the label over the card's top edge (a little above it); it rides up with
-                // the card during a swipe-to-close. No fading (iOS has none) — the label is simply
-                // tied to the open state via progress so it isn't shown over the live browse page.
-                val labelGap = 34f
+                // Sit above the card's top edge, centred over the card; rides up with the card on a
+                // swipe-to-close. The Column grows downward from this origin, so offset up by roughly
+                // its own height plus a small gap. Alpha follows the open progress (so it isn't drawn
+                // over the live browse page) and the card's own depth transparency.
+                val labelGap = with(density) { 52.dp.toPx() }
                 translationX = slot.tx + (containerW * slot.scale - containerW * DeckFrontScale) / 2f
                 translationY = slot.ty + swipeOffset - labelGap
-                alpha = progress().coerceIn(0f, 1f)
+                alpha = progress().coerceIn(0f, 1f) * slot.alpha
             }
-            .width(labelWidthDp),
-        contentAlignment = Alignment.Center,
+            .width(labelWidthDp)
+            .padding(horizontal = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = host,
-            style = MaterialTheme.typography.labelMedium,
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.Medium,
+            fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        if (host.isNotEmpty() && !tab.url.isBlankTabUrl()) {
+            Text(
+                text = host,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }

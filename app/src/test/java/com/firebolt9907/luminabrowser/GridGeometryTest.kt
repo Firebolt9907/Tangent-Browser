@@ -2,7 +2,6 @@ package com.firebolt9907.luminabrowser
 
 import com.firebolt9907.luminabrowser.ui.grid.DeckFrontCenterXFrac
 import com.firebolt9907.luminabrowser.ui.grid.DeckFrontScale
-import com.firebolt9907.luminabrowser.ui.grid.DeckVisibleDepth
 import com.firebolt9907.luminabrowser.ui.grid.deckSlot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -23,10 +22,10 @@ class GridGeometryTest {
     private fun slot(p: Float) = deckSlot(p, w, h, crop)
 
     @Test
-    fun `front slot is the largest and biased right`() {
+    fun `front slot is the largest and centred`() {
         val front = slot(0f)
         assertEquals(DeckFrontScale, front.scale, 0.001f)
-        // Centre x = tx + (W*scale)/2 sits at the right-biased fraction of the width.
+        // Centre x = tx + (W*scale)/2 sits at the focus fraction of the width (dead centre).
         val centerX = front.tx + w * front.scale / 2f
         assertEquals(w * DeckFrontCenterXFrac, centerX, 0.5f)
     }
@@ -52,13 +51,18 @@ class GridGeometryTest {
     }
 
     @Test
-    fun `deep cards slide off the left edge instead of fading`() {
-        // The front card is on-screen; a deep card's right edge has passed the left viewport edge.
-        val front = slot(0f)
-        assertTrue("front card is on-screen", front.tx + w * front.scale / 2f > 0f)
-        val deep = slot(DeckVisibleDepth + 1f)
-        val deepRightEdge = deep.tx + w * deep.scale
-        assertTrue("deep card has slid off the left edge", deepRightEdge < 0f)
+    fun `the left stack tapers - each older sliver is narrower than the one in front`() {
+        // The visible sliver of an older card is the gap between its centre and the centre of the
+        // (newer) card in front of it. With a geometric left offset these gaps shrink with depth,
+        // so the stack tapers into a vanishing point instead of marching off the edge.
+        var prevGap = Float.MAX_VALUE
+        for (p in 1..5) {
+            val gap = (slot((p - 1).toFloat()).tx + w * slot((p - 1).toFloat()).scale / 2f) -
+                (slot(p.toFloat()).tx + w * slot(p.toFloat()).scale / 2f)
+            assertTrue("gap should be positive (older card is further left) at p=$p", gap > 0f)
+            assertTrue("sliver gap should shrink with depth at p=$p", gap < prevGap)
+            prevGap = gap
+        }
     }
 
     @Test

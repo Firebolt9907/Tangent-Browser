@@ -110,6 +110,33 @@ class LuminaHaptics(
      */
     fun remove() = play(doubleClick())
 
+    /**
+     * A secondary or ambient tap — lighter than [click], heavier than [tick]. Used for toolbar
+     * buttons and navigation actions where the user expects acknowledgment but not emphasis.
+     * Sits between "you selected something" ([select]) and "something was created" ([create]).
+     */
+    fun softClick() = play(tick())
+
+    /**
+     * A long-press was recognized (aA long-press, reload long-press). A single medium-weight
+     * pulse — heavier than [tick] but lighter than [click]. Conveys "a deeper action was engaged"
+     * without the finality of [commitStrong].
+     */
+    fun longPress() = play(click())
+
+    /**
+     * A completed async operation — bookmark saved, link copied, tab sent. A quick double-tick,
+     * lighter than [create] (which fires on synchronous creation). The double-pulse says "done"
+     * without the weight of a full click.
+     */
+    fun success() = play(
+        VibrationEffect.createWaveform(
+            longArrayOf(0, 8, 24, 8),
+            intArrayOf(0, 70, 0, 70),
+            -1,
+        )
+    )
+
     private fun tick(): VibrationEffect =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)

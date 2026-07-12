@@ -5,7 +5,9 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.runtime.getValue
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.WindowInsets
@@ -40,9 +43,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import com.firebolt9907.luminabrowser.state.BarMode
 import com.firebolt9907.luminabrowser.state.BarUiState
+import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 
 private val BottomBarPadding = 24.dp
 private val BottomBarMaxHeight = 56.dp
@@ -80,16 +86,35 @@ fun SafariBar(
     onTabsTap: () -> Unit = {},
     pillTranslationX: () -> Float = { 0f },
     pillScale: () -> Float = { 1f },
+    // Only the live, interactive pill morphs its address text into the editing field. The neighbor
+    // "ghost" pills never enter editing, so they skip the SharedTransitionLayout + sharedBounds
+    // bookkeeping entirely (it was multiplying per-frame cost across every peeking pill).
+    enableAddressHero: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val isToolbarVisible = showBottomToolbar && interactive && state.mode != BarMode.Editing
+    // Animate the reserved toolbar space (0 = gone, 1 = shown) rather than toggling it on
+    // `state.mode`. Entering editing used to snap this 48dp→0 instantly: the shared address text
+    // morphed smoothly via its own boundsTransform, but the rest of the pill body — and the buttons
+    // — jumped down by the toolbar's height and popped out, so the hero "didn't account for the
+    // bottom buttons". Driving the pill's lift and the buttons' fade from this one animated fraction
+    // keeps the whole bar moving with the morph. NOTE: this must NOT depend on `interactive` — the
+    // neighbor ghost pills are non-interactive but still need the same lift so they sit beside the
+    // live pill (above the toolbar), not dropped down next to the buttons. The `interactive` gate
+    // belongs only on the button Row below.
+    val haptics = rememberLuminaHaptics()
+    val reserveToolbarSpace = showBottomToolbar && state.mode != BarMode.Editing
+    val toolbarFraction by animateFloatAsState(
+        targetValue = if (reserveToolbarSpace) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow),
+        label = "bottomToolbarFraction",
+    )
     val barHeight = if (state.mode == BarMode.Editing) {
         BottomBarEditingHeight
     } else {
         BottomBarMaxHeight
     }
-    
-    val toolbarHeight = if (showBottomToolbar && state.mode != BarMode.Editing) 48.dp else 0.dp
+
+    val toolbarHeight = 48.dp * toolbarFraction
     val navBarHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val bottomPadding = navBarHeight.coerceAtLeast(24.dp)
     val totalHeight = barHeight + bottomPadding + toolbarHeight
@@ -111,13 +136,19 @@ fun SafariBar(
               AnimatedContent(
                 targetState = state.mode,
                 modifier = Modifier
+                    // Lift above the toolbar as a LAYOUT offset (not a graphicsLayer translation):
+                    // the shared address element captures its bounds in layout space, so a draw-only
+                    // translation was invisible to it — the hero targeted the un-lifted (bottom)
+                    // position and the text slid back toward the buttons on exit. offset{} is
+                    // placement-phase (still no recomposition/remeasure), so it stays cheap.
+                    .offset {
+                        IntOffset(0, (-toolbarHeight.toPx() * (1f - collapseProgress)).roundToInt())
+                    }
                     .graphicsLayer {
-                        val toolbarHeightPx = toolbarHeight.toPx()
                         val scale = pillScale()
                         scaleX = scale
                         scaleY = scale
                         translationX = pillTranslationX()
-                        translationY = -toolbarHeightPx * (1f - collapseProgress)
                     },
                 transitionSpec = {
                     (fadeIn(spring(stiffness = Spring.StiffnessMediumLow)) togetherWith
@@ -135,10 +166,17 @@ fun SafariBar(
                 // label into the editing field (and back), so the URL appears to physically glide
                 // between the two surfaces instead of cross-fading in place. `this` here is the
                 // AnimatedContentScope that drives the pairing across the Expanded/Editing swap.
-                val addressShared = Modifier.sharedBounds(
-                    rememberSharedContentState(key = "addressText"),
-                    animatedVisibilityScope = this,
-                )
+                // Only the live pill opts in (enableAddressHero) — ghosts get a no-op modifier so
+                // they don't run shared-element bookkeeping. The flag is constant per instance, so
+                // the conditional `remember` never switches branches.
+                val addressShared = if (enableAddressHero) {
+                    Modifier.sharedBounds(
+                        rememberSharedContentState(key = "addressText"),
+                        animatedVisibilityScope = this,
+                    )
+                } else {
+                    Modifier
+                }
                 when (mode) {
                     BarMode.Expanded -> BarExpanded(
                         state = state,
@@ -159,6 +197,7 @@ fun SafariBar(
                         readerTheme = readerTheme,
                         onClick = onClick,
                         addressSharedModifier = addressShared,
+                        haptics = haptics,
                     )
                     BarMode.Compact -> BarExpanded(
                         state = state,
@@ -179,6 +218,7 @@ fun SafariBar(
                         readerTheme = readerTheme,
                         onClick = onClick,
                         addressSharedModifier = addressShared,
+                        haptics = haptics,
                     )
                     BarMode.Editing -> BarEditing(
                         state,
@@ -187,12 +227,13 @@ fun SafariBar(
                         onEditingCancel,
                         controlsEnabled = controlsEnabled,
                         addressSharedModifier = addressShared,
+                        haptics = haptics,
                     )
                 }
               }
             }
 
-            if (isToolbarVisible) {
+            if (interactive && toolbarFraction > 0.001f) {
                 val hasPage = state.pageUrl.isNotBlank() && state.pageUrl != "about:blank"
                 Row(
                     modifier = Modifier
@@ -200,8 +241,11 @@ fun SafariBar(
                         .height(48.dp)
                         .padding(horizontal = 20.dp)
                         .graphicsLayer {
-                            alpha = (1f - collapseProgress).coerceIn(0f, 1f)
-                            translationY = 48.dp.toPx() * collapseProgress
+                            // Fade + slide the buttons out as the pill collapses (scroll) or the
+                            // toolbar retracts on the way into editing, so they never pop.
+                            alpha = ((1f - collapseProgress) * toolbarFraction).coerceIn(0f, 1f)
+                            translationY = 48.dp.toPx() *
+                                (collapseProgress + (1f - toolbarFraction)).coerceIn(0f, 1f)
                         },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceAround
@@ -209,31 +253,31 @@ fun SafariBar(
                     BottomToolbarButton(
                         icon = Icons.Default.ContentCopy,
                         contentDescription = "Copy link",
-                        onClick = onCopyTap,
+                        onClick = { haptics.softClick(); onCopyTap() },
                         enabled = controlsEnabled && hasPage,
                     )
                     BottomToolbarButton(
                         icon = Icons.AutoMirrored.Filled.ArrowForward,
                         contentDescription = "Forward",
-                        onClick = onForwardTap,
+                        onClick = { haptics.softClick(); onForwardTap() },
                         enabled = controlsEnabled && canGoForward,
                     )
                     BottomToolbarButton(
                         icon = Icons.Default.Share,
                         contentDescription = "Share",
-                        onClick = onShareTap,
+                        onClick = { haptics.softClick(); onShareTap() },
                         enabled = controlsEnabled && hasPage,
                     )
                     BottomToolbarButton(
                         icon = Icons.Outlined.BookmarkBorder,
                         contentDescription = "Bookmarks",
-                        onClick = onBookmarksTap,
+                        onClick = { haptics.softClick(); onBookmarksTap() },
                         enabled = controlsEnabled,
                     )
                     BottomToolbarButton(
                         icon = Icons.Outlined.Layers,
                         contentDescription = "Tabs",
-                        onClick = onTabsTap,
+                        onClick = { haptics.softClick(); onTabsTap() },
                         enabled = controlsEnabled,
                     )
                 }

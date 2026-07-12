@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import com.firebolt9907.luminabrowser.ui.LuminaHaptics
 import androidx.compose.ui.unit.dp
 
 /**
@@ -179,6 +180,7 @@ internal fun CollapsibleSection(
     title: String,
     expanded: Boolean,
     onToggle: () -> Unit,
+    haptics: LuminaHaptics? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     // Rotate one chevron rather than hard-swapping up/down icons, and animate the body's
@@ -193,7 +195,7 @@ internal fun CollapsibleSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .clickable { onToggle() }
+                .clickable { haptics?.select(); onToggle() }
                 .padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

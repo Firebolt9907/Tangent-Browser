@@ -42,6 +42,7 @@ import androidx.compose.ui.util.lerp
 import com.firebolt9907.luminabrowser.state.BarMode
 import com.firebolt9907.luminabrowser.state.BarUiState
 import com.firebolt9907.luminabrowser.ui.reader.ReaderTheme
+import com.firebolt9907.luminabrowser.ui.LuminaHaptics
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 
@@ -68,6 +69,7 @@ internal fun BarExpanded(
     // Applied to the address label so it can act as a shared element that morphs into the editing
     // field (supplied by SafariBar's SharedTransitionLayout). Default no-op for previews/ghosts.
     addressSharedModifier: Modifier = Modifier,
+    haptics: LuminaHaptics? = null,
 ) {
     val progress = collapseProgress.coerceIn(0f, 1f)
     val controlsProgress = 1f - progress
@@ -141,8 +143,8 @@ internal fun BarExpanded(
                                 .padding(4.dp)
                                 .clip(splashShape)
                                 .combinedClickable(
-                                    onClick = onAaTap,
-                                    onLongClick = onAaLongPress,
+                                    onClick = { haptics?.softClick(); onAaTap() },
+                                    onLongClick = { haptics?.longPress(); onAaLongPress() },
                                     enabled = controlsEnabled,
                                 )
                                 .semantics(mergeDescendants = true) {
@@ -184,7 +186,7 @@ internal fun BarExpanded(
                             indication = null,
                             enabled = controlsEnabled,
                             onClickLabel = if (blankPreview) "Open a new tab" else "Edit address",
-                            onClick = onUrlTap,
+                            onClick = { haptics?.softClick(); onUrlTap() },
                         )
                         .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -228,8 +230,8 @@ internal fun BarExpanded(
                                 .padding(4.dp)
                                 .clip(splashShape)
                                 .combinedClickable(
-                                    onClick = onReload,
-                                    onLongClick = if (canGoForward) onReloadLongPress else null,
+                                    onClick = { haptics?.softClick(); onReload() },
+                                    onLongClick = if (canGoForward) { { haptics?.longPress(); onReloadLongPress() } } else null,
                                     enabled = controlsEnabled,
                                 ),
                             contentAlignment = Alignment.Center,

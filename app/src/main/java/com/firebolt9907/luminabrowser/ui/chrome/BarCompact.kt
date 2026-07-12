@@ -18,6 +18,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.state.BarMode
 import com.firebolt9907.luminabrowser.state.BarUiState
+import com.firebolt9907.luminabrowser.ui.LuminaHaptics
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 
 @Composable
@@ -28,6 +29,7 @@ internal fun BarCompact(
     onDragEnd: (totalDelta: Offset, velocity: Offset) -> Unit,
     modifier: Modifier = Modifier,
     interactive: Boolean = true,
+    haptics: LuminaHaptics? = null,
 ) {
     BarPill(
         widthFraction = 0.4f,
@@ -42,7 +44,7 @@ internal fun BarCompact(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .clickable(onClickLabel = "Edit address", onClick = onUrlTap)
+                .clickable(onClickLabel = "Edit address") { haptics?.softClick(); onUrlTap() }
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,

@@ -55,6 +55,7 @@ fun SettingsSheet(
     onClearSitePermissions: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val haptics = rememberLuminaHaptics()
     var trackingProtection by remember { mutableStateOf(globalPrefsStore.trackingProtection) }
     var blockPopUps by remember { mutableStateOf(globalPrefsStore.blockPopUps) }
     var javaScriptEnabled by remember { mutableStateOf(globalPrefsStore.javaScriptEnabled) }
@@ -192,7 +193,8 @@ fun SettingsSheet(
                         queryParameterStrippingStripList = it
                         globalPrefsStore.queryParameterStrippingStripList = it
                         onSettingChanged()
-                    }
+                    },
+                    haptics = haptics,
                 )
                 SheetRowDivider()
                 SettingsTextField(
@@ -203,7 +205,8 @@ fun SettingsSheet(
                         queryParameterStrippingAllowList = it
                         globalPrefsStore.queryParameterStrippingAllowList = it
                         onSettingChanged()
-                    }
+                    },
+                    haptics = haptics,
                 )
             }
             SheetRowDivider()
@@ -231,7 +234,8 @@ fun SettingsSheet(
                         globalPrefsStore.cookieBannerHandlingMode = 2
                         onSettingChanged()
                     }
-                )
+                ),
+                haptics = haptics,
             )
             SheetRowDivider()
             SettingsPicker(
@@ -264,7 +268,8 @@ fun SettingsSheet(
                         globalPrefsStore.dohSettingsMode = 3
                         onSettingChanged()
                     }
-                )
+                ),
+                haptics = haptics,
             )
             if (dohSettingsMode > 0) {
                 SheetRowDivider()
@@ -276,7 +281,8 @@ fun SettingsSheet(
                         dohProviderUrl = it
                         globalPrefsStore.dohProviderUrl = it
                         onSettingChanged()
-                    }
+                    },
+                    haptics = haptics,
                 )
             }
             SheetRowDivider()
@@ -387,7 +393,8 @@ fun SettingsSheet(
                     bannedPorts = it
                     globalPrefsStore.bannedPorts = it
                     onSettingChanged()
-                }
+                },
+                haptics = haptics,
             )
             SheetRowDivider()
             SettingsTextField(
@@ -398,7 +405,8 @@ fun SettingsSheet(
                     crliteChannel = it
                     globalPrefsStore.crliteChannel = it
                     onSettingChanged()
-                }
+                },
+                haptics = haptics,
             )
         }
 
@@ -544,7 +552,8 @@ fun SettingsSheet(
                         globalPrefsStore.fontSizeFactor = 2.0f
                         onSettingChanged()
                     }
-                )
+                ),
+                haptics = haptics,
             )
             SheetRowDivider()
             SettingsToggle(
@@ -596,6 +605,7 @@ fun SettingsSheet(
                         globalPrefsStore.searchEngine = engine
                     }
                 },
+                haptics = haptics,
             )
             SheetRowDivider()
             SettingsToggle(
@@ -634,6 +644,7 @@ fun SettingsSheet(
                         globalPrefsStore.httpCacheSizeMb = mb
                     }
                 },
+                haptics = haptics,
             )
             SheetRowDivider()
             SettingsPicker(
@@ -646,6 +657,7 @@ fun SettingsSheet(
                         globalPrefsStore.preloadMode = mode
                     }
                 },
+                haptics = haptics,
             )
         }
 
@@ -697,6 +709,7 @@ fun SettingsSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
+                        haptics.remove()
                         onClearSitePermissions()
                         Toast.makeText(
                             context,
@@ -754,13 +767,14 @@ private fun SettingsPicker(
     subtitle: String,
     selectedLabel: String,
     options: List<Pair<String, () -> Unit>>,
+    haptics: com.firebolt9907.luminabrowser.ui.LuminaHaptics? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { expanded = true }
+                .clickable { haptics?.select(); expanded = true }
                 .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -790,6 +804,7 @@ private fun SettingsPicker(
                 DropdownMenuItem(
                     text = { Text(label) },
                     onClick = {
+                        haptics?.select()
                         onSelect()
                         expanded = false
                     },
@@ -840,6 +855,7 @@ private fun SettingsTextField(
     subtitle: String,
     value: String,
     onValueChange: (String) -> Unit,
+    haptics: com.firebolt9907.luminabrowser.ui.LuminaHaptics? = null,
 ) {
     var showDialog by remember { mutableStateOf(false) }
     var text by remember(value) { mutableStateOf(value) }
@@ -847,7 +863,7 @@ private fun SettingsTextField(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { showDialog = true }
+            .clickable { haptics?.select(); showDialog = true }
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -891,6 +907,7 @@ private fun SettingsTextField(
             },
             confirmButton = {
                 TextButton(onClick = {
+                    haptics?.create()
                     onValueChange(text)
                     showDialog = false
                 }) {
@@ -898,7 +915,7 @@ private fun SettingsTextField(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDialog = false }) {
+                TextButton(onClick = { haptics?.softClick(); showDialog = false }) {
                     Text("Cancel")
                 }
             }

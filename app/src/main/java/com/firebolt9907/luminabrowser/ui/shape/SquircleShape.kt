@@ -14,6 +14,27 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 
+private data class SquircleSamples(val cosPow: FloatArray, val sinPow: FloatArray)
+
+// Grid crop shapes are rebuilt by the render layer as their corner/crop values animate.  The
+// superellipse sample points do not depend on size or radius, so calculating trig/pow values for
+// every card on every frame is pure avoidable CPU work.
+private val defaultSquircleSamples = createSquircleSamples(exponent = 5f, cornerSamples = 16)
+
+private fun createSquircleSamples(exponent: Float, cornerSamples: Int): SquircleSamples {
+    val twoOverN = 2.0 / exponent
+    return SquircleSamples(
+        cosPow = FloatArray(cornerSamples) { i ->
+            val theta = ((i + 1).toDouble() / cornerSamples) * (PI / 2.0)
+            cos(theta).pow(twoOverN).toFloat()
+        },
+        sinPow = FloatArray(cornerSamples) { i ->
+            val theta = ((i + 1).toDouble() / cornerSamples) * (PI / 2.0)
+            sin(theta).pow(twoOverN).toFloat()
+        },
+    )
+}
+
 /**
  * iOS-style continuous-corner rounded rectangle (sampled superellipse). `exponent` is
  * the superellipse `n`: 2 = circle, 5 = the iOS look. Radius is clamped to `min(w,h)/2`.
@@ -50,17 +71,13 @@ fun squirclePath(
     exponent: Float = 5f,
     cornerSamples: Int = 16,
 ): Path {
-    val twoOverN = 2.0 / exponent
-    // All four corners sample the same superellipse quadrant, so compute the (cos^k, sin^k)
-    // pairs once and reuse them per corner — the pow()/cos()/sin() calls are the expensive part,
-    // and this cuts them 4×. Each corner just maps the shared samples onto its own axes.
-    val cosPow = FloatArray(cornerSamples)
-    val sinPow = FloatArray(cornerSamples)
-    for (i in 0 until cornerSamples) {
-        val theta = ((i + 1).toDouble() / cornerSamples) * (PI / 2.0)
-        cosPow[i] = cos(theta).pow(twoOverN).toFloat()
-        sinPow[i] = sin(theta).pow(twoOverN).toFloat()
+    val samples = if (exponent == 5f && cornerSamples == 16) {
+        defaultSquircleSamples
+    } else {
+        createSquircleSamples(exponent, cornerSamples)
     }
+    val cosPow = samples.cosPow
+    val sinPow = samples.sinPow
     return Path().apply {
         moveTo(0f, r)
         for (i in 0 until cornerSamples) {

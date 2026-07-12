@@ -39,6 +39,7 @@ import com.firebolt9907.luminabrowser.sync.FirefoxSyncController
 import com.firebolt9907.luminabrowser.sync.FirefoxSyncedDevice
 import com.firebolt9907.luminabrowser.sync.FirefoxSyncedTab
 import com.firebolt9907.luminabrowser.ui.components.Favicon
+import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,6 +52,7 @@ fun SyncedTabsSheet(
     currentPageTitle: String = "",
 ) {
     val state by controller.state.collectAsStateWithLifecycle()
+    val haptics = rememberLuminaHaptics()
 
     // Reflect the latest background-sync results immediately on open (no network round trip).
     LaunchedEffect(state.isSignedIn) {
@@ -84,7 +86,7 @@ fun SyncedTabsSheet(
             Spacer(Modifier.height(16.dp))
             Button(
                 enabled = !state.isBusy,
-                onClick = { controller.beginSignIn(onSignInUrl) },
+                onClick = { haptics.softClick(); controller.beginSignIn(onSignInUrl) },
             ) {
                 Text("Sign in with Firefox")
             }
@@ -109,13 +111,13 @@ fun SyncedTabsSheet(
                 }
                 TextButton(
                     enabled = !state.isBusy,
-                    onClick = controller::refreshSyncedTabs,
+                    onClick = { haptics.softClick(); controller.refreshSyncedTabs() },
                 ) {
                     Text("Sync Now")
                 }
                 TextButton(
                     enabled = !state.isBusy,
-                    onClick = controller::signOut,
+                    onClick = { haptics.remove(); controller.signOut() },
                 ) {
                     Text("Sign Out")
                 }
@@ -169,6 +171,7 @@ fun SyncedTabsSheet(
                     TextButton(
                         enabled = !state.isBusy,
                         onClick = {
+                            haptics.create()
                             controller.sendTab(device.id, currentPageTitle, currentPageUrl)
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -215,6 +218,7 @@ fun SyncedTabsSheet(
                                     onOpenTab(tab.url)
                                     onDismiss()
                                 },
+                                haptics = haptics,
                             )
                         }
                     }
@@ -258,9 +262,10 @@ private fun DeviceHeader(device: FirefoxSyncedDevice) {
 private fun SyncedTabRow(
     tab: FirefoxSyncedTab,
     onOpen: () -> Unit,
+    haptics: com.firebolt9907.luminabrowser.ui.LuminaHaptics? = null,
 ) {
     ListItem(
-        modifier = Modifier.clickable(onClick = onOpen),
+        modifier = Modifier.clickable { haptics?.softClick(); onOpen() },
         leadingContent = { Favicon(tab.url) },
         headlineContent = {
             Text(

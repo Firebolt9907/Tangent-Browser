@@ -99,6 +99,7 @@ internal fun AddonsManagerSheetContent(
     onOpenQuickSettings: (InstalledAddon) -> Unit,
     onUninstall: (String) -> Unit,
 ) {
+    val haptics = rememberLuminaHaptics()
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -136,7 +137,7 @@ internal fun AddonsManagerSheetContent(
                 label = { Text("AMO slug, page, or .xpi URL") },
                 trailingIcon = if (installText.isNotEmpty()) {
                     {
-                        IconButton(onClick = { onInstallTextChange("") }) {
+                        IconButton(onClick = { haptics.remove(); onInstallTextChange("") }) {
                             Icon(Icons.Default.Clear, contentDescription = "Clear")
                         }
                     }
@@ -151,7 +152,7 @@ internal fun AddonsManagerSheetContent(
             )
             Button(
                 enabled = canInstall,
-                onClick = onInstall,
+                onClick = { haptics.create(); onInstall() },
             ) {
                 Text("Install")
             }
@@ -235,16 +236,16 @@ private fun AddonRow(
                     },
                 )
                 if (addon.isEnabled && addon.hasQuickSettings) {
-                    IconButton(onClick = onOpenQuickSettings) {
+                    IconButton(onClick = { haptics.softClick(); onOpenQuickSettings() }) {
                         Icon(Icons.Default.Tune, contentDescription = "Open ${addon.name} quick settings")
                     }
                 }
                 if (addon.optionsPageUrl != null) {
-                    IconButton(onClick = onOpenSettings) {
+                    IconButton(onClick = { haptics.softClick(); onOpenSettings() }) {
                         Icon(Icons.Default.Settings, contentDescription = "Open ${addon.name} settings")
                     }
                 }
-                IconButton(onClick = { pendingRemoval = true }) {
+                IconButton(onClick = { haptics.softClick(); pendingRemoval = true }) {
                     Icon(Icons.Default.Delete, contentDescription = "Remove ${addon.name}")
                 }
             }

@@ -450,7 +450,7 @@ private fun PageTabContent(
                         )
                         recentBrowsers.forEach { browser ->
                             TextButton(
-                                onClick = { pick(browser) },
+                                onClick = { haptics.select(); pick(browser) },
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Box(Modifier.fillMaxWidth()) {
@@ -465,7 +465,7 @@ private fun PageTabContent(
                     }
                     otherBrowsers.forEach { browser ->
                         TextButton(
-                            onClick = { pick(browser) },
+                            onClick = { haptics.select(); pick(browser) },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Box(Modifier.fillMaxWidth()) {
@@ -480,7 +480,7 @@ private fun PageTabContent(
             },
             confirmButton = {},
             dismissButton = {
-                TextButton(onClick = { showBrowserPicker = false }) { Text("Cancel") }
+                TextButton(onClick = { haptics.softClick(); showBrowserPicker = false }) { Text("Cancel") }
             },
         )
     }
@@ -523,14 +523,14 @@ private fun PageTabContent(
         // ---------- 2. Quick actions: the everyday, high-priority actions ----------
         if (hasRealUrl) {
             val quickActions = buildList {
-                add(QuickAction(Icons.Default.Share, "Share", ::doShare))
+                add(QuickAction(Icons.Default.Share, "Share") { haptics.softClick(); doShare() })
                 if (bookmarksStorage != null && isWebPage) {
-                    add(QuickAction(Icons.Default.Star, "Bookmark", ::doBookmark))
+                    add(QuickAction(Icons.Default.Star, "Bookmark") { haptics.softClick(); doBookmark() })
                 }
-                add(QuickAction(Icons.Default.ContentCopy, "Copy", ::doCopy))
-                add(QuickAction(Icons.Default.Search, "Find", ::doFind))
+                add(QuickAction(Icons.Default.ContentCopy, "Copy") { haptics.softClick(); doCopy() })
+                add(QuickAction(Icons.Default.Search, "Find") { haptics.softClick(); doFind() })
                 if (isWebPage) {
-                    add(QuickAction(Icons.Default.Home, "Home", ::doAddToHomeScreen))
+                    add(QuickAction(Icons.Default.Home, "Home") { haptics.softClick(); doAddToHomeScreen() })
                 }
             }
             Spacer(Modifier.height(18.dp))
@@ -549,6 +549,7 @@ private fun PageTabContent(
             Spacer(Modifier.height(18.dp))
             TextButton(
                 onClick = {
+                    haptics.toggle(isActive)
                     val readerHost = hostFromUrl(pageUrl)
                     if (isActive || isEligible) {
                         tabId?.let { readerManager.toggleReader(it, pageUrl, engineSession) }
@@ -587,7 +588,7 @@ private fun PageTabContent(
             if (listenArticle != null) {
                 Spacer(Modifier.height(4.dp))
                 TextButton(
-                    onClick = { PageSpeaker.toggle(context, listenArticle, tabId) },
+                    onClick = { haptics.toggle(isSpeaking); PageSpeaker.toggle(context, listenArticle, tabId) },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     ActionRowContent(
@@ -634,7 +635,7 @@ private fun PageTabContent(
                                         contentDescription = themeLabel
                                         if (readerTheme == themeOption) selected = true
                                     }
-                                    .clickable { readerManager.setTheme(themeOption) }
+                                    .clickable { haptics.select(); readerManager.setTheme(themeOption) }
                             )
                         }
                     }
@@ -646,7 +647,7 @@ private fun PageTabContent(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         IconButton(
-                            onClick = { readerManager.setFontSize(readerFontSize - 10) },
+                            onClick = { haptics.step(); readerManager.setFontSize(readerFontSize - 10) },
                             enabled = readerFontSize > 50,
                             modifier = Modifier.semantics {
                                 contentDescription = "Decrease reader font size"
@@ -660,7 +661,7 @@ private fun PageTabContent(
                             fontWeight = FontWeight.Bold
                         )
                         IconButton(
-                            onClick = { readerManager.setFontSize(readerFontSize + 10) },
+                            onClick = { haptics.step(); readerManager.setFontSize(readerFontSize + 10) },
                             enabled = readerFontSize < 200,
                             modifier = Modifier.semantics {
                                 contentDescription = "Increase reader font size"
@@ -684,7 +685,7 @@ private fun PageTabContent(
                             }
                             val fontSelected = readerFontName == name
                             TextButton(
-                                onClick = { readerManager.setFontName(name) },
+                                onClick = { haptics.select(); readerManager.setFontName(name) },
                                 modifier = Modifier.semantics {
                                     contentDescription = "$name reader font"
                                     if (fontSelected) selected = true
@@ -770,6 +771,7 @@ private fun PageTabContent(
             title = "Page Settings",
             expanded = pageSettingsExpanded || isActive,
             onToggle = { pageSettingsExpanded = !pageSettingsExpanded },
+            haptics = haptics,
         ) {
             AaToggleRow(
                 title = "Add top padding for this site",
@@ -838,7 +840,7 @@ private fun PageTabContent(
             // dedicated "Reading List" folder under the Mobile root, created on first use.
             if (bookmarksStorage != null && isWebPage) {
                 TextButton(
-                    onClick = ::doReadingList,
+                    onClick = { haptics.create(); doReadingList() },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     ActionRowContent(icon = Icons.AutoMirrored.Filled.MenuBook, text = "Add to Reading List")
@@ -855,6 +857,7 @@ private fun PageTabContent(
             if (resolvedNativeApp != null) {
                 TextButton(
                     onClick = {
+                        haptics.softClick()
                         val intent = Intent(Intent.ACTION_VIEW, pageUrl.toUri()).apply {
                             setPackage(resolvedNativeApp.packageName)
                             addCategory(Intent.CATEGORY_BROWSABLE)
@@ -898,6 +901,7 @@ private fun PageTabContent(
             ) {
                 TextButton(
                     onClick = {
+                        haptics.softClick()
                         val uri = pageUrl.toUri()
                         val pkg = preferredBrowserPkg
                         val intent = Intent(Intent.ACTION_VIEW, uri).apply {
@@ -916,7 +920,7 @@ private fun PageTabContent(
                 ) {
                     ActionRowContent(icon = Icons.Default.Public, text = openLabel)
                 }
-                TextButton(onClick = { showBrowserPicker = true }) {
+                TextButton(onClick = { haptics.select(); showBrowserPicker = true }) {
                     Text(
                         text = "Change",
                         style = MaterialTheme.typography.bodySmall,

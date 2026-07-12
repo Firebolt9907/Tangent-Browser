@@ -41,6 +41,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.state.BarMode
 import com.firebolt9907.luminabrowser.state.BarUiState
+import com.firebolt9907.luminabrowser.ui.LuminaHaptics
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 import kotlinx.coroutines.delay
 
@@ -55,6 +56,7 @@ internal fun BarEditing(
     // Applied to the editing field so it pairs with BarExpanded's address region as a shared
     // element (supplied by SafariBar's SharedTransitionLayout). Default no-op for previews.
     addressSharedModifier: Modifier = Modifier,
+    haptics: LuminaHaptics? = null,
 ) {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -134,6 +136,7 @@ internal fun BarEditing(
                     {
                         IconButton(
                             onClick = {
+                                haptics?.remove()
                                 fieldValue = TextFieldValue("")
                                 onEditingTextChange("")
                                 focusRequester.requestFocus()
@@ -163,7 +166,7 @@ internal fun BarEditing(
                     disabledContainerColor = Color.Transparent,
                 ),
             )
-            TextButton(onClick = onEditingCancel, enabled = controlsEnabled) { Text("Cancel") }
+            TextButton(onClick = { haptics?.softClick(); onEditingCancel() }, enabled = controlsEnabled) { Text("Cancel") }
         }
     }
 }

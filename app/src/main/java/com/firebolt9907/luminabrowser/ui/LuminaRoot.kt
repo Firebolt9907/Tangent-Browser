@@ -205,19 +205,22 @@ private const val GridCommitVelocityPxS = 1000f
 // Safari-style motion for the tab-overview (grid) transitions. iOS springs are authored as a
 // "response" (seconds to settle) + damping fraction; Compose's stiffness maps as
 // stiffness = (2*PI / response)^2. Safari's overview zoom is a soft, lightly-damped settle that
-// carries the finger's release velocity rather than snapping — damping just under 1 so it eases
-// in without a visible bounce. Centralised here so the open/settle/cancel phases stay coherent.
+// carries the finger's release velocity rather than snapping. Tuned to iOS's grace: response
+// ~0.46s (softer/longer than a snappy Material spring) with a lively-but-controlled damping so the
+// motion eases in and settles crisply rather than crawling to rest. Centralised here so the
+// open/settle/cancel/close phases stay one coherent feel.
 private object LuminaMotion {
-    // Overview zoom-in (carousel → grid). response ~0.40s.
-    val GridOpen = spring<Float>(dampingRatio = 0.86f, stiffness = 260f)
-    // Settle to a target and cancel-return. response ~0.42s, a hair more damped so it doesn't
-    // overshoot back into the chrome.
-    val GridSettle = spring<Float>(dampingRatio = 0.9f, stiffness = 240f)
-    // Overview zoom-out (grid → fullscreen tab), the tap-to-select / back / new-tab exit. Mirrors
-    // GridOpen's stiffness so entry and exit feel symmetric, but critically damped (no bounce) so
-    // the zoom can't overshoot past the fullscreen tab into the chrome. Replaces a fixed 300ms
-    // tween whose linear ease-out read as mechanical next to the spring-driven open/pill motion.
-    val GridClose = spring<Float>(dampingRatio = 1f, stiffness = 260f)
+    // Overview zoom-in (carousel → grid). response ~0.46s. Damping 0.8 gives the barely-there
+    // overshoot-and-settle that reads as "iOS smooth" instead of a hard stop.
+    val GridOpen = spring<Float>(dampingRatio = 0.8f, stiffness = 190f)
+    // Settle to a target and cancel-return. Same softness, a hair more damped so a cancel doesn't
+    // visibly bounce back into the chrome.
+    val GridSettle = spring<Float>(dampingRatio = 0.85f, stiffness = 200f)
+    // Overview zoom-out (grid → fullscreen tab): tap-to-select / back / new-tab exit. Symmetric
+    // softness with GridOpen so entry and exit feel like one motion. Damping 0.9 keeps it crisp
+    // (no dead critical-damping crawl at the end) — the render clamps progress to [0,1], so the
+    // sub-percent undershoot a light damping produces can't show as an overshoot past the tab.
+    val GridClose = spring<Float>(dampingRatio = 0.9f, stiffness = 200f)
     // Toolbar collapse/expand — the single spring that drives both directions (Safari-style). No
     // finger-tracking preview: crossing the scroll threshold animates the pill smoothly between the
     // expanded and compact states with this one spring, so up and down feel identical. Near-critical
@@ -731,7 +734,10 @@ fun LuminaRoot(
     }
 
     val cache = components.tabSnapshotCache
-    val snapshotCacheVersion by cache.version.collectAsStateWithLifecycle()
+    // The State instance itself is handed to TabGridOverlay so grid cards can observe version
+    // bumps via derivedStateOf without the version being a recomposing parameter.
+    val snapshotCacheVersionState = cache.version.collectAsStateWithLifecycle()
+    val snapshotCacheVersion by snapshotCacheVersionState
     fun snapshotFor(tabId: String?, url: String?): Bitmap? {
         val id = tabId ?: return null
         // Reader-active tabs render their thumbnail from the native ReaderView; the engine capture
@@ -841,12 +847,20 @@ fun LuminaRoot(
         return (contentSize.height.toFloat() - (cell.top + cell.height)).coerceAtLeast(1f)
     }
 
-    val gridEngaged = gridGestureActive ||
-        gridOpen ||
-        gridProgressState.value > 0f ||
-        gridCommitFromProgress > 0f ||
-        gridCancelFromProgress > 0f ||
-        gridWaitingForAfterClose
+    // Derived so the gridProgressState.value read flips a boolean instead of invalidating all of
+    // LuminaRoot per animation frame. During open, gridOpen short-circuits before the read; the
+    // close/cancel springs had no such guard — the whole tree recomposed at display rate for the
+    // entire exit animation. Cheap plain-state clauses first so the animated value is read last.
+    val gridEngaged by remember {
+        derivedStateOf {
+            gridGestureActive ||
+                gridOpen ||
+                gridWaitingForAfterClose ||
+                gridCommitFromProgress > 0f ||
+                gridCancelFromProgress > 0f ||
+                gridProgressState.value > 0f
+        }
+    }
     val tabSwitchingEnabled = !barCollapseCompact &&
         predictiveBackOffsetPx == 0f &&
         stickyBackCoverSnapshot == null &&
@@ -1337,14 +1351,6 @@ fun LuminaRoot(
 
     fun openGrid(initialVelocityProgressPerSec: Float, fromProgress: Float = 0f) {
         gridAnimationJob?.cancel()
-        // Capture the current page live now that the grid is opening. The drag-to-open path already
-        // does this via requestTabSwitchSnapshot; the tap path did not, so a page whose last stored
-        // snapshot is stale or missing — notably SPA pages (reddit et al.) that never fire a
-        // load-complete capture — showed a stale/blank thumbnail in its own grid cell. Purpose stays
-        // null (no tab-switch/predictive-back cover side effect); the capture just refreshes the
-        // URL/tab-keyed snapshot maps that the grid reads.
-        currentSnapshotRequestPurpose = null
-        currentSnapshotRequestId += 1
         gridGestureActive = false
         gridOpen = true
         gridDragPx = 0f
@@ -1380,6 +1386,12 @@ fun LuminaRoot(
             gridCommitFromProgress = 0f
             gridCancelFromProgress = 0f
             gridCommitFromPositions = null
+            // captureThumbnail() can allocate/upload a full viewport bitmap. Do this only after
+            // the overview spring has settled: requesting it at the release boundary competed
+            // directly with the first grid frames and was visible as slow bitmap uploads.
+            // Purpose stays null; ContentHost still refreshes its URL/tab-keyed cache.
+            currentSnapshotRequestPurpose = null
+            currentSnapshotRequestId += 1
             gridAnimationJob = null
         }
     }
@@ -2519,15 +2531,8 @@ fun LuminaRoot(
                     )
                 }
                 if (gridEngaged) {
-                    // During drag: read gridDragProgress directly (no coroutine overhead).
-                    // During animations: read from the Animatable spring.
-                    val gridProgress = if (gridGestureActive) gridDragProgress else gridProgressState.value
-                    // x stays at 0 (carousel positions) while the finger is down; only springs
-                    // to grid-column positions after release.
-                    val xProgress = if (gridGestureActive) 0f else gridXProgressState.value
                     val tabsList = browserState.tabs
                     val width = contentSize.width.toFloat()
-                    val height = contentSize.height.toFloat()
                     val pageStride = width + tabSwitchGapPx
                     val newSelIdx = if (gridNewTabSelected) {
                         tabsList.size // "+" cell position — real tabs lerp left, "+" cell expands to fullscreen
@@ -2547,13 +2552,11 @@ fun LuminaRoot(
                             tab.id to with(density) { padDp.toPx() }.toInt()
                         }
                     }
-                    val gridTabs by remember(
+                    val gridTabs = remember(
                         tabsList,
                         selectedTabId,
                         gridNewTabSelected,
-                        offsetXState,
                         sitePrefsVersion,
-                        snapshotCacheVersion,
                         tabSwitchGapPx,
                         contentSize,
                         gridHandoffSelectedTabId,
@@ -2563,72 +2566,29 @@ fun LuminaRoot(
                         gridHandoffSelectedTopPadPx,
                         gridHandoffLeavingTopPadPx,
                     ) {
-                        derivedStateOf {
-                            // Read all per-frame and event-driven state directly here so the lambda
-                            // is tracked as a snapshot observer of each. Plain-float / plain-value
-                            // captures from outside the lambda are not tracked by derivedStateOf.
-                            val liveCommitPositions = gridCommitFromPositions
-                            // Plain-float captures computed outside the lambda are not tracked by
-                            // derivedStateOf, which caused drag positions to freeze mid-gesture.
-                            val isGestureActive = gridGestureActive
-                            // Handoff mode adds the live drag offset on top of the frozen mid-switch
-                            // position (offsetX is 0 at the grab) so the card still follows the
-                            // finger horizontally; a bare frozen read pinned the card's X for the
-                            // whole gesture.
-                            val liveShift = if (gridHandoffSelectedTabId != null) {
-                                gridHandoffSelectedOffsetX + offsetX
-                            } else {
-                                offsetX
+                        // This list is deliberately frame-stable. Drag values belong exclusively
+                        // in TabGridOverlay graphicsLayer providers: observing them here caused a
+                        // full LuminaRoot recomposition and GridTab allocation on every 120 Hz
+                        // pointer sample.
+                        tabsList.mapIndexed { i, tab ->
+                            val isHandoffLeaving = gridHandoffSelectedTabId != null && tab.id == gridHandoffLeavingTabId
+                            val browsePadPx = when {
+                                isHandoffLeaving -> gridHandoffLeavingTopPadPx
+                                gridHandoffSelectedTabId != null && i == newSelIdx -> gridHandoffSelectedTopPadPx
+                                else -> tabPadPxMap[tab.id] ?: 0
                             }
-                            val liveScale: Float
-                            val liveSelTx: Float
-                            val liveSelTy: Float
-                            val liveStride: Float
-                            if (isGestureActive && width > 0f && height > 0f) {
-                                val sideMarginPx = with(density) { GridSideMarginDp.toPx() }
-                                val gapPx = with(density) { GridGapDp.toPx() }
-                                val cellW = (width - 2 * sideMarginPx - gapPx) / 2f
-                                val minScale = (cellW / width).coerceIn(0.3f, 0.6f)
-                                liveScale = (1f - gridDragProgress * (1f - minScale)).coerceIn(minScale, 1f)
-                                val fingerX = width / 2f + liveShift
-                                val fingerY = height - gridDragPx
-                                liveSelTx = fingerX - width * liveScale / 2f
-                                liveSelTy = fingerY - height * liveScale
-                                liveStride = (width + tabSwitchGapPx) * liveScale
-                            } else {
-                                liveScale = 1f
-                                liveSelTx = 0f
-                                liveSelTy = 0f
-                                liveStride = pageStride
-                            }
-                            tabsList.mapIndexed { i, tab ->
-                                val isHandoffLeaving = gridHandoffSelectedTabId != null && tab.id == gridHandoffLeavingTabId
-                                val browseX = if (isHandoffLeaving) {
-                                    gridHandoffLeavingOffsetX + offsetX
+                            GridTab(
+                                id = tab.id,
+                                url = tab.content.url,
+                                title = tab.content.title.ifBlank { hostFromUrl(tab.content.url) },
+                                browseBaseX = if (isHandoffLeaving) {
+                                    gridHandoffLeavingOffsetX
                                 } else {
-                                    (i - newSelIdx) * pageStride + liveShift
-                                }
-                                val browsePadPx = when {
-                                    isHandoffLeaving -> gridHandoffLeavingTopPadPx
-                                    gridHandoffSelectedTabId != null && i == newSelIdx -> gridHandoffSelectedTopPadPx
-                                    else -> tabPadPxMap[tab.id] ?: 0
-                                }
-                                GridTab(
-                                    id = tab.id,
-                                    url = tab.content.url,
-                                    title = tab.content.title.ifBlank {
-                                        hostFromUrl(tab.content.url)
-                                    },
-                                    snapshot = null,
-                                    browseBaseX = if (isHandoffLeaving) {
-                                        gridHandoffLeavingOffsetX + offsetX
-                                    } else {
-                                        (i - newSelIdx) * pageStride
-                                    },
-                                    browseTopPadPx = browsePadPx,
-                                    slotDelta = i - newSelIdx,
-                                )
-                            }
+                                    (i - newSelIdx) * pageStride
+                                },
+                                browseTopPadPx = browsePadPx,
+                                slotDelta = i - newSelIdx,
+                            )
                         }
                     }
                     // Shared new-tab action: used by both the grid's "+" cell and the header
@@ -2704,7 +2664,7 @@ fun LuminaRoot(
                         commitFromProgress = if (gridGestureActive) 0f else gridCommitFromProgress,
                         cancelFromProgress = if (gridGestureActive) 0f else gridCancelFromProgress,
                         releasePositions = gridCommitFromPositions,
-                        snapshotCacheVersion = snapshotCacheVersion,
+                        snapshotVersion = snapshotCacheVersionState,
                         snapshotProvider = { tabId ->
                             val tabIndex = tabsList.indexOfFirst { it.id == tabId }
                             val tab = tabsList.getOrNull(tabIndex)
@@ -2717,7 +2677,9 @@ fun LuminaRoot(
                             }
                         },
                     )
-                    Column(
+                    // Controls never appear while a finger is down. Keeping them out of that
+                    // phase prevents their alpha/enable state from observing every drag sample.
+                    if (!gridGestureActive) Column(
                         modifier = Modifier
                             .zIndex(2f)
                             .align(Alignment.BottomCenter)
@@ -2725,7 +2687,7 @@ fun LuminaRoot(
                             .navigationBarsPadding()
                             .padding(bottom = 16.dp, start = 12.dp, end = 12.dp)
                             .graphicsLayer {
-                                alpha = ((gridProgress - 0.35f) / 0.35f).coerceIn(0f, 1f)
+                                alpha = ((gridProgressState.value - 0.35f) / 0.35f).coerceIn(0f, 1f)
                             },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -2764,7 +2726,12 @@ fun LuminaRoot(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                val toolbarEnabled = !gridGestureActive && gridProgress > 0.65f
+                                // This is a composition input, but it has only one transition
+                                // per open/close animation instead of invalidating the toolbar on
+                                // every animation frame.
+                                val toolbarEnabled by remember {
+                                    derivedStateOf { gridProgressState.value > 0.65f }
+                                }
                                 FilledTonalIconButton(
                                     onClick = { openNewTabFromGrid() },
                                     enabled = toolbarEnabled,
@@ -2831,19 +2798,21 @@ fun LuminaRoot(
                 // colour on top of the content. This keeps the browsing viewport's rounded corners
                 // visible at all times (idle, scrolling, pill drag) — it only fades out as the
                 // all-tabs grid opens, which draws its own rounded cards.
-                run {
-                    val gridOpenFraction =
-                        (if (gridGestureActive) gridDragProgress else gridProgressState.value)
-                            .coerceIn(0f, 1f)
-                    val maskAlpha = if (isVideoFullscreen || isInPipMode) 0f else (1f - gridOpenFraction).coerceIn(0f, 1f)
-                    if (maskAlpha > 0.001f) {
+                if (!isVideoFullscreen && !isInPipMode) run {
+                    // Keep progress in the layer block. Reading gridDragProgress here would
+                    // invalidate this entire content Box for every pointer sample.
+                    val gridOpenFraction = remember {
+                        { if (gridGestureActive) gridDragProgress else gridProgressState.value }
+                    }
                         val cornerMaskDp = with(density) { (topChromeInsetPx * 1.6f).toDp() }
                         val maskColor = MaterialTheme.colorScheme.background
                         val maskShape = remember(cornerMaskDp) { SquircleShape(cornerMaskDp) }
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .graphicsLayer { alpha = maskAlpha }
+                                .graphicsLayer {
+                                    alpha = (1f - gridOpenFraction()).coerceIn(0f, 1f)
+                                }
                                 .drawWithCache {
                                     // SquircleShape yields Outline.Rectangle when the radius/size
                                     // resolves to 0 (e.g. a zero-size first draw); only a Generic
@@ -2861,7 +2830,6 @@ fun LuminaRoot(
                                     onDrawBehind { mask?.let { drawPath(it, color = maskColor) } }
                                 },
                         )
-                    }
                 }
                 AddressSheet(
                     query = state.editingText,
@@ -3402,6 +3370,8 @@ private fun BottomBarLayer(
             onShareTap = onShareTap,
             onBookmarksTap = onBookmarksTap,
             onTabsTap = onTabsTap,
+            // Only the live pill morphs its address text into the editing field; ghosts opt out.
+            enableAddressHero = true,
         )
         }
     }

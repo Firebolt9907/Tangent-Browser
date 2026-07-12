@@ -35,13 +35,14 @@ const val GridColumns = 2
  * that changes while the finger moves (carousel shift, drag position, scale, progress) is read
  * inside [TabGridOverlay]'s per-card `graphicsLayer` blocks via providers, so the list — and with
  * it the whole composition — stays untouched during the drag. It only changes when tabs, the
- * selection, snapshots, or a mid-switch handoff change.
+ * selection, or a mid-switch handoff change. Snapshots are looked up per card via the overlay's
+ * provider, NOT carried here: a Bitmap field would make this class (and every List of it)
+ * unstable, defeating card skipping.
  */
 data class GridTab(
     val id: String,
     val url: String,
     val title: String,
-    val snapshot: Bitmap?,
     /**
      * Static X of this tab's carousel slot (px): `(i - selectedIndex) * pageStride`, plus the
      * frozen mid-switch handoff offset when one is active. The overlay adds the live carousel

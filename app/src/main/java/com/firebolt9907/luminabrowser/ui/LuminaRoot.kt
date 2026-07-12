@@ -2772,16 +2772,22 @@ fun LuminaRoot(
                                         }
                                         tabViewMode = next
                                         components.globalPreferencesStore.tabViewModeName = next.name
+                                        luminaHaptics.select()
                                     },
                                     enabled = toolbarEnabled,
                                 ) {
+                                    val modeLabel = when (tabViewMode) {
+                                        TabViewMode.DECK -> "Deck"
+                                        TabViewMode.PIXEL -> "Filmstrip"
+                                        TabViewMode.GRID -> "Grid"
+                                    }
                                     Icon(
                                         imageVector = when (tabViewMode) {
                                             TabViewMode.PIXEL -> Icons.Default.ViewColumn
                                             TabViewMode.GRID -> Icons.Default.GridView
                                             TabViewMode.DECK -> Icons.Default.ViewCarousel
                                         },
-                                        contentDescription = "Change tab layout",
+                                        contentDescription = "Tab layout: $modeLabel. Tap to change.",
                                     )
                                 }
                                 FilledTonalIconButton(

@@ -2722,6 +2722,10 @@ fun LuminaRoot(
                                 tab?.content?.url?.let { faviconCache[it] } ?: tab?.content?.icon
                             },
                             tabViewMode = tabViewMode,
+                            // Reserve the floating-controls band at the bottom so the deck/pixel
+                            // cards ride up clear of the overview toolbar (measured height incl. the
+                            // nav-bar inset), like the classic grid's bottom margin.
+                            bottomInsetPx = gridBottomControlsHeightPx.toFloat(),
                         )
                     }
                     // Controls never appear while a finger is down. Keeping them out of that

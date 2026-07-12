@@ -1,6 +1,8 @@
 package com.firebolt9907.luminabrowser.ui.grid
 
 import android.graphics.Bitmap
+import android.os.Build
+import android.view.RoundedCorner
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,6 +62,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -145,6 +148,9 @@ fun TabGridOverlay(
     /** Which overview layout to render. Selects the per-card slot function ([deckSlot]/[pixelSlot])
      * and the horizontal drag/scroll step; the gesture core stays layout-agnostic. */
     tabViewMode: TabViewMode = TabViewMode.DECK,
+    /** Space (px) to reserve at the bottom of the overview (for the floating controls). Cards ride
+     * up off this band so they clear the controls. DECK/PIXEL only; GRID handles its own margin. */
+    bottomInsetPx: Float = 0f,
 ) {
     if (containerSize.width <= 0 || containerSize.height <= 0 || tabs.isEmpty()) return
     val density = LocalDensity.current
@@ -159,7 +165,28 @@ fun TabGridOverlay(
     }
 
     val browseCornerPx = with(density) { browseCornerDp.toPx() }
-    val deckCornerPx = with(density) { 46.dp.toPx() }
+    // Match the deck card's rounded corners to the device's PHYSICAL screen corner radius so each
+    // card reads as a scaled-down phone (iOS app-switcher look). Query the real display corner
+    // (RoundedCorner API, 31+) and divide by DeckFrontScale so the FRONT card's on-screen corner
+    // equals the screen radius (the card is drawn at that scale). Fallback (older OS / device that
+    // reports no corner) is a generous on-screen radius, still larger than the old flat 46dp.
+    val view = LocalView.current
+    val deckCornerPx = remember(view, density) {
+        val screenRadiusPx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            view.rootWindowInsets?.let { insets ->
+                listOf(
+                    RoundedCorner.POSITION_TOP_LEFT,
+                    RoundedCorner.POSITION_TOP_RIGHT,
+                    RoundedCorner.POSITION_BOTTOM_LEFT,
+                    RoundedCorner.POSITION_BOTTOM_RIGHT,
+                ).mapNotNull { insets.getRoundedCorner(it)?.radius }.maxOrNull()?.toFloat()
+            }
+        } else {
+            null
+        }
+        val onScreenRadius = screenRadiusPx ?: with(density) { 44.dp.toPx() }
+        onScreenRadius / DeckFrontScale
+    }
     val containerW = containerSize.width.toFloat()
     val containerH = containerSize.height.toFloat()
     val containerHDp = with(density) { containerH.toDp() }
@@ -175,13 +202,18 @@ fun TabGridOverlay(
     // fullscreen selected page morphs continuously into the front slot. The overlay is only composed
     // while the deck is engaged, so each open re-enters here fresh.
     // Per-card slot function for the active mode — a drop-in swap read in the draw phase.
-    val slotProvider: (Float) -> DeckSlot = remember(tabViewMode, containerW, containerH, croppedPageHeightPx) {
-        when (tabViewMode) {
-            TabViewMode.PIXEL -> { p -> pixelSlot(p, containerW, containerH, croppedPageHeightPx) }
-            // GRID falls back to the deck placement until the legacy 2-column grid is wired in.
-            else -> { p -> deckSlot(p, containerW, containerH, croppedPageHeightPx) }
+    val slotProvider: (Float) -> DeckSlot =
+        remember(tabViewMode, containerW, containerH, croppedPageHeightPx, bottomInsetPx) {
+            when (tabViewMode) {
+                TabViewMode.PIXEL -> { p ->
+                    pixelSlot(p, containerW, containerH, croppedPageHeightPx, bottomInsetPx)
+                }
+                // GRID falls back to the deck placement until the legacy 2-column grid is wired in.
+                else -> { p ->
+                    deckSlot(p, containerW, containerH, croppedPageHeightPx, bottomInsetPx)
+                }
+            }
         }
-    }
     // Drag/scroll step matches the mode's visual centre-to-centre spacing so the deck tracks the
     // finger and snapping lands a card centred.
     val stepFrac = when (tabViewMode) {
@@ -197,8 +229,13 @@ fun TabGridOverlay(
     val cullHigh = if (tabViewMode == TabViewMode.PIXEL) 4 else DeckVisibleDepth.toInt() + 1
     val maxScroll = (tabs.size - 1).coerceAtLeast(0).toFloat()
     val maxScrollPx = maxScroll * stepPx
-    val initialScrollPx = remember(tabs, selectedTabId, stepPx) {
-        (tabs.firstOrNull { it.id == selectedTabId }?.recencyRank ?: 0).toFloat() * stepPx
+    // Seed the deck one card OLDER than the selected tab (recencyRank + 1) so, exactly like the iOS
+    // app switcher, opening the overview slides the current tab to the RIGHT and centres the
+    // previous tab ready to tap. Clamped, so if the current tab is already the oldest it just stays
+    // centred (nothing older to move it right of).
+    val initialScrollPx = remember(tabs, selectedTabId, stepPx, maxScrollPx) {
+        val rank = tabs.firstOrNull { it.id == selectedTabId }?.recencyRank ?: 0
+        ((rank + 1).toFloat() * stepPx).coerceIn(0f, maxScrollPx)
     }
     // deckDragging + deckScrollDrag are the hot-path pair (written directly per pointer sample, no
     // coroutine); deckScrollAnim carries the seed and the release fling. Same split as the grid's
@@ -207,8 +244,15 @@ fun TabGridOverlay(
     var deckScrollDrag by remember { mutableFloatStateOf(0f) }
     val deckScrollAnim = remember { Animatable(0f) }
     LaunchedEffect(Unit) { deckScrollAnim.snapTo(initialScrollPx) }
-    // Re-clamp if tabs shrink out from under the current front (e.g. a card was closed).
+    // Hard-bound the scroll to [0, maxScrollPx]. Without this the release fling re-applies the
+    // release velocity on top of an already-projected target, so a decisive fling toward either
+    // end SPRING-OVERSHOOTS past the last/first card: the front-card position (p) then lands off the
+    // valid range, every card's slot slides clear off the viewport, and the whole overview flashes
+    // to the bare surfaceDim backdrop (the "everything goes black" bug — most visible in the
+    // constant-scale Pixel filmstrip). Bounding the Animatable clamps both the fling and any
+    // animateTo, so the scroll always rests on a real card. (deckScrollDrag is already hand-coerced.)
     LaunchedEffect(maxScrollPx) {
+        deckScrollAnim.updateBounds(0f, maxScrollPx)
         if (!deckDragging && deckScrollAnim.value > maxScrollPx) {
             deckScrollAnim.animateTo(maxScrollPx)
         }
@@ -256,17 +300,6 @@ fun TabGridOverlay(
     val iconProviderFwd: (String) -> Bitmap? = remember { { id -> iconProviderHolder.value(id) } }
     val onTabSelectedFwd: (String) -> Unit = remember { { id -> onTabSelectedHolder.value(id) } }
     val onCloseTabFwd: (String) -> Unit = remember { { id -> onCloseTabHolder.value(id) } }
-    // Swipe-up navigation: center the tab one OLDER than the swiped tab (recencyRank + 1), so the
-    // swiped tab slides to the right (newer) slot. Animates the deck scroll with the settle spring.
-    val onSwipeUpFwd: (String) -> Unit = remember(tabs, stepPx, maxScrollPx) {
-        { id ->
-            val rank = tabs.firstOrNull { it.id == id }?.recencyRank
-            if (rank != null && !deckDragging) {
-                val target = ((rank + 1).toFloat() * stepPx).coerceIn(0f, maxScrollPx)
-                coroutineScope.launch { deckScrollAnim.animateTo(target, settleSpring) }
-            }
-        }
-    }
     val cellsClickableFwd: () -> Boolean = remember { { progressHolder.value() > 0.5f } }
 
     // Composition-level culling. During the gesture / cancel spring only cards within a couple of
@@ -304,11 +337,16 @@ fun TabGridOverlay(
                 // handled by the child cards and win on the vertical axis, so the two don't fight.
                 .pointerInput(stepPx, maxScroll) {
                     val tracker = VelocityTracker()
+                    // Front card index at the last haptic tick. A featherweight tick fires each time
+                    // the drag crosses into a new card (Pixel-recents style); tracked here in the
+                    // gesture scope so it's finger-drag only — the release fling doesn't buzz.
+                    var lastTickIndex = 0
                     detectHorizontalDragGestures(
                         onDragStart = {
                             if (scrollEnabledState.value) {
                                 deckDragging = true
                                 deckScrollDrag = deckScrollAnim.value
+                                lastTickIndex = (deckScrollDrag / stepPx).roundToInt()
                                 tracker.resetTracking()
                                 coroutineScope.launch { deckScrollAnim.stop() }
                             }
@@ -322,6 +360,12 @@ fun TabGridOverlay(
                                 // so the front card tracks the finger 1:1.
                                 deckScrollDrag =
                                     (deckScrollDrag + dragAmount).coerceIn(0f, maxScrollPx)
+                                // Subtle detent each time a new card takes the focus slot.
+                                val idx = (deckScrollDrag / stepPx).roundToInt()
+                                if (idx != lastTickIndex) {
+                                    lastTickIndex = idx
+                                    haptics.step()
+                                }
                             }
                         },
                         onDragEnd = {
@@ -342,7 +386,17 @@ fun TabGridOverlay(
                                         targetValue = targetCard * stepPx,
                                         animationSpec = settleSpring,
                                         initialVelocity = vPx,
-                                    )
+                                    ) {
+                                        // Keep ticking through the inertial settle: the fling
+                                        // crosses cards after the finger lifts, so continue the
+                                        // per-index detent (Pixel-recents style) off the same
+                                        // counter so there's no double/skipped tick at hand-off.
+                                        val idx = (value / stepPx).roundToInt()
+                                        if (idx != lastTickIndex) {
+                                            lastTickIndex = idx
+                                            haptics.step()
+                                        }
+                                    }
                                 }
                             }
                         },
@@ -401,7 +455,6 @@ fun TabGridOverlay(
                             cellsClickable = cellsClickableFwd,
                             onTabSelected = onTabSelectedFwd,
                             onCloseTab = onCloseTabFwd,
-                            onSwipeUp = onSwipeUpFwd,
                             haptics = haptics,
                             coroutineScope = coroutineScope,
                         )
@@ -518,7 +571,6 @@ private fun GridTabCard(
     cellsClickable: () -> Boolean,
     onTabSelected: (String) -> Unit,
     onCloseTab: (String) -> Unit,
-    onSwipeUp: (String) -> Unit,
     haptics: LuminaHaptics,
     coroutineScope: CoroutineScope,
 ) {
@@ -605,6 +657,12 @@ private fun GridTabCard(
                     // the open/close morph matches the browse layer), shrinking to the deck slice.
                     cropHeightPx = lerp(containerH, croppedPageHeightPx, p) - padPx,
                 )
+                // Drop shadow behind every card so each reads as physically lifted off the
+                // surfaceDim backdrop. The squircle `shape` above is reused as the shadow outline;
+                // the elevation lives inside this transform layer, so it scales and moves with the
+                // card for free. Ramped by `p` so it grows in as cards fan into the deck and there's
+                // no halo during the near-fullscreen open/close morph.
+                shadowElevation = DeckCardShadowDp.toPx() * p
             }
             .background(
                 if (tab.url.isBlankTabUrl()) {
@@ -627,31 +685,18 @@ private fun GridTabCard(
                     onDragEnd = {
                         coroutineScope.launch {
                             val offset = swipeOffsets[tab.id] ?: 0f
-                            // Distance-sensitive up-swipe, iOS-app-switcher style:
-                            //  • a DECISIVE swipe (past ~38% of the screen) CLOSES the tab — the
-                            //    card flies off the top;
-                            //  • a GENTLE swipe (past ~12%) NAVIGATES to the next-OLDER tab — this
-                            //    tab slides into the right/newer slot as the older one takes centre,
-                            //    its vertical offset springing back while the deck scroll carries it;
-                            //  • anything shorter springs back.
-                            when {
-                                offset < -containerH * 0.38f -> {
-                                    animate(
-                                        initialValue = offset,
-                                        targetValue = -containerH,
-                                        animationSpec = tween(durationMillis = 200)
-                                    ) { value, _ -> swipeOffsets[tab.id] = value }
-                                    onCloseTab(tab.id)
-                                }
-                                offset < -containerH * 0.12f -> {
-                                    onSwipeUp(tab.id)
-                                    animate(
-                                        initialValue = offset,
-                                        targetValue = 0f,
-                                        animationSpec = tween(durationMillis = 200)
-                                    ) { value, _ -> swipeOffsets[tab.id] = value }
-                                }
-                                else -> animate(
+                            // Up-swipe closes the tab (card flies off the top) once it passes ~38% of
+                            // the screen; anything shorter springs back. (No gentle-swipe-to-navigate:
+                            // the deck already opens with the current tab shifted right, iOS-style.)
+                            if (offset < -containerH * 0.38f) {
+                                animate(
+                                    initialValue = offset,
+                                    targetValue = -containerH,
+                                    animationSpec = tween(durationMillis = 200)
+                                ) { value, _ -> swipeOffsets[tab.id] = value }
+                                onCloseTab(tab.id)
+                            } else {
+                                animate(
                                     initialValue = offset,
                                     targetValue = 0f,
                                     animationSpec = tween(durationMillis = 200)

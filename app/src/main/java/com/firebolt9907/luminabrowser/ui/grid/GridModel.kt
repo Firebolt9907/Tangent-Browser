@@ -44,16 +44,16 @@ const val DeckFrontCenterXFrac = 0.5f
 /** Screen-Y of every card's centre, as a fraction of height. All cards are vertically centred (no
  * per-depth rise) so the deck reads as a clean horizontal row like iOS. */
 const val DeckFrontCenterYFrac = 0.50f
-/** First left step (fraction of width) for the nearest OLDER card (p = 1). ~0.10 ≈ 12% of a card
- * width, so the first left sliver shows ~12% with the rest hidden by the focus. */
-const val DeckLeftFirstStepFrac = 0.10f
-/** Geometric decay of the left step per deeper card. Steep, so the visible left slivers collapse
- * fast — roughly 12% (p=1), ~4% (p=2), ~0% (p=3), then culled — instead of a long fanned tail. */
-const val DeckLeftDecay = 0.30f
+/** First left step (fraction of width) for the nearest OLDER card (p = 1): the first left sliver
+ * shows ~15% with the rest hidden by the focus. */
+const val DeckLeftFirstStepFrac = 0.13f
+/** Geometric decay of the left step per deeper card. Steep (≈1/3), so the visible left slivers
+ * collapse fast — roughly 15% (p=1), 5% (p=2), ~0% (p=3), then culled — instead of a long tail. */
+const val DeckLeftDecay = 0.5f
 /** Centre-to-centre step (fraction of width) for NEWER cards (p < 0), which sit to the RIGHT.
- * Large — the newer card is stacked ON TOP of the focus but pushed far right so only a thin sliver
- * of its left edge shows and the focused card keeps its high visible width. */
-const val DeckRightStepFrac = 0.74f
+ * The newer card is stacked ON TOP of the focus and pushed right so a sliver of its left edge shows;
+ * moderate (not flung far off) so a bit more of it peeks in while the focus keeps most of its width. */
+const val DeckRightStepFrac = 0.7f
 /** Drag→slot ratio (fraction of width of finger travel per card) for the horizontal deck scroll,
  * decoupled from the (asymmetric) visual steps above so scrolling stays responsive rather than
  * tracking the wide right-side step. */
@@ -76,6 +76,10 @@ const val DeckCropAspect = 2.4f
 const val DeckDragMinScale = 0.62f
 /** Fraction of screen height the finger pulls up for a full open — sets drag sensitivity. */
 const val DeckTravelFrac = 0.55f
+/** Drop-shadow elevation behind each deck card at full open, so every card reads as lifted off the
+ * surfaceDim backdrop. Applied inside the card's (scaled) transform layer and ramped by open
+ * progress; the card's squircle crop is reused as the shadow outline. */
+val DeckCardShadowDp = 30.dp
 
 // ── Pixel-style (constant-scale filmstrip) tunables ────────────────────────────────────────────
 // An alternative overview ([TabViewMode.PIXEL]): every card is the SAME size, laid out in a plain
@@ -193,7 +197,7 @@ data class DeckSlot(val tx: Float, val ty: Float, val scale: Float, val alpha: F
  *  - The focused card (p = 0) is centred and covers the majority of the screen.
  *  - Older cards (p > 0) form a tapering LEFT STACK: offsets compound geometrically
  *    ([DeckLeftFirstStepFrac] decayed by [DeckLeftDecay]^k), so the visible slivers shrink with
- *    depth (~20%, ~14%, ~10%, …) into a vanishing point, each drawn BEHIND the newer card in front.
+ *    depth (~15%, ~5%, ~0%, then culled) into a vanishing point, each drawn BEHIND the newer card.
  *  - Newer cards (p < 0) are slightly LARGER and drawn ON TOP of the focus, but pushed far to the
  *    RIGHT by the linear [DeckRightStepFrac] so only a thin sliver of the left edge shows and the
  *    focus keeps its high visible width.
@@ -208,6 +212,10 @@ fun deckSlot(
     containerW: Float,
     containerH: Float,
     cropHeightPx: Float,
+    /** Space (px) reserved at the BOTTOM of the viewport (e.g. for the floating overview controls).
+     * Cards are vertically centred within `containerH - bottomInsetPx`, so they ride up off the
+     * controls instead of sitting under them. */
+    bottomInsetPx: Float = 0f,
 ): DeckSlot {
     val scale = (DeckFrontScale * DeckDepthScaleStep.toDouble().pow(p.toDouble()).toFloat())
         .coerceIn(0.04f, 1f)
@@ -222,7 +230,7 @@ fun deckSlot(
         DeckRightStepFrac * p
     }
     val cx = containerW * DeckFrontCenterXFrac - offsetFrac * containerW
-    val cy = containerH * DeckFrontCenterYFrac
+    val cy = (containerH - bottomInsetPx) * DeckFrontCenterYFrac
     val tx = cx - containerW * scale / 2f
     val ty = cy - cropHeightPx * scale / 2f
     // Depth transparency: fully opaque up to one slot left of the focus, then fading with depth into
@@ -247,12 +255,15 @@ fun pixelSlot(
     containerW: Float,
     containerH: Float,
     cropHeightPx: Float,
+    /** Space (px) reserved at the BOTTOM of the viewport; cards centre within `containerH -
+     * bottomInsetPx` so they clear the floating overview controls. */
+    bottomInsetPx: Float = 0f,
 ): DeckSlot {
     val scale = DeckPixelScale
     // Centre-to-centre step = card width + gap; older cards (p > 0) to the left, newer to the right.
     val stepFrac = DeckPixelScale + DeckPixelGapFrac
     val cx = containerW * DeckFrontCenterXFrac - stepFrac * containerW * p
-    val cy = containerH * DeckFrontCenterYFrac
+    val cy = (containerH - bottomInsetPx) * DeckFrontCenterYFrac
     val tx = cx - containerW * scale / 2f
     val ty = cy - cropHeightPx * scale / 2f
     return DeckSlot(tx = tx, ty = ty, scale = scale, alpha = 1f)

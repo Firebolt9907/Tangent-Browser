@@ -146,6 +146,7 @@ fun AaSheet(
     statusBarTopPad: Dp = 0.dp,
     bookmarksStorage: BookmarksStorage? = null,
     pageIcon: android.graphics.Bitmap? = null,
+    showBottomToolbar: Boolean = false,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
     // Always open fully expanded (no partially-expanded detent). Otherwise the sheet's own drag
@@ -197,6 +198,7 @@ fun AaSheet(
             onReload = {},
             interactive = false,
             controlsEnabled = false,
+            showBottomToolbar = showBottomToolbar,
         )
     }
 

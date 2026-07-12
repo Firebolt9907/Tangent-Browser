@@ -10,25 +10,54 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.ui.shape.squirclePath
 import kotlin.math.min
+import kotlin.math.pow
 
 /**
- * Non-composable model, geometry, and small helpers for the tab grid — split out of `Grid.kt`
+ * Non-composable model, geometry, and small helpers for the tab deck — split out of `Grid.kt`
  * so [TabGridOverlay] there holds the rendering and this holds the plumbing.
  */
 
-val GridSideMarginDp = 16.dp
-val GridTopMarginDp = 64.dp
-// Breathing-room gap between the last grid row and the top of the floating bottom controls. The
-// controls' full measured height (which already includes the nav-bar inset, and the handoff banner
-// when shown) is added on top of this in Grid.kt, so this is only the gap — not the whole clearance.
-val GridBottomMarginDp = 24.dp
-val GridGapDp = 14.dp
-const val GridColumns = 2
+// ── Receding 3D deck (iOS app-switcher style) tunables ─────────────────────────────────────────
+// The "all tabs" overview is a horizontal deck of cards, all vertically centred (like the iOS app
+// switcher). The focused card sits centre-right, large and fully visible; older tabs recede to the
+// left, shrinking and tucking behind it. Only ~[DeckVisibleDepth] read as visible before the rest
+// slide off the left edge. Every value here is consumed only inside [deckSlot], run in the draw
+// phase.
+
+/** On-screen scale of the front (focused) card, applied uniformly (the card is a scaled-down full
+ * screenshot). The card is a bit narrower than the viewport so the neighbours sit beside it nearly
+ * edge-to-edge, iOS-style. */
+const val DeckFrontScale = 0.62f
+/** Geometric scale ratio between adjacent deck slots (scale(p) = DeckFrontScale * step^p). Gentle:
+ * neighbours are only slightly larger (newer/right) or smaller (older/left) than the focus, not a
+ * steep recede. */
+const val DeckDepthScaleStep = 0.93f
+/** Screen-X of the focused card's centre, as a fraction of width. Dead centre: the most-visible
+ * card is always the one nearest screen centre (iOS), with the deck receding away on both sides. */
+const val DeckFrontCenterXFrac = 0.5f
+/** Screen-Y of every card's centre, as a fraction of height. All cards are vertically centred (no
+ * per-depth rise) so the deck reads as a clean horizontal row like iOS. */
+const val DeckFrontCenterYFrac = 0.50f
+/** Horizontal centre-to-centre step per slot (fraction of width). Close to [DeckFrontScale] so the
+ * cards sit nearly edge-to-edge — the newer (right) card is stacked ON TOP of the focus but pushed
+ * far enough right that the overlap is tiny (~90% of the focused card stays visible). Linear (not
+ * compounded) so far cards keep translating and slide clean off the edges like iOS — no
+ * vanishing-point pile-up. This is ALSO the drag→slot ratio (px of finger travel per card), so the
+ * focused card tracks the finger 1:1 during a horizontal scroll. */
+const val DeckDxStepFrac = 0.56f
+/** Roughly how many cards read as on-screen before they slide off — drives cull windows only. */
+const val DeckVisibleDepth = 4f
+/** Card crop aspect (height / width). Set high so `min(W*aspect, H)` clamps to the full viewport
+ * height on phones/tablets — each card is a scaled-down full screenshot, like the app switcher. */
+const val DeckCropAspect = 2.4f
+/** Scale floor the card shrinks to while the finger drags up (before the fan-into-deck spring).
+ * Shared with LuminaRoot's release capture so the commit spring starts from the drawn scale. */
+const val DeckDragMinScale = 0.62f
+/** Fraction of screen height the finger pulls up for a full open — sets drag sensitivity. */
+const val DeckTravelFrac = 0.55f
 
 /**
  * Frame-stable description of one tab card. Deliberately carries NO per-frame values: everything
@@ -53,31 +82,45 @@ data class GridTab(
     val browseTopPadPx: Int = 0,
     /** Slot offset from the selected tab; spreads cards around the finger during the gesture. */
     val slotDelta: Int = 0,
+    /** Recency rank: 0 = newest (front of the deck), larger = older (further back-left). */
+    val recencyRank: Int = 0,
 )
 
-data class GridRect(val left: Float, val top: Float, val width: Float, val height: Float)
+/** Draw-phase result of placing a card at continuous deck position [DeckSlot]. */
+data class DeckSlot(val tx: Float, val ty: Float, val scale: Float)
 
-fun gridCellRect(
-    index: Int,
-    containerSize: IntSize,
-    columns: Int,
-    horizontalGapPx: Float,
-    verticalGapPx: Float,
-    sideMarginPx: Float,
-    topMarginPx: Float,
-): GridRect {
-    val w = containerSize.width.toFloat()
-    val h = containerSize.height.toFloat()
-    if (w <= 0f || h <= 0f) return GridRect(0f, 0f, 0f, 0f)
-    val cellW = (w - 2 * sideMarginPx - (columns - 1) * horizontalGapPx) / columns
-    // Tab cards are a fixed 3:4 (portrait) aspect — the page is cropped to its top region rather
-    // than showing the full (very tall) viewport. See [TabGridOverlay] for the crop/morph math.
-    val cellH = cellW * 4f / 3f
-    val col = index % columns
-    val row = index / columns
-    val left = sideMarginPx + col * (cellW + horizontalGapPx)
-    val top = topMarginPx + row * (cellH + verticalGapPx)
-    return GridRect(left, top, cellW, cellH)
+/**
+ * Transform for a card at continuous deck position `p` (0 = front/largest/right; increasing =
+ * recede up-left/smaller). Cards are full-container-sized boxes drawn with `TransformOrigin(0, 0)`
+ * and clipped to [cropHeightPx] from the top, so ([DeckSlot.tx], [DeckSlot.ty]) is the scaled
+ * card's top-left and the visible slice is `cropHeightPx * scale` tall.
+ *
+ * Asymmetric, exactly like the iOS app switcher. Scale is **monotonic** in p (`step^p`, step < 1),
+ * and z-order (set by the draw order in [TabGridOverlay]) is newest-on-top:
+ *  - The focused card (p = 0) is centred and covers the majority of the screen.
+ *  - Older cards (p > 0) recede LEFT — slightly smaller, drawn BEHIND the focus, peeking on the
+ *    left where the focus doesn't cover them.
+ *  - Newer cards (p < 0) are slightly LARGER and drawn ON TOP of the focus, but pushed far to the
+ *    RIGHT (cards sit nearly edge-to-edge) so the overlap is tiny — ~90% of the focused card stays
+ *    visible and only the newer card's left portion shows.
+ *
+ * Position translates **linearly** with p, so far cards keep marching and slide clean off the
+ * screen edges rather than piling up at a vanishing point. Every card is vertically centred. No
+ * alpha fade anywhere: cards enter and leave only by sliding across the viewport edges, like iOS.
+ */
+fun deckSlot(
+    p: Float,
+    containerW: Float,
+    containerH: Float,
+    cropHeightPx: Float,
+): DeckSlot {
+    val scale = (DeckFrontScale * DeckDepthScaleStep.toDouble().pow(p.toDouble()).toFloat())
+        .coerceIn(0.04f, 1f)
+    val cx = containerW * DeckFrontCenterXFrac - DeckDxStepFrac * containerW * p
+    val cy = containerH * DeckFrontCenterYFrac
+    val tx = cx - containerW * scale / 2f
+    val ty = cy - cropHeightPx * scale / 2f
+    return DeckSlot(tx = tx, ty = ty, scale = scale)
 }
 
 /**

@@ -289,10 +289,12 @@ private fun buildRuntime(application: Application, prefs: GlobalPreferencesStore
         .aboutConfigEnabled(false)
         .apply { writeGeckoConfig(application, prefs)?.let { configFilePath(it) } }
         .build()
-    // WebAuthn/passkeys need no pref overrides: Gecko's Android defaults already route requests
-    // to the platform FIDO2/Credential Manager path (Google Password Manager) with resident-key
-    // support enabled. Forcing `webauthn_enable_softtoken` on would silently service requests
-    // with Gecko's virtual test authenticator instead of showing the system passkey UI.
+    // WebAuthn/passkeys normally need no pref overrides: Gecko's Android defaults already route
+    // requests to the platform FIDO2/Credential Manager path (Google Password Manager) with
+    // resident-key support enabled. Forcing `webauthn_enable_softtoken` on would silently service
+    // requests with Gecko's virtual test authenticator instead of showing the system passkey UI.
+    // NOTE: WebAuthn is currently disabled outright via `security.webauth.webauthn: false` in
+    // writeGeckoConfig() — a TEMPORARY measure until Lumina is on the GPM trusted-browser allowlist.
     return GeckoRuntime.create(application, settings)
 }
 
@@ -390,6 +392,15 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           # <link rel=prefetch> hints so likely next-hops are warmed before the tap.
           network.dns.disablePrefetchFromHTTPS: false
           network.prefetch-next: true
+          # --- TEMPORARY: passkeys/WebAuthn disabled ---
+          # Lumina isn't on Google Password Manager's trusted-browser allowlist yet, so the platform
+          # FIDO2 path rejects our cert and passkey flows fail. Disable the WebAuthn API entirely so
+          # sites fall back to passwords instead of offering a broken passkey prompt. This turns OFF
+          # the whole API (isUserVerifyingPlatformAuthenticatorAvailable() → false) — it is NOT the
+          # `webauthn_enable_softtoken` override that AGENTS.md invariant #12 forbids (that would
+          # silently service requests with Gecko's virtual test authenticator). Re-enable by removing
+          # this pref once we're on the GPM allowlist.
+          security.webauth.webauthn: false
         """.trimIndent() + "\n",
     )
     file.absolutePath

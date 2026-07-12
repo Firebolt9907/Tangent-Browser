@@ -2,9 +2,7 @@ package com.firebolt9907.luminabrowser.ui.grid
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,39 +10,39 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.calculateTargetValue
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -52,7 +50,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -68,36 +65,35 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.firebolt9907.luminabrowser.ui.LuminaHaptics
 import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
-import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 import kotlin.math.abs
+import kotlin.math.min
 import kotlin.math.roundToInt
 
-// The drag morph layers are full viewport-sized bitmap textures until they reach the grid scale.
-// At 120 Hz, drawing five of them simultaneously can exceed the GPU budget even though only the
-// centred card and its immediate neighbours are useful visual context. The full grid is composed
-// immediately after release, before cards fan into their final cells.
+// During the drag/commit only cards within a couple of carousel slots of the finger can be on
+// screen; composing all of a many-tab deck would pay layout and snapshot texture uploads for cards
+// you can't see. The window is quantized to whole slots so it recomposes only when the drag crosses
+// a slot boundary — never per frame.
 private const val GestureVisibleSlots = 1
 
-// GridTab, GridRect, gridCellRect, the Grid* margin constants, CardCropShape, SnapshotTracker,
-// and the hostLabel/isBlankTabUrl/lerp helpers live in GridModel.kt.
-
 /**
- * Renders every (near-viewport) tab simultaneously. Each cell starts at its true carousel position
- * ([GridTab.browseBaseX] + the live carousel shift, matching the browse-layer overlay
- * pixel-for-pixel) and ends at its grid cell.
+ * The "all tabs" overview, rendered as a horizontal receding 3D deck (iOS app-switcher style):
+ * the newest tab is the largest and furthest right (the front), older tabs shrink and tuck
+ * behind-left, and only ~[DeckVisibleDepth] read as visible. Each card starts at its true carousel
+ * position ([GridTab.browseBaseX] + the live carousel shift, matching the browse-layer overlay
+ * pixel-for-pixel) and ends at its deck slot ([deckSlot]).
  *
- * Hot-path contract: [progress], [xProgress], [carouselShift], [dragOffsetPx], and the per-card
- * swipe-to-close offsets are read ONLY inside `graphicsLayer` / `derivedStateOf` blocks. During a
- * drag no recomposition or layout happens — every per-frame value (position, scale, corner radius,
- * page crop, alphas) is a draw-phase layer property. Composition changes only at phase boundaries
- * (gesture ↔ springs ↔ open) and when the quantized (half-screen) scroll-culling bucket slides.
+ * Hot-path contract: [progress], [xProgress], [carouselShift], [dragOffsetPx], the live deck-scroll
+ * position, and the per-card swipe-to-close offsets are read ONLY inside `graphicsLayer` /
+ * `derivedStateOf` blocks. During a drag no recomposition or layout happens — every per-frame value
+ * (position, scale, corner radius, page crop, alphas) is a draw-phase layer property. Composition
+ * changes only at phase boundaries (gesture ↔ springs ↔ open) and when the quantized deck-scroll or
+ * carousel-slot culling bucket slides.
  *
  * Recomposition contract: each card is a skippable composable ([GridTabCard] / [GridCellChrome])
- * whose inputs are all stable. The caller's lambdas are re-allocated on most of its recompositions
- * (they capture local functions), so they are wrapped in remembered forwarders here; a body
- * re-execution of this overlay then costs only the cell-geometry loop while unchanged cards skip.
- * Snapshot bitmaps resolve inside each card via [derivedStateOf] keyed on [snapshotVersion], so a
- * thumbnail landing from the disk cache recomposes only the card whose bitmap actually changed.
+ * whose inputs are all stable. The caller's lambdas are re-allocated on most of its recompositions,
+ * so they are wrapped in remembered forwarders here. Snapshot bitmaps resolve inside each card via
+ * [derivedStateOf] keyed on [snapshotVersion], so a thumbnail landing from the disk cache
+ * recomposes only the card whose bitmap actually changed.
  */
 @Composable
 fun TabGridOverlay(
@@ -123,13 +119,13 @@ fun TabGridOverlay(
     /** True while the finger is still down — cards track the finger via [dragOffsetPx]. */
     isGesture: Boolean = false,
     /**
-     * Non-zero during the commit spring (finger released, grid opening). The spring animates
-     * [progress] from this value to 1. Tabs lerp from [releasePositions] to grid cells using
+     * Non-zero during the commit spring (finger released, deck opening). The spring animates
+     * [progress] from this value to 1. Tabs lerp from [releasePositions] to deck slots using
      * a normalized t = (progress − commitFromProgress) / (1 − commitFromProgress).
      */
     commitFromProgress: Float = 0f,
     /**
-     * Non-zero during the cancel spring (finger released, grid closing). Tabs lerp from
+     * Non-zero during the cancel spring (finger released, deck closing). Tabs lerp from
      * [releasePositions] back to their browse/fullscreen carousel positions as [progress]
      * returns to 0.
      */
@@ -139,18 +135,12 @@ fun TabGridOverlay(
     /** Bumps when a snapshot lands; cards re-resolve their bitmap through [snapshotProvider]. */
     snapshotVersion: State<Int>,
     snapshotProvider: (String) -> Bitmap? = { null },
-    /**
-     * Measured height (px) of the floating bottom controls — nav-bar inset + toolbar + the handoff
-     * banner when shown. The last row's bottom clearance is derived from this so it tracks button vs
-     * gesture navigation and the banner's presence. 0 until first measured; falls back to a static
-     * estimate for that first frame.
-     */
-    bottomControlsHeightPx: Int = 0,
 ) {
     if (containerSize.width <= 0 || containerSize.height <= 0 || tabs.isEmpty()) return
     val density = LocalDensity.current
     val haptics = rememberLuminaHaptics()
     val coroutineScope = rememberCoroutineScope()
+    // Per-card vertical swipe-to-close offset (px, negative = upward).
     val swipeOffsets = remember { mutableStateMapOf<String, Float>() }
 
     LaunchedEffect(tabs) {
@@ -158,75 +148,64 @@ fun TabGridOverlay(
         swipeOffsets.keys.retainAll(currentIds)
     }
 
-    val sideMarginPx = with(density) { GridSideMarginDp.toPx() }
-    val topMarginPx = with(density) { GridTopMarginDp.toPx() }
-    val navBarPx = WindowInsets.navigationBars.getBottom(density)
-    // Clear the last row of the floating bottom controls. `bottomControlsHeightPx` already includes
-    // the nav-bar inset (the controls are laid out inside navigationBarsPadding), so it adapts to
-    // button vs gesture navigation and grows when the handoff banner is showing — plus a small gap
-    // for breathing room. Before the controls are first measured, fall back to a static estimate
-    // (constant margin + nav bar) so the very first opened frame isn't under-padded.
-    val bottomGapPx = with(density) { GridBottomMarginDp.toPx() }
-    val bottomMarginPx = if (bottomControlsHeightPx > 0) {
-        bottomControlsHeightPx + bottomGapPx
-    } else {
-        bottomGapPx + navBarPx
-    }
-    val gapPx = with(density) { GridGapDp.toPx() }
-    val horizontalGapPx = gapPx
-    val verticalGapPx = with(density) { 36.dp.toPx() } // extra space for domain name/label below the card
-    // Cell clip radius is in the card's *unscaled* (full-container) space and is then shrunk by the
-    // cell's scale (~0.44), so this is intentionally large to land at a generous on-screen radius.
-    // The radius lerps from the browse-mode value (matching the horizontal-switch overlay) inside
-    // each card's layer shape, so at progress=0 the card is pixel-identical to the browse layer.
     val browseCornerPx = with(density) { browseCornerDp.toPx() }
-    val gridCornerPx = with(density) { 52.dp.toPx() }
+    val deckCornerPx = with(density) { 46.dp.toPx() }
     val containerW = containerSize.width.toFloat()
     val containerH = containerSize.height.toFloat()
     val containerHDp = with(density) { containerH.toDp() }
+    // Visible page slice of a fully-open deck card (its own unscaled coordinate space). Taller than
+    // the old grid's 3:4 for a screen-like card, but never taller than the viewport.
+    val croppedPageHeightPx = min(containerW * DeckCropAspect, containerH)
 
-    val totalItems = tabs.size + 1 // +1 for the new-tab cell
-    val rows = (totalItems + GridColumns - 1) / GridColumns
-    val cellW = (containerW - 2 * sideMarginPx - (GridColumns - 1) * gapPx) / GridColumns
-    val cellH = cellW * 4f / 3f
-    // Scale floor during the gesture — must match the geometry LuminaRoot uses to compute the
-    // release positions, or the springs would start from a different scale than the drag showed.
-    val minScale = (cellW / containerW).coerceIn(0.3f, 0.6f)
-    // Page height (in the tab's own unscaled coordinate space) that a fully-open 3:4 cell reveals.
-    // At the grid cell, on-screen card height = cellH = cellW*4/3, and the card is drawn at
-    // scale = cellW/containerW, so the visible page slice = cellH / scale = containerW*4/3.
-    val croppedPageHeightPx = if (containerW > 0f) containerW * 4f / 3f else containerH
-    val rawContentHeightPx = topMarginPx + rows * cellH + (rows - 1).coerceAtLeast(0) * verticalGapPx + bottomMarginPx
-    val contentHeightPx = rawContentHeightPx.coerceAtLeast(containerH)
-    val contentHeightDp = with(density) { contentHeightPx.toDp() }
-
-    // Seed the scroll position so the selected tab is already in view as the grid opens. The grid is
-    // only composed while engaged, so every open re-enters this composable with a fresh scrollState;
-    // without the seed the open animation lays cells out at scroll 0 and a tab deep in a long list
-    // animates to an off-screen cell, then gets dragged back by the post-open centering scroll (the
-    // jump we want to avoid). We seed the same centered target that post-open centering settles on,
-    // so that effect finds the cell already fully visible and no-ops.
-    val initialScroll = run {
-        val selectedIndex = tabs.indexOfFirst { it.id == selectedTabId }.coerceAtLeast(0)
-        val cell = gridCellRect(
-            index = selectedIndex,
-            containerSize = containerSize,
-            columns = GridColumns,
-            horizontalGapPx = horizontalGapPx,
-            verticalGapPx = verticalGapPx,
-            sideMarginPx = sideMarginPx,
-            topMarginPx = topMarginPx,
-        )
-        val maxScroll = (contentHeightPx - containerH).coerceAtLeast(0f)
-        (cell.top + cell.height / 2f - containerH / 2f).coerceIn(0f, maxScroll).toInt()
+    // ── Deck scroll ────────────────────────────────────────────────────────────────────────────
+    // Scroll is stored in PIXELS of finger travel; the card whose recencyRank == scrollPx / stepPx
+    // sits at the front (p = 0). Storing pixels (not card-units) is what makes the fling feel right:
+    // the spline decay's friction is calibrated for pixel-scale magnitudes, so a card-unit velocity
+    // (~tens) would decay almost instantly and kill the inertia. Seeded to the selected tab so the
+    // fullscreen selected page morphs continuously into the front slot. The overlay is only composed
+    // while the deck is engaged, so each open re-enters here fresh.
+    val stepPx = (DeckDxStepFrac * containerW).coerceAtLeast(1f)
+    val maxScroll = (tabs.size - 1).coerceAtLeast(0).toFloat()
+    val maxScrollPx = maxScroll * stepPx
+    val initialScrollPx = remember(tabs, selectedTabId, stepPx) {
+        (tabs.firstOrNull { it.id == selectedTabId }?.recencyRank ?: 0).toFloat() * stepPx
     }
-    val scrollState = rememberScrollState(initial = initialScroll)
-    // Stable forwarders. The caller re-allocates the incoming lambdas on most of its
-    // recompositions (they capture local functions with fresh identities), which would change
-    // every card's parameters and defeat skipping. Each forwarder is remembered once and reads
-    // the latest lambda through a rememberUpdatedState holder, so cards see a single stable
-    // instance for the overlay's lifetime while still calling current code.
+    // deckDragging + deckScrollDrag are the hot-path pair (written directly per pointer sample, no
+    // coroutine); deckScrollAnim carries the seed and the release fling. Same split as the grid's
+    // gridDragProgress / gridProgressState (invariant #4): never snapTo on the drag hot path.
+    var deckDragging by remember { mutableStateOf(false) }
+    var deckScrollDrag by remember { mutableFloatStateOf(0f) }
+    val deckScrollAnim = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { deckScrollAnim.snapTo(initialScrollPx) }
+    // Re-clamp if tabs shrink out from under the current front (e.g. a card was closed).
+    LaunchedEffect(maxScrollPx) {
+        if (!deckDragging && deckScrollAnim.value > maxScrollPx) {
+            deckScrollAnim.animateTo(maxScrollPx)
+        }
+    }
+    val flingSpec = rememberSplineBasedDecay<Float>()
+    // Settle spring: after the momentum is projected forward it lands, critically damped (no
+    // bounce), on the nearest card so the deck always rests with a card cleanly focused.
+    val settleSpring = remember { spring<Float>(dampingRatio = 1f, stiffness = Spring.StiffnessLow) }
+
+    // Cells become tappable / scrollable once the deck is essentially fully open. Derived so the
+    // per-frame progress read flips a boolean instead of recomposing per frame. Built from
+    // rememberUpdatedState holders (not remember keys) so the derived instance is stable across
+    // recompositions and the per-card swipe pointerInput can read it at event time.
+    val isGestureState = rememberUpdatedState(isGesture)
+    val commitFromProgressState = rememberUpdatedState(commitFromProgress)
+    val cancelFromProgressState = rememberUpdatedState(cancelFromProgress)
     val progressHolder = rememberUpdatedState(progress)
+    val scrollEnabledState = remember {
+        derivedStateOf {
+            !isGestureState.value && commitFromProgressState.value == 0f &&
+                cancelFromProgressState.value == 0f && progressHolder.value() >= 0.999f
+        }
+    }
+    val scrollEnabled by scrollEnabledState
+
+    // Stable forwarders. See class doc — the caller re-allocates these lambdas on most of its
+    // recompositions, which would change every card's parameters and defeat skipping.
     val xProgressHolder = rememberUpdatedState(xProgress)
     val carouselShiftHolder = rememberUpdatedState(carouselShift)
     val dragOffsetHolder = rememberUpdatedState(dragOffsetPx)
@@ -237,82 +216,21 @@ fun TabGridOverlay(
     val xProgressFwd: () -> Float = remember { { xProgressHolder.value() } }
     val carouselShiftFwd: () -> Float = remember { { carouselShiftHolder.value() } }
     val dragOffsetFwd: () -> Float = remember { { dragOffsetHolder.value() } }
+    // Live deck-scroll provider, read only in the draw phase. Converts the pixel-space scroll into
+    // continuous card units (the front card index).
+    val stackScrollFwd: () -> Float = remember(stepPx) {
+        { (if (deckDragging) deckScrollDrag else deckScrollAnim.value) / stepPx }
+    }
     val snapshotProviderFwd: (String) -> Bitmap? = remember { { id -> snapshotProviderHolder.value(id) } }
     val onTabSelectedFwd: (String) -> Unit = remember { { id -> onTabSelectedHolder.value(id) } }
     val onCloseTabFwd: (String) -> Unit = remember { { id -> onCloseTabHolder.value(id) } }
-    // Cells become tappable once the grid is mostly open. Checked at click time rather than via a
-    // composition-observed `enabled` flag — the 0.5 crossing otherwise recomposed every composed
-    // card mid-spring, in both directions.
     val cellsClickableFwd: () -> Boolean = remember { { progressHolder.value() > 0.5f } }
-    // Only allow scrolling once the grid is essentially fully open — during the open animation
-    // the scroll offset must stay 0 so cells land in their target cells, not in scrolled positions.
-    // Derived so the per-frame progress read flips a boolean instead of recomposing per frame.
-    // Built from the rememberUpdatedState holders (not remember keys) so the derived instance is
-    // stable across recompositions: the per-card swipe-to-close pointerInput reads it at event
-    // time instead of keying on it, which used to cancel and relaunch every card's gesture
-    // coroutine on the first frame of the close spring (and the last frame of the open spring).
-    val isGestureState = rememberUpdatedState(isGesture)
-    val commitFromProgressState = rememberUpdatedState(commitFromProgress)
-    val cancelFromProgressState = rememberUpdatedState(cancelFromProgress)
-    val scrollEnabledState = remember {
-        derivedStateOf {
-            !isGestureState.value && commitFromProgressState.value == 0f &&
-                cancelFromProgressState.value == 0f && progressHolder.value() >= 0.999f
-        }
-    }
-    val scrollEnabled by scrollEnabledState
 
-    // Re-assert the seeded scroll for paths that enter at progress≈0 without a gesture (e.g. a
-    // button-open whose spring hasn't moved yet): keep it on the same centered target the seed and
-    // post-open centering use, so all three agree and the selected tab stays centered as it opens.
-    // Only runs while progress≈0 with no gesture/spring, so the scroll change is invisible and the
-    // ty lerp starts from the correct offset; setting it while progress>0 would teleport tabs.
-    val gridIsClosed by remember(isGesture, commitFromProgress, cancelFromProgress) {
-        derivedStateOf {
-            progress() < 0.001f && !isGesture &&
-                commitFromProgress == 0f && cancelFromProgress == 0f
-        }
-    }
-    LaunchedEffect(gridIsClosed, selectedTabId) {
-        if (gridIsClosed) {
-            scrollState.scrollTo(initialScroll)
-        }
-    }
-
-    // After the grid finishes opening, ensure the tab you came from is actually on-screen. The
-    // open animation lays cells out at scroll 0, so a tab deep in a long list would otherwise be
-    // left off-screen below the fold. Once scrolling is enabled (grid fully open) we smooth-scroll
-    // to center the selected tab if it isn't already fully visible. This only touches scroll state,
-    // not the open/close morph, so the entrance animation is unaffected.
-    LaunchedEffect(scrollEnabled, selectedTabId) {
-        if (!scrollEnabled) return@LaunchedEffect
-        val selectedIndex = tabs.indexOfFirst { it.id == selectedTabId }
-        if (selectedIndex < 0) return@LaunchedEffect
-        val cell = gridCellRect(
-            index = selectedIndex,
-            containerSize = containerSize,
-            columns = GridColumns,
-            horizontalGapPx = horizontalGapPx,
-            verticalGapPx = verticalGapPx,
-            sideMarginPx = sideMarginPx,
-            topMarginPx = topMarginPx,
-        )
-        val current = scrollState.value.toFloat()
-        val cellTopVisual = cell.top - current
-        val cellBottomVisual = cellTopVisual + cell.height
-        val fullyVisible = cellTopVisual >= topMarginPx && cellBottomVisual <= containerH
-        if (!fullyVisible) {
-            val maxScroll = (contentHeightPx - containerH).coerceAtLeast(0f)
-            val centered = (cell.top + cell.height / 2f - containerH / 2f).coerceIn(0f, maxScroll)
-            scrollState.animateScrollTo(centered.toInt())
-        }
-    }
-
-    // Composition-level culling. During the gesture and the cancel spring, only cards within a
-    // couple of carousel slots of the finger can be on screen; composing all of a many-tab grid
-    // would pay layout and snapshot texture uploads for cards you can't see. The window is
-    // quantized to whole slots so it recomposes only when the drag crosses a slot boundary —
-    // never per frame.
+    // Composition-level culling. During the gesture / cancel spring only cards within a couple of
+    // carousel slots of the finger can be on screen. In the open/commit deck, only cards whose deck
+    // position is in the visible depth window. Both windows are quantized to whole slots via
+    // derivedStateOf so composition invalidates only when a card crosses a boundary — never per
+    // frame; per-frame positioning still reads the exact live value in the draw phase.
     val gestureLike = isGesture || cancelFromProgress > 0f
     val shiftSlots by remember(pageStridePx, selectedShiftBase) {
         derivedStateOf {
@@ -323,16 +241,7 @@ fun TabGridOverlay(
             }
         }
     }
-    // Scroll offset for composition-level culling, quantized to half-screen buckets via
-    // derivedStateOf so scrolling the open grid invalidates composition once per half-screen of
-    // travel instead of on every scrolled pixel. The cull margins are at least a full screen on
-    // each side, so the up-to-half-screen quantization error can never cull a visible row.
-    // Per-frame card positioning still reads the exact scrollState.value in the draw phase.
-    val scrollBucketPx = containerH / 2f
-    val scrollBucket by remember(scrollBucketPx) {
-        derivedStateOf { (scrollState.value / scrollBucketPx).toInt() }
-    }
-    val approxScrollPx = scrollBucket * scrollBucketPx
+    val scrollBucket by remember { derivedStateOf { stackScrollFwd().roundToInt() } }
 
     Box(modifier = modifier.fillMaxSize()) {
         Box(
@@ -342,237 +251,184 @@ fun TabGridOverlay(
                 // through the squircle corners during the gesture ramp-up.
                 .graphicsLayer { alpha = (progress() * 20f).coerceIn(0f, 1f) }
                 // surfaceDim is the darkest surface tone — using it as the overview backdrop makes
-                // every card (surface / surfaceContainer) read as raised against it, in both light
-                // and dark, without needing a cast shadow (the cards' CardCropShape is a generic
-                // squircle path, on which elevation shadows don't render reliably).
+                // every card read as raised against it, in both light and dark.
                 .background(MaterialTheme.colorScheme.surfaceDim),
         )
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(scrollState, enabled = scrollEnabled),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(contentHeightDp),
-            ) {
-                val drawOrder = remember(tabs, selectedTabId) {
-                    tabs.indices.sortedWith(
-                        compareBy<Int> { tabs[it].id == selectedTabId }
-                            .thenBy { it },
-                    )
-                }
-                drawOrder.forEach { index ->
-                    val tab = tabs[index]
-                    key(tab.id) {
-                        val cell = gridCellRect(
-                            index = index,
-                            containerSize = containerSize,
-                            columns = GridColumns,
-                            horizontalGapPx = horizontalGapPx,
-                            verticalGapPx = verticalGapPx,
-                            sideMarginPx = sideMarginPx,
-                            topMarginPx = topMarginPx,
-                        )
-                        val cellScale = if (containerW > 0f) cell.width / containerW else 1f
-                        val composeCard = if (gestureLike) {
-                            abs(tab.slotDelta + shiftSlots) <= GestureVisibleSlots
-                        } else if (commitFromProgress > 0f) {
-                            // Fan-out to cells. Only cards that can actually cross the viewport
-                            // need composing: ones released near the finger, or whose destination
-                            // cell lands within the (seeded) scroll window. Composing every card
-                            // on the release frame paid layout + first-draw texture upload for
-                            // rows that stay off-screen for the whole commit spring.
-                            if (abs(tab.slotDelta + shiftSlots) <= GestureVisibleSlots) {
-                                true
-                            } else {
-                                val visualTop = cell.top - approxScrollPx
-                                visualTop + cell.height > -containerH && visualTop < containerH * 2f
+                // Horizontal drag scrolls the deck; per-card vertical drags (swipe-to-close) are
+                // handled by the child cards and win on the vertical axis, so the two don't fight.
+                .pointerInput(stepPx, maxScroll) {
+                    val tracker = VelocityTracker()
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            if (scrollEnabledState.value) {
+                                deckDragging = true
+                                deckScrollDrag = deckScrollAnim.value
+                                tracker.resetTracking()
+                                coroutineScope.launch { deckScrollAnim.stop() }
                             }
-                        } else {
-                            // Static/open grid: cull rows scrolled far off-screen (bucketed
-                            // scroll-time recomposition only; nothing animates per frame here).
-                            val visualTop = cell.top - approxScrollPx
-                            visualTop + cell.height > -containerH && visualTop < containerH * 2f
-                        }
-                        if (composeCard) {
-                            GridTabCard(
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            if (deckDragging) {
+                                change.consume()
+                                tracker.addPosition(change.uptimeMillis, change.position)
+                                // Drag right → deck slides right, revealing older cards. Scroll is
+                                // in px, and the focused card's centre also moves stepPx per card,
+                                // so the front card tracks the finger 1:1.
+                                deckScrollDrag =
+                                    (deckScrollDrag + dragAmount).coerceIn(0f, maxScrollPx)
+                            }
+                        },
+                        onDragEnd = {
+                            if (deckDragging) {
+                                deckDragging = false
+                                val vPx = tracker.calculateVelocity().x
+                                coroutineScope.launch {
+                                    deckScrollAnim.snapTo(deckScrollDrag)
+                                    // Project the momentum forward, then settle (critically damped,
+                                    // carrying the release velocity) on the nearest card. This keeps
+                                    // the flung distance/inertia while always resting card-centred.
+                                    val projected =
+                                        flingSpec.calculateTargetValue(deckScrollAnim.value, vPx)
+                                    val targetCard = (projected / stepPx)
+                                        .roundToInt()
+                                        .coerceIn(0, maxScroll.toInt())
+                                    deckScrollAnim.animateTo(
+                                        targetValue = targetCard * stepPx,
+                                        animationSpec = settleSpring,
+                                        initialVelocity = vPx,
+                                    )
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            if (deckDragging) {
+                                deckDragging = false
+                                coroutineScope.launch { deckScrollAnim.snapTo(deckScrollDrag) }
+                            }
+                        },
+                    )
+                },
+        ) {
+            // Draw back-to-front: list order is oldest→newest, and recencyRank = size-1-index, so
+            // iterating in index order draws the deepest (highest rank) card first and the front
+            // (rank 0 / newest) last, on top. Cards scrolled in front of the front (p < 0) have the
+            // lowest ranks and so also land on top — correct z-order in both directions.
+            tabs.forEachIndexed { index, tab ->
+                key(tab.id) {
+                    val p = tab.recencyRank - scrollBucket
+                    val composeCard = if (gestureLike) {
+                        abs(tab.slotDelta + shiftSlots) <= GestureVisibleSlots
+                    } else if (commitFromProgress > 0f) {
+                        // Fan into the deck: compose cards near the finger at release OR whose deck
+                        // slot is on-screen. With the near-edge-to-edge step only ~3 cards (p in
+                        // [-1, 1]) are ever visible; a ±2 window covers cards mid-slide off-edge.
+                        abs(tab.slotDelta + shiftSlots) <= GestureVisibleSlots ||
+                            (p >= -2 && p <= 2)
+                    } else {
+                        p >= -2 && p <= 2
+                    }
+                    if (composeCard) {
+                        GridTabCard(
+                            tab = tab,
+                            containerW = containerW,
+                            containerH = containerH,
+                            containerHDp = containerHDp,
+                            croppedPageHeightPx = croppedPageHeightPx,
+                            browseCornerPx = browseCornerPx,
+                            deckCornerPx = deckCornerPx,
+                            pageStridePx = pageStridePx,
+                            selectedShiftBase = selectedShiftBase,
+                            isGesture = isGesture,
+                            commitFromProgress = commitFromProgress,
+                            cancelFromProgress = cancelFromProgress,
+                            releasePosition = releasePositions?.getOrNull(index),
+                            tabCount = tabs.size,
+                            progress = progressFwd,
+                            xProgress = xProgressFwd,
+                            carouselShift = carouselShiftFwd,
+                            dragOffsetPx = dragOffsetFwd,
+                            stackScroll = stackScrollFwd,
+                            swipeOffsets = swipeOffsets,
+                            scrollEnabled = scrollEnabledState,
+                            snapshotVersion = snapshotVersion,
+                            snapshotProvider = snapshotProviderFwd,
+                            cellsClickable = cellsClickableFwd,
+                            onTabSelected = onTabSelectedFwd,
+                            onCloseTab = onCloseTabFwd,
+                            haptics = haptics,
+                            coroutineScope = coroutineScope,
+                        )
+                    }
+                } // key(tab.id)
+            }
+
+            // Host label above each visible card. Rendered after the cards so it paints on top; its
+            // position follows the card's deck slot. Suppressed while the finger is down (labels
+            // appear only after release).
+            if (!isGesture) {
+                tabs.forEach { tab ->
+                    key(tab.id) {
+                        val p = tab.recencyRank - scrollBucket
+                        if (p >= -2 && p <= 2) {
+                            GridCellChrome(
                                 tab = tab,
-                                cell = cell,
-                                cellScale = cellScale,
-                                minScale = minScale,
                                 containerW = containerW,
                                 containerH = containerH,
-                                containerHDp = containerHDp,
                                 croppedPageHeightPx = croppedPageHeightPx,
-                                browseCornerPx = browseCornerPx,
-                                gridCornerPx = gridCornerPx,
-                                pageStridePx = pageStridePx,
-                                selectedShiftBase = selectedShiftBase,
-                                isGesture = isGesture,
-                                commitFromProgress = commitFromProgress,
-                                cancelFromProgress = cancelFromProgress,
-                                releasePosition = releasePositions?.getOrNull(index),
-                                tabCount = tabs.size,
                                 progress = progressFwd,
-                                xProgress = xProgressFwd,
-                                carouselShift = carouselShiftFwd,
-                                dragOffsetPx = dragOffsetFwd,
-                                scrollState = scrollState,
+                                stackScroll = stackScrollFwd,
                                 swipeOffsets = swipeOffsets,
-                                scrollEnabled = scrollEnabledState,
-                                snapshotVersion = snapshotVersion,
-                                snapshotProvider = snapshotProviderFwd,
-                                cellsClickable = cellsClickableFwd,
-                                onTabSelected = onTabSelectedFwd,
-                                onCloseTab = onCloseTabFwd,
-                                haptics = haptics,
-                                coroutineScope = coroutineScope,
                             )
                         }
                     } // key(tab.id)
                 }
+            }
 
-                // Domain pills — rendered after the cells in document order so they paint on top.
-                // Positioned in unscaled grid-content coordinates (cell.left / cell.top) so they
-                // appear at a consistent on-screen size rather than being shrunk by the cell's
-                // graphicsLayer scale.
-                // Suppress pills while the finger is still down — they should only fade in after
-                // the user lifts and the commit spring starts. The fade itself is a draw-phase
-                // layer alpha (progress()), so the springs don't recompose this section.
-                if (!isGesture) {
-                    tabs.forEachIndexed { index, tab ->
-                        key(tab.id) {
-                            val cell = gridCellRect(
-                                index = index,
-                                containerSize = containerSize,
-                                columns = GridColumns,
-                                horizontalGapPx = horizontalGapPx,
-                                verticalGapPx = verticalGapPx,
-                                sideMarginPx = sideMarginPx,
-                                topMarginPx = topMarginPx,
+            // Animated new-tab card for the deck→new-tab transition: expands from the front deck
+            // slot to fullscreen as the deck closes, identical to how a real tab animates. Real tabs
+            // have browseBaseX offset left (newSelIdx = tabs.size in gridTabs) so they slide off
+            // left while this card takes center.
+            if (newTabSelected && !isGesture) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(containerHDp)
+                        .graphicsLayer {
+                            val p = progress().coerceIn(0f, 1f)
+                            val front = deckSlot(0f, containerW, containerH, croppedPageHeightPx)
+                            transformOrigin = TransformOrigin(0f, 0f)
+                            translationX = lerp(0f, front.tx, xProgress())
+                            translationY = lerp(0f, front.ty, p)
+                            val scale = lerp(1f, front.scale, p)
+                            scaleX = scale
+                            scaleY = scale
+                            clip = true
+                            shape = CardCropShape(
+                                radiusPx = lerp(browseCornerPx, deckCornerPx, p),
+                                cropHeightPx = lerp(containerH, croppedPageHeightPx, p),
                             )
-                            // Skip overlay work (pill + close button) for rows scrolled off-screen.
-                            val rowVisualTop = cell.top - approxScrollPx
-                            val rowOnScreen =
-                                rowVisualTop + cell.height > -containerH && rowVisualTop < containerH * 2f
-                            if (rowOnScreen) {
-                                GridCellChrome(
-                                    tab = tab,
-                                    cell = cell,
-                                    isSelected = tab.id == selectedTabId,
-                                    showClose = tabs.size > 1,
-                                    containerW = containerW,
-                                    gridCornerPx = gridCornerPx,
-                                    progress = progressFwd,
-                                    cellsClickable = cellsClickableFwd,
-                                    swipeOffsets = swipeOffsets,
-                                    scrollEnabled = scrollEnabledState,
-                                    onCloseTab = onCloseTabFwd,
-                                    haptics = haptics,
-                                )
-                            }
-                        } // key(tab.id)
-                    }
-
-                    // Fixed-position "+" cell — shown when grid is open and user has not yet tapped it.
-                    if (!newTabSelected) {
-                        val newTabCell = gridCellRect(
-                            index = tabs.size,
-                            containerSize = containerSize,
-                            columns = GridColumns,
-                            horizontalGapPx = horizontalGapPx,
-                            verticalGapPx = verticalGapPx,
-                            sideMarginPx = sideMarginPx,
-                            topMarginPx = topMarginPx,
-                        )
-                        val newTabCellScale = if (containerW > 0f) newTabCell.width / containerW else 1f
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(with(density) { croppedPageHeightPx.toDp() })
-                                .graphicsLayer {
-                                    transformOrigin = TransformOrigin(0f, 0f)
-                                    translationX = newTabCell.left
-                                    translationY = newTabCell.top
-                                    scaleX = newTabCellScale
-                                    scaleY = newTabCellScale
-                                    alpha = progress().coerceIn(0f, 1f)
-                                    clip = true
-                                    shape = CardCropShape(
-                                        radiusPx = gridCornerPx,
-                                        cropHeightPx = croppedPageHeightPx,
-                                    )
-                                }
-                                .background(MaterialTheme.colorScheme.surfaceContainer)
-                                .clickable {
-                                    if (!cellsClickableFwd()) return@clickable
-                                    haptics.create()
-                                    onNewTab()
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            // Content sits in the cell's unscaled coordinate space (~0.44x at
-                            // runtime), so sizes here are ~2.3x their on-screen appearance:
-                            // 96.dp icon ≈ 42.dp, 40.sp label ≈ 17.sp on screen.
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(96.dp),
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    text = "New Tab",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 40.sp,
-                                    fontWeight = FontWeight.Medium,
-                                )
-                            }
                         }
+                        .background(MaterialTheme.colorScheme.surface),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.graphicsLayer {
+                            // Only show the "+" glyph while still card-sized, fading out as it fills.
+                            alpha = (1f - progress() * 2f).coerceIn(0f, 1f)
+                        },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(72.dp),
+                        )
                     }
-                }
-
-                // Animated "+" cell for the grid→new-tab transition: expands from its grid cell
-                // to fullscreen as the grid closes, identical to how a real tab would animate.
-                // Real tabs have browseBaseX offsetted left (newSelIdx = tabs.size in gridTabs)
-                // so they all slide off-screen left while this cell takes center.
-                if (newTabSelected && !isGesture) {
-                    val newTabCell = gridCellRect(
-                        index = tabs.size,
-                        containerSize = containerSize,
-                        columns = GridColumns,
-                        horizontalGapPx = horizontalGapPx,
-                        verticalGapPx = verticalGapPx,
-                        sideMarginPx = sideMarginPx,
-                        topMarginPx = topMarginPx,
-                    )
-                    val newTabCellScale = if (containerW > 0f) newTabCell.width / containerW else 1f
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(containerHDp)
-                            .graphicsLayer {
-                                val p = progress().coerceIn(0f, 1f)
-                                transformOrigin = TransformOrigin(0f, 0f)
-                                translationX = lerp(0f, newTabCell.left, xProgress())
-                                translationY = lerp(scrollState.value.toFloat(), newTabCell.top, p)
-                                val scale = lerp(1f, newTabCellScale, p)
-                                scaleX = scale
-                                scaleY = scale
-                                clip = true
-                                shape = CardCropShape(
-                                    radiusPx = lerp(browseCornerPx, gridCornerPx, p),
-                                    cropHeightPx = lerp(containerH, croppedPageHeightPx, p),
-                                )
-                            }
-                            .background(MaterialTheme.colorScheme.surface),
-                    )
                 }
             }
         }
@@ -581,23 +437,19 @@ fun TabGridOverlay(
 
 /**
  * One tab card: the morphing page layer. Skippable — all parameters are stable, and everything
- * per-frame (progress, carousel shift, drag position, swipe offset, scroll offset) is read only
+ * per-frame (progress, carousel shift, drag position, deck scroll, swipe offset) is read only
  * inside the `graphicsLayer` block. The snapshot bitmap resolves through a [derivedStateOf] on
- * [snapshotVersion] whose structural (identity) policy means a cache version bump recomposes this
- * card only when *its* bitmap instance actually changed.
+ * [snapshotVersion].
  */
 @Composable
 private fun GridTabCard(
     tab: GridTab,
-    cell: GridRect,
-    cellScale: Float,
-    minScale: Float,
     containerW: Float,
     containerH: Float,
     containerHDp: Dp,
     croppedPageHeightPx: Float,
     browseCornerPx: Float,
-    gridCornerPx: Float,
+    deckCornerPx: Float,
     pageStridePx: Float,
     selectedShiftBase: Float,
     isGesture: Boolean,
@@ -609,7 +461,7 @@ private fun GridTabCard(
     xProgress: () -> Float,
     carouselShift: () -> Float,
     dragOffsetPx: () -> Float,
-    scrollState: ScrollState,
+    stackScroll: () -> Float,
     swipeOffsets: SnapshotStateMap<String, Float>,
     scrollEnabled: State<Boolean>,
     snapshotVersion: State<Int>,
@@ -630,31 +482,27 @@ private fun GridTabCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            // Constant layout height: the fullscreen→3:4 page crop animates via
-            // the layer's crop shape below, not via layout, so a drag frame never
-            // measures or lays anything out.
+            // Constant layout height: the fullscreen→deck page crop animates via the layer's crop
+            // shape below, not via layout, so a drag frame never measures or lays anything out.
             .height(containerHDp)
             .padding(top = padDp)
             .graphicsLayer {
                 val p = progress().coerceIn(0f, 1f)
-                val scrollOffset = scrollState.value.toFloat()
                 val scale: Float
                 val tx: Float
                 val ty: Float
-                // The cells are inside a verticalScroll that offsets content by
-                // -scrollOffset. The finger-tracked positions are screen-space, so
-                // they're expressed in scroll-content space by adding the current
-                // scroll offset. The static `else` branch does this via its
-                // lerp-from-scrollOffset.
                 when {
                     isGesture -> {
-                        val liveScale = (1f - p * (1f - minScale)).coerceIn(minScale, 1f)
+                        // Finger-tracked carousel: cards shrink together toward the drag floor and
+                        // fan into the deck only on release (commit spring).
+                        val liveScale =
+                            (1f - p * (1f - DeckDragMinScale)).coerceIn(DeckDragMinScale, 1f)
                         val fingerX = containerW / 2f + selectedShiftBase + carouselShift()
                         val fingerY = containerH - dragOffsetPx()
                         scale = liveScale
                         tx = (fingerX - containerW * liveScale / 2f) +
                             tab.slotDelta * pageStridePx * liveScale
-                        ty = (fingerY - containerH * liveScale) + scrollOffset
+                        ty = fingerY - containerH * liveScale
                     }
                     commitFromProgress > 0f -> {
                         val from = releasePosition ?: Triple(0f, 0f, 1f)
@@ -663,46 +511,48 @@ private fun GridTabCard(
                         } else {
                             1f
                         }
-                        scale = lerp(from.third, cellScale, t)
-                        tx = lerp(from.first, cell.left, t)
-                        ty = lerp(from.second + scrollOffset, cell.top, t)
+                        val slot = deckSlot(
+                            tab.recencyRank - stackScroll(),
+                            containerW, containerH, croppedPageHeightPx,
+                        )
+                        scale = lerp(from.third, slot.scale, t)
+                        tx = lerp(from.first, slot.tx, t)
+                        ty = lerp(from.second, slot.ty, t)
                     }
                     cancelFromProgress > 0f -> {
                         val from = releasePosition ?: Triple(0f, 0f, 1f)
                         val t = (1f - p / cancelFromProgress).coerceIn(0f, 1f)
                         scale = lerp(from.third, 1f, t)
                         tx = lerp(from.first, tab.browseBaseX + carouselShift(), t)
-                        // Target is fullscreen (on-screen y = 0) → content-space
-                        // y = scrollOffset.
-                        ty = lerp(from.second + scrollOffset, scrollOffset, t)
+                        ty = lerp(from.second, 0f, t)
                     }
                     else -> {
-                        scale = lerp(1f, cellScale, p)
-                        tx = lerp(tab.browseBaseX + carouselShift(), cell.left, xProgress())
-                        // cell.top is in scroll-content coordinates; visual
-                        // y = ty - scrollOffset. Lerp from scrollOffset so that at
-                        // progress=0 the tab lands at y=0 (fullscreen), not at
-                        // y=-scrollOffset (above the screen).
-                        ty = lerp(scrollOffset, cell.top, p)
+                        // Static open / close morph: browse fullscreen ↔ deck slot by progress.
+                        val slot = deckSlot(
+                            tab.recencyRank - stackScroll(),
+                            containerW, containerH, croppedPageHeightPx,
+                        )
+                        scale = lerp(1f, slot.scale, p)
+                        tx = lerp(tab.browseBaseX + carouselShift(), slot.tx, xProgress())
+                        ty = lerp(0f, slot.ty, p)
                     }
                 }
-                // Swipe-to-close offset/fade are draw-phase reads too, so dragging a card
-                // sideways never recomposes — it only re-draws this layer.
+                // Swipe-to-close: an upward Y offset with a fade, read in the draw phase so
+                // dragging a card up never recomposes — it only re-draws this layer.
                 val swipeOffset = swipeOffsets[tab.id] ?: 0f
                 transformOrigin = TransformOrigin(0f, 0f)
-                translationX = tx + swipeOffset
-                translationY = ty
+                translationX = tx
+                translationY = ty + swipeOffset
                 scaleX = scale
                 scaleY = scale
                 clip = true
-                alpha = (1f - abs(swipeOffset) / (cell.width * 0.8f)).coerceIn(0f, 1f)
+                // No fading anywhere (iOS app switcher has none): cards leave the deck by sliding
+                // off the viewport edges, and a swipe-to-close flies the card straight up off the
+                // top of the screen — never a cross-fade.
                 shape = CardCropShape(
-                    radiusPx = lerp(browseCornerPx, gridCornerPx, p),
-                    // Local (pre-scale) visible height of the card. At fullscreen
-                    // (progress 0) it is the full viewport so the open/close morph
-                    // matches the browse layer; as the grid opens it shrinks to the
-                    // 3:4 page slice, cropping everything below the fold. The pad
-                    // is subtracted because the layer sits below the top padding.
+                    radiusPx = lerp(browseCornerPx, deckCornerPx, p),
+                    // Local (pre-scale) visible height of the card: full viewport at progress 0 (so
+                    // the open/close morph matches the browse layer), shrinking to the deck slice.
                     cropHeightPx = lerp(containerH, croppedPageHeightPx, p) - padPx,
                 )
             }
@@ -723,52 +573,46 @@ private fun GridTabCard(
             }
             .pointerInput(tabCount) {
                 if (tabCount <= 1) return@pointerInput
-                detectHorizontalDragGestures(
-                    onDragStart = {},
+                detectVerticalDragGestures(
                     onDragEnd = {
                         coroutineScope.launch {
-                            val targetOffset = swipeOffsets[tab.id] ?: 0f
-                            val threshold = cell.width * 0.4f
-                            if (abs(targetOffset) > threshold) {
-                                val endValue = if (targetOffset > 0) cell.width * 1.5f else -cell.width * 1.5f
+                            val offset = swipeOffsets[tab.id] ?: 0f
+                            // Only an upward swipe past the threshold dismisses the card.
+                            if (offset < -containerH * 0.18f) {
                                 animate(
-                                    initialValue = targetOffset,
-                                    targetValue = endValue,
+                                    initialValue = offset,
+                                    targetValue = -containerH,
                                     animationSpec = tween(durationMillis = 200)
-                                ) { value, _ ->
-                                    swipeOffsets[tab.id] = value
-                                }
+                                ) { value, _ -> swipeOffsets[tab.id] = value }
                                 onCloseTab(tab.id)
                             } else {
                                 animate(
-                                    initialValue = targetOffset,
+                                    initialValue = offset,
                                     targetValue = 0f,
                                     animationSpec = tween(durationMillis = 200)
-                                ) { value, _ ->
-                                    swipeOffsets[tab.id] = value
-                                }
+                                ) { value, _ -> swipeOffsets[tab.id] = value }
                             }
                         }
                     },
                     onDragCancel = {
                         coroutineScope.launch {
-                            val targetOffset = swipeOffsets[tab.id] ?: 0f
+                            val offset = swipeOffsets[tab.id] ?: 0f
                             animate(
-                                initialValue = targetOffset,
+                                initialValue = offset,
                                 targetValue = 0f,
                                 animationSpec = tween(durationMillis = 200)
-                            ) { value, _ ->
-                                swipeOffsets[tab.id] = value
-                            }
+                            ) { value, _ -> swipeOffsets[tab.id] = value }
                         }
                     },
-                    onHorizontalDrag = { change, dragAmount ->
-                        // Checked per event (not as a pointerInput key) so the
-                        // enable flip never restarts the gesture coroutine.
+                    onVerticalDrag = { change, dragAmount ->
+                        // Checked per event (not as a pointerInput key) so the enable flip never
+                        // restarts the gesture coroutine.
                         if (scrollEnabled.value) {
                             change.consume()
                             val current = swipeOffsets[tab.id] ?: 0f
-                            swipeOffsets[tab.id] = current + dragAmount
+                            // Allow upward travel freely; resist downward so the card doesn't sink.
+                            val next = current + dragAmount
+                            swipeOffsets[tab.id] = if (next > 0f) next * 0.2f else next
                         }
                     }
                 )
@@ -778,8 +622,7 @@ private fun GridTabCard(
             Unit
         } else {
             // Identity-invalidating snapshot lookup: recomputes on every version bump, but only
-            // recomposes this card when the resolved bitmap instance changed. The provider is
-            // read through its holder so the lookup always uses current tab state.
+            // recomposes this card when the resolved bitmap instance changed.
             val snapshot by remember(tab.id) {
                 derivedStateOf {
                     snapshotVersion.value
@@ -898,127 +741,50 @@ private fun GridTabCard(
 }
 
 /**
- * The per-cell chrome drawn above the cards in unscaled grid-content coordinates: selected-tab
- * highlight ring, domain pill, and close button. Skippable; the swipe-to-close offset and the
- * open-progress fade are draw-phase layer reads.
+ * The host label drawn above each visible deck card, following its slot in the draw phase.
+ * Skippable; the slot position, the swipe-to-close offset, and the open-state alpha are all
+ * draw-phase layer reads.
  */
 @Composable
 private fun GridCellChrome(
     tab: GridTab,
-    cell: GridRect,
-    isSelected: Boolean,
-    showClose: Boolean,
     containerW: Float,
-    gridCornerPx: Float,
+    containerH: Float,
+    croppedPageHeightPx: Float,
     progress: () -> Float,
-    cellsClickable: () -> Boolean,
+    stackScroll: () -> Float,
     swipeOffsets: SnapshotStateMap<String, Float>,
-    scrollEnabled: State<Boolean>,
-    onCloseTab: (String) -> Unit,
-    haptics: LuminaHaptics,
 ) {
-    val density = LocalDensity.current
-    // Highlight ring around the currently-selected tab. Only shown once the
-    // grid is fully open and static (scrollEnabled) — never during the
-    // drag/open/close animation. Drawn in unscaled grid-content coordinates
-    // (like the pills) so the stroke stays a constant on-screen thickness.
-    if (isSelected && scrollEnabled.value) {
-        val cellWidthDp = with(density) { cell.width.toDp() }
-        val cellHeightDp = with(density) { cell.height.toDp() }
-        // The cell's clip radius is in unscaled card space and gets shrunk by
-        // the cell scale on screen. The highlight is drawn at the real cell
-        // size (unscaled), so multiply by that same scale to match the card's
-        // actual on-screen corner radius. (Fully open ⇒ radius = gridCornerPx.)
-        val cellScale = if (containerW > 0f) cell.width / containerW else 1f
-        val highlightShape = remember(cellScale) {
-            SquircleShape(with(density) { (gridCornerPx * cellScale).toDp() })
-        }
-        Box(
-            modifier = Modifier
-                .graphicsLayer {
-                    val swipeOffset = swipeOffsets[tab.id] ?: 0f
-                    translationX = cell.left + swipeOffset
-                    translationY = cell.top
-                    alpha = (1f - abs(swipeOffset) / (cell.width * 0.8f)).coerceIn(0f, 1f)
-                }
-                .size(width = cellWidthDp, height = cellHeightDp)
-                .border(3.dp, MaterialTheme.colorScheme.primary, highlightShape),
-        )
-    }
     val host = remember(tab.url) { hostLabel(tab.url) }
-    if (host.isNotEmpty()) {
-        val labelTopPx = cell.top + cell.height + with(density) { 6.dp.toPx() }
-        val cellWidthDp = with(density) { cell.width.toDp() }
-        Box(
-            modifier = Modifier
-                .graphicsLayer {
-                    val swipeOffset = swipeOffsets[tab.id] ?: 0f
-                    translationX = cell.left + swipeOffset
-                    translationY = labelTopPx
-                    alpha = progress().coerceIn(0f, 1f) * (1f - abs(swipeOffset) / (cell.width * 0.8f)).coerceIn(0f, 1f)
-                }
-                .width(cellWidthDp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = host,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-
-    // Close ("×") button at the top-right of each cell. Hidden when only one
-    // tab remains, so closing can never leave an empty browser. Positioned in
-    // unscaled grid-content coordinates (like the domain pills) for a constant
-    // on-screen size, and drawn after the cells so it receives the tap.
-    if (showClose) {
-        val closeSizePx = with(density) { 28.dp.toPx() }
-        val closeMarginPx = with(density) { 6.dp.toPx() }
-        val closeLeftPx = cell.left + cell.width - closeSizePx - closeMarginPx
-        val closeTopPx = cell.top + closeMarginPx
-        // The visible dot stays 28dp, but the tappable area is expanded to 44dp
-        // (Material touch-target guideline) and centered on the dot so it's not
-        // easy to mis-tap. The extra 8dp per side keeps the dot in the same spot.
-        val touchExtraPx = with(density) { 8.dp.toPx() }
-        Box(
-            modifier = Modifier
-                .graphicsLayer {
-                    val swipeOffset = swipeOffsets[tab.id] ?: 0f
-                    translationX = closeLeftPx - touchExtraPx + swipeOffset
-                    translationY = closeTopPx - touchExtraPx
-                    alpha = progress().coerceIn(0f, 1f) * (1f - abs(swipeOffset) / (cell.width * 0.8f)).coerceIn(0f, 1f)
-                }
-                .size(44.dp)
-                .clip(CircleShape)
-                .clickable {
-                    if (!cellsClickable()) return@clickable
-                    haptics.remove()
-                    onCloseTab(tab.id)
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            Surface(
-                modifier = Modifier.size(28.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                shadowElevation = 3.dp,
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close tab",
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
+    if (host.isEmpty()) return
+    val density = LocalDensity.current
+    val labelWidthDp = with(density) { (containerW * DeckFrontScale).toDp() }
+    Box(
+        modifier = Modifier
+            .graphicsLayer {
+                val slot = deckSlot(
+                    tab.recencyRank - stackScroll(),
+                    containerW, containerH, croppedPageHeightPx,
+                )
+                val swipeOffset = swipeOffsets[tab.id] ?: 0f
+                // Centre the label over the card's top edge (a little above it); it rides up with
+                // the card during a swipe-to-close. No fading (iOS has none) — the label is simply
+                // tied to the open state via progress so it isn't shown over the live browse page.
+                val labelGap = 34f
+                translationX = slot.tx + (containerW * slot.scale - containerW * DeckFrontScale) / 2f
+                translationY = slot.ty + swipeOffset - labelGap
+                alpha = progress().coerceIn(0f, 1f)
             }
-        }
+            .width(labelWidthDp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = host,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

@@ -133,13 +133,10 @@ import mozilla.components.browser.state.action.EngineAction
 import mozilla.components.browser.state.state.TabSessionState
 import mozilla.components.browser.state.state.content.HistoryState
 import com.firebolt9907.luminabrowser.ui.content.ContentHost
-import com.firebolt9907.luminabrowser.ui.grid.GridColumns
-import com.firebolt9907.luminabrowser.ui.grid.GridGapDp
-import com.firebolt9907.luminabrowser.ui.grid.GridSideMarginDp
+import com.firebolt9907.luminabrowser.ui.grid.DeckDragMinScale
+import com.firebolt9907.luminabrowser.ui.grid.DeckTravelFrac
 import com.firebolt9907.luminabrowser.ui.grid.GridTab
-import com.firebolt9907.luminabrowser.ui.grid.GridTopMarginDp
 import com.firebolt9907.luminabrowser.ui.grid.TabGridOverlay
-import com.firebolt9907.luminabrowser.ui.grid.gridCellRect
 import com.firebolt9907.luminabrowser.ui.reader.hydrateAppearanceFromPrefs
 import com.firebolt9907.luminabrowser.ui.reader.openReaderLink
 import com.firebolt9907.luminabrowser.ui.reader.toggleReader
@@ -824,27 +821,12 @@ fun LuminaRoot(
         stickyIncomingSnapshot == null &&
         stickyIncomingTabId == null &&
         stickyBackCoverSnapshot == null
-    // Pixels from the screen bottom to the bottom edge of the row-0 grid cell.
-    // Always uses index 0 regardless of which tab is selected. Row-1+ cells sit higher on
-    // screen, so their bottom-to-screen-edge distance is much shorter (~26 px on a typical
-    // phone vs ~500 px for row 0). Using the selected tab's own cell caused tabs 3+ to reach
-    // progress = 1.0 after just a few pixels of drag, producing a jarring instant scale-down.
-    // Using a fixed row-0 reference gives every tab the same, consistent drag speed.
+    // How far the finger pulls up for a full deck open. A fixed fraction of screen height gives
+    // every tab the same, consistent drag speed regardless of which tab is selected (the deck is a
+    // single-screen layout, so there is no per-row travel to normalise as the old grid had).
     fun gridTravelPx(): Float {
         if (contentSize.width <= 0 || contentSize.height <= 0) return 1f
-        val sideMargin = with(density) { GridSideMarginDp.toPx() }
-        val topMargin = with(density) { GridTopMarginDp.toPx() }
-        val gap = with(density) { GridGapDp.toPx() }
-        val cell = gridCellRect(
-            index = 0,
-            containerSize = contentSize,
-            columns = GridColumns,
-            horizontalGapPx = gap,
-            verticalGapPx = gap,
-            sideMarginPx = sideMargin,
-            topMarginPx = topMargin,
-        )
-        return (contentSize.height.toFloat() - (cell.top + cell.height)).coerceAtLeast(1f)
+        return (contentSize.height.toFloat() * DeckTravelFrac).coerceAtLeast(1f)
     }
 
     // Derived so the gridProgressState.value read flips a boolean instead of invalidating all of
@@ -1553,10 +1535,9 @@ fun LuminaRoot(
             val containerW = contentSize.width.toFloat()
             val containerH = contentSize.height.toFloat()
             if (containerW <= 0f || containerH <= 0f) return null
-            val sideMarginPx = with(density) { GridSideMarginDp.toPx() }
-            val gapPx = with(density) { GridGapDp.toPx() }
-            val cellW = (containerW - 2 * sideMarginPx - gapPx) / 2f
-            val minScale = (cellW / containerW).coerceIn(0.3f, 0.6f)
+            // Must match the finger-tracked drag floor drawn in TabGridOverlay's isGesture branch,
+            // or the commit spring would start from a different scale than the drag showed.
+            val minScale = DeckDragMinScale
             val releaseScale = (1f - gridDragProgress * (1f - minScale)).coerceIn(minScale, 1f)
             val captureCarouselShift = if (gridHandoffSelectedTabId != null) {
                 gridHandoffSelectedOffsetX + offsetX
@@ -2588,6 +2569,8 @@ fun LuminaRoot(
                                 },
                                 browseTopPadPx = browsePadPx,
                                 slotDelta = i - newSelIdx,
+                                // Deck recency: 0 = newest (front/largest/right), older = further back-left.
+                                recencyRank = tabsList.size - 1 - i,
                             )
                         }
                     }
@@ -2616,7 +2599,6 @@ fun LuminaRoot(
                         containerSize = contentSize,
                         tabs = gridTabs,
                         selectedTabId = selectedTabId,
-                        bottomControlsHeightPx = gridBottomControlsHeightPx,
                         onTabSelected = { tabId ->
                             // Switch the selected tab so the closing animation lands on the
                             // tapped cell — its carousel slot then becomes the centered (offset=0)
@@ -3106,6 +3088,7 @@ fun LuminaRoot(
                 statusBarTopPad = with(density) { topChromeInsetPx.toDp() },
                 bookmarksStorage = components.bookmarksStorage,
                 pageIcon = selectedContent?.icon,
+                showBottomToolbar = showBottomToolbar,
             )
         }
     }

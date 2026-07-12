@@ -1,66 +1,71 @@
 package com.firebolt9907.luminabrowser
 
-import androidx.compose.ui.unit.IntSize
-import com.firebolt9907.luminabrowser.ui.grid.gridCellRect
+import com.firebolt9907.luminabrowser.ui.grid.DeckFrontCenterXFrac
+import com.firebolt9907.luminabrowser.ui.grid.DeckFrontScale
+import com.firebolt9907.luminabrowser.ui.grid.DeckVisibleDepth
+import com.firebolt9907.luminabrowser.ui.grid.deckSlot
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The tab-grid cell geometry (extracted to GridModel.kt). Pins the column/row placement, the fixed
- * 3:4 card aspect, and the zero-size guard so a regression can't silently misplace every tab card.
+ * The receding 3D deck geometry ([deckSlot]). Pins the front-slot placement, the monotonic
+ * recede (each older card is smaller and further left), and the depth fade so a regression can't
+ * silently break the app-switcher stack.
  */
 class GridGeometryTest {
 
-    // A generous, evenly-dividing container so the expected values are exact.
-    private val container = IntSize(1000, 2000)
-    private val columns = 2
-    private val hGap = 14f
-    private val vGap = 36f
-    private val sideMargin = 16f
-    private val topMargin = 64f
+    private val w = 1000f
+    private val h = 2000f
+    // Card crop height in the card's own coordinate space; only affects ty, not the invariants below.
+    private val crop = 1700f
 
-    private fun cell(index: Int) =
-        gridCellRect(index, container, columns, hGap, vGap, sideMargin, topMargin)
-
-    // cellW = (1000 - 2*16 - (2-1)*14) / 2 = 954 / 2 = 477 ; cellH = 477 * 4/3 = 636
-    private val expectedW = 477f
-    private val expectedH = 636f
+    private fun slot(p: Float) = deckSlot(p, w, h, crop)
 
     @Test
-    fun `first cell sits at the top-left margins`() {
-        val r = cell(0)
-        assertEquals(sideMargin, r.left, 0.01f)
-        assertEquals(topMargin, r.top, 0.01f)
-        assertEquals(expectedW, r.width, 0.01f)
-        assertEquals(expectedH, r.height, 0.01f)
+    fun `front slot is the largest and biased right`() {
+        val front = slot(0f)
+        assertEquals(DeckFrontScale, front.scale, 0.001f)
+        // Centre x = tx + (W*scale)/2 sits at the right-biased fraction of the width.
+        val centerX = front.tx + w * front.scale / 2f
+        assertEquals(w * DeckFrontCenterXFrac, centerX, 0.5f)
     }
 
     @Test
-    fun `cards keep a fixed 3 to 4 aspect ratio`() {
-        val r = cell(0)
-        assertEquals(r.width * 4f / 3f, r.height, 0.01f)
+    fun `older cards recede smaller and to the left`() {
+        var prev = slot(0f)
+        for (p in 1..5) {
+            val cur = slot(p.toFloat())
+            val prevCenterX = prev.tx + w * prev.scale / 2f
+            val curCenterX = cur.tx + w * cur.scale / 2f
+            assertTrue("scale should shrink with depth at p=$p", cur.scale < prev.scale)
+            assertTrue("centre should move left with depth at p=$p", curCenterX < prevCenterX)
+            prev = cur
+        }
     }
 
     @Test
-    fun `second cell is one column to the right`() {
-        val r = cell(1)
-        assertEquals(sideMargin + expectedW + hGap, r.left, 0.01f)
-        assertEquals(topMargin, r.top, 0.01f)
+    fun `a card scrolled in front of the front grows toward fullscreen`() {
+        val front = slot(0f)
+        val ahead = slot(-1f)
+        assertTrue(ahead.scale > front.scale)
     }
 
     @Test
-    fun `third cell wraps to the next row`() {
-        val r = cell(2)
-        assertEquals(sideMargin, r.left, 0.01f)
-        assertEquals(topMargin + expectedH + vGap, r.top, 0.01f)
+    fun `deep cards slide off the left edge instead of fading`() {
+        // The front card is on-screen; a deep card's right edge has passed the left viewport edge.
+        val front = slot(0f)
+        assertTrue("front card is on-screen", front.tx + w * front.scale / 2f > 0f)
+        val deep = slot(DeckVisibleDepth + 1f)
+        val deepRightEdge = deep.tx + w * deep.scale
+        assertTrue("deep card has slid off the left edge", deepRightEdge < 0f)
     }
 
     @Test
-    fun `an empty container yields a zero rect`() {
-        val r = gridCellRect(0, IntSize(0, 0), columns, hGap, vGap, sideMargin, topMargin)
-        assertEquals(0f, r.left, 0f)
-        assertEquals(0f, r.top, 0f)
-        assertEquals(0f, r.width, 0f)
-        assertEquals(0f, r.height, 0f)
+    fun `a card scrolled in front slides off the right edge`() {
+        // Its centre has passed the right viewport edge (a near-fullscreen card exits gradually).
+        val ahead = slot(-3f)
+        val centerX = ahead.tx + w * ahead.scale / 2f
+        assertTrue("front-exiting card's centre has passed the right edge", centerX > w)
     }
 }

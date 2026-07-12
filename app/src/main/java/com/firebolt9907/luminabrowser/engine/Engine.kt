@@ -356,6 +356,12 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           # Gecko's copy is a duplicate periodic wakeup + radio poke we don't need.
           network.captive-portal-service.enabled: false
           captivedetect.canonicalURL: ""
+          # Also stop the connectivity service, which probes that same canonical URL on a timer
+          # to re-derive network capabilities. On Android the authoritative online/offline signal
+          # comes from the OS ConnectivityManager, and navigator.onLine stays true regardless of
+          # this probe, so its only effect here is extra periodic radio wakeups. Failure mode is
+          # benign (assume-online), which is what the page sees anyway.
+          network.connectivity-service.enabled: false
           # --- Betterfox "Fastfox" (mobile-appropriate subset) ---
           # General: batch layout notifications during load into ~100ms slices so a busy
           # page reflows fewer times while parsing (fewer, larger paints = faster to done).

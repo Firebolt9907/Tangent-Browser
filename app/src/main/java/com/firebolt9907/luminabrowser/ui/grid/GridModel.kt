@@ -56,8 +56,9 @@ const val DeckLeftDecay = 0.5f
 const val DeckRightStepFrac = 0.7f
 /** Drag→slot ratio (fraction of width of finger travel per card) for the horizontal deck scroll,
  * decoupled from the (asymmetric) visual steps above so scrolling stays responsive rather than
- * tracking the wide right-side step. */
-const val DeckDragStepFrac = 0.45f
+ * tracking the wide right-side step. Kept tight (a third of the width per card) so the focused card
+ * advances close to the finger instead of lagging well behind it on a side-to-side swipe. */
+const val DeckDragStepFrac = 0.34f
 /** Depth (p) beyond which older left-stack cards start going transparent. Cards up to one slot left
  * of the focus (p ≤ 1) stay fully opaque; past that they fade, like the iOS app switcher. */
 const val DeckFadeStartDepth = 1f
@@ -74,8 +75,10 @@ const val DeckCropAspect = 2.4f
 /** Scale floor the card shrinks to while the finger drags up (before the fan-into-deck spring).
  * Shared with LuminaRoot's release capture so the commit spring starts from the drawn scale. */
 const val DeckDragMinScale = 0.62f
-/** Fraction of screen height the finger pulls up for a full open — sets drag sensitivity. */
-const val DeckTravelFrac = 0.55f
+/** Fraction of screen height the finger pulls up for a full open — sets drag sensitivity. Lower =
+ * a shorter pull opens the deck. Kept below half a screen so a comfortable thumb flick (which rarely
+ * travels more than ~40% of the height) reaches a full open without the hand leaving the pill. */
+const val DeckTravelFrac = 0.4f
 /** Drop-shadow elevation behind each deck card at full open, so every card reads as lifted off the
  * surfaceDim backdrop. Applied inside the card's (scaled) transform layer and ramped by open
  * progress; the card's squircle crop is reused as the shadow outline. */

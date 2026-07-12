@@ -229,13 +229,14 @@ fun TabGridOverlay(
     val cullHigh = if (tabViewMode == TabViewMode.PIXEL) 4 else DeckVisibleDepth.toInt() + 1
     val maxScroll = (tabs.size - 1).coerceAtLeast(0).toFloat()
     val maxScrollPx = maxScroll * stepPx
-    // Seed the deck one card OLDER than the selected tab (recencyRank + 1) so, exactly like the iOS
-    // app switcher, opening the overview slides the current tab to the RIGHT and centres the
-    // previous tab ready to tap. Clamped, so if the current tab is already the oldest it just stays
-    // centred (nothing older to move it right of).
-    val initialScrollPx = remember(tabs, selectedTabId, stepPx, maxScrollPx) {
+    // Where the overview opens focused. In DECK (iOS app-switcher) seed one card OLDER than the
+    // selected tab (recencyRank + 1) so opening slides the current tab to the RIGHT and centres the
+    // previous tab ready to tap. In PIXEL (Android recents) there is no such offset — the current
+    // tab opens dead-centre. Clamped, so an already-oldest current tab just stays centred.
+    val initialScrollPx = remember(tabs, selectedTabId, stepPx, maxScrollPx, tabViewMode) {
         val rank = tabs.firstOrNull { it.id == selectedTabId }?.recencyRank ?: 0
-        ((rank + 1).toFloat() * stepPx).coerceIn(0f, maxScrollPx)
+        val seedRank = if (tabViewMode == TabViewMode.PIXEL) rank else rank + 1
+        (seedRank.toFloat() * stepPx).coerceIn(0f, maxScrollPx)
     }
     // deckDragging + deckScrollDrag are the hot-path pair (written directly per pointer sample, no
     // coroutine); deckScrollAnim carries the seed and the release fling. Same split as the grid's

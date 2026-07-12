@@ -80,11 +80,13 @@ const val DeckTravelFrac = 0.55f
 // horizontal row that scrolls normally (like Android/Pixel recents) — no receding, no stacking, no
 // depth fade. Consumed only inside [pixelSlot], run in the draw phase.
 
-/** Constant on-screen scale of every card in Pixel mode (a scaled-down full screenshot). */
-const val DeckPixelScale = 0.8f
+/** Constant on-screen scale of every card in Pixel mode (a scaled-down full screenshot). Sized so
+ * the centred card dominates but the previous/next cards still peek ~10% on each side, like the
+ * Android/Pixel recents filmstrip. */
+const val DeckPixelScale = 0.72f
 /** Gap between adjacent Pixel-mode cards, as a fraction of width. The card centre-to-centre step is
  * `DeckPixelScale + DeckPixelGapFrac`, so this is also the drag→slot ratio for that mode. */
-const val DeckPixelGapFrac = 0.06f
+const val DeckPixelGapFrac = 0.05f
 
 /**
  * Which "all tabs" overview to render. The gesture core in `LuminaRoot` is layout-agnostic — it

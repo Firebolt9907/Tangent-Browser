@@ -623,18 +623,36 @@ private fun GridTabCard(
                     onDragEnd = {
                         coroutineScope.launch {
                             val offset = swipeOffsets[tab.id] ?: 0f
-                            // An upward swipe past the threshold navigates to the next-OLDER tab:
-                            // this tab slides to the right (newer) slot as the older one takes
-                            // centre. The card doesn't fly off — its vertical offset springs back
-                            // while the deck scroll carries it right (handled by onSwipeUp).
-                            if (offset < -containerH * 0.18f) {
-                                onSwipeUp(tab.id)
+                            // Distance-sensitive up-swipe, iOS-app-switcher style:
+                            //  • a DECISIVE swipe (past ~38% of the screen) CLOSES the tab — the
+                            //    card flies off the top;
+                            //  • a GENTLE swipe (past ~12%) NAVIGATES to the next-OLDER tab — this
+                            //    tab slides into the right/newer slot as the older one takes centre,
+                            //    its vertical offset springing back while the deck scroll carries it;
+                            //  • anything shorter springs back.
+                            when {
+                                offset < -containerH * 0.38f -> {
+                                    animate(
+                                        initialValue = offset,
+                                        targetValue = -containerH,
+                                        animationSpec = tween(durationMillis = 200)
+                                    ) { value, _ -> swipeOffsets[tab.id] = value }
+                                    onCloseTab(tab.id)
+                                }
+                                offset < -containerH * 0.12f -> {
+                                    onSwipeUp(tab.id)
+                                    animate(
+                                        initialValue = offset,
+                                        targetValue = 0f,
+                                        animationSpec = tween(durationMillis = 200)
+                                    ) { value, _ -> swipeOffsets[tab.id] = value }
+                                }
+                                else -> animate(
+                                    initialValue = offset,
+                                    targetValue = 0f,
+                                    animationSpec = tween(durationMillis = 200)
+                                ) { value, _ -> swipeOffsets[tab.id] = value }
                             }
-                            animate(
-                                initialValue = offset,
-                                targetValue = 0f,
-                                animationSpec = tween(durationMillis = 200)
-                            ) { value, _ -> swipeOffsets[tab.id] = value }
                         }
                     },
                     onDragCancel = {

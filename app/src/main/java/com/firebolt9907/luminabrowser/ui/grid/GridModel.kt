@@ -75,6 +75,34 @@ const val DeckDragMinScale = 0.62f
 /** Fraction of screen height the finger pulls up for a full open — sets drag sensitivity. */
 const val DeckTravelFrac = 0.55f
 
+// ── Pixel-style (constant-scale filmstrip) tunables ────────────────────────────────────────────
+// An alternative overview ([TabViewMode.PIXEL]): every card is the SAME size, laid out in a plain
+// horizontal row that scrolls normally (like Android/Pixel recents) — no receding, no stacking, no
+// depth fade. Consumed only inside [pixelSlot], run in the draw phase.
+
+/** Constant on-screen scale of every card in Pixel mode (a scaled-down full screenshot). */
+const val DeckPixelScale = 0.8f
+/** Gap between adjacent Pixel-mode cards, as a fraction of width. The card centre-to-centre step is
+ * `DeckPixelScale + DeckPixelGapFrac`, so this is also the drag→slot ratio for that mode. */
+const val DeckPixelGapFrac = 0.06f
+
+/**
+ * Which "all tabs" overview to render. The gesture core in `LuminaRoot` is layout-agnostic — it
+ * only drives open/close progress — so each mode is just a different per-card slot function
+ * ([deckSlot] / [pixelSlot]) plus, for [GRID], the legacy 2-column [gridCellRect] recovered from
+ * the `jul-8` branch. Persisted as a user setting.
+ */
+enum class TabViewMode {
+    /** iOS app-switcher horizontal receding deck (the current default). */
+    DECK,
+
+    /** Legacy 2-column vertical scrolling grid (from `jul-8`). */
+    GRID,
+
+    /** Pixel/Android-recents constant-scale horizontal filmstrip. */
+    PIXEL,
+}
+
 /**
  * Frame-stable description of one tab card. Deliberately carries NO per-frame values: everything
  * that changes while the finger moves (carousel shift, drag position, scale, progress) is read
@@ -156,6 +184,29 @@ fun deckSlot(
         (1f - (p - DeckFadeStartDepth) * DeckFadePerDepth).coerceIn(DeckMinAlpha, 1f)
     }
     return DeckSlot(tx = tx, ty = ty, scale = scale, alpha = alpha)
+}
+
+/**
+ * [TabViewMode.PIXEL] placement: a plain constant-scale horizontal filmstrip (Android/Pixel recents
+ * style). Every card is the same size ([DeckPixelScale]), vertically centred, spaced evenly on both
+ * sides of the focus, with no receding/stacking and no depth fade (alpha always 1). Same draw-phase
+ * contract and `TransformOrigin(0, 0)` convention as [deckSlot], so it is a drop-in alternative in
+ * the per-card `graphicsLayer`.
+ */
+fun pixelSlot(
+    p: Float,
+    containerW: Float,
+    containerH: Float,
+    cropHeightPx: Float,
+): DeckSlot {
+    val scale = DeckPixelScale
+    // Centre-to-centre step = card width + gap; older cards (p > 0) to the left, newer to the right.
+    val stepFrac = DeckPixelScale + DeckPixelGapFrac
+    val cx = containerW * DeckFrontCenterXFrac - stepFrac * containerW * p
+    val cy = containerH * DeckFrontCenterYFrac
+    val tx = cx - containerW * scale / 2f
+    val ty = cy - cropHeightPx * scale / 2f
+    return DeckSlot(tx = tx, ty = ty, scale = scale, alpha = 1f)
 }
 
 /**

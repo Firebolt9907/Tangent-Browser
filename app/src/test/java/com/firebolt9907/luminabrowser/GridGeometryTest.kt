@@ -2,7 +2,9 @@ package com.firebolt9907.luminabrowser
 
 import com.firebolt9907.luminabrowser.ui.grid.DeckFrontCenterXFrac
 import com.firebolt9907.luminabrowser.ui.grid.DeckFrontScale
+import com.firebolt9907.luminabrowser.ui.grid.DeckPixelScale
 import com.firebolt9907.luminabrowser.ui.grid.deckSlot
+import com.firebolt9907.luminabrowser.ui.grid.pixelSlot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -71,5 +73,33 @@ class GridGeometryTest {
         val ahead = slot(-3f)
         val centerX = ahead.tx + w * ahead.scale / 2f
         assertTrue("front-exiting card's centre has passed the right edge", centerX > w)
+    }
+
+    // ── Pixel mode: constant-scale horizontal filmstrip ─────────────────────────────────────────
+
+    private fun px(p: Float) = pixelSlot(p, w, h, crop)
+
+    @Test
+    fun `pixel mode keeps every card the same size and centres the focus`() {
+        assertEquals(DeckPixelScale, px(0f).scale, 0.001f)
+        assertEquals(DeckPixelScale, px(1f).scale, 0.001f)
+        assertEquals(DeckPixelScale, px(-2f).scale, 0.001f)
+        // Focus centred; no depth fade anywhere.
+        assertEquals(w * DeckFrontCenterXFrac, px(0f).tx + w * px(0f).scale / 2f, 0.5f)
+        assertEquals(1f, px(3f).alpha, 0.001f)
+    }
+
+    @Test
+    fun `pixel mode is an evenly spaced row on both sides`() {
+        // Constant centre-to-centre step, symmetric about the focus (a plain scrollable list).
+        val c0 = px(0f).tx + w * px(0f).scale / 2f
+        val cLeft = px(1f).tx + w * px(1f).scale / 2f
+        val cRight = px(-1f).tx + w * px(-1f).scale / 2f
+        val stepLeft = c0 - cLeft
+        val stepRight = cRight - c0
+        assertEquals("step is symmetric", stepLeft, stepRight, 0.5f)
+        // And uniform across further slots.
+        val cLeft2 = px(2f).tx + w * px(2f).scale / 2f
+        assertEquals("step is uniform", stepLeft, cLeft - cLeft2, 0.5f)
     }
 }

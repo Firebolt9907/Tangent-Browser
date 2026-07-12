@@ -363,6 +363,12 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           # GFX: give Skia a larger in-process font cache so repeated glyph rasterization
           # (common on text-heavy pages / infinite scroll) hits the cache instead of redrawing.
           gfx.content.skia-font-cache-size: 20
+          # GFX: enlarge the accelerated-canvas cache so canvas-heavy pages (charts, games,
+          # map tiles) reuse GPU-cached draw items across frames instead of re-uploading them,
+          # for steadier frame pacing. Only bites when accelerated canvas is active; otherwise
+          # inert. (Betterfox "Fastfox".)
+          gfx.canvas.accelerated.cache-items: 4096
+          gfx.canvas.accelerated.cache-size: 512
           # Autoplay activation policy: block audible autoplay even after the page is interacted
           # with. Policy 2 ("user gesture activation") means only a gesture *directly on the media
           # element* lifts the autoplay block — the default policy 0 ("sticky activation") lets any
@@ -383,6 +389,11 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           network.http.max-connections: 1800
           network.http.max-urgent-start-excessive-connections-per-host: 5
           network.http.pacing.requests.enabled: false
+          # Network buffers: larger socket read buffers move each transfer in fewer, bigger
+          # chunks — fewer read syscalls per response (a touch less CPU per byte on big pages).
+          # (Betterfox "Fastfox".)
+          network.buffer.cache.count: 24
+          network.buffer.cache.size: 262144
           # Network caching: keep far more resolved DNS entries and TLS session tokens around so
           # revisits skip the DNS round-trip and resume TLS (0-RTT) instead of a full handshake.
           network.dnsCacheEntries: 10000

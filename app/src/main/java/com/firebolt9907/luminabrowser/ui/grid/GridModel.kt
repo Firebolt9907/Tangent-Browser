@@ -22,37 +22,40 @@ import kotlin.math.pow
 
 // ── Receding 3D deck (iOS app-switcher style) tunables ─────────────────────────────────────────
 // The "all tabs" overview is a horizontal deck of cards, all vertically centred (like the iOS app
-// switcher). The focused card sits centre-right, large and fully visible; older tabs recede to the
-// left, shrinking and tucking behind it. Only ~[DeckVisibleDepth] read as visible before the rest
-// slide off the left edge. Every value here is consumed only inside [deckSlot], run in the draw
+// switcher). The focused card sits dead-centre, large, covering the majority of the screen. Older
+// tabs form a tight stack to the LEFT — each showing only its left ~15% behind the newer card in
+// front of it. The single newer card sits to the RIGHT, flung far off so only a thin left sliver
+// shows on top of the focus. Every value here is consumed only inside [deckSlot], run in the draw
 // phase.
 
 /** On-screen scale of the front (focused) card, applied uniformly (the card is a scaled-down full
- * screenshot). Wide — the focused card has high visible width and dominates the screen; the left
- * and right neighbours are pushed mostly off-screen and show only thin slivers (see
- * [DeckDxStepFrac]). */
-const val DeckFrontScale = 0.85f
+ * screenshot). High enough that the focus dominates the screen, but with real margin on both sides
+ * so the neighbours' slivers have room and the card reads as a card, not a zoomed-in page. */
+const val DeckFrontScale = 0.72f
 /** Geometric scale ratio between adjacent deck slots (scale(p) = DeckFrontScale * step^p). Gentle:
- * neighbours are only slightly larger (newer/right) or smaller (older/left) than the focus, not a
- * steep recede. */
-const val DeckDepthScaleStep = 0.93f
+ * the older stack recedes only slightly per card (so each still reads as a full card edge) and the
+ * newer card is only slightly larger than the focus. */
+const val DeckDepthScaleStep = 0.95f
 /** Screen-X of the focused card's centre, as a fraction of width. Dead centre: the most-visible
  * card is always the one nearest screen centre (iOS), with the deck receding away on both sides. */
 const val DeckFrontCenterXFrac = 0.5f
 /** Screen-Y of every card's centre, as a fraction of height. All cards are vertically centred (no
  * per-depth rise) so the deck reads as a clean horizontal row like iOS. */
 const val DeckFrontCenterYFrac = 0.50f
-/** Horizontal centre-to-centre step per slot (fraction of width). Large — neighbours are pushed
- * almost entirely off their side of the screen, so only a thin sliver of each shows while the
- * focused card keeps its high visible width. The newer (right) card is stacked ON TOP of the focus
- * with a tiny overlap; the older (left) card sits behind it. Sized so a neighbour's near edge just
- * reaches the focused card's edge (no background gap). Linear (not compounded) so far cards keep
- * translating and slide clean off the edges like iOS — no vanishing-point pile-up. This is ALSO the
- * drag→slot ratio: because every card's centre moves 1px per 1px of scroll, the deck tracks the
- * finger 1:1 during a horizontal scroll regardless of this value. */
-const val DeckDxStepFrac = 0.8f
-/** Roughly how many cards read as on-screen before they slide off — drives cull windows only. */
-const val DeckVisibleDepth = 4f
+/** Centre-to-centre step (fraction of width) for OLDER cards (p > 0), which stack to the LEFT.
+ * Small — each older card is offset left by ~15% of a card width and drawn behind the newer one in
+ * front of it, so you see a stacked fan of ~15% left slivers (85% hidden), iOS-style. */
+const val DeckLeftStepFrac = 0.13f
+/** Centre-to-centre step (fraction of width) for NEWER cards (p < 0), which sit to the RIGHT.
+ * Large — the newer card is stacked ON TOP of the focus but pushed far right so only a thin sliver
+ * of its left edge shows and the focused card keeps its high visible width. */
+const val DeckRightStepFrac = 0.74f
+/** Drag→slot ratio (fraction of width of finger travel per card) for the horizontal deck scroll,
+ * decoupled from the (asymmetric) visual steps above so scrolling stays responsive rather than
+ * tracking the wide right-side step. */
+const val DeckDragStepFrac = 0.45f
+/** Roughly how many older cards read as a visible left stack — drives cull windows only. */
+const val DeckVisibleDepth = 5f
 /** Card crop aspect (height / width). Set high so `min(W*aspect, H)` clamps to the full viewport
  * height on phones/tablets — each card is a scaled-down full screenshot, like the app switcher. */
 const val DeckCropAspect = 2.4f
@@ -101,14 +104,16 @@ data class DeckSlot(val tx: Float, val ty: Float, val scale: Float)
  * Asymmetric, exactly like the iOS app switcher. Scale is **monotonic** in p (`step^p`, step < 1),
  * and z-order (set by the draw order in [TabGridOverlay]) is newest-on-top:
  *  - The focused card (p = 0) is centred and covers the majority of the screen.
- *  - Older cards (p > 0) recede LEFT — slightly smaller, drawn BEHIND the focus, peeking on the
- *    left where the focus doesn't cover them.
+ *  - Older cards (p > 0) form a tight LEFT STACK: each is offset left by only [DeckLeftStepFrac]
+ *    (~15% of a card width) and drawn BEHIND the newer card in front of it, so you see a fan of
+ *    ~15% left slivers (85% hidden), the cards receding slightly in scale.
  *  - Newer cards (p < 0) are slightly LARGER and drawn ON TOP of the focus, but pushed far to the
- *    RIGHT (cards sit nearly edge-to-edge) so the overlap is tiny — ~90% of the focused card stays
- *    visible and only the newer card's left portion shows.
+ *    RIGHT by [DeckRightStepFrac] so only a thin sliver of the left edge shows and the focus keeps
+ *    its high visible width.
  *
- * Position translates **linearly** with p, so far cards keep marching and slide clean off the
- * screen edges rather than piling up at a vanishing point. Every card is vertically centred. No
+ * The horizontal step is therefore **asymmetric** (small left, large right) but position is still
+ * **linear** in p on each side and continuous at p = 0 (both sides pass through the centre), so far
+ * cards keep marching and slide clean off the screen edges. Every card is vertically centred. No
  * alpha fade anywhere: cards enter and leave only by sliding across the viewport edges, like iOS.
  */
 fun deckSlot(
@@ -119,7 +124,9 @@ fun deckSlot(
 ): DeckSlot {
     val scale = (DeckFrontScale * DeckDepthScaleStep.toDouble().pow(p.toDouble()).toFloat())
         .coerceIn(0.04f, 1f)
-    val cx = containerW * DeckFrontCenterXFrac - DeckDxStepFrac * containerW * p
+    // Older (p > 0) cards stack tight to the left; newer (p < 0) cards are flung far right.
+    val stepFrac = if (p >= 0f) DeckLeftStepFrac else DeckRightStepFrac
+    val cx = containerW * DeckFrontCenterXFrac - stepFrac * containerW * p
     val cy = containerH * DeckFrontCenterYFrac
     val tx = cx - containerW * scale / 2f
     val ty = cy - cropHeightPx * scale / 2f

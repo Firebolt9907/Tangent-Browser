@@ -164,7 +164,7 @@ fun TabGridOverlay(
     // (~tens) would decay almost instantly and kill the inertia. Seeded to the selected tab so the
     // fullscreen selected page morphs continuously into the front slot. The overlay is only composed
     // while the deck is engaged, so each open re-enters here fresh.
-    val stepPx = (DeckDxStepFrac * containerW).coerceAtLeast(1f)
+    val stepPx = (DeckDragStepFrac * containerW).coerceAtLeast(1f)
     val maxScroll = (tabs.size - 1).coerceAtLeast(0).toFloat()
     val maxScrollPx = maxScroll * stepPx
     val initialScrollPx = remember(tabs, selectedTabId, stepPx) {
@@ -323,12 +323,12 @@ fun TabGridOverlay(
                         abs(tab.slotDelta + shiftSlots) <= GestureVisibleSlots
                     } else if (commitFromProgress > 0f) {
                         // Fan into the deck: compose cards near the finger at release OR whose deck
-                        // slot is on-screen. With the near-edge-to-edge step only ~3 cards (p in
-                        // [-1, 1]) are ever visible; a ±2 window covers cards mid-slide off-edge.
+                        // slot is on-screen. One newer card (p=-1) sits right; the older left stack
+                        // spans p up to ~DeckVisibleDepth before its slivers slide off the left.
                         abs(tab.slotDelta + shiftSlots) <= GestureVisibleSlots ||
-                            (p >= -2 && p <= 2)
+                            (p >= -2 && p <= DeckVisibleDepth.toInt() + 1)
                     } else {
-                        p >= -2 && p <= 2
+                        p >= -2 && p <= DeckVisibleDepth.toInt() + 1
                     }
                     if (composeCard) {
                         GridTabCard(
@@ -372,7 +372,7 @@ fun TabGridOverlay(
                 tabs.forEach { tab ->
                     key(tab.id) {
                         val p = tab.recencyRank - scrollBucket
-                        if (p >= -2 && p <= 2) {
+                        if (p >= -2 && p <= DeckVisibleDepth.toInt() + 1) {
                             GridCellChrome(
                                 tab = tab,
                                 containerW = containerW,

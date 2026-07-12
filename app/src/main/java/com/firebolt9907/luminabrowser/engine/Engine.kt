@@ -340,6 +340,20 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           network.http.http3.enable: true
           network.http.max-persistent-connections-per-server: 10
           network.dns.disablePrefetch: false
+          # --- Smoothness: paint the first frame immediately (Betterfox "Fastfox") ---
+          # Gecko delays the initial paint by 5ms (250ms for out-of-process iframes) to
+          # batch a page's earliest reflows into the first paint. On a phone that delay just
+          # reads as a beat of blank before content appears; zeroing both makes every
+          # navigation feel snappier without changing what eventually gets painted.
+          nglayout.initialpaint.delay: 0
+          nglayout.initialpaint.delay_in_oopif: 0
+          # --- Battery: drop Gecko's redundant captive-portal probing ---
+          # GeckoView's captive-portal service periodically fetches a canonical URL to detect
+          # Wi-Fi sign-in portals. Android already owns captive-portal detection at the OS
+          # level (it shows its own sign-in flow before the browser is even involved), so
+          # Gecko's copy is a duplicate periodic wakeup + radio poke we don't need.
+          network.captive-portal-service.enabled: false
+          captivedetect.canonicalURL: ""
           # --- Betterfox "Fastfox" (mobile-appropriate subset) ---
           # General: batch layout notifications during load into ~100ms slices so a busy
           # page reflows fewer times while parsing (fewer, larger paints = faster to done).

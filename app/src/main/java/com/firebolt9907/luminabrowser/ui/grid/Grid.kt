@@ -135,6 +135,9 @@ fun TabGridOverlay(
     /** Bumps when a snapshot lands; cards re-resolve their bitmap through [snapshotProvider]. */
     snapshotVersion: State<Int>,
     snapshotProvider: (String) -> Bitmap? = { null },
+    /** Which overview layout to render. Selects the per-card slot function ([deckSlot]/[pixelSlot])
+     * and the horizontal drag/scroll step; the gesture core stays layout-agnostic. */
+    tabViewMode: TabViewMode = TabViewMode.DECK,
 ) {
     if (containerSize.width <= 0 || containerSize.height <= 0 || tabs.isEmpty()) return
     val density = LocalDensity.current
@@ -164,7 +167,21 @@ fun TabGridOverlay(
     // (~tens) would decay almost instantly and kill the inertia. Seeded to the selected tab so the
     // fullscreen selected page morphs continuously into the front slot. The overlay is only composed
     // while the deck is engaged, so each open re-enters here fresh.
-    val stepPx = (DeckDragStepFrac * containerW).coerceAtLeast(1f)
+    // Per-card slot function for the active mode — a drop-in swap read in the draw phase.
+    val slotProvider: (Float) -> DeckSlot = remember(tabViewMode, containerW, containerH, croppedPageHeightPx) {
+        when (tabViewMode) {
+            TabViewMode.PIXEL -> { p -> pixelSlot(p, containerW, containerH, croppedPageHeightPx) }
+            // GRID falls back to the deck placement until the legacy 2-column grid is wired in.
+            else -> { p -> deckSlot(p, containerW, containerH, croppedPageHeightPx) }
+        }
+    }
+    // Drag/scroll step matches the mode's visual centre-to-centre spacing so the deck tracks the
+    // finger and snapping lands a card centred.
+    val stepFrac = when (tabViewMode) {
+        TabViewMode.PIXEL -> DeckPixelScale + DeckPixelGapFrac
+        else -> DeckDragStepFrac
+    }
+    val stepPx = (stepFrac * containerW).coerceAtLeast(1f)
     val maxScroll = (tabs.size - 1).coerceAtLeast(0).toFloat()
     val maxScrollPx = maxScroll * stepPx
     val initialScrollPx = remember(tabs, selectedTabId, stepPx) {
@@ -351,6 +368,7 @@ fun TabGridOverlay(
                             carouselShift = carouselShiftFwd,
                             dragOffsetPx = dragOffsetFwd,
                             stackScroll = stackScrollFwd,
+                            slotProvider = slotProvider,
                             swipeOffsets = swipeOffsets,
                             scrollEnabled = scrollEnabledState,
                             snapshotVersion = snapshotVersion,
@@ -378,10 +396,9 @@ fun TabGridOverlay(
                             GridCellChrome(
                                 tab = tab,
                                 containerW = containerW,
-                                containerH = containerH,
-                                croppedPageHeightPx = croppedPageHeightPx,
                                 progress = progressFwd,
                                 stackScroll = stackScrollFwd,
+                                slotProvider = slotProvider,
                                 swipeOffsets = swipeOffsets,
                             )
                         }
@@ -400,7 +417,7 @@ fun TabGridOverlay(
                         .height(containerHDp)
                         .graphicsLayer {
                             val p = progress().coerceIn(0f, 1f)
-                            val front = deckSlot(0f, containerW, containerH, croppedPageHeightPx)
+                            val front = slotProvider(0f)
                             transformOrigin = TransformOrigin(0f, 0f)
                             translationX = lerp(0f, front.tx, xProgress())
                             translationY = lerp(0f, front.ty, p)
@@ -464,6 +481,7 @@ private fun GridTabCard(
     carouselShift: () -> Float,
     dragOffsetPx: () -> Float,
     stackScroll: () -> Float,
+    slotProvider: (Float) -> DeckSlot,
     swipeOffsets: SnapshotStateMap<String, Float>,
     scrollEnabled: State<Boolean>,
     snapshotVersion: State<Int>,
@@ -516,10 +534,7 @@ private fun GridTabCard(
                         } else {
                             1f
                         }
-                        val slot = deckSlot(
-                            tab.recencyRank - stackScroll(),
-                            containerW, containerH, croppedPageHeightPx,
-                        )
+                        val slot = slotProvider(tab.recencyRank - stackScroll())
                         scale = lerp(from.third, slot.scale, t)
                         tx = lerp(from.first, slot.tx, t)
                         ty = lerp(from.second, slot.ty, t)
@@ -534,10 +549,7 @@ private fun GridTabCard(
                     }
                     else -> {
                         // Static open / close morph: browse fullscreen ↔ deck slot by progress.
-                        val slot = deckSlot(
-                            tab.recencyRank - stackScroll(),
-                            containerW, containerH, croppedPageHeightPx,
-                        )
+                        val slot = slotProvider(tab.recencyRank - stackScroll())
                         scale = lerp(1f, slot.scale, p)
                         tx = lerp(tab.browseBaseX + carouselShift(), slot.tx, xProgress())
                         ty = lerp(0f, slot.ty, p)
@@ -757,10 +769,9 @@ private fun GridTabCard(
 private fun GridCellChrome(
     tab: GridTab,
     containerW: Float,
-    containerH: Float,
-    croppedPageHeightPx: Float,
     progress: () -> Float,
     stackScroll: () -> Float,
+    slotProvider: (Float) -> DeckSlot,
     swipeOffsets: SnapshotStateMap<String, Float>,
 ) {
     val host = remember(tab.url) { hostLabel(tab.url) }
@@ -778,10 +789,7 @@ private fun GridCellChrome(
     Column(
         modifier = Modifier
             .graphicsLayer {
-                val slot = deckSlot(
-                    tab.recencyRank - stackScroll(),
-                    containerW, containerH, croppedPageHeightPx,
-                )
+                val slot = slotProvider(tab.recencyRank - stackScroll())
                 val swipeOffset = swipeOffsets[tab.id] ?: 0f
                 // Sit above the card's top edge, centred over the card; rides up with the card on a
                 // swipe-to-close. The Column grows downward from this origin, so offset up by roughly

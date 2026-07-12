@@ -101,6 +101,13 @@ enum class TabViewMode {
 
     /** Pixel/Android-recents constant-scale horizontal filmstrip. */
     PIXEL,
+    ;
+
+    companion object {
+        /** Parse a persisted mode name; unknown/null falls back to [DECK]. */
+        fun fromName(name: String?): TabViewMode =
+            entries.firstOrNull { it.name == name } ?: DECK
+    }
 }
 
 /**

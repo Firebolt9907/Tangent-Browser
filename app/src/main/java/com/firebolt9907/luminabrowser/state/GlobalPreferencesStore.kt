@@ -65,6 +65,13 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("showBottomToolbar", false)
         set(value) { prefs.edit { putBoolean("showBottomToolbar", value) } }
 
+    // Which "all tabs" overview to render (TabViewMode enum, stored by name). Kept as a raw String
+    // here so the state layer doesn't depend on the ui.grid package; the UI parses it via
+    // TabViewMode.fromName. null/unknown falls back to the caller's default (DECK).
+    var tabViewModeName: String?
+        get() = prefs.getString("tabViewMode", null)
+        set(value) { prefs.edit { putString("tabViewMode", value) } }
+
     // Reader-view appearance, persisted so the user's choices survive app restarts. Theme is stored
     // by enum name; an unknown/missing value falls back to the caller's default.
     var readerThemeName: String?

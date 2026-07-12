@@ -69,6 +69,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.ViewCarousel
+import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
@@ -137,6 +140,7 @@ import com.firebolt9907.luminabrowser.ui.grid.DeckDragMinScale
 import com.firebolt9907.luminabrowser.ui.grid.DeckTravelFrac
 import com.firebolt9907.luminabrowser.ui.grid.GridTab
 import com.firebolt9907.luminabrowser.ui.grid.TabGridOverlay
+import com.firebolt9907.luminabrowser.ui.grid.TabViewMode
 import com.firebolt9907.luminabrowser.ui.reader.hydrateAppearanceFromPrefs
 import com.firebolt9907.luminabrowser.ui.reader.openReaderLink
 import com.firebolt9907.luminabrowser.ui.reader.toggleReader
@@ -269,6 +273,10 @@ fun LuminaRoot(
     // Find-in-page state. The match counts are pushed by the engine session's onFindResult.
     var findInPageActive by remember { mutableStateOf(false) }
     var showBottomToolbar by remember { mutableStateOf(components.globalPreferencesStore.showBottomToolbar) }
+    // Which overview layout the all-tabs view renders; persisted, cycled from the overview toolbar.
+    var tabViewMode by remember {
+        mutableStateOf(TabViewMode.fromName(components.globalPreferencesStore.tabViewModeName))
+    }
     var findQuery by remember { mutableStateOf("") }
     var findActiveMatch by remember { mutableIntStateOf(0) }
     var findTotalMatches by remember { mutableIntStateOf(0) }
@@ -2658,6 +2666,7 @@ fun LuminaRoot(
                                 snapshotFor(tab.id, tab.content.url)
                             }
                         },
+                        tabViewMode = tabViewMode,
                     )
                     // Controls never appear while a finger is down. Keeping them out of that
                     // phase prevents their alpha/enable state from observing every drag sample.
@@ -2719,6 +2728,28 @@ fun LuminaRoot(
                                     enabled = toolbarEnabled,
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = "New Tab")
+                                }
+                                // Cycle the all-tabs overview layout (deck ↔ pixel filmstrip; the
+                                // legacy 2-column grid joins the cycle once it's ported). Persisted.
+                                FilledTonalIconButton(
+                                    onClick = {
+                                        val next = when (tabViewMode) {
+                                            TabViewMode.DECK -> TabViewMode.PIXEL
+                                            else -> TabViewMode.DECK
+                                        }
+                                        tabViewMode = next
+                                        components.globalPreferencesStore.tabViewModeName = next.name
+                                    },
+                                    enabled = toolbarEnabled,
+                                ) {
+                                    Icon(
+                                        imageVector = when (tabViewMode) {
+                                            TabViewMode.PIXEL -> Icons.Default.ViewColumn
+                                            TabViewMode.GRID -> Icons.Default.GridView
+                                            TabViewMode.DECK -> Icons.Default.ViewCarousel
+                                        },
+                                        contentDescription = "Change tab layout",
+                                    )
                                 }
                                 FilledTonalIconButton(
                                     onClick = { showSyncedTabs = true },

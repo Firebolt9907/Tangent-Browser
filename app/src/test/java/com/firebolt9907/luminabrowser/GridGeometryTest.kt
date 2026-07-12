@@ -3,6 +3,7 @@ package com.firebolt9907.luminabrowser
 import androidx.compose.ui.unit.IntSize
 import com.firebolt9907.luminabrowser.ui.grid.DeckFrontCenterXFrac
 import com.firebolt9907.luminabrowser.ui.grid.DeckFrontScale
+import com.firebolt9907.luminabrowser.ui.grid.DeckMinAlpha
 import com.firebolt9907.luminabrowser.ui.grid.DeckPixelScale
 import com.firebolt9907.luminabrowser.ui.grid.deckSlot
 import com.firebolt9907.luminabrowser.ui.grid.gridCellRect
@@ -75,6 +76,26 @@ class GridGeometryTest {
         val ahead = slot(-3f)
         val centerX = ahead.tx + w * ahead.scale / 2f
         assertTrue("front-exiting card's centre has passed the right edge", centerX > w)
+    }
+
+    @Test
+    fun `depth alpha is opaque to one slot left, then fades to a floor`() {
+        // Focus, the newer/right card, and the nearest older card all stay fully opaque.
+        assertEquals(1f, slot(0f).alpha, 0.001f)
+        assertEquals(1f, slot(-1f).alpha, 0.001f)
+        assertEquals(1f, slot(1f).alpha, 0.001f)
+        // Deeper left-stack cards fade, monotonically, never below the floor.
+        assertTrue("p=2 fades", slot(2f).alpha < 1f)
+        assertTrue("p=3 fades more than p=2", slot(3f).alpha < slot(2f).alpha)
+        assertTrue("alpha never dips below the floor", slot(6f).alpha >= DeckMinAlpha - 0.001f)
+        assertEquals("deep cards reach the floor", DeckMinAlpha, slot(10f).alpha, 0.001f)
+    }
+
+    @Test
+    fun `pixel mode never fades`() {
+        assertEquals(1f, px(0f).alpha, 0.001f)
+        assertEquals(1f, px(3f).alpha, 0.001f)
+        assertEquals(1f, px(-2f).alpha, 0.001f)
     }
 
     // ── Pixel mode: constant-scale horizontal filmstrip ─────────────────────────────────────────

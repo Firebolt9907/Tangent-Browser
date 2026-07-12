@@ -187,6 +187,12 @@ fun TabGridOverlay(
         else -> DeckDragStepFrac
     }
     val stepPx = (stepFrac * containerW).coerceAtLeast(1f)
+    // Composition cull window (deck position p). The deck's steep left decay hides cards by ~p=3, so
+    // it needs only a tight window; Pixel mode's constant-scale cards stay on-screen across a much
+    // wider p range (and rounding straddles slot boundaries during a scroll), so it gets a generous
+    // symmetric window — a tight window there clips cards that are still visible while scrolling.
+    val cullLow = if (tabViewMode == TabViewMode.PIXEL) -4 else -2
+    val cullHigh = if (tabViewMode == TabViewMode.PIXEL) 4 else DeckVisibleDepth.toInt() + 1
     val maxScroll = (tabs.size - 1).coerceAtLeast(0).toFloat()
     val maxScrollPx = maxScroll * stepPx
     val initialScrollPx = remember(tabs, selectedTabId, stepPx) {
@@ -346,13 +352,12 @@ fun TabGridOverlay(
                     val composeCard = if (gestureLike) {
                         abs(tab.slotDelta + shiftSlots) <= GestureVisibleSlots
                     } else if (commitFromProgress > 0f) {
-                        // Fan into the deck: compose cards near the finger at release OR whose deck
-                        // slot is on-screen. One newer card (p=-1) sits right; the older left stack
-                        // spans p up to ~DeckVisibleDepth before its slivers slide off the left.
+                        // Fan into the deck: compose cards near the finger at release OR whose slot
+                        // is on-screen (mode-aware cull window).
                         abs(tab.slotDelta + shiftSlots) <= GestureVisibleSlots ||
-                            (p >= -2 && p <= DeckVisibleDepth.toInt() + 1)
+                            (p >= cullLow && p <= cullHigh)
                     } else {
-                        p >= -2 && p <= DeckVisibleDepth.toInt() + 1
+                        p >= cullLow && p <= cullHigh
                     }
                     if (composeCard) {
                         GridTabCard(
@@ -390,19 +395,19 @@ fun TabGridOverlay(
                 } // key(tab.id)
             }
 
-            // Host label above each visible card. Rendered after the cards so it paints on top; its
-            // position follows the card's deck slot. Suppressed while the finger is down (labels
-            // appear only after release).
+            // Caption above each visible card: every visible card shows its favicon just above its
+            // top-left corner; only the centred card (p == 0) additionally shows the left-aligned
+            // title + host text. Rendered after the cards so it paints on top; suppressed while the
+            // finger is down (captions appear only after release).
             if (!isGesture) {
                 tabs.forEach { tab ->
                     key(tab.id) {
                         val p = tab.recencyRank - scrollBucket
-                        // Only the prominently-visible cards (focus + the newer card + the nearest
-                        // older card) carry a caption; the faded deep stack does not.
-                        if (p >= -1 && p <= 1) {
+                        if (p >= -1 && p <= 2) {
                             GridCellChrome(
                                 tab = tab,
                                 icon = iconProviderFwd(tab.id),
+                                showText = p == 0,
                                 containerW = containerW,
                                 progress = progressFwd,
                                 stackScroll = stackScrollFwd,
@@ -769,15 +774,18 @@ private fun GridTabCard(
 }
 
 /**
- * The caption drawn above each prominently-visible deck card — the site favicon + page title on one
- * row with the host beneath, iOS-app-switcher style — following its slot in the draw phase.
- * Skippable; the slot position, the swipe-to-close offset, and the open-state alpha are all
- * draw-phase layer reads.
+ * The caption above a visible deck card, following its slot in the draw phase. EVERY visible card
+ * shows its favicon just above its top-left corner; only the centred card ([showText]) additionally
+ * shows the left-aligned page title + host. Anchored to the card's left edge with a fixed-height
+ * bottom-aligned box, so the favicon-only and favicon+text variants both hug the card's top-left
+ * corner without measuring. Skippable; the slot position, swipe offset, and alpha are draw-phase
+ * layer reads.
  */
 @Composable
 private fun GridCellChrome(
     tab: GridTab,
     icon: Bitmap?,
+    showText: Boolean,
     containerW: Float,
     progress: () -> Float,
     stackScroll: () -> Float,
@@ -795,56 +803,58 @@ private fun GridCellChrome(
     }
     val iconBitmap = remember(icon) { icon?.asImageBitmap() }
     val density = LocalDensity.current
-    // The caption tracks the widest (focused) card so it stays put and legible; text is centred.
     val labelWidthDp = with(density) { (containerW * DeckFrontScale).toDp() }
-    Column(
+    val boxHeightDp = 60.dp
+    Box(
         modifier = Modifier
             .graphicsLayer {
                 val slot = slotProvider(tab.recencyRank - stackScroll())
                 val swipeOffset = swipeOffsets[tab.id] ?: 0f
-                // Sit above the card's top edge, centred over the card; rides up with the card on a
-                // swipe-to-close. The Column grows downward from this origin, so offset up by roughly
-                // its own height plus a small gap. Alpha follows the open progress (so it isn't drawn
-                // over the live browse page) and the card's own depth transparency.
-                val labelGap = with(density) { 52.dp.toPx() }
-                translationX = slot.tx + (containerW * slot.scale - containerW * DeckFrontScale) / 2f
-                translationY = slot.ty + swipeOffset - labelGap
+                // Left edge at the card's left edge; the box bottom sits a small gap above the card
+                // top so the bottom-aligned content hugs the top-left corner. Rides up on a swipe.
+                translationX = slot.tx
+                translationY = slot.ty + swipeOffset - boxHeightDp.toPx() - 6.dp.toPx()
                 alpha = progress().coerceIn(0f, 1f) * slot.alpha
             }
             .width(labelWidthDp)
-            .padding(horizontal = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .height(boxHeightDp),
+        contentAlignment = Alignment.BottomStart,
     ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (iconBitmap != null && !tab.url.isBlankTabUrl()) {
-                Image(
-                    bitmap = iconBitmap,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(18.dp)
-                        .clip(RoundedCornerShape(4.dp)),
+        Column(horizontalAlignment = Alignment.Start) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (iconBitmap != null && !tab.url.isBlankTabUrl()) {
+                    Image(
+                        bitmap = iconBitmap,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                    )
+                }
+                if (showText) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
+            }
+            if (showText && host.isNotEmpty() && !tab.url.isBlankTabUrl()) {
+                Text(
+                    text = host,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (host.isNotEmpty() && !tab.url.isBlankTabUrl()) {
-            Text(
-                text = host,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 }

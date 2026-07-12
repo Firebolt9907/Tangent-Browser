@@ -44,13 +44,12 @@ const val DeckFrontCenterXFrac = 0.5f
 /** Screen-Y of every card's centre, as a fraction of height. All cards are vertically centred (no
  * per-depth rise) so the deck reads as a clean horizontal row like iOS. */
 const val DeckFrontCenterYFrac = 0.50f
-/** First left step (fraction of width) for the nearest OLDER card (p = 1). ~0.15 ≈ 20% of a card
+/** First left step (fraction of width) for the nearest OLDER card (p = 1). ~0.16 ≈ 20% of a card
  * width, so the first left sliver shows ~20% with the other 80% hidden by the focus. */
-const val DeckLeftFirstStepFrac = 0.15f
-/** Geometric decay of the left step per deeper card: each older card's visible sliver is this
- * fraction of the one in front of it, so the left stack tapers into a vanishing point (20%, ~14%,
- * ~10%, …) like a fanned deck rather than a constant-width filmstrip. */
-const val DeckLeftDecay = 0.72f
+const val DeckLeftFirstStepFrac = 0.16f
+/** Geometric decay of the left step per deeper card. Steep, so the visible left slivers collapse
+ * fast — roughly 20% (p=1), ~5% (p=2), ~0% (p=3), then culled — instead of a long fanned tail. */
+const val DeckLeftDecay = 0.28f
 /** Centre-to-centre step (fraction of width) for NEWER cards (p < 0), which sit to the RIGHT.
  * Large — the newer card is stacked ON TOP of the focus but pushed far right so only a thin sliver
  * of its left edge shows and the focused card keeps its high visible width. */
@@ -66,8 +65,9 @@ const val DeckFadeStartDepth = 1f
 const val DeckFadePerDepth = 0.4f
 /** Floor the deep left-stack cards fade to (never fully invisible, so the stack still reads). */
 const val DeckMinAlpha = 0.15f
-/** Roughly how many older cards read as a visible left stack — drives cull windows only. */
-const val DeckVisibleDepth = 5f
+/** Roughly how many older cards read as a visible left stack — drives cull windows only. With the
+ * steep decay the 3rd card (p=3) is already ~0%, so composing to ~p=3 and culling beyond suffices. */
+const val DeckVisibleDepth = 2f
 /** Card crop aspect (height / width). Set high so `min(W*aspect, H)` clamps to the full viewport
  * height on phones/tablets — each card is a scaled-down full screenshot, like the app switcher. */
 const val DeckCropAspect = 2.4f

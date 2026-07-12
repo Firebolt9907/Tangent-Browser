@@ -139,6 +139,7 @@ import com.firebolt9907.luminabrowser.ui.content.ContentHost
 import com.firebolt9907.luminabrowser.ui.grid.DeckDragMinScale
 import com.firebolt9907.luminabrowser.ui.grid.DeckTravelFrac
 import com.firebolt9907.luminabrowser.ui.grid.GridTab
+import com.firebolt9907.luminabrowser.ui.grid.ClassicTabGridOverlay
 import com.firebolt9907.luminabrowser.ui.grid.TabGridOverlay
 import com.firebolt9907.luminabrowser.ui.grid.TabViewMode
 import com.firebolt9907.luminabrowser.ui.reader.hydrateAppearanceFromPrefs
@@ -2599,78 +2600,106 @@ fun LuminaRoot(
                             commitPendingGeckoSelection()
                         }
                     }
-                    TabGridOverlay(
-                        progress = { if (gridGestureActive) gridDragProgress else gridProgressState.value },
-                        xProgress = { if (gridGestureActive) 0f else gridXProgressState.value },
-                        carouselShift = { offsetX },
-                        dragOffsetPx = { gridDragPx },
-                        containerSize = contentSize,
-                        tabs = gridTabs,
-                        selectedTabId = selectedTabId,
-                        onTabSelected = { tabId ->
-                            // Switch the selected tab so the closing animation lands on the
-                            // tapped cell — its carousel slot then becomes the centered (offset=0)
-                            // browse position, which the grid → fullscreen lerp uses as its
-                            // target.
-                            gridHandoffSelectedTabId = null
-                            gridHandoffLeavingTabId = null
-                            val tappedTab = browserState.tabs.firstOrNull { it.id == tabId }
-                            if (tabId != selectedTabId) {
-                                visualSelectedTabId = tabId
-                                // Clear the old tab's gesture-local snapshot so the close
-                                // animation shows the tapped tab's own cached snapshot.
-                                resetTabSwitchSnapshot()
-                                tappedTab?.let {
-                                    pendingActiveBarState = visualBarStateForUrl(
-                                        url = it.content.url,
-                                        count = tabCount,
-                                    )
-                                }
-                                stagePendingGeckoSelection(tabId = tabId)
+                    // Shared gesture-core callbacks, hoisted so the deck/pixel overlay and the
+                    // legacy grid overlay (selected by tabViewMode) can both use them.
+                    val onGridTabSelected: (String) -> Unit = onTabSelected@{ tabId ->
+                        // Switch the selected tab so the closing animation lands on the
+                        // tapped cell — its carousel slot then becomes the centered (offset=0)
+                        // browse position, which the grid → fullscreen lerp uses as its
+                        // target.
+                        gridHandoffSelectedTabId = null
+                        gridHandoffLeavingTabId = null
+                        val tappedTab = browserState.tabs.firstOrNull { it.id == tabId }
+                        if (tabId != selectedTabId) {
+                            visualSelectedTabId = tabId
+                            // Clear the old tab's gesture-local snapshot so the close
+                            // animation shows the tapped tab's own cached snapshot.
+                            resetTabSwitchSnapshot()
+                            tappedTab?.let {
+                                pendingActiveBarState = visualBarStateForUrl(
+                                    url = it.content.url,
+                                    count = tabCount,
+                                )
                             }
-                            offsetX = 0f
-                            closeGrid(animateBack = true) {
-                                if (pendingGeckoSelectTabId == tabId) {
-                                    stickyIncomingSnapshot = snapshotFor(tabId, tappedTab?.content?.url)
-                                    stickyIncomingTabId = tabId
-                                    stickyIncomingTopPadPx = with(density) {
-                                        topPadDpFor(tappedTab?.content?.url).toPx()
-                                    }.toInt()
-                                }
-                                commitPendingGeckoSelection()
+                            stagePendingGeckoSelection(tabId = tabId)
+                        }
+                        offsetX = 0f
+                        closeGrid(animateBack = true) {
+                            if (pendingGeckoSelectTabId == tabId) {
+                                stickyIncomingSnapshot = snapshotFor(tabId, tappedTab?.content?.url)
+                                stickyIncomingTabId = tabId
+                                stickyIncomingTopPadPx = with(density) {
+                                    topPadDpFor(tappedTab?.content?.url).toPx()
+                                }.toInt()
                             }
-                        },
-                        pageStridePx = pageStride,
-                        selectedShiftBase = gridHandoffSelectedOffsetX,
-                        onNewTab = {
-                            openNewTabFromGrid()
-                        },
-                        onCloseTab = { tabId ->
-                            components.tabRepository.removeTab(tabId)
-                        },
-                        newTabSelected = gridNewTabSelected,
-                        browseCornerDp = switchCornerRadiusDp,
-                        isGesture = gridGestureActive,
-                        commitFromProgress = if (gridGestureActive) 0f else gridCommitFromProgress,
-                        cancelFromProgress = if (gridGestureActive) 0f else gridCancelFromProgress,
-                        releasePositions = gridCommitFromPositions,
-                        snapshotVersion = snapshotCacheVersionState,
-                        snapshotProvider = { tabId ->
-                            val tabIndex = tabsList.indexOfFirst { it.id == tabId }
-                            val tab = tabsList.getOrNull(tabIndex)
-                            if (tab == null || tab.content.url.isBlankPageUrl()) {
-                                null
-                            } else if (tabIndex == newSelIdx) {
-                                tabSwitchCurrentSnapshot ?: snapshotFor(tab.id, tab.content.url)
-                            } else {
-                                snapshotFor(tab.id, tab.content.url)
-                            }
-                        },
-                        iconProvider = { tabId ->
-                            tabsList.firstOrNull { it.id == tabId }?.content?.icon
-                        },
-                        tabViewMode = tabViewMode,
-                    )
+                            commitPendingGeckoSelection()
+                        }
+                    }
+                    val gridSnapshotProvider: (String) -> Bitmap? = { tabId ->
+                        val tabIndex = tabsList.indexOfFirst { it.id == tabId }
+                        val tab = tabsList.getOrNull(tabIndex)
+                        if (tab == null || tab.content.url.isBlankPageUrl()) {
+                            null
+                        } else if (tabIndex == newSelIdx) {
+                            tabSwitchCurrentSnapshot ?: snapshotFor(tab.id, tab.content.url)
+                        } else {
+                            snapshotFor(tab.id, tab.content.url)
+                        }
+                    }
+                    if (tabViewMode == TabViewMode.GRID) {
+                        // Legacy 2-column vertical grid (recovered from jul-8). Same gesture-core
+                        // params; it renders its own vertical-scroll layout + captions.
+                        ClassicTabGridOverlay(
+                            progress = { if (gridGestureActive) gridDragProgress else gridProgressState.value },
+                            xProgress = { if (gridGestureActive) 0f else gridXProgressState.value },
+                            carouselShift = { offsetX },
+                            dragOffsetPx = { gridDragPx },
+                            containerSize = contentSize,
+                            tabs = gridTabs,
+                            selectedTabId = selectedTabId,
+                            onTabSelected = onGridTabSelected,
+                            pageStridePx = pageStride,
+                            selectedShiftBase = gridHandoffSelectedOffsetX,
+                            onNewTab = { openNewTabFromGrid() },
+                            onCloseTab = { tabId -> components.tabRepository.removeTab(tabId) },
+                            newTabSelected = gridNewTabSelected,
+                            browseCornerDp = switchCornerRadiusDp,
+                            isGesture = gridGestureActive,
+                            commitFromProgress = if (gridGestureActive) 0f else gridCommitFromProgress,
+                            cancelFromProgress = if (gridGestureActive) 0f else gridCancelFromProgress,
+                            releasePositions = gridCommitFromPositions,
+                            snapshotVersion = snapshotCacheVersionState,
+                            snapshotProvider = gridSnapshotProvider,
+                            bottomControlsHeightPx = gridBottomControlsHeightPx,
+                        )
+                    } else {
+                        TabGridOverlay(
+                            progress = { if (gridGestureActive) gridDragProgress else gridProgressState.value },
+                            xProgress = { if (gridGestureActive) 0f else gridXProgressState.value },
+                            carouselShift = { offsetX },
+                            dragOffsetPx = { gridDragPx },
+                            containerSize = contentSize,
+                            tabs = gridTabs,
+                            selectedTabId = selectedTabId,
+                            onTabSelected = onGridTabSelected,
+                            pageStridePx = pageStride,
+                            selectedShiftBase = gridHandoffSelectedOffsetX,
+                            onNewTab = { openNewTabFromGrid() },
+                            onCloseTab = { tabId -> components.tabRepository.removeTab(tabId) },
+                            newTabSelected = gridNewTabSelected,
+                            browseCornerDp = switchCornerRadiusDp,
+                            isGesture = gridGestureActive,
+                            commitFromProgress = if (gridGestureActive) 0f else gridCommitFromProgress,
+                            cancelFromProgress = if (gridGestureActive) 0f else gridCancelFromProgress,
+                            releasePositions = gridCommitFromPositions,
+                            snapshotVersion = snapshotCacheVersionState,
+                            snapshotProvider = gridSnapshotProvider,
+                            iconProvider = { tabId ->
+                                tabsList.firstOrNull { it.id == tabId }?.content?.icon
+                            },
+                            tabViewMode = tabViewMode,
+                        )
+                    }
                     // Controls never appear while a finger is down. Keeping them out of that
                     // phase prevents their alpha/enable state from observing every drag sample.
                     if (!gridGestureActive) Column(
@@ -2732,13 +2761,14 @@ fun LuminaRoot(
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = "New Tab")
                                 }
-                                // Cycle the all-tabs overview layout (deck ↔ pixel filmstrip; the
-                                // legacy 2-column grid joins the cycle once it's ported). Persisted.
+                                // Cycle the all-tabs overview layout: deck → pixel filmstrip →
+                                // legacy 2-column grid → deck. Persisted.
                                 FilledTonalIconButton(
                                     onClick = {
                                         val next = when (tabViewMode) {
                                             TabViewMode.DECK -> TabViewMode.PIXEL
-                                            else -> TabViewMode.DECK
+                                            TabViewMode.PIXEL -> TabViewMode.GRID
+                                            TabViewMode.GRID -> TabViewMode.DECK
                                         }
                                         tabViewMode = next
                                         components.globalPreferencesStore.tabViewModeName = next.name

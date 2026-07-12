@@ -10,7 +10,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.ui.shape.squirclePath
 import kotlin.math.min
 import kotlin.math.pow
@@ -110,6 +112,44 @@ enum class TabViewMode {
         fun fromName(name: String?): TabViewMode =
             entries.firstOrNull { it.name == name } ?: DECK
     }
+}
+
+// ── Legacy 2-column grid ([TabViewMode.GRID]) tunables + geometry ──────────────────────────────
+// The original vertical-scrolling 2-column grid (recovered from the `jul-8` branch), rendered by
+// ClassicTabGridOverlay in ClassicGrid.kt. Cards are a fixed 3:4 crop laid out in rows.
+
+val GridSideMarginDp = 16.dp
+val GridTopMarginDp = 64.dp
+// Breathing-room gap between the last grid row and the top of the floating bottom controls. The
+// controls' full measured height (which already includes the nav-bar inset, and the handoff banner
+// when shown) is added on top of this in ClassicGrid.kt, so this is only the gap.
+val GridBottomMarginDp = 24.dp
+val GridGapDp = 14.dp
+const val GridColumns = 2
+
+data class GridRect(val left: Float, val top: Float, val width: Float, val height: Float)
+
+fun gridCellRect(
+    index: Int,
+    containerSize: IntSize,
+    columns: Int,
+    horizontalGapPx: Float,
+    verticalGapPx: Float,
+    sideMarginPx: Float,
+    topMarginPx: Float,
+): GridRect {
+    val w = containerSize.width.toFloat()
+    val h = containerSize.height.toFloat()
+    if (w <= 0f || h <= 0f) return GridRect(0f, 0f, 0f, 0f)
+    val cellW = (w - 2 * sideMarginPx - (columns - 1) * horizontalGapPx) / columns
+    // Tab cards are a fixed 3:4 (portrait) aspect — the page is cropped to its top region rather
+    // than showing the full (very tall) viewport. See ClassicTabGridOverlay for the crop/morph math.
+    val cellH = cellW * 4f / 3f
+    val col = index % columns
+    val row = index / columns
+    val left = sideMarginPx + col * (cellW + horizontalGapPx)
+    val top = topMarginPx + row * (cellH + verticalGapPx)
+    return GridRect(left, top, cellW, cellH)
 }
 
 /**

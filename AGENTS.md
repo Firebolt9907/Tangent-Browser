@@ -15,7 +15,7 @@ app/src/main/java/com/firebolt9907/luminabrowser/
   ui/
     chrome/       # SafariBar, BarPill, BarExpanded, BarCompact, BarEditing
     content/      # ContentHost (the single EngineView), page JS injection
-    grid/         # Tab grid overlay
+    grid/         # Tab overview — iOS deck / pixel filmstrip / classic 2-col (TabViewMode)
     shape/        # SquircleShape
     addons/       # AddonsSheet UI
     theme/        # Material 3 colors/type
@@ -148,6 +148,35 @@ Mixing these causes either frame-skip or stale visual position on finger-up.
 The horizontal-drag overlay block is gated on `!gridEngaged`.
 The grid takes over rendering when `gridEngaged` is true.
 Never render both simultaneously.
+
+### 5a. Tab overview has three selectable modes (do not assume the 2-column grid)
+
+The "all tabs" overview is a persisted `TabViewMode` (`state/GlobalPreferencesStore.tabViewModeName`,
+parsed by `TabViewMode.fromName`, default `DECK`), cycled from the overview toolbar button in
+`LuminaRoot`:
+
+- **DECK** (default) — iOS app-switcher: centred focus card, the newer card stacked on top pushed
+  far right, older cards a geometrically-tapering left stack that fades with depth. Geometry is
+  `deckSlot(p)` in `GridModel.kt`.
+- **PIXEL** — constant-scale horizontal filmstrip (`pixelSlot(p)`), no receding/stacking/fade.
+- **GRID** — the legacy 2-column vertical grid, recovered verbatim from the `jul-8` branch as
+  `ui/grid/ClassicGrid.kt` (`ClassicTabGridOverlay`) + `gridCellRect`/`Grid*` constants in
+  `GridModel.kt`.
+
+Both `TabGridOverlay` (DECK/PIXEL) and `ClassicTabGridOverlay` (GRID) consume the **same**
+layout-agnostic gesture core in `LuminaRoot` (progress, release positions, invariants #4/#5) — the
+mode only swaps the destination layout. Non-obvious rules:
+
+- `TabGridOverlay` routes ALL per-card placement through one `slotProvider(p)` (deckSlot vs
+  pixelSlot) read in the draw phase; the drag/scroll `stepPx` is mode-aware too.
+- Deck scroll is stored in **pixels** (not card-units): the spline-decay fling needs pixel-scale
+  magnitudes or inertia dies; release projects the fling then springs to the nearest card.
+- `ClassicGrid.kt`'s private helpers (`GridTabCard`, `GridCellChrome`, `GestureVisibleSlots`) share
+  names with `Grid.kt`'s but are **file-scoped**, so they don't collide — keep them private.
+- Swipe-up on a deck card is distance-sensitive: a gentle swipe navigates to the older tab, a
+  decisive one (~38% of the screen) closes it.
+- Captions load **real favicons** via `components.icons` (mozilla `BrowserIcons`, URL-keyed cache in
+  `LuminaRoot` pruned to open tabs), falling back to `ContentState.icon` then a letter tile.
 
 ### 6. Snapshot capture — `EngineView.captureThumbnail`, not `EngineSession`
 

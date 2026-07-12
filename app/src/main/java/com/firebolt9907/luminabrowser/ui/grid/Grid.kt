@@ -53,6 +53,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -419,7 +421,9 @@ fun TabGridOverlay(
                             GridCellChrome(
                                 tab = tab,
                                 icon = iconProviderFwd(tab.id),
-                                showText = p == 0,
+                                // Compose the text for the near-centre cards so it can cross-fade;
+                                // the actual alpha tracks distance-to-centre in the draw phase.
+                                textCandidate = p >= -1 && p <= 1,
                                 containerW = containerW,
                                 progress = progressFwd,
                                 stackScroll = stackScrollFwd,
@@ -813,7 +817,7 @@ private fun GridTabCard(
 private fun GridCellChrome(
     tab: GridTab,
     icon: Bitmap?,
-    showText: Boolean,
+    textCandidate: Boolean,
     containerW: Float,
     progress: () -> Float,
     stackScroll: () -> Float,
@@ -853,16 +857,10 @@ private fun GridCellChrome(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (iconBitmap != null && !tab.url.isBlankTabUrl()) {
-                    Image(
-                        bitmap = iconBitmap,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clip(RoundedCornerShape(4.dp)),
-                    )
+                if (!tab.url.isBlankTabUrl()) {
+                    FaviconTile(iconBitmap, host)
                 }
-                if (showText) {
+                if (textCandidate) {
                     Text(
                         text = title,
                         style = MaterialTheme.typography.titleSmall,
@@ -870,19 +868,69 @@ private fun GridCellChrome(
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .graphicsLayer {
+                                // Cross-fade the text as this card nears / leaves centre.
+                                alpha = (1f - abs(tab.recencyRank - stackScroll())).coerceIn(0f, 1f)
+                            },
                     )
                 }
             }
-            if (showText && host.isNotEmpty() && !tab.url.isBlankTabUrl()) {
+            if (textCandidate && host.isNotEmpty() && !tab.url.isBlankTabUrl()) {
                 Text(
                     text = host,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.graphicsLayer {
+                        alpha = (1f - abs(tab.recencyRank - stackScroll())).coerceIn(0f, 1f)
+                    },
                 )
             }
+        }
+    }
+}
+
+/**
+ * The favicon shown above a deck card: the real [ContentState.icon] when available, otherwise a
+ * coloured letter tile (host initial). Guarantees every non-blank tab shows an identifying mark,
+ * since [ContentState.icon] is null for tabs that never loaded a favicon this session.
+ */
+@Composable
+private fun FaviconTile(icon: ImageBitmap?, host: String) {
+    val shape = RoundedCornerShape(4.dp)
+    if (icon != null) {
+        Image(
+            bitmap = icon,
+            contentDescription = null,
+            modifier = Modifier
+                .size(18.dp)
+                .clip(shape),
+        )
+    } else {
+        val initial = remember(host) {
+            host.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "•"
+        }
+        val tileColor = remember(host) {
+            if (host.isEmpty()) Color(0xFF7E7E7E)
+            else Color.hsl((abs(host.hashCode()) % 360).toFloat(), 0.45f, 0.55f)
+        }
+        Box(
+            modifier = Modifier
+                .size(18.dp)
+                .clip(shape)
+                .background(tileColor),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = initial,
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
         }
     }
 }

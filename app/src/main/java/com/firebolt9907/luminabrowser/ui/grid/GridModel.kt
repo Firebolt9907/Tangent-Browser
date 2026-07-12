@@ -314,3 +314,17 @@ internal fun hostLabel(url: String): String {
 internal fun String.isBlankTabUrl(): Boolean = isBlank() || this == "about:blank"
 
 internal fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
+
+/**
+ * Easing applied to the finger-drag progress before it drives a deck card's SHRINK (scale, and with
+ * it the card top and the neighbour spread) during a swipe-up-to-open. A decelerating ease-out
+ * (quadratic): the card responds immediately as the pull begins, then eases as it approaches the
+ * deck, so the open reads as a curved, iOS-like motion instead of a flat linear shrink. The card's
+ * *position* still tracks the finger 1:1 — only the scale is eased. Both the drawn scale
+ * ([TabGridOverlay]'s isGesture branch) and the release-capture scale (LuminaRoot) run through this,
+ * so the commit spring starts from exactly the scale the drag last drew (no pop on release).
+ */
+fun deckDragEase(x: Float): Float {
+    val inv = 1f - x.coerceIn(0f, 1f)
+    return 1f - inv * inv
+}

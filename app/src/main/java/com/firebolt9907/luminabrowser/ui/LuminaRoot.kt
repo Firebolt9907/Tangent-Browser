@@ -138,6 +138,7 @@ import mozilla.components.browser.state.state.content.HistoryState
 import com.firebolt9907.luminabrowser.ui.content.ContentHost
 import com.firebolt9907.luminabrowser.ui.grid.DeckDragMinScale
 import com.firebolt9907.luminabrowser.ui.grid.DeckTravelFrac
+import com.firebolt9907.luminabrowser.ui.grid.deckDragEase
 import com.firebolt9907.luminabrowser.ui.grid.GridTab
 import mozilla.components.browser.icons.IconRequest
 import com.firebolt9907.luminabrowser.ui.grid.ClassicTabGridOverlay
@@ -1570,7 +1571,8 @@ fun LuminaRoot(
             // Must match the finger-tracked drag floor drawn in TabGridOverlay's isGesture branch,
             // or the commit spring would start from a different scale than the drag showed.
             val minScale = DeckDragMinScale
-            val releaseScale = (1f - gridDragProgress * (1f - minScale)).coerceIn(minScale, 1f)
+            val releaseScale =
+                (1f - deckDragEase(gridDragProgress) * (1f - minScale)).coerceIn(minScale, 1f)
             val captureCarouselShift = if (gridHandoffSelectedTabId != null) {
                 gridHandoffSelectedOffsetX + offsetX
             } else {

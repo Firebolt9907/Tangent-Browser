@@ -28,9 +28,10 @@ import kotlin.math.pow
 // phase.
 
 /** On-screen scale of the front (focused) card, applied uniformly (the card is a scaled-down full
- * screenshot). The card is a bit narrower than the viewport so the neighbours sit beside it nearly
- * edge-to-edge, iOS-style. */
-const val DeckFrontScale = 0.62f
+ * screenshot). Wide — the focused card has high visible width and dominates the screen; the left
+ * and right neighbours are pushed mostly off-screen and show only thin slivers (see
+ * [DeckDxStepFrac]). */
+const val DeckFrontScale = 0.85f
 /** Geometric scale ratio between adjacent deck slots (scale(p) = DeckFrontScale * step^p). Gentle:
  * neighbours are only slightly larger (newer/right) or smaller (older/left) than the focus, not a
  * steep recede. */
@@ -41,13 +42,15 @@ const val DeckFrontCenterXFrac = 0.5f
 /** Screen-Y of every card's centre, as a fraction of height. All cards are vertically centred (no
  * per-depth rise) so the deck reads as a clean horizontal row like iOS. */
 const val DeckFrontCenterYFrac = 0.50f
-/** Horizontal centre-to-centre step per slot (fraction of width). Close to [DeckFrontScale] so the
- * cards sit nearly edge-to-edge — the newer (right) card is stacked ON TOP of the focus but pushed
- * far enough right that the overlap is tiny (~90% of the focused card stays visible). Linear (not
- * compounded) so far cards keep translating and slide clean off the edges like iOS — no
- * vanishing-point pile-up. This is ALSO the drag→slot ratio (px of finger travel per card), so the
- * focused card tracks the finger 1:1 during a horizontal scroll. */
-const val DeckDxStepFrac = 0.56f
+/** Horizontal centre-to-centre step per slot (fraction of width). Large — neighbours are pushed
+ * almost entirely off their side of the screen, so only a thin sliver of each shows while the
+ * focused card keeps its high visible width. The newer (right) card is stacked ON TOP of the focus
+ * with a tiny overlap; the older (left) card sits behind it. Sized so a neighbour's near edge just
+ * reaches the focused card's edge (no background gap). Linear (not compounded) so far cards keep
+ * translating and slide clean off the edges like iOS — no vanishing-point pile-up. This is ALSO the
+ * drag→slot ratio: because every card's centre moves 1px per 1px of scroll, the deck tracks the
+ * finger 1:1 during a horizontal scroll regardless of this value. */
+const val DeckDxStepFrac = 0.8f
 /** Roughly how many cards read as on-screen before they slide off — drives cull windows only. */
 const val DeckVisibleDepth = 4f
 /** Card crop aspect (height / width). Set high so `min(W*aspect, H)` clamps to the full viewport

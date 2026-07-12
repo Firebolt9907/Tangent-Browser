@@ -254,6 +254,17 @@ fun TabGridOverlay(
     val iconProviderFwd: (String) -> Bitmap? = remember { { id -> iconProviderHolder.value(id) } }
     val onTabSelectedFwd: (String) -> Unit = remember { { id -> onTabSelectedHolder.value(id) } }
     val onCloseTabFwd: (String) -> Unit = remember { { id -> onCloseTabHolder.value(id) } }
+    // Swipe-up navigation: center the tab one OLDER than the swiped tab (recencyRank + 1), so the
+    // swiped tab slides to the right (newer) slot. Animates the deck scroll with the settle spring.
+    val onSwipeUpFwd: (String) -> Unit = remember(tabs, stepPx, maxScrollPx) {
+        { id ->
+            val rank = tabs.firstOrNull { it.id == id }?.recencyRank
+            if (rank != null && !deckDragging) {
+                val target = ((rank + 1).toFloat() * stepPx).coerceIn(0f, maxScrollPx)
+                coroutineScope.launch { deckScrollAnim.animateTo(target, settleSpring) }
+            }
+        }
+    }
     val cellsClickableFwd: () -> Boolean = remember { { progressHolder.value() > 0.5f } }
 
     // Composition-level culling. During the gesture / cancel spring only cards within a couple of
@@ -388,6 +399,7 @@ fun TabGridOverlay(
                             cellsClickable = cellsClickableFwd,
                             onTabSelected = onTabSelectedFwd,
                             onCloseTab = onCloseTabFwd,
+                            onSwipeUp = onSwipeUpFwd,
                             haptics = haptics,
                             coroutineScope = coroutineScope,
                         )
@@ -502,6 +514,7 @@ private fun GridTabCard(
     cellsClickable: () -> Boolean,
     onTabSelected: (String) -> Unit,
     onCloseTab: (String) -> Unit,
+    onSwipeUp: (String) -> Unit,
     haptics: LuminaHaptics,
     coroutineScope: CoroutineScope,
 ) {
@@ -610,21 +623,18 @@ private fun GridTabCard(
                     onDragEnd = {
                         coroutineScope.launch {
                             val offset = swipeOffsets[tab.id] ?: 0f
-                            // Only an upward swipe past the threshold dismisses the card.
+                            // An upward swipe past the threshold navigates to the next-OLDER tab:
+                            // this tab slides to the right (newer) slot as the older one takes
+                            // centre. The card doesn't fly off — its vertical offset springs back
+                            // while the deck scroll carries it right (handled by onSwipeUp).
                             if (offset < -containerH * 0.18f) {
-                                animate(
-                                    initialValue = offset,
-                                    targetValue = -containerH,
-                                    animationSpec = tween(durationMillis = 200)
-                                ) { value, _ -> swipeOffsets[tab.id] = value }
-                                onCloseTab(tab.id)
-                            } else {
-                                animate(
-                                    initialValue = offset,
-                                    targetValue = 0f,
-                                    animationSpec = tween(durationMillis = 200)
-                                ) { value, _ -> swipeOffsets[tab.id] = value }
+                                onSwipeUp(tab.id)
                             }
+                            animate(
+                                initialValue = offset,
+                                targetValue = 0f,
+                                animationSpec = tween(durationMillis = 200)
+                            ) { value, _ -> swipeOffsets[tab.id] = value }
                         }
                     },
                     onDragCancel = {

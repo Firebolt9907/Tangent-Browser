@@ -362,6 +362,13 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           # this probe, so its only effect here is extra periodic radio wakeups. Failure mode is
           # benign (assume-online), which is what the page sees anyway.
           network.connectivity-service.enabled: false
+          # Battery: throttle JS timers in backgrounded tabs harder. BackgroundTabSuspender
+          # (state/) suspends background GeckoSessions beyond a small keep-alive budget, but the
+          # 1-3 tabs it keeps live still fire their setTimeout/setInterval work while off-screen.
+          # Raising the background-timer floor from Gecko's 1s default to 5s cuts that idle CPU
+          # burn; foregrounding a tab un-throttles it immediately, sub-5s pollers are exactly what
+          # we want slowed while hidden, and audible/media tabs are exempt from this clamp.
+          dom.min_background_timeout_value: 5000
           # --- Betterfox "Fastfox" (mobile-appropriate subset) ---
           # General: batch layout notifications during load into ~100ms slices so a busy
           # page reflows fewer times while parsing (fewer, larger paints = faster to done).

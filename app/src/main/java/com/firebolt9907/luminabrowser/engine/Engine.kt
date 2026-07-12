@@ -399,6 +399,12 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           network.dnsCacheEntries: 10000
           network.dnsCacheExpiration: 3600
           network.ssl_tokens_cache_capacity: 10240
+          # Battery/data: turn off "Race Cache With Network". When RCWN is on, Gecko may fire a
+          # network request in parallel with a disk-cache read and take whichever wins — a hedge
+          # that pays off on slow spinning disks but rarely on phone flash, where the cache read
+          # almost always wins anyway. With the enlarged disk cache above, that parallel fetch is
+          # mostly wasted radio + data, so serve cache hits straight from cache instead.
+          network.http.rcwn.enabled: false
           # Speculative loading: allow DNS prefetch to fire from HTTPS pages and honor
           # <link rel=prefetch> hints so likely next-hops are warmed before the tap.
           network.dns.disablePrefetchFromHTTPS: false

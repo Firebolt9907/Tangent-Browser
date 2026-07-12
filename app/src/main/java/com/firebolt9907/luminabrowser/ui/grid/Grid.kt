@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -50,6 +51,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -135,6 +138,8 @@ fun TabGridOverlay(
     /** Bumps when a snapshot lands; cards re-resolve their bitmap through [snapshotProvider]. */
     snapshotVersion: State<Int>,
     snapshotProvider: (String) -> Bitmap? = { null },
+    /** Resolves a tab's favicon (ContentState.icon) for the caption; null → no icon shown. */
+    iconProvider: (String) -> Bitmap? = { null },
     /** Which overview layout to render. Selects the per-card slot function ([deckSlot]/[pixelSlot])
      * and the horizontal drag/scroll step; the gesture core stays layout-agnostic. */
     tabViewMode: TabViewMode = TabViewMode.DECK,
@@ -227,6 +232,7 @@ fun TabGridOverlay(
     val carouselShiftHolder = rememberUpdatedState(carouselShift)
     val dragOffsetHolder = rememberUpdatedState(dragOffsetPx)
     val snapshotProviderHolder = rememberUpdatedState(snapshotProvider)
+    val iconProviderHolder = rememberUpdatedState(iconProvider)
     val onTabSelectedHolder = rememberUpdatedState(onTabSelected)
     val onCloseTabHolder = rememberUpdatedState(onCloseTab)
     val progressFwd: () -> Float = remember { { progressHolder.value() } }
@@ -239,6 +245,7 @@ fun TabGridOverlay(
         { (if (deckDragging) deckScrollDrag else deckScrollAnim.value) / stepPx }
     }
     val snapshotProviderFwd: (String) -> Bitmap? = remember { { id -> snapshotProviderHolder.value(id) } }
+    val iconProviderFwd: (String) -> Bitmap? = remember { { id -> iconProviderHolder.value(id) } }
     val onTabSelectedFwd: (String) -> Unit = remember { { id -> onTabSelectedHolder.value(id) } }
     val onCloseTabFwd: (String) -> Unit = remember { { id -> onCloseTabHolder.value(id) } }
     val cellsClickableFwd: () -> Boolean = remember { { progressHolder.value() > 0.5f } }
@@ -395,6 +402,7 @@ fun TabGridOverlay(
                         if (p >= -1 && p <= 1) {
                             GridCellChrome(
                                 tab = tab,
+                                icon = iconProviderFwd(tab.id),
                                 containerW = containerW,
                                 progress = progressFwd,
                                 stackScroll = stackScrollFwd,
@@ -761,13 +769,15 @@ private fun GridTabCard(
 }
 
 /**
- * The caption drawn above each prominently-visible deck card — the page title with the site host
- * beneath it, iOS-app-switcher style — following its slot in the draw phase. Skippable; the slot
- * position, the swipe-to-close offset, and the open-state alpha are all draw-phase layer reads.
+ * The caption drawn above each prominently-visible deck card — the site favicon + page title on one
+ * row with the host beneath, iOS-app-switcher style — following its slot in the draw phase.
+ * Skippable; the slot position, the swipe-to-close offset, and the open-state alpha are all
+ * draw-phase layer reads.
  */
 @Composable
 private fun GridCellChrome(
     tab: GridTab,
+    icon: Bitmap?,
     containerW: Float,
     progress: () -> Float,
     stackScroll: () -> Float,
@@ -783,6 +793,7 @@ private fun GridCellChrome(
             else -> tab.url
         }
     }
+    val iconBitmap = remember(icon) { icon?.asImageBitmap() }
     val density = LocalDensity.current
     // The caption tracks the widest (focused) card so it stays put and legible; text is centred.
     val labelWidthDp = with(density) { (containerW * DeckFrontScale).toDp() }
@@ -804,14 +815,28 @@ private fun GridCellChrome(
             .padding(horizontal = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (iconBitmap != null && !tab.url.isBlankTabUrl()) {
+                Image(
+                    bitmap = iconBitmap,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(18.dp)
+                        .clip(RoundedCornerShape(4.dp)),
+                )
+            }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         if (host.isNotEmpty() && !tab.url.isBlankTabUrl()) {
             Text(
                 text = host,

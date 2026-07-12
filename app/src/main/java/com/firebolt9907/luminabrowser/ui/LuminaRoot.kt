@@ -2666,6 +2666,9 @@ fun LuminaRoot(
                                 snapshotFor(tab.id, tab.content.url)
                             }
                         },
+                        iconProvider = { tabId ->
+                            tabsList.firstOrNull { it.id == tabId }?.content?.icon
+                        },
                         tabViewMode = tabViewMode,
                     )
                     // Controls never appear while a finger is down. Keeping them out of that

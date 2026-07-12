@@ -859,6 +859,10 @@ fun LuminaRoot(
     val faviconCache = remember { mutableStateMapOf<String, android.graphics.Bitmap?>() }
     LaunchedEffect(gridEngaged, browserState.tabs.size) {
         if (!gridEngaged) return@LaunchedEffect
+        // Bound the cache to currently-open tabs so it can't grow without limit across a long
+        // session of navigations/closes (BrowserIcons keeps its own bounded disk cache underneath).
+        val currentUrls = browserState.tabs.mapTo(HashSet()) { it.content.url }
+        faviconCache.keys.retainAll(currentUrls)
         browserState.tabs.forEach { tab ->
             val url = tab.content.url
             if (url.isNotBlank() && !url.isBlankPageUrl() && !faviconCache.containsKey(url)) {

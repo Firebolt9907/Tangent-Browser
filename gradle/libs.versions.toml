@@ -43,6 +43,7 @@ androidx-lifecycle-process = { group = "androidx.lifecycle", name = "lifecycle-p
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
 mozilla-browser-engine-gecko = { group = "org.mozilla.components", name = "browser-engine-gecko", version.ref = "mozillaComponents" }
 mozilla-browser-state = { group = "org.mozilla.components", name = "browser-state", version.ref = "mozillaComponents" }
+mozilla-browser-icons = { group = "org.mozilla.components", name = "browser-icons", version.ref = "mozillaComponents" }
 mozilla-browser-storage-sync = { group = "org.mozilla.components", name = "browser-storage-sync", version.ref = "mozillaComponents" }
 mozilla-concept-engine = { group = "org.mozilla.components", name = "concept-engine", version.ref = "mozillaComponents" }
 mozilla-concept-sync = { group = "org.mozilla.components", name = "concept-sync", version.ref = "mozillaComponents" }

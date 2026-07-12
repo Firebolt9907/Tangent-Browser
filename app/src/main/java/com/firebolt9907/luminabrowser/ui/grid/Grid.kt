@@ -852,15 +852,23 @@ private fun GridCellChrome(
             .height(boxHeightDp),
         contentAlignment = Alignment.BottomStart,
     ) {
-        Column(horizontalAlignment = Alignment.Start) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (!tab.url.isBlankTabUrl()) {
-                    FaviconTile(iconBitmap, host)
-                }
-                if (textCandidate) {
+        // Favicon on the left; the title + host stack to its right (centred against it), the whole
+        // text block cross-fading with distance-to-centre.
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (!tab.url.isBlankTabUrl()) {
+                FaviconTile(iconBitmap, host, size = 30.dp)
+            }
+            if (textCandidate) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .graphicsLayer {
+                            alpha = (1f - abs(tab.recencyRank - stackScroll())).coerceIn(0f, 1f)
+                        },
+                ) {
                     Text(
                         text = title,
                         style = MaterialTheme.typography.titleSmall,
@@ -868,26 +876,17 @@ private fun GridCellChrome(
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .weight(1f, fill = false)
-                            .graphicsLayer {
-                                // Cross-fade the text as this card nears / leaves centre.
-                                alpha = (1f - abs(tab.recencyRank - stackScroll())).coerceIn(0f, 1f)
-                            },
                     )
+                    if (host.isNotEmpty() && !tab.url.isBlankTabUrl()) {
+                        Text(
+                            text = host,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
-            }
-            if (textCandidate && host.isNotEmpty() && !tab.url.isBlankTabUrl()) {
-                Text(
-                    text = host,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.graphicsLayer {
-                        alpha = (1f - abs(tab.recencyRank - stackScroll())).coerceIn(0f, 1f)
-                    },
-                )
             }
         }
     }
@@ -899,14 +898,14 @@ private fun GridCellChrome(
  * since [ContentState.icon] is null for tabs that never loaded a favicon this session.
  */
 @Composable
-private fun FaviconTile(icon: ImageBitmap?, host: String) {
-    val shape = RoundedCornerShape(4.dp)
+private fun FaviconTile(icon: ImageBitmap?, host: String, size: Dp) {
+    val shape = RoundedCornerShape(6.dp)
     if (icon != null) {
         Image(
             bitmap = icon,
             contentDescription = null,
             modifier = Modifier
-                .size(18.dp)
+                .size(size)
                 .clip(shape),
         )
     } else {
@@ -919,7 +918,7 @@ private fun FaviconTile(icon: ImageBitmap?, host: String) {
         }
         Box(
             modifier = Modifier
-                .size(18.dp)
+                .size(size)
                 .clip(shape)
                 .background(tileColor),
             contentAlignment = Alignment.Center,
@@ -927,7 +926,7 @@ private fun FaviconTile(icon: ImageBitmap?, host: String) {
             Text(
                 text = initial,
                 color = Color.White,
-                fontSize = 11.sp,
+                fontSize = (size.value * 0.52f).sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
             )

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import mozilla.components.browser.engine.gecko.GeckoEngine
+import mozilla.components.browser.icons.BrowserIcons
 import mozilla.components.browser.state.engine.EngineMiddleware
 import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.browser.state.store.BrowserStore
@@ -53,6 +54,9 @@ class LuminaBrowserComponents(application: Application) {
     )
     val sessionUseCases = SessionUseCases(store)
     val tabsUseCases = TabsUseCases(store)
+    // Loads real site favicons (memory + disk cached) for the tab overview captions, via the
+    // HttpURLConnection fetch client. Falls back to a letter tile in the UI when a site has none.
+    val icons = BrowserIcons(application, mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient())
     // Owns add/remove/migrate for custom-tab sessions (external-link "Custom Tab" surface hosted by
     // CustomTabActivity). Custom tabs live in store.state.customTabs, separate from the normal tab
     // list, so they never touch the grid, persistence, or Firefox Sync.

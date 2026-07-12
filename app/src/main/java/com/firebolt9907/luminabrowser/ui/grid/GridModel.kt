@@ -44,12 +44,12 @@ const val DeckFrontCenterXFrac = 0.5f
 /** Screen-Y of every card's centre, as a fraction of height. All cards are vertically centred (no
  * per-depth rise) so the deck reads as a clean horizontal row like iOS. */
 const val DeckFrontCenterYFrac = 0.50f
-/** First left step (fraction of width) for the nearest OLDER card (p = 1). ~0.16 ≈ 20% of a card
- * width, so the first left sliver shows ~20% with the other 80% hidden by the focus. */
-const val DeckLeftFirstStepFrac = 0.16f
+/** First left step (fraction of width) for the nearest OLDER card (p = 1). ~0.10 ≈ 12% of a card
+ * width, so the first left sliver shows ~12% with the rest hidden by the focus. */
+const val DeckLeftFirstStepFrac = 0.10f
 /** Geometric decay of the left step per deeper card. Steep, so the visible left slivers collapse
- * fast — roughly 20% (p=1), ~5% (p=2), ~0% (p=3), then culled — instead of a long fanned tail. */
-const val DeckLeftDecay = 0.28f
+ * fast — roughly 12% (p=1), ~4% (p=2), ~0% (p=3), then culled — instead of a long fanned tail. */
+const val DeckLeftDecay = 0.30f
 /** Centre-to-centre step (fraction of width) for NEWER cards (p < 0), which sit to the RIGHT.
  * Large — the newer card is stacked ON TOP of the focus but pushed far right so only a thin sliver
  * of its left edge shows and the focused card keeps its high visible width. */

@@ -139,6 +139,7 @@ import com.firebolt9907.luminabrowser.ui.content.ContentHost
 import com.firebolt9907.luminabrowser.ui.grid.DeckDragMinScale
 import com.firebolt9907.luminabrowser.ui.grid.DeckTravelFrac
 import com.firebolt9907.luminabrowser.ui.grid.GridTab
+import mozilla.components.browser.icons.IconRequest
 import com.firebolt9907.luminabrowser.ui.grid.ClassicTabGridOverlay
 import com.firebolt9907.luminabrowser.ui.grid.TabGridOverlay
 import com.firebolt9907.luminabrowser.ui.grid.TabViewMode
@@ -850,6 +851,24 @@ fun LuminaRoot(
                 gridCommitFromProgress > 0f ||
                 gridCancelFromProgress > 0f ||
                 gridProgressState.value > 0f
+        }
+    }
+    // Real favicons for the tab-overview captions, loaded (memory + disk cached) via BrowserIcons
+    // while the overview is engaged. Keyed by URL so a navigation refreshes it; null is cached too
+    // to avoid refetch storms, and the UI falls back to a letter tile. Feeds the iconProvider below.
+    val faviconCache = remember { mutableStateMapOf<String, android.graphics.Bitmap?>() }
+    LaunchedEffect(gridEngaged, browserState.tabs.size) {
+        if (!gridEngaged) return@LaunchedEffect
+        browserState.tabs.forEach { tab ->
+            val url = tab.content.url
+            if (url.isNotBlank() && !url.isBlankPageUrl() && !faviconCache.containsKey(url)) {
+                launch {
+                    val bmp = runCatching {
+                        components.icons.loadIcon(IconRequest(url)).await().bitmap
+                    }.getOrNull()
+                    faviconCache[url] = bmp
+                }
+            }
         }
     }
     val tabSwitchingEnabled = !barCollapseCompact &&
@@ -2695,7 +2714,8 @@ fun LuminaRoot(
                             snapshotVersion = snapshotCacheVersionState,
                             snapshotProvider = gridSnapshotProvider,
                             iconProvider = { tabId ->
-                                tabsList.firstOrNull { it.id == tabId }?.content?.icon
+                                val tab = tabsList.firstOrNull { it.id == tabId }
+                                tab?.content?.url?.let { faviconCache[it] } ?: tab?.content?.icon
                             },
                             tabViewMode = tabViewMode,
                         )

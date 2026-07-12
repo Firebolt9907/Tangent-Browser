@@ -84,6 +84,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.mozilla.browser.engine.gecko)
     implementation(libs.mozilla.browser.state)
+    implementation(libs.mozilla.browser.icons)
     implementation(libs.mozilla.browser.storage.sync)
     implementation(libs.mozilla.concept.engine)
     implementation(libs.mozilla.concept.sync)

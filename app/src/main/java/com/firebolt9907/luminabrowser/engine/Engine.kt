@@ -336,6 +336,12 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           browser.cache.disk.parent_directory: "$cacheParent"
           browser.cache.disk.smart_size.enabled: false
           browser.cache.disk.capacity: $capacityKb
+          # In-memory HTTP cache: Gecko auto-sizes this from physical RAM but caps it near 32 MB
+          # even on high-RAM phones. Pinning 50 MB keeps more recently-used images/CSS resident in
+          # RAM, so back/forward and revisits are served without re-reading and re-decoding from
+          # disk — smoother navigation and marginally fewer disk reads. lowMemoryDetection() still
+          # lets Gecko shed it under pressure, and 50 MB is trivial on this device's RAM budget.
+          browser.cache.memory.capacity: 51200
           network.http.speculative-parallel-limit: 12
           network.predictor.enabled: true
           network.predictor.enable-prefetch: true

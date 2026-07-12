@@ -1,9 +1,11 @@
 package com.firebolt9907.luminabrowser
 
+import androidx.compose.ui.unit.IntSize
 import com.firebolt9907.luminabrowser.ui.grid.DeckFrontCenterXFrac
 import com.firebolt9907.luminabrowser.ui.grid.DeckFrontScale
 import com.firebolt9907.luminabrowser.ui.grid.DeckPixelScale
 import com.firebolt9907.luminabrowser.ui.grid.deckSlot
+import com.firebolt9907.luminabrowser.ui.grid.gridCellRect
 import com.firebolt9907.luminabrowser.ui.grid.pixelSlot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -101,5 +103,38 @@ class GridGeometryTest {
         // And uniform across further slots.
         val cLeft2 = px(2f).tx + w * px(2f).scale / 2f
         assertEquals("step is uniform", stepLeft, cLeft - cLeft2, 0.5f)
+    }
+
+    // ── Legacy GRID mode: 2-column cell layout ──────────────────────────────────────────────────
+
+    @Test
+    fun `grid cells lay out in two columns of 3-4 aspect`() {
+        val side = 16f
+        val hGap = 14f
+        val vGap = 30f
+        val top = 64f
+        val size = IntSize(1000, 2000)
+        val c0 = gridCellRect(0, size, 2, hGap, vGap, side, top)
+        val c1 = gridCellRect(1, size, 2, hGap, vGap, side, top)
+        val c2 = gridCellRect(2, size, 2, hGap, vGap, side, top)
+
+        val expectedW = (1000f - 2 * side - hGap) / 2f
+        assertEquals("cell width fills the two columns", expectedW, c0.width, 0.5f)
+        assertEquals("cells are 3:4 (portrait)", expectedW * 4f / 3f, c0.height, 0.5f)
+        // Index 0 = col 0, index 1 = col 1 of the same row.
+        assertEquals(side, c0.left, 0.5f)
+        assertEquals(side + expectedW + hGap, c1.left, 0.5f)
+        assertEquals("cols 0 and 1 share a row", c0.top, c1.top, 0.5f)
+        // Index 2 wraps to the next row, col 0.
+        assertEquals(side, c2.left, 0.5f)
+        assertTrue("index 2 drops to the next row", c2.top > c0.top)
+        assertEquals(c0.top + c0.height + vGap, c2.top, 0.5f)
+    }
+
+    @Test
+    fun `grid cell rect is empty for a zero-size container`() {
+        val r = gridCellRect(0, IntSize(0, 0), 2, 14f, 30f, 16f, 64f)
+        assertEquals(0f, r.width, 0f)
+        assertEquals(0f, r.height, 0f)
     }
 }

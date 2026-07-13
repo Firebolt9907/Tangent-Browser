@@ -497,7 +497,14 @@ fun LuminaRoot(
     // Reader-mode pill auto-hide: 0 = pill shown, 1 = pill fully translated off the bottom edge.
     // Driven by reader scroll direction (separate from the web-page compact collapse above).
     val readerBarHidden = remember { Animatable(0f) }
-    val pullRefreshProgress = (pullRefreshDistancePx / pullRefreshThresholdPx).coerceIn(0f, 1f)
+    // Boolean gate for whether the pull-refresh line is shown. Derived so the per-frame
+    // pullRefreshDistancePx updates (during a pull) flip this only at the 0↔>0 boundary instead of
+    // recomposing LuminaRoot on every drag frame; the live magnitude is passed to PullRefreshLine as
+    // a lambda read in its draw phase.
+    val pullRefreshActive by remember { derivedStateOf { pullRefreshDistancePx > 0f } }
+    val pullRefreshProgressProvider = remember(pullRefreshThresholdPx) {
+        { (pullRefreshDistancePx / pullRefreshThresholdPx).coerceIn(0f, 1f) }
+    }
     val trackedPreviousUrl = selectedTabId?.let(previousObservedUrlByTab::get)
     val previousHistoryUrl = remember(
         selectedTabId,
@@ -2915,9 +2922,9 @@ fun LuminaRoot(
                 // Arc/Zen-style refresh line: a horizontal primary-coloured line that fills from the
                 // centre as you pull (driven by the live distance from PullRefreshContainer's nested
                 // scroll), snaps bright + buzzes at the threshold, then pulses while the reload runs.
-                if (pullRefreshDistancePx > 0f || pullRefreshing) {
+                if (pullRefreshActive || pullRefreshing) {
                     PullRefreshLine(
-                        progress = pullRefreshProgress,
+                        progress = pullRefreshProgressProvider,
                         refreshing = pullRefreshing,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
@@ -3520,7 +3527,7 @@ private fun BottomBarLayer(
  */
 @Composable
 private fun PullRefreshLine(
-    progress: Float,
+    progress: () -> Float,
     refreshing: Boolean,
     color: Color,
     modifier: Modifier = Modifier,
@@ -3535,6 +3542,9 @@ private fun PullRefreshLine(
         label = "sweep",
     )
     Canvas(modifier = modifier) {
+        // Read the live pull magnitude in the draw phase so a pull frame repaints this line without
+        // recomposing it (or LuminaRoot).
+        val progressValue = progress()
         val w = size.width
         val cy = size.height / 2f
         val stroke = size.height
@@ -3556,11 +3566,11 @@ private fun PullRefreshLine(
                 strokeWidth = stroke,
                 cap = StrokeCap.Round,
             )
-        } else if (progress > 0f) {
-            val fill = w * progress
+        } else if (progressValue > 0f) {
+            val fill = w * progressValue
             val left = (w - fill) / 2f
             drawLine(
-                color = color.copy(alpha = lerp(0.45f, 1f, progress)),
+                color = color.copy(alpha = lerp(0.45f, 1f, progressValue)),
                 start = Offset(left, cy),
                 end = Offset(left + fill, cy),
                 strokeWidth = stroke,

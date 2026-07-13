@@ -14,6 +14,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -226,12 +229,19 @@ fun ReaderView(
         captureArmed = false
     }
 
-    // Scroll progress calculation
-    val progress = if (scrollState.maxValue > 0) {
-        (scrollState.value.toFloat() / scrollState.maxValue.toFloat()).coerceIn(0f, 1f)
-    } else {
-        0f
+    // Reading-progress (0..1). Provided as a lambda read in the progress bar's draw phase so
+    // scrolling the article doesn't recompose ReaderView on every frame; `hasScrolled` gates the
+    // bar's presence and flips only at the boundary.
+    val readingProgress = remember(scrollState) {
+        {
+            if (scrollState.maxValue > 0) {
+                (scrollState.value.toFloat() / scrollState.maxValue.toFloat()).coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+        }
     }
+    val hasScrolled by remember { derivedStateOf { scrollState.maxValue > 0 && scrollState.value > 0 } }
 
     val accentColor = when (theme) {
         ReaderTheme.System -> MaterialTheme.colorScheme.primary
@@ -855,13 +865,18 @@ fun ReaderView(
             }
         }
 
-        // Reading Progress Bar
-        if (progress > 0f && !capturing) {
+        // Reading Progress Bar — full-width bar scaled from the left edge in the draw phase, so a
+        // scroll frame only repaints it (no ReaderView recomposition, no relayout).
+        if (hasScrolled && !capturing) {
             Box(
                 modifier = Modifier
                     .padding(horizontal = topPadding * 0.8f)
-                    .fillMaxWidth(progress)
+                    .fillMaxWidth()
                     .height(3.dp)
+                    .graphicsLayer {
+                        scaleX = readingProgress()
+                        transformOrigin = TransformOrigin(0f, 0.5f)
+                    }
                     .background(accentColor)
                     .align(Alignment.TopStart)
             )

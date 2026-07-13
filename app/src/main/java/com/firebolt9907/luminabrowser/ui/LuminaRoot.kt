@@ -69,6 +69,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewCarousel
@@ -85,6 +86,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -2801,35 +2803,6 @@ fun LuminaRoot(
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = "New Tab")
                                 }
-                                // Cycle the all-tabs overview layout: deck → pixel filmstrip →
-                                // legacy 2-column grid → deck. Persisted.
-                                FilledTonalIconButton(
-                                    onClick = {
-                                        val next = when (tabViewMode) {
-                                            TabViewMode.DECK -> TabViewMode.PIXEL
-                                            TabViewMode.PIXEL -> TabViewMode.GRID
-                                            TabViewMode.GRID -> TabViewMode.DECK
-                                        }
-                                        tabViewMode = next
-                                        components.globalPreferencesStore.tabViewModeName = next.name
-                                        luminaHaptics.select()
-                                    },
-                                    enabled = toolbarEnabled,
-                                ) {
-                                    val modeLabel = when (tabViewMode) {
-                                        TabViewMode.DECK -> "Deck"
-                                        TabViewMode.PIXEL -> "Filmstrip"
-                                        TabViewMode.GRID -> "Grid"
-                                    }
-                                    Icon(
-                                        imageVector = when (tabViewMode) {
-                                            TabViewMode.PIXEL -> Icons.Default.ViewColumn
-                                            TabViewMode.GRID -> Icons.Default.GridView
-                                            TabViewMode.DECK -> Icons.Default.ViewCarousel
-                                        },
-                                        contentDescription = "Tab layout: $modeLabel. Tap to change.",
-                                    )
-                                }
                                 // Synced Tabs is a labeled button, not an anonymous cloud icon —
                                 // it's the primary reason to open this hub on a second device, so it
                                 // reads clearly instead of hiding behind mystery-meat iconography.
@@ -2860,6 +2833,32 @@ fun LuminaRoot(
                                         expanded = overflowOpen,
                                         onDismissRequest = { overflowOpen = false },
                                     ) {
+                                        // Tab layout is a display preference, not a primary action —
+                                        // it lives here as three explicit, checkmarked choices rather
+                                        // than a mystery-meat cycle button on the bar.
+                                        TabViewMode.values().forEach { mode ->
+                                            val (modeLabel, modeIcon) = when (mode) {
+                                                TabViewMode.DECK -> "Deck" to Icons.Default.ViewCarousel
+                                                TabViewMode.PIXEL -> "Filmstrip" to Icons.Default.ViewColumn
+                                                TabViewMode.GRID -> "Grid" to Icons.Default.GridView
+                                            }
+                                            DropdownMenuItem(
+                                                text = { Text(modeLabel) },
+                                                leadingIcon = { Icon(modeIcon, contentDescription = null) },
+                                                trailingIcon = if (mode == tabViewMode) {
+                                                    { Icon(Icons.Default.Check, contentDescription = "Selected") }
+                                                } else null,
+                                                onClick = {
+                                                    overflowOpen = false
+                                                    if (mode != tabViewMode) {
+                                                        tabViewMode = mode
+                                                        components.globalPreferencesStore.tabViewModeName = mode.name
+                                                        luminaHaptics.select()
+                                                    }
+                                                },
+                                            )
+                                        }
+                                        HorizontalDivider()
                                         DropdownMenuItem(
                                             text = { Text("Bookmarks") },
                                             leadingIcon = { Icon(Icons.Outlined.BookmarkBorder, contentDescription = null) },

@@ -66,6 +66,14 @@ android {
     buildFeatures {
         compose = true
     }
+    // Skip stripping debug symbols from the ~1 GB of Gecko/appservices native libraries.
+    // This is the single slowest packaging step; for local dev installs (debug keystore, no
+    // distribution) the larger on-disk APK is irrelevant. Remove for a real size-optimized build.
+    packaging {
+        jniLibs {
+            keepDebugSymbols += "**/*.so"
+        }
+    }
 }
 
 configurations.configureEach {
@@ -146,9 +154,14 @@ dependencies {
 val syncReaderRules by tasks.registering {
     group = "lumina"
     description = "Pull the local reader-rules repo and copy reader_rules.json into assets (compile-time floor)."
+    // Resolve these at configuration time into plain local values (String?/File). doLast closes over
+    // these locals only — never over Project/script objects — which is what the configuration cache
+    // requires (Task.project and script-object references at execution time are disallowed).
+    val configuredRulesRepoPath = (project.findProperty("luminaRulesRepo") as String?)?.takeIf { it.isNotBlank() }
+        ?: System.getenv("LUMINA_RULES_REPO")?.takeIf { it.isNotBlank() }
+    val bundledRulesAsset = layout.projectDirectory.file("src/main/assets/reader_rules.json").asFile
     doLast {
-        val repoPath = (project.findProperty("luminaRulesRepo") as String?)?.takeIf { it.isNotBlank() }
-            ?: System.getenv("LUMINA_RULES_REPO")?.takeIf { it.isNotBlank() }
+        val repoPath = configuredRulesRepoPath
         if (repoPath == null) {
             logger.lifecycle("[reader-rules] luminaRulesRepo/LUMINA_RULES_REPO not set; keeping checked-in asset.")
             return@doLast
@@ -180,7 +193,7 @@ val syncReaderRules by tasks.registering {
             logger.warn("[reader-rules] ${srcJson.path} not found; keeping checked-in asset.")
             return@doLast
         }
-        val dest = layout.projectDirectory.file("src/main/assets/reader_rules.json").asFile
+        val dest = bundledRulesAsset
         if (dest.exists() && dest.readText() == srcJson.readText()) {
             logger.lifecycle("[reader-rules] bundled asset already up to date.")
             return@doLast

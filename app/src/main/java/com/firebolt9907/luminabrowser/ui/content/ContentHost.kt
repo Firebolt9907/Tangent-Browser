@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -86,7 +86,10 @@ fun ContentHost(
     onFirefoxAuthRedirect: (String) -> Boolean = { false },
     topPaddingFixActive: Boolean = false,
     pageZoomFactor: Float = 1.0f,
-    barCollapseProgress: Float = 0f,
+    // Live scroll-collapse progress (0 = pill expanded, 1 = compact), as a lambda so the per-frame
+    // spring updates drive the engine's vertical clipping via snapshotFlow without recomposing
+    // ContentHost. See the clipping effects below and BarPill.PillMorph.
+    barCollapseProgress: () -> Float = { 0f },
     tabIsLoading: Boolean = false,
     keyboardInsetPx: Int = 0,
 ) {
@@ -187,15 +190,7 @@ fun ContentHost(
     val navBarPx = WindowInsets.navigationBars.getBottom(density)
     val barPaddingPx = navBarPx.coerceAtLeast(with(density) { 24.dp.roundToPx() })
     val compactPillPx = with(density) { 44.dp.roundToPx() }
-    val collapseProgress = barCollapseProgress
     val expandedClippingPx = (bottomChromeInsetPx - barPaddingPx + navBarPx).coerceAtLeast(0)
-    // The amount of the bottom chrome currently obscuring the page: the full reserve when the bar is
-    // expanded, shrinking toward the compact-pill footprint as it collapses.
-    val currentObscuredPx = lerp(
-        expandedClippingPx.toFloat(),
-        (compactPillPx + navBarPx).toFloat(),
-        collapseProgress,
-    ).roundToInt().coerceAtLeast(0)
     // GeckoView's dynamic-toolbar clipping baseline is `setDynamicToolbarMaxHeight` (the *max*
     // reserve). `setVerticalClipping` is the CURRENT offset from that baseline, and must be 0 when
     // the bar is fully shown and negative as it hides — passing the positive obscured height here
@@ -203,11 +198,12 @@ fun ContentHost(
     // one toolbar-height *shorter* than the small viewport (svh). See mozilla-components'
     // EngineViewClippingBehavior: "the values should be negative because the baseline for clipping
     // is bottom toolbar height."
-    val currentClippingPx = currentObscuredPx - expandedClippingPx
-    SideEffect {
+    //
+    // The baseline reserve only changes with layout insets, so set it (or clear it in fullscreen)
+    // from an effect keyed on those inputs rather than on every recomposition.
+    LaunchedEffect(engineView, bottomChromeInsetPx, expandedClippingPx) {
         if (bottomChromeInsetPx > 0) {
             engineView.setDynamicToolbarMaxHeight(expandedClippingPx)
-            engineView.setVerticalClipping(currentClippingPx)
         } else {
             // No bottom chrome reserved (video fullscreen passes bottomChromeInsetPx=0). Clear any
             // prior toolbar reservation, otherwise GeckoView keeps clipping space for the now-hidden
@@ -218,6 +214,22 @@ fun ContentHost(
                 "LuminaVideo",
                 "[clip] fullscreen bottomInset=0 set dtmh=0 clip=0 viewH=${engineView.asView().height} navBarPx=$navBarPx",
             )
+        }
+    }
+    // The current clipping offset tracks the collapse spring on every frame. The pill morph updates
+    // barCollapseProgress ~120x/s; observing it here via snapshotFlow drives setVerticalClipping
+    // WITHOUT recomposing ContentHost — recomposing the engine host per frame was part of the
+    // collapse-scroll frame drops. The obscured height shrinks from the full reserve (bar expanded)
+    // toward the compact-pill footprint as the pill collapses.
+    LaunchedEffect(engineView, bottomChromeInsetPx, expandedClippingPx, compactPillPx, navBarPx) {
+        if (bottomChromeInsetPx <= 0) return@LaunchedEffect
+        snapshotFlow { barCollapseProgress().coerceIn(0f, 1f) }.collect { p ->
+            val currentObscuredPx = lerp(
+                expandedClippingPx.toFloat(),
+                (compactPillPx + navBarPx).toFloat(),
+                p,
+            ).roundToInt().coerceAtLeast(0)
+            engineView.setVerticalClipping(currentObscuredPx - expandedClippingPx)
         }
     }
 
@@ -301,7 +313,17 @@ fun ContentHost(
         // immediately by ACTION_CANCEL — which kicks the compositor without moving the page or
         // registering as a tap on web content.
         if (engineRefreshTick <= 0) return@LaunchedEffect
-        if (bottomChromeInsetPx > 0) engineView.setVerticalClipping(currentClippingPx)
+        if (bottomChromeInsetPx > 0) {
+            // Re-assert the current clipping offset for the live collapse progress (recomputed here
+            // since it's no longer a composition value — see the clipping effects above).
+            val p = barCollapseProgress().coerceIn(0f, 1f)
+            val obscured = lerp(
+                expandedClippingPx.toFloat(),
+                (compactPillPx + navBarPx).toFloat(),
+                p,
+            ).roundToInt().coerceAtLeast(0)
+            engineView.setVerticalClipping(obscured - expandedClippingPx)
+        }
         // Wait a frame so the overlay is fully gone before we nudge the surface.
         withFrameNanos { }
         val view = engineView.asView()

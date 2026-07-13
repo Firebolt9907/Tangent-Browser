@@ -54,6 +54,10 @@ private val BottomBarPadding = 24.dp
 private val BottomBarMaxHeight = 56.dp
 private val BottomBarEditingHeight = 72.dp
 
+// Hoisted constant progress providers so the Compact branch and defaults don't allocate a lambda
+// per recomposition.
+private val CompactProgress: () -> Float = { 1f }
+
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun SafariBar(
@@ -73,7 +77,10 @@ fun SafariBar(
     onBottomInsetMeasured: (Int) -> Unit = {},
     interactive: Boolean = true,
     controlsEnabled: Boolean = true,
-    collapseProgress: Float = 0f,
+    // Live scroll-collapse progress (0 = expanded, 1 = compact). A lambda, not a Float, so the
+    // spring's per-frame updates are read in the layout/draw phases below and never recompose the
+    // bar. See BarPill.PillMorph / BarExpanded.
+    collapseProgress: () -> Float = { 0f },
     isReaderEligible: Boolean = false,
     isReaderActive: Boolean = false,
     readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme = com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.System,
@@ -142,7 +149,7 @@ fun SafariBar(
                     // position and the text slid back toward the buttons on exit. offset{} is
                     // placement-phase (still no recomposition/remeasure), so it stays cheap.
                     .offset {
-                        IntOffset(0, (-toolbarHeight.toPx() * (1f - collapseProgress)).roundToInt())
+                        IntOffset(0, (-toolbarHeight.toPx() * (1f - collapseProgress())).roundToInt())
                     }
                     .graphicsLayer {
                         val scale = pillScale()
@@ -212,7 +219,7 @@ fun SafariBar(
                         canGoForward = canGoForward,
                         interactive = interactive,
                         controlsEnabled = controlsEnabled,
-                        collapseProgress = 1f,
+                        collapseProgress = CompactProgress,
                         isReaderEligible = isReaderEligible,
                         isReaderActive = isReaderActive,
                         readerTheme = readerTheme,
@@ -243,9 +250,10 @@ fun SafariBar(
                         .graphicsLayer {
                             // Fade + slide the buttons out as the pill collapses (scroll) or the
                             // toolbar retracts on the way into editing, so they never pop.
-                            alpha = ((1f - collapseProgress) * toolbarFraction).coerceIn(0f, 1f)
+                            val collapse = collapseProgress()
+                            alpha = ((1f - collapse) * toolbarFraction).coerceIn(0f, 1f)
                             translationY = 48.dp.toPx() *
-                                (collapseProgress + (1f - toolbarFraction)).coerceIn(0f, 1f)
+                                (collapse + (1f - toolbarFraction)).coerceIn(0f, 1f)
                         },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceAround

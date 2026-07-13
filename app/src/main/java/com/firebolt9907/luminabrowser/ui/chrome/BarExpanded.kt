@@ -30,21 +30,35 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.lerp
-import androidx.compose.ui.util.lerp
 import com.firebolt9907.luminabrowser.state.BarMode
 import com.firebolt9907.luminabrowser.state.BarUiState
 import com.firebolt9907.luminabrowser.ui.reader.ReaderTheme
 import com.firebolt9907.luminabrowser.ui.LuminaHaptics
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
+import kotlin.math.roundToInt
+
+/**
+ * Width that collapses from [full] (progress 0) to zero (progress 1), read in the LAYOUT phase so
+ * the scroll-collapse spring never recomposes the pill's controls. Pair with `Modifier.clipToBounds`
+ * on the same node so the fixed-size child clips away as the reported width shrinks — matching the
+ * old `Modifier.width(lerp(full, 0.dp, progress))`.
+ */
+private fun Modifier.collapsingWidth(full: Dp, progress: () -> Float): Modifier = this.layout { measurable, constraints ->
+    val p = progress().coerceIn(0f, 1f)
+    val w = (full.toPx() * (1f - p)).roundToInt().coerceAtLeast(0)
+    val placeable = measurable.measure(constraints)
+    layout(w, placeable.height) { placeable.place(0, 0) }
+}
 
 @Composable
 internal fun BarExpanded(
@@ -61,7 +75,7 @@ internal fun BarExpanded(
     modifier: Modifier = Modifier,
     interactive: Boolean = true,
     controlsEnabled: Boolean = true,
-    collapseProgress: Float = 0f,
+    collapseProgress: () -> Float = { 0f },
     isReaderEligible: Boolean = false,
     isReaderActive: Boolean = false,
     readerTheme: ReaderTheme = ReaderTheme.System,
@@ -71,8 +85,8 @@ internal fun BarExpanded(
     addressSharedModifier: Modifier = Modifier,
     haptics: LuminaHaptics? = null,
 ) {
-    val progress = collapseProgress.coerceIn(0f, 1f)
-    val controlsProgress = 1f - progress
+    // controlsProgress = 1f - collapseProgress(), read in draw phase via graphicsLayer.
+    val controlsAlpha: () -> Float = { (1f - collapseProgress().coerceIn(0f, 1f)) }
     // Splash (ripple) shape for the aA / reload chips — a squircle echoing the pill's own corner
     // style so the touch feedback reads as part of the pill rather than a hard square.
     val splashShape = remember { SquircleShape(radius = 16.dp, exponent = 3f) }
@@ -80,7 +94,6 @@ internal fun BarExpanded(
     // (about:, blank new tab) show nothing — only http:// is called out.
     val isInsecure = !state.blankNewTabPreview &&
         state.pageUrl.startsWith("http://", ignoreCase = true)
-    val controlsWidth = lerp(48.dp, 0.dp, progress)
     val blankPreview = state.blankNewTabPreview
 
     val containerColor = if (isReaderActive) {
@@ -108,17 +121,29 @@ internal fun BarExpanded(
             .coerceIn(80.dp, (maxWidth - 40.dp).coerceAtLeast(80.dp))
 
         BarPill(
-            width = lerp(expandedWidth, compactWidth, progress),
-            height = lerp(56.dp, 36.dp, progress),
-            cornerRadius = lerp(28.dp, 18.dp, progress),
+            // Static height/cornerRadius are placeholders — `morph` overrides all per-frame geometry
+            // and interpolates it in the layout/draw phases (no recomposition on the collapse spring).
+            height = 56.dp,
+            cornerRadius = 28.dp,
             onDragStart = onDragStart,
             onDragDelta = onDragDelta,
             onDragEnd = onDragEnd,
             interactive = interactive,
             containerColor = containerColor,
             onClick = onClick,
-            exponent = lerp(3.0f, 2.0f, progress),
-            shadowElevation = lerp(6.dp, 0.dp, progress),
+            morph = PillMorph(
+                progress = collapseProgress,
+                expandedWidth = expandedWidth,
+                compactWidth = compactWidth,
+                expandedHeight = 56.dp,
+                compactHeight = 36.dp,
+                expandedCorner = 28.dp,
+                compactCorner = 18.dp,
+                expandedExponent = 3.0f,
+                compactExponent = 2.0f,
+                expandedElevation = 6.dp,
+                compactElevation = 0.dp,
+            ),
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 8.dp),
@@ -127,9 +152,9 @@ internal fun BarExpanded(
                 if (!blankPreview) {
                     Box(
                         modifier = Modifier
-                            .width(controlsWidth)
+                            .collapsingWidth(48.dp, collapseProgress)
                             .clipToBounds()
-                            .graphicsLayer { alpha = controlsProgress },
+                            .graphicsLayer { alpha = controlsAlpha() },
                     ) {
                         @OptIn(ExperimentalFoundationApi::class)
                         val aADescription = if (isReaderActive) {
@@ -199,9 +224,9 @@ internal fun BarExpanded(
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier
                                 .size(14.dp)
-                                .graphicsLayer { alpha = controlsProgress },
+                                .graphicsLayer { alpha = controlsAlpha() },
                         )
-                        Spacer(Modifier.width(lerp(4.dp, 0.dp, progress)))
+                        Spacer(Modifier.collapsingWidth(4.dp, collapseProgress))
                     }
                     Text(
                         text = if (blankPreview) "+" else state.displayUrl,
@@ -219,9 +244,9 @@ internal fun BarExpanded(
                 if (!blankPreview) {
                     Box(
                         modifier = Modifier
-                            .width(controlsWidth)
+                            .collapsingWidth(48.dp, collapseProgress)
                             .clipToBounds()
-                            .graphicsLayer { alpha = controlsProgress },
+                            .graphicsLayer { alpha = controlsAlpha() },
                     ) {
                         @OptIn(ExperimentalFoundationApi::class)
                         Box(

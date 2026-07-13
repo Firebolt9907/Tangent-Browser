@@ -195,6 +195,8 @@ private const val BarExpandSnapThresholdPx = 120f
 // expanded). Because it lives on the same progress value the snap animates, the flip continues
 // seamlessly from the indicated shape instead of popping back to the resting size.
 private const val BarCollapsePreviewMax = 0.12f
+// Hoisted constant collapse-progress provider for the always-expanded blank new-tab ghost.
+private val ZeroCollapseProgress: () -> Float = { 0f }
 // After scrolling stops mid-band, spring the preview back to its resting state so the indication
 // nudge doesn't linger; this is the idle delay before that settle runs.
 private const val BarCollapseIdleSettleMs = 140L
@@ -487,6 +489,11 @@ fun LuminaRoot(
     val previousObservedUrlByTab = remember { mutableStateMapOf<String, String>() }
     val barCollapseProgressState = remember { Animatable(0f) }
     var barCollapseProgress by remember { mutableFloatStateOf(0f) }
+    // Stable lambda that reads the live collapse progress. Passing this (instead of the raw Float)
+    // down through BottomBarLayer/SafariBar/ContentHost keeps the per-frame collapse spring out of
+    // composition: the value is read only inside layout/draw phases, so the pill morph runs without
+    // recomposing the bar or the engine host. See BarPill.PillMorph.
+    val barCollapseProgressProvider = remember { { barCollapseProgress } }
     // Reader-mode pill auto-hide: 0 = pill shown, 1 = pill fully translated off the bottom edge.
     // Driven by reader scroll direction (separate from the web-page compact collapse above).
     val readerBarHidden = remember { Animatable(0f) }
@@ -2172,7 +2179,7 @@ fun LuminaRoot(
                         },
                     topPaddingFixActive = currentSitePrefs.topPaddingFix,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
-                    barCollapseProgress = barCollapseProgress,
+                    barCollapseProgress = barCollapseProgressProvider,
                     tabIsLoading = actualSelectedContent?.loading == true,
                 )
                 if (selectedContent?.url.isBlankPageUrl() && shouldShowUi) {
@@ -3059,7 +3066,7 @@ fun LuminaRoot(
                         },
                         activeOffsetX = pillOffsetX,
                         onBottomInsetMeasured = { bottomChromeInsetPx = it },
-                        barCollapseProgress = barCollapseProgress,
+                        barCollapseProgress = barCollapseProgressProvider,
                         pillInteractive = !barCollapseCompact && !gridOpen,
                         controlsEnabled = !gridEngaged,
                         gridProgress = pillGridProgress,
@@ -3261,7 +3268,7 @@ private fun BottomBarLayer(
     // spring, or grid gesture, and must never be read during composition (see the call site).
     activeOffsetX: () -> Float,
     onBottomInsetMeasured: (Int) -> Unit,
-    barCollapseProgress: Float = 0f,
+    barCollapseProgress: () -> Float = { 0f },
     pillInteractive: Boolean = true,
     controlsEnabled: Boolean = true,
     gridProgress: () -> Float = { 0f },
@@ -3333,7 +3340,7 @@ private fun BottomBarLayer(
                         .requiredHeight(boxHeight)
                         .align(Alignment.BottomCenter)
                         .graphicsLayer {
-                            val collapse = barCollapseProgress
+                            val collapse = barCollapseProgress()
                             val readerHide = readerHideOffsetPx()
                             alpha = (1f - collapse).coerceIn(0f, 1f)
                             translationY = (toolbarHeight.toPx() + bottomPadding.toPx()) * collapse + readerHide
@@ -3451,7 +3458,7 @@ private fun BottomBarLayer(
                     blankNewTabPreview = true,
                 ),
                 barCollapseProgress = barCollapseProgress,
-                collapseProgress = 0f,
+                collapseProgress = ZeroCollapseProgress,
                 pillTranslationX = ghostTx,
                 pillScale = ghostScale,
                 onClick = {
@@ -3589,12 +3596,12 @@ private fun SnapshotImage(bitmap: android.graphics.Bitmap, modifier: Modifier = 
 @Composable
 private fun BoxScope.GhostSafariBar(
     state: BarUiState,
-    barCollapseProgress: Float,
+    barCollapseProgress: () -> Float,
     pillTranslationX: () -> Float,
     pillScale: () -> Float,
     onClick: () -> Unit,
     showBottomToolbar: Boolean,
-    collapseProgress: Float = barCollapseProgress,
+    collapseProgress: () -> Float = barCollapseProgress,
     isReaderEligible: Boolean = false,
     isReaderActive: Boolean = false,
     readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme =
@@ -3618,7 +3625,7 @@ private fun BoxScope.GhostSafariBar(
         modifier = Modifier
             .align(Alignment.BottomCenter)
             .graphicsLayer {
-                alpha = (1f - barCollapseProgress).coerceIn(0f, 1f)
+                alpha = (1f - barCollapseProgress()).coerceIn(0f, 1f)
             },
         pillTranslationX = pillTranslationX,
         pillScale = pillScale,

@@ -45,6 +45,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -82,6 +83,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -2828,11 +2830,21 @@ fun LuminaRoot(
                                         contentDescription = "Tab layout: $modeLabel. Tap to change.",
                                     )
                                 }
-                                FilledTonalIconButton(
+                                // Synced Tabs is a labeled button, not an anonymous cloud icon —
+                                // it's the primary reason to open this hub on a second device, so it
+                                // reads clearly instead of hiding behind mystery-meat iconography.
+                                FilledTonalButton(
                                     onClick = { showSyncedTabs = true },
                                     enabled = toolbarEnabled,
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                                 ) {
-                                    Icon(Icons.Default.CloudSync, contentDescription = "Synced Tabs")
+                                    Icon(
+                                        Icons.Default.CloudSync,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Synced")
                                 }
                                 // Secondary library/settings destinations live in an overflow menu
                                 // so the bar stays focused on tab actions (New Tab, layout, sync).

@@ -363,6 +363,11 @@ fun LuminaRoot(
     val offsetXState = remember { mutableFloatStateOf(0f) }
     var offsetX by offsetXState
     var predictiveBackOffsetPx by remember { mutableFloatStateOf(0f) }
+    // Boolean gate for the predictive-back overlay. Derived so the per-frame predictiveBackOffsetPx
+    // updates during a back-swipe flip this only at the 0↔>0 boundary; the overlay's own transforms
+    // already read the raw value inside graphicsLayer/drawBehind (draw phase), so the subtree no
+    // longer recomposes every frame of the gesture.
+    val predictiveBackActive by remember { derivedStateOf { predictiveBackOffsetPx > 0f } }
     var dragCommitted by remember { mutableStateOf(false) }
     var stickyIncomingSnapshot by remember { mutableStateOf<Bitmap?>(null) }
     var stickyIncomingTabId by remember { mutableStateOf<String?>(null) }
@@ -2383,7 +2388,7 @@ fun LuminaRoot(
                         )
                     }
                 }
-                if (predictiveBackOffsetPx > 0f) {
+                if (predictiveBackActive) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()

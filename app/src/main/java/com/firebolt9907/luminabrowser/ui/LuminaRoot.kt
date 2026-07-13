@@ -2887,6 +2887,8 @@ fun LuminaRoot(
                                             leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
                                             onClick = { overflowOpen = false; showDownloads = true },
                                         )
+                                        // Divide browsing data (above) from app/account items (below).
+                                        HorizontalDivider()
                                         DropdownMenuItem(
                                             text = { Text("Passwords") },
                                             leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },

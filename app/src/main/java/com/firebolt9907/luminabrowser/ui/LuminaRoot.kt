@@ -81,6 +81,8 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -2806,18 +2808,29 @@ fun LuminaRoot(
                                 // Synced Tabs is a labeled button, not an anonymous cloud icon —
                                 // it's the primary reason to open this hub on a second device, so it
                                 // reads clearly instead of hiding behind mystery-meat iconography.
-                                FilledTonalButton(
-                                    onClick = { showSyncedTabs = true },
-                                    enabled = toolbarEnabled,
-                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                // A count badge signals there are actually tabs waiting from other
+                                // devices, so it's discoverable rather than a shot in the dark.
+                                val syncedTabCount = firefoxSyncState.devices.sumOf { it.tabs.size }
+                                BadgedBox(
+                                    badge = {
+                                        if (syncedTabCount > 0) {
+                                            Badge { Text(if (syncedTabCount > 99) "99+" else "$syncedTabCount") }
+                                        }
+                                    },
                                 ) {
-                                    Icon(
-                                        Icons.Default.CloudSync,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Synced")
+                                    FilledTonalButton(
+                                        onClick = { showSyncedTabs = true },
+                                        enabled = toolbarEnabled,
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Default.CloudSync,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Synced")
+                                    }
                                 }
                                 // Secondary library/settings destinations live in an overflow menu
                                 // so the bar stays focused on tab actions (New Tab, layout, sync).

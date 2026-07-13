@@ -75,10 +75,13 @@ import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -2724,6 +2727,11 @@ fun LuminaRoot(
                                 tab?.content?.url?.let { faviconCache[it] } ?: tab?.content?.icon
                             },
                             tabViewMode = tabViewMode,
+                            // Reserve the top cutout band (status bar / hole punch) plus the caption
+                            // band that hangs ~66dp above each card, so the card titles/favicons sit
+                            // below the hole punch instead of being clipped by it.
+                            topInsetPx = topChromeInsetPx.toFloat() +
+                                with(density) { 66.dp.toPx() },
                             // Reserve the floating-controls band at the bottom so the deck/pixel
                             // cards ride up clear of the overview toolbar (measured height incl. the
                             // nav-bar inset), like the classic grid's bottom margin.
@@ -2826,35 +2834,46 @@ fun LuminaRoot(
                                 ) {
                                     Icon(Icons.Default.CloudSync, contentDescription = "Synced Tabs")
                                 }
-                                FilledTonalIconButton(
-                                    onClick = { showPasswords = true },
-                                    enabled = toolbarEnabled,
-                                ) {
-                                    Icon(Icons.Default.Lock, contentDescription = "Passwords")
-                                }
-                                FilledTonalIconButton(
-                                    onClick = { showHistory = true },
-                                    enabled = toolbarEnabled,
-                                ) {
-                                    Icon(Icons.Default.History, contentDescription = "History")
-                                }
-                                FilledTonalIconButton(
-                                    onClick = { showBookmarks = true },
-                                    enabled = toolbarEnabled,
-                                ) {
-                                    Icon(Icons.Outlined.BookmarkBorder, contentDescription = "Bookmarks")
-                                }
-                                FilledTonalIconButton(
-                                    onClick = { showDownloads = true },
-                                    enabled = toolbarEnabled,
-                                ) {
-                                    Icon(Icons.Default.Download, contentDescription = "Downloads")
-                                }
-                                FilledTonalIconButton(
-                                    onClick = { showSettings = true },
-                                    enabled = toolbarEnabled,
-                                ) {
-                                    Icon(Icons.Default.Settings, contentDescription = "Settings")
+                                // Secondary library/settings destinations live in an overflow menu
+                                // so the bar stays focused on tab actions (New Tab, layout, sync).
+                                Box {
+                                    var overflowOpen by remember { mutableStateOf(false) }
+                                    FilledTonalIconButton(
+                                        onClick = { overflowOpen = true },
+                                        enabled = toolbarEnabled,
+                                    ) {
+                                        Icon(Icons.Default.MoreHoriz, contentDescription = "More")
+                                    }
+                                    DropdownMenu(
+                                        expanded = overflowOpen,
+                                        onDismissRequest = { overflowOpen = false },
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Bookmarks") },
+                                            leadingIcon = { Icon(Icons.Outlined.BookmarkBorder, contentDescription = null) },
+                                            onClick = { overflowOpen = false; showBookmarks = true },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("History") },
+                                            leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
+                                            onClick = { overflowOpen = false; showHistory = true },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Downloads") },
+                                            leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
+                                            onClick = { overflowOpen = false; showDownloads = true },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Passwords") },
+                                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                                            onClick = { overflowOpen = false; showPasswords = true },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Settings") },
+                                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                                            onClick = { overflowOpen = false; showSettings = true },
+                                        )
+                                    }
                                 }
                             }
                         }

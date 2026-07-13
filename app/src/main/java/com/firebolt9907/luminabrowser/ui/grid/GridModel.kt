@@ -215,9 +215,13 @@ fun deckSlot(
     containerW: Float,
     containerH: Float,
     cropHeightPx: Float,
+    /** Space (px) reserved at the TOP of the viewport (status-bar / display-cutout + the caption
+     * band that hangs above each card). Cards centre BELOW it so the caption text clears the hole
+     * punch. */
+    topInsetPx: Float = 0f,
     /** Space (px) reserved at the BOTTOM of the viewport (e.g. for the floating overview controls).
-     * Cards are vertically centred within `containerH - bottomInsetPx`, so they ride up off the
-     * controls instead of sitting under them. */
+     * Cards are vertically centred within the band between [topInsetPx] and `containerH -
+     * bottomInsetPx`, so they clear both the cutout above and the controls below. */
     bottomInsetPx: Float = 0f,
 ): DeckSlot {
     val scale = (DeckFrontScale * DeckDepthScaleStep.toDouble().pow(p.toDouble()).toFloat())
@@ -233,7 +237,7 @@ fun deckSlot(
         DeckRightStepFrac * p
     }
     val cx = containerW * DeckFrontCenterXFrac - offsetFrac * containerW
-    val cy = (containerH - bottomInsetPx) * DeckFrontCenterYFrac
+    val cy = topInsetPx + (containerH - topInsetPx - bottomInsetPx) * DeckFrontCenterYFrac
     val tx = cx - containerW * scale / 2f
     val ty = cy - cropHeightPx * scale / 2f
     // Depth transparency: fully opaque up to one slot left of the focus, then fading with depth into
@@ -258,15 +262,18 @@ fun pixelSlot(
     containerW: Float,
     containerH: Float,
     cropHeightPx: Float,
-    /** Space (px) reserved at the BOTTOM of the viewport; cards centre within `containerH -
-     * bottomInsetPx` so they clear the floating overview controls. */
+    /** Space (px) reserved at the TOP of the viewport (status-bar / display-cutout + caption band);
+     * cards centre below it so their captions clear the hole punch. */
+    topInsetPx: Float = 0f,
+    /** Space (px) reserved at the BOTTOM of the viewport; cards centre within the band between
+     * [topInsetPx] and `containerH - bottomInsetPx` so they clear the cutout and the controls. */
     bottomInsetPx: Float = 0f,
 ): DeckSlot {
     val scale = DeckPixelScale
     // Centre-to-centre step = card width + gap; older cards (p > 0) to the left, newer to the right.
     val stepFrac = DeckPixelScale + DeckPixelGapFrac
     val cx = containerW * DeckFrontCenterXFrac - stepFrac * containerW * p
-    val cy = (containerH - bottomInsetPx) * DeckFrontCenterYFrac
+    val cy = topInsetPx + (containerH - topInsetPx - bottomInsetPx) * DeckFrontCenterYFrac
     val tx = cx - containerW * scale / 2f
     val ty = cy - cropHeightPx * scale / 2f
     return DeckSlot(tx = tx, ty = ty, scale = scale, alpha = 1f)

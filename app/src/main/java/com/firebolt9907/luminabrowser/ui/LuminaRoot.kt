@@ -22,6 +22,9 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.util.lerp
 import androidx.compose.animation.fadeIn
@@ -142,10 +145,16 @@ import com.firebolt9907.luminabrowser.ui.chrome.FindInPageBar
 import com.firebolt9907.luminabrowser.ui.chrome.SafariBar
 import com.firebolt9907.luminabrowser.ui.settings.SettingsSheet
 import com.firebolt9907.luminabrowser.sync.FirefoxSyncEvent
+import mozilla.components.browser.state.action.ContentAction
 import mozilla.components.browser.state.action.EngineAction
 import mozilla.components.browser.state.state.TabSessionState
 import mozilla.components.browser.state.state.content.HistoryState
 import com.firebolt9907.luminabrowser.ui.content.ContentHost
+import com.firebolt9907.luminabrowser.ui.content.LinkPeekCard
+import com.firebolt9907.luminabrowser.ui.content.LinkRectProbe
+import com.firebolt9907.luminabrowser.ui.content.PeekEngineHolder
+import com.firebolt9907.luminabrowser.ui.content.loadJavascriptUrl
+import com.firebolt9907.luminabrowser.ui.content.linkUrlFromHitResult
 import com.firebolt9907.luminabrowser.ui.grid.DeckTravelFrac
 import com.firebolt9907.luminabrowser.ui.grid.deckDragScale
 import com.firebolt9907.luminabrowser.ui.grid.GridTab
@@ -165,6 +174,7 @@ import com.firebolt9907.luminabrowser.ui.sync.HandoffCard
 import com.firebolt9907.luminabrowser.ui.sync.SyncedTabsSheet
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 import mozilla.components.concept.engine.EngineSession
+import mozilla.components.concept.engine.EngineView
 import mozilla.components.concept.engine.window.WindowRequest
 import com.firebolt9907.luminabrowser.ui.content.extractCacheHtml
 import kotlinx.coroutines.delay
@@ -260,6 +270,7 @@ fun LuminaRoot(
     onRequestPipMode: () -> Unit = {},
 ) {
     val appContext = LocalContext.current.applicationContext
+    val activityContext = LocalContext.current
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     val components = (appContext as LuminaApplication).components
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -319,6 +330,75 @@ fun LuminaRoot(
     val actualSelectedTab = browserState.tabs.firstOrNull { it.id == actualSelectedTabId }
     val selectedEngineSession = actualSelectedTab?.engineState?.engineSession
     val selectedContent = selectedTab?.content
+
+    // Link "glance" (Safari/Arc-style): a long-press on a link populates the tab's hitResult; we
+    // capture the target URL, consume the hitResult (so the same link can be pressed again), and
+    // show a LinkPeekCard. Cleared on dismiss / action.
+    var peekUrl by remember { mutableStateOf<String?>(null) }
+    // The finger-down position of the most recent press anywhere in the content region, used as the
+    // hero-transition origin so the glance card grows out of the link the user held.
+    var lastPressPos by remember { mutableStateOf(Offset.Zero) }
+    var peekOrigin by remember { mutableStateOf(Offset.Zero) }
+    // The measured on-screen rectangle of the pressed link (root px), resolved asynchronously via
+    // LinkRectProbe's prompt() bridge. When present, the card morphs out of this exact element;
+    // when null it falls back to a chip at [peekOrigin].
+    var peekSourceRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    // A full-view capture of the main GeckoView taken at long-press; cropped to [peekSourceRect] so
+    // the card can morph out of the *actual pixels* of the pressed element, not a flat color. The
+    // full ~10 MB capture is dropped the instant it's cropped (see the crop effect below) — retaining
+    // it, plus the peek's second content process, is exactly the native-memory pressure that triggers
+    // the GC hitches, so we keep only the small cropped region.
+    var peekCaptureBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var peekElementBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    // The single reusable peek session/view (Option A): one bounded extra content process, reused via
+    // loadUrl across peeks instead of created/closed each time (that churn fragments native memory).
+    val peekEngine = remember { PeekEngineHolder(components.engine) }
+    var peekSession by remember { mutableStateOf<EngineSession?>(null) }
+    var peekView by remember { mutableStateOf<EngineView?>(null) }
+    // When the device signals memory pressure we drop the live preview entirely (static glance only)
+    // and release the held session. Requested from the ComponentCallbacks below; the release runs
+    // once the card is gone so we never pull the view out from under a live AndroidView.
+    var peekReleaseRequested by remember { mutableStateOf(false) }
+    val activityManager = remember {
+        appContext.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+    }
+    fun deviceLowOnMemory(): Boolean {
+        val mi = android.app.ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(mi)
+        // `lowMemory` is the system's own flag; the headroom check trips a bit earlier so we back off
+        // before the OS starts killing/GC-thrashing.
+        return mi.lowMemory || mi.availMem < mi.threshold * 2
+    }
+    DisposableEffect(peekEngine) {
+        val callbacks = object : android.content.ComponentCallbacks2 {
+            override fun onTrimMemory(level: Int) {
+                if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+                    peekUrl = null
+                    peekReleaseRequested = true
+                }
+            }
+            override fun onLowMemory() {
+                peekUrl = null
+                peekReleaseRequested = true
+            }
+            override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {}
+        }
+        appContext.registerComponentCallbacks(callbacks)
+        onDispose {
+            appContext.unregisterComponentCallbacks(callbacks)
+            peekEngine.release()
+        }
+    }
+    // Release the held peek session once any open glance is torn down (deferred so the AndroidView
+    // has detached the view first).
+    LaunchedEffect(peekReleaseRequested, peekUrl) {
+        if (peekReleaseRequested && peekUrl == null) {
+            peekSession = null
+            peekView = null
+            peekEngine.release()
+            peekReleaseRequested = false
+        }
+    }
 
     // Tabs that host an add-on action popup ("quick settings"). They must NOT become the active tab
     // for web extensions, or the popup (uBlock, Chrome Mask, …) would query itself (about:blank)
@@ -458,6 +538,64 @@ fun LuminaRoot(
     var gridBottomControlsHeightPx by remember { mutableIntStateOf(0) }
     var currentSnapshotRequestPurpose by remember { mutableStateOf<SnapshotRequestPurpose?>(null) }
     var currentSnapshotRequestId by remember { mutableIntStateOf(0) }
+
+    // Link "glance" long-press → capture pixels + rect, then show the morphing LinkPeekCard. Placed
+    // here (not with the peek state vars above) because it drives the shared snapshot-request state
+    // declared just above.
+    LaunchedEffect(selectedContent?.hitResult) {
+        val link = linkUrlFromHitResult(selectedContent?.hitResult)
+        if (link != null) {
+            val origin = lastPressPos
+            peekOrigin = origin
+            peekSourceRect = null
+            peekCaptureBitmap = null
+            peekElementBitmap = null
+            // Option A + low-memory guard: reuse one held session when memory is healthy; under
+            // pressure, skip the live preview (static glance) and free the held session now — no peek
+            // card is mounted at long-press time, so releasing the view here can't race an AndroidView.
+            if (deviceLowOnMemory()) {
+                peekSession = null
+                peekView = null
+                peekEngine.release()
+            } else {
+                val (s, v) = peekEngine.ensure(activityContext, selectedContent?.private == true)
+                peekSession = s
+                peekView = v
+            }
+            peekUrl = link
+            luminaHaptics.longPress()
+            selectedTabId?.let { components.store.dispatch(ContentAction.ConsumeHitResultAction(it)) }
+            // Grab the current on-screen pixels of the page so we can crop the element region.
+            currentSnapshotRequestPurpose = SnapshotRequestPurpose.LinkPeek
+            currentSnapshotRequestId += 1
+            // Ask the page for the pressed link's rectangle; the delegate routes the reply here.
+            // The bridge fires on Gecko's thread, but snapshot-state writes are thread-safe.
+            LinkRectProbe.pending = { rect -> peekSourceRect = rect }
+            selectedEngineSession?.loadJavascriptUrl(
+                LinkRectProbe.buildScript(link, origin.x, origin.y)
+            )
+        }
+    }
+    // Crop the full capture to the element rect once both arrive, then immediately release the full
+    // ~10 MB bitmap so it doesn't sit in the heap (native-memory pressure = the GC hitches). Runs off
+    // the main thread's critical path; only the small cropped region is retained for the morph.
+    LaunchedEffect(peekCaptureBitmap, peekSourceRect, contentSize) {
+        val full = peekCaptureBitmap
+        val rect = peekSourceRect
+        if (full != null && rect != null && contentSize.width > 0 && contentSize.height > 0) {
+            peekElementBitmap = cropBitmapToRect(
+                full, rect, contentSize.width.toFloat(), contentSize.height.toFloat()
+            )
+            peekCaptureBitmap = null // drop the full-screen capture reference for prompt GC reclaim
+        }
+    }
+    // Release the cropped bitmap when the glance is fully gone, so nothing lingers between peeks.
+    LaunchedEffect(peekUrl) {
+        if (peekUrl == null) {
+            peekElementBitmap = null
+            peekCaptureBitmap = null
+        }
+    }
     // Bumped when a full-screen overlay (e.g. the appearance sheet's opaque ScaledPageBackdrop) is
     // dismissed, to force the z-ordered GeckoView surface to recomposite. Without this the surface
     // keeps showing its stale pre-overlay frame — which covers the pill — until the user scrolls.
@@ -2053,7 +2191,17 @@ fun LuminaRoot(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .onSizeChanged { contentSize = it },
+                    .onSizeChanged { contentSize = it }
+                    // Record the finger-down of each gesture so a subsequent link long-press can grow
+                    // its glance card out of that point. awaitEachGesture wakes once per gesture (on
+                    // the down) then idles until it ends — it does NOT process every scroll MOVE, so
+                    // it stays off the scroll hot path (the old Initial-pass loop woke on every move).
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            lastPressPos = down.position
+                        }
+                    },
             ) {
                 val contentWidth = contentSize.width.toFloat()
                 val shouldShowUi = !isVideoFullscreen && !isInPipMode
@@ -2186,6 +2334,12 @@ fun LuminaRoot(
                                 ) {
                                     tabSwitchCurrentSnapshot = bitmap
                                 }
+                            }
+                            SnapshotRequestPurpose.LinkPeek -> {
+                                if (capturedTabId == selectedTabId || capturedTabId == actualSelectedTabId) {
+                                    peekCaptureBitmap = bitmap
+                                }
+                                currentSnapshotRequestPurpose = null
                             }
                             null -> Unit
                         }
@@ -3294,6 +3448,38 @@ fun LuminaRoot(
                 showBottomToolbar = showBottomToolbar,
             )
         }
+
+        // Link glance (Safari/Arc). Drawn last so it floats above the content, chrome and grid.
+        peekUrl?.let { link ->
+            // The cropped element pixels (small) are produced off-band by the crop effect above,
+            // which then frees the full-screen capture — so nothing large is retained here.
+            LinkPeekCard(
+                url = link,
+                peekSession = peekSession,
+                peekView = peekView,
+                origin = peekOrigin,
+                sourceRect = peekSourceRect,
+                elementBitmap = peekElementBitmap?.asImageBitmap(),
+                onOpenHere = { u ->
+                    components.tabRepository.loadUrl(u)
+                    peekUrl = null
+                },
+                onOpenNewTab = { u ->
+                    viewModel.onOpenNewTab(url = u, title = "", selectTab = true)
+                    peekUrl = null
+                },
+                onCopy = { u ->
+                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(u))
+                    android.widget.Toast.makeText(appContext, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
+                    peekUrl = null
+                },
+                onShare = { u ->
+                    shareUrl(appContext, u)
+                    peekUrl = null
+                },
+                onDismiss = { peekUrl = null },
+            )
+        }
     }
 }
 
@@ -3723,6 +3909,29 @@ private class BarCallbacks(
 private enum class SnapshotRequestPurpose {
     PredictiveBack,
     TabSwitch,
+    LinkPeek,
+}
+
+/**
+ * Crop [full] (a capture of the whole engine view) to [rect] (element bounds in root px). The
+ * capture may be at a different pixel scale than the layout, so [viewW]/[viewH] (the view's root-px
+ * size) are used to rescale the rect into bitmap space. Returns null if the region is degenerate.
+ */
+private fun cropBitmapToRect(
+    full: Bitmap,
+    rect: androidx.compose.ui.geometry.Rect,
+    viewW: Float,
+    viewH: Float,
+): Bitmap? {
+    if (viewW <= 0f || viewH <= 0f) return null
+    val sx = full.width / viewW
+    val sy = full.height / viewH
+    val left = (rect.left * sx).toInt().coerceIn(0, full.width - 1)
+    val top = (rect.top * sy).toInt().coerceIn(0, full.height - 1)
+    val width = (rect.width * sx).toInt().coerceAtLeast(1).coerceAtMost(full.width - left)
+    val height = (rect.height * sy).toInt().coerceAtLeast(1).coerceAtMost(full.height - top)
+    if (width <= 0 || height <= 0) return null
+    return runCatching { Bitmap.createBitmap(full, left, top, width, height) }.getOrNull()
 }
 
 private fun predictiveBackTargetUrl(

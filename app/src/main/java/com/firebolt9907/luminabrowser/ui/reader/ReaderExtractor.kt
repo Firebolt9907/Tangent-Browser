@@ -755,6 +755,12 @@ object ReaderExtractor {
                 }
                 return GeckoResult.fromValue(prompt.confirm("ok"))
             }
+            if (prompt.message == com.firebolt9907.luminabrowser.ui.content.LinkRectProbe.BRIDGE_MESSAGE) {
+                prompt.defaultValue?.let {
+                    com.firebolt9907.luminabrowser.ui.content.LinkRectProbe.onPayload(it)
+                }
+                return GeckoResult.fromValue(prompt.confirm("ok"))
+            }
             if (prompt.message == "lumina-reader") {
                 val defaultValue = prompt.defaultValue
                 if (defaultValue != null) {

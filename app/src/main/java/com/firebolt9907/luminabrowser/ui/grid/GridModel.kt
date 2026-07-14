@@ -73,8 +73,12 @@ const val DeckVisibleDepth = 2f
  * height on phones/tablets — each card is a scaled-down full screenshot, like the app switcher. */
 const val DeckCropAspect = 2.4f
 /** Scale floor the card shrinks to while the finger drags up (before the fan-into-deck spring).
- * Shared with LuminaRoot's release capture so the commit spring starts from the drawn scale. */
-const val DeckDragMinScale = 0.4f
+ * Shared with LuminaRoot's release capture so the commit spring starts from the drawn scale.
+ * NOTE: the drag-phase card is bottom-center-anchored to the finger (ty = fingerY - H*scale in
+ * Grid.kt), so a *low* floor makes the card's top collapse toward the finger faster than the body
+ * lifts — it reads as "just scaling, not moving up." Keep this fairly high (~0.6+) so upward finger
+ * tracking stays the dominant motion; the fan-into-deck spring on release does the rest of the shrink. */
+const val DeckDragMinScale = 0.62f
 /** Fraction of screen height the finger pulls up for a full open — sets drag sensitivity. Lower =
  * a shorter pull opens the deck. Kept below half a screen so a comfortable thumb flick (which rarely
  * travels more than ~40% of the height) reaches a full open without the hand leaving the pill. */

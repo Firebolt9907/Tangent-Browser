@@ -185,7 +185,9 @@ fun LinkPeekCard(
             targetValue = 1f,
             animationSpec = spring(
                 dampingRatio = 0.85f,
-                stiffness = Spring.StiffnessLow,
+                // ~1.5x faster open than StiffnessLow (200): spring speed scales with √stiffness,
+                // so 450 ≈ 1.5x. Kept slightly under-damped for a bit of snap.
+                stiffness = 450f,
             ),
         )
     }
@@ -221,16 +223,23 @@ fun LinkPeekCard(
                 backEdgeSign = if (event.swipeEdge == BackEventCompat.EDGE_LEFT) 1f else -1f
                 back.snapTo(event.progress.coerceIn(0f, 1f))
             }
-            // Committed: settle the preview back to rest while the card morphs into the link.
-            dismissing = true
-            scope.launch {
-                back.animateTo(0f, spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMedium))
+            // Committed. Run the finish in the card's OWN scope, not this handler's coroutine:
+            // setting `dismissing = true` disables PredictiveBackHandler, which cancels the onBack
+            // coroutine — if the reverse morph ran here it would be cancelled before onDismiss(),
+            // leaving the card (and its element bitmap) stuck on screen. scope survives the disable.
+            if (!dismissing) {
+                dismissing = true
+                scope.launch {
+                    back.animateTo(0f, spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMedium))
+                }
+                scope.launch {
+                    morph.animateTo(
+                        targetValue = 0f,
+                        animationSpec = spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMedium),
+                    )
+                    onDismiss()
+                }
             }
-            morph.animateTo(
-                targetValue = 0f,
-                animationSpec = spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMedium),
-            )
-            onDismiss()
         } catch (_: CancellationException) {
             // Cancelled — spring the preview back to the full card; morph stays put.
             back.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow))

@@ -359,6 +359,11 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           # navigation feel snappier without changing what eventually gets painted.
           nglayout.initialpaint.delay: 0
           nglayout.initialpaint.delay_in_oopif: 0
+          # Long-press: shorten the hold before Gecko fires the long-tap (→ HitResult → the link
+          # "glance" preview). Gecko's default is 500ms, which feels sluggish for a peek gesture;
+          # 280ms triggers noticeably sooner while staying above the ~150ms tap/scroll threshold so
+          # normal taps and scrolls aren't misread as long-presses.
+          ui.click_hold_context_menus.delay: 280
           # --- Battery: drop Gecko's redundant captive-portal probing ---
           # GeckoView's captive-portal service periodically fetches a canonical URL to detect
           # Wi-Fi sign-in portals. Android already owns captive-portal detection at the OS

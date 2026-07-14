@@ -746,6 +746,7 @@ fun LuminaRoot(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
+                    components.firefoxSyncController.verifyAccount()
                     components.firefoxSyncController.checkForHandoffTab()
                     components.firefoxSyncController.startForegroundPeriodicSync()
                 }

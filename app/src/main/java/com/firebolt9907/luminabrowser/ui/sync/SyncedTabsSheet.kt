@@ -54,7 +54,9 @@ fun SyncedTabsSheet(
     val state by controller.state.collectAsStateWithLifecycle()
     val haptics = rememberLuminaHaptics()
 
-    // Reflect the latest background-sync results immediately on open (no network round trip).
+    // On open, actively confirm we're still signed in (catches a remote sign-out) and reflect the
+    // latest background-sync results immediately (no network round trip).
+    LaunchedEffect(Unit) { controller.verifyAccount() }
     LaunchedEffect(state.isSignedIn) {
         if (state.isSignedIn) controller.loadCachedSyncedTabs()
     }

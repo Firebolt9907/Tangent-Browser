@@ -48,6 +48,7 @@ import mozilla.components.service.fxa.ServerConfig
 import mozilla.components.service.fxa.SyncConfig
 import mozilla.components.service.fxa.SyncEngine
 import mozilla.components.service.fxa.manager.FxaAccountManager
+import mozilla.components.service.fxa.manager.SCOPE_SYNC
 import mozilla.components.service.fxa.sync.GlobalSyncableStoreProvider
 import mozilla.components.service.fxa.sync.SyncReason
 import mozilla.components.service.fxa.sync.SyncStatusObserver
@@ -138,6 +139,15 @@ class FirefoxSyncController(
      * intentional local sign-out apart from a remote disconnect and skip the "signed out remotely"
      * event/message for the former. */
     @Volatile private var localSignOutInFlight = false
+    /**
+     * Latched true once we've established this device was signed out remotely (a device disconnect,
+     * account deletion, or password change on another device). It's our own authoritative bit
+     * because [FxaAccountManager.authenticatedAccount] keeps returning the account — and
+     * [FxaAccountManager.accountNeedsReauth] can lag — after a remote sign-out, so relying on those
+     * alone leaves the UI wrongly "signed in" (and spinning "Syncing tabs..." against dead
+     * credentials). Cleared on a successful re-sign-in or a deliberate local sign-out.
+     */
+    @Volatile private var remoteSignOut = false
     @Volatile private var lastHandoffSyncAtMs = 0L
     @Volatile private var dismissedHandoffKey: String? = null
     @Volatile private var foregroundSyncJob: Job? = null
@@ -150,26 +160,42 @@ class FirefoxSyncController(
      */
     private val accountObserver = object : AccountObserver {
         override fun onLoggedOut() {
-            // Fires for both a local [signOut] and a remote disconnect. The localSignOutInFlight
-            // guard keeps us from double-reporting the deliberate local case (signOut already set
-            // the "Signed out" state and doesn't want the "signed out remotely" event).
-            stopForegroundPeriodicSync()
-            if (localSignOutInFlight) return
-            resetToSignedOut("Firefox Sync was signed out on another device")
-            _events.tryEmit(FirefoxSyncEvent.LoggedOutRemotely)
+            // Fires for both a local [signOut] and a remote disconnect (push / account destroyed).
+            // The localSignOutInFlight guard keeps the deliberate local case from being reported as
+            // a remote sign-out (signOut already set the "Signed out" state).
+            if (localSignOutInFlight) {
+                stopForegroundPeriodicSync()
+                return
+            }
+            onRemoteSignOut("Firefox Sync was signed out on another device")
         }
 
         override fun onAuthenticationProblems() {
             // A sync found the stored credentials no longer valid (remote disconnect / password
             // change discovered lazily). Treat it as a remote sign-out and prompt re-auth.
-            stopForegroundPeriodicSync()
-            resetToSignedOut("Firefox Sync signed you out — sign in again to resume")
-            _events.tryEmit(FirefoxSyncEvent.LoggedOutRemotely)
+            onRemoteSignOut("Firefox Sync signed you out — sign in again to resume")
         }
 
-        override fun onAuthenticated(account: OAuthAccount, authType: AuthType) = Unit
+        override fun onAuthenticated(account: OAuthAccount, authType: AuthType) {
+            // A fresh (or recovered) sign-in clears any prior remote-sign-out latch.
+            remoteSignOut = false
+        }
+
         override fun onProfileUpdated(profile: Profile) = Unit
         override fun onReady(authenticatedAccount: OAuthAccount?) = Unit
+    }
+
+    /**
+     * Central handler for "this device was signed out somewhere else". Latches [remoteSignOut],
+     * tears down the foreground sync loop, resets the UI to a signed-out shell, and emits the
+     * one-shot event exactly once per detection so the host can surface it (e.g. a toast).
+     */
+    private fun onRemoteSignOut(message: String) {
+        stopForegroundPeriodicSync()
+        if (remoteSignOut) return
+        remoteSignOut = true
+        resetToSignedOut(message)
+        _events.tryEmit(FirefoxSyncEvent.LoggedOutRemotely)
     }
 
     init {
@@ -190,7 +216,11 @@ class FirefoxSyncController(
             runCatching {
                 accountManager.start()
                 refreshAccountState()
-                if (accountManager.authenticatedAccount() != null) refreshSyncedTabs()
+                if (accountManager.authenticatedAccount() != null) {
+                    // Catch a sign-out that happened remotely while the app was dead.
+                    verifyAccount()
+                    refreshSyncedTabs()
+                }
             }.onFailure { throwable ->
                 setError("Firefox Sync is unavailable: ${throwable.readableMessage()}")
             }
@@ -295,6 +325,7 @@ class FirefoxSyncController(
                         state = state,
                     )
                 )
+                remoteSignOut = false
                 refreshAccountState()
                 refreshSyncedTabs()
                 _events.emit(FirefoxSyncEvent.AuthenticationCompleted)
@@ -308,8 +339,9 @@ class FirefoxSyncController(
 
     fun refreshSyncedTabs() {
         scope.launch {
-            if (accountManager.authenticatedAccount() == null) {
+            if (usableAccount() == null) {
                 _state.update { it.copy(devices = emptyList(), isBusy = false) }
+                refreshAccountState()
                 return@launch
             }
             setBusy("Syncing tabs...")
@@ -359,7 +391,7 @@ class FirefoxSyncController(
      */
     fun loadCachedSyncedTabs() {
         scope.launch {
-            if (accountManager.authenticatedAccount() == null) return@launch
+            if (usableAccount() == null) return@launch
             refreshTargetDevices()
             runCatching { readSyncedDevices() }
                 .onSuccess { devices ->
@@ -383,7 +415,7 @@ class FirefoxSyncController(
      */
     fun checkForHandoffTab(minSyncSpacingMs: Long = HandoffSyncDebounceMs) {
         scope.launch {
-            if (accountManager.authenticatedAccount() == null) return@launch
+            if (usableAccount() == null) return@launch
             val now = System.currentTimeMillis()
             if (now - lastHandoffSyncAtMs >= minSyncSpacingMs) {
                 lastHandoffSyncAtMs = now
@@ -405,7 +437,7 @@ class FirefoxSyncController(
         foregroundSyncJob = scope.launch {
             while (isActive) {
                 delay(ForegroundSyncIntervalMs)
-                if (accountManager.authenticatedAccount() == null) continue
+                if (usableAccount() == null) continue
                 lastHandoffSyncAtMs = System.currentTimeMillis()
                 runCatching { awaitSync(syncEngines) }
                 refreshDevicesFromStorage()
@@ -574,7 +606,7 @@ class FirefoxSyncController(
 
     fun syncNow() {
         scope.launch {
-            if (accountManager.authenticatedAccount() == null) return@launch
+            if (usableAccount() == null) return@launch
             setBusy("Syncing...")
             runCatching {
                 awaitSync(null)
@@ -589,6 +621,7 @@ class FirefoxSyncController(
         scope.launch {
             setBusy("Signing out...")
             localSignOutInFlight = true
+            remoteSignOut = false
             runCatching {
                 accountManager.logout()
                 _state.value = FirefoxSyncUiState(message = "Signed out")
@@ -604,11 +637,49 @@ class FirefoxSyncController(
         _state.value = FirefoxSyncUiState(message = message, isError = true)
     }
 
+    /**
+     * The account we can actually sync with, or null. An account that was signed out remotely
+     * ([remoteSignOut]) or that the manager reports as needing re-auth
+     * ([FxaAccountManager.accountNeedsReauth]) is deliberately treated as unusable here even though
+     * [FxaAccountManager.authenticatedAccount] still returns it — otherwise every guarded operation
+     * would proceed and spin "Syncing tabs..." against dead credentials.
+     */
+    private fun usableAccount(): OAuthAccount? {
+        if (remoteSignOut) return null
+        val account = accountManager.authenticatedAccount() ?: return null
+        return account.takeUnless { accountManager.accountNeedsReauth() }
+    }
+
+    /**
+     * Actively confirm the account is still authorized, so a *remote* sign-out is caught promptly
+     * rather than whenever a background sync next happens to fail. [OAuthAccount.checkAuthorizationStatus]
+     * asks the FxA server directly (bypassing the local sync-token cache that can stay valid for a
+     * while after a remote disconnect); a definitive `false` means the device was signed out
+     * elsewhere. `null`/errors are transient/inconclusive and ignored. No-op when already signed out
+     * or already known to be in a remote-sign-out state. Cheap enough to run on resume / sheet open.
+     */
+    fun verifyAccount() {
+        scope.launch {
+            if (remoteSignOut) return@launch
+            val account = accountManager.authenticatedAccount() ?: return@launch
+            if (accountManager.accountNeedsReauth()) {
+                onRemoteSignOut("Firefox Sync signed you out — sign in again to resume")
+                return@launch
+            }
+            val authorized = runCatching { account.checkAuthorizationStatus(SCOPE_SYNC) }.getOrNull()
+            if (authorized == false) {
+                // Let the account layer rebuild its cached state, then reflect signed-out in the UI.
+                runCatching { account.authErrorDetected() }
+                onRemoteSignOut("Firefox Sync was signed out on another device")
+            }
+        }
+    }
+
     private fun refreshAccountState() {
         val profile = accountManager.accountProfile()
         _state.update {
             it.copy(
-                isSignedIn = accountManager.authenticatedAccount() != null,
+                isSignedIn = usableAccount() != null,
                 accountEmail = profile?.email,
                 isBusy = false,
                 isError = false,

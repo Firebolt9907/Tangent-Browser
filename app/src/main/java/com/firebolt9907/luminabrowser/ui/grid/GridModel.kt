@@ -33,7 +33,7 @@ import kotlin.math.pow
 /** On-screen scale of the front (focused) card, applied uniformly (the card is a scaled-down full
  * screenshot). High enough that the focus dominates the screen, but with real margin on both sides
  * so the neighbours' slivers have room and the card reads as a card, not a zoomed-in page. */
-const val DeckFrontScale = 0.72f
+const val DeckFrontScale = 0.7f
 /** Geometric scale ratio between adjacent deck slots (scale(p) = DeckFrontScale * step^p). Gentle:
  * the older stack recedes only slightly per card (so each still reads as a full card edge) and the
  * newer card is only slightly larger than the focus. */
@@ -58,7 +58,7 @@ const val DeckRightStepFrac = 0.7f
  * decoupled from the (asymmetric) visual steps above so scrolling stays responsive rather than
  * tracking the wide right-side step. Kept tight (a third of the width per card) so the focused card
  * advances close to the finger instead of lagging well behind it on a side-to-side swipe. */
-const val DeckDragStepFrac = 0.34f
+const val DeckDragStepFrac = 0.44f
 /** Depth (p) beyond which older left-stack cards start going transparent. Cards up to one slot left
  * of the focus (p ≤ 1) stay fully opaque; past that they fade, like the iOS app switcher. */
 const val DeckFadeStartDepth = 1f
@@ -74,7 +74,7 @@ const val DeckVisibleDepth = 2f
 const val DeckCropAspect = 2.4f
 /** Scale floor the card shrinks to while the finger drags up (before the fan-into-deck spring).
  * Shared with LuminaRoot's release capture so the commit spring starts from the drawn scale. */
-const val DeckDragMinScale = 0.62f
+const val DeckDragMinScale = 0.4f
 /** Fraction of screen height the finger pulls up for a full open — sets drag sensitivity. Lower =
  * a shorter pull opens the deck. Kept below half a screen so a comfortable thumb flick (which rarely
  * travels more than ~40% of the height) reaches a full open without the hand leaving the pill. */

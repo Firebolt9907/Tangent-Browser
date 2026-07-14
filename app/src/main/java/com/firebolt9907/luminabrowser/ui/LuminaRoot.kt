@@ -216,6 +216,14 @@ private val TabSwitchGap = 64.dp
 private val PullRefreshThreshold = 96.dp
 private val PullRefreshMaxDistance = 132.dp
 private const val GridCommitVelocityPxS = 1000f
+// The open spring seeds the finger's release velocity so the settle carries momentum. But a big/fast
+// swipe releases with gridDragProgress ≈ 1 (little range left) AND a high velocity, which rushes
+// gridProgressState 0.95→1 in a couple frames — collapsing the card's commit morph into an instant
+// SNAP (the "no hero on large swipes" report). Cap the seed velocity relative to the range still to
+// travel so the open always keeps ~≥1/this-many seconds of settle regardless of how far you dragged;
+// smaller swipes (lots of range left) keep their full natural finger velocity. Tuning this lower =
+// gentler/longer open, higher = snappier.
+private const val GridOpenMaxVelocityPerRange = 5f
 
 // Safari-style motion for the tab-overview (grid) transitions. iOS springs are authored as a
 // "response" (seconds to settle) + damping fraction; Compose's stiffness maps as
@@ -1635,9 +1643,16 @@ fun LuminaRoot(
             offsetX = 0f
             resetTabSwitchSnapshot()
             cancelLeavingSnapshot()
-            // Seed the spring with velocity normalised to progress-units (velocity / travelPx).
+            // Seed the spring with velocity normalised to progress-units (velocity / travelPx), but
+            // cap it against the range still left to open so a far/fast swipe still plays the settle
+            // morph instead of snapping. fromProgress stays at the real release point, so the pill /
+            // backdrop / corner-mask that read gridProgressState directly don't pop. See
+            // GridOpenMaxVelocityPerRange.
+            val remainingRange = (1f - gridDragProgress).coerceAtLeast(0.0001f)
+            val seedVelocity = (upwardVelocity / travelPx)
+                .coerceIn(0f, remainingRange * GridOpenMaxVelocityPerRange)
             openGrid(
-                initialVelocityProgressPerSec = upwardVelocity / travelPx,
+                initialVelocityProgressPerSec = seedVelocity,
                 fromProgress = gridDragProgress,
             )
         } else {

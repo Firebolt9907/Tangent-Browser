@@ -24,4 +24,13 @@ interface TabRepository {
     fun addTab(url: String, title: String): String
 
     fun removeTab(id: String)
+
+    /** Number of recently-closed tabs available to reopen; drives the "Reopen Closed Tab" UI. */
+    val reopenableCount: StateFlow<Int>
+
+    /**
+     * Reopen (and select) the most-recently-closed tab. Returns the new tab id, or null when there
+     * is nothing to reopen.
+     */
+    fun reopenLastClosedTab(): String?
 }

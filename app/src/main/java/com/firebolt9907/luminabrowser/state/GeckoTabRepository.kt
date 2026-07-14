@@ -17,6 +17,13 @@ import mozilla.components.concept.engine.EngineSession
 import mozilla.components.feature.session.SessionUseCases
 import mozilla.components.feature.tabs.TabsUseCases
 import com.firebolt9907.luminabrowser.ui.content.extractCacheHtml
+
+/** A closed tab remembered for the "Reopen Closed Tab" action — URL + title, no session history. */
+private data class ClosedTab(val url: String, val title: String)
+
+/** Upper bound on the recently-closed-tab stack so a long session can't grow it without limit. */
+private const val MAX_CLOSED_TABS = 25
+
 /**
  * Production [TabRepository] backed by mozilla-components' [BrowserStore]. Also tracks
  * the previous selected-tab id so [dismissBlankTabAndReturn] can return there.
@@ -39,6 +46,16 @@ class GeckoTabRepository(
     override val selectedTabId: StateFlow<String?> = _selectedTabId.asStateFlow()
 
     private var previousSelectedTabId: String? = null
+
+    /**
+     * Recently-closed tabs (most-recent last), for the Safari/Arc-style "Reopen Closed Tab" action.
+     * Bounded so a long session can't grow it without limit; only real web pages are recorded
+     * (blank/about: closes aren't worth reopening). Restored URL+title only — no session history.
+     */
+    private val closedTabs = ArrayDeque<ClosedTab>()
+    private val _reopenableCount = MutableStateFlow(0)
+    /** Number of reopenable closed tabs; UI enables "Reopen Closed Tab" when > 0. */
+    override val reopenableCount: StateFlow<Int> = _reopenableCount.asStateFlow()
 
     /** Last time each tab was the selected/foreground tab, keyed by tab id. */
     private val lastAccessById = mutableMapOf<String, Long>()
@@ -163,7 +180,29 @@ class GeckoTabRepository(
         )
 
     override fun removeTab(id: String) {
+        recordClosedTab(id)
         tabsUseCases.removeTab.invoke(id)
+    }
+
+    /** Snapshot a tab's URL+title onto the closed-tab stack before it's removed (real pages only). */
+    private fun recordClosedTab(id: String) {
+        val tab = store.state.tabs.firstOrNull { it.id == id } ?: return
+        val url = tab.content.url
+        if (url.isBlank() || url == "about:blank" || url == "about:home") return
+        closedTabs.addLast(ClosedTab(url = url, title = tab.content.title))
+        while (closedTabs.size > MAX_CLOSED_TABS) closedTabs.removeFirst()
+        _reopenableCount.value = closedTabs.size
+    }
+
+    /**
+     * Reopen the most-recently-closed tab (Safari/Arc "Reopen Closed Tab"), selecting it. Returns
+     * the new tab id, or null when the stack is empty. Reloads the URL fresh — page session history
+     * is not restored.
+     */
+    override fun reopenLastClosedTab(): String? {
+        val closed = closedTabs.removeLastOrNull() ?: return null
+        _reopenableCount.value = closedTabs.size
+        return addTab(url = closed.url, title = closed.title)
     }
 
     /**

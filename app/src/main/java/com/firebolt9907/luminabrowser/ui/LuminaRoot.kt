@@ -75,6 +75,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -2870,6 +2871,8 @@ fun LuminaRoot(
                                 // so the bar stays focused on tab actions (New Tab, layout, sync).
                                 Box {
                                     var overflowOpen by remember { mutableStateOf(false) }
+                                    val reopenableCount by components.tabRepository.reopenableCount
+                                        .collectAsStateWithLifecycle()
                                     FilledTonalIconButton(
                                         onClick = { overflowOpen = true },
                                         enabled = toolbarEnabled,
@@ -2905,6 +2908,24 @@ fun LuminaRoot(
                                                 },
                                             )
                                         }
+                                        // Reopen the last closed tab (Safari/Arc). Disabled — not
+                                        // hidden — when the stack is empty, so its slot is stable.
+                                        DropdownMenuItem(
+                                            text = { Text("Reopen Closed Tab") },
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.AutoMirrored.Filled.Undo,
+                                                    contentDescription = null,
+                                                )
+                                            },
+                                            enabled = reopenableCount > 0,
+                                            onClick = {
+                                                overflowOpen = false
+                                                components.tabRepository.reopenLastClosedTab()
+                                                luminaHaptics.create()
+                                                closeGrid(animateBack = true)
+                                            },
+                                        )
                                         HorizontalDivider()
                                         DropdownMenuItem(
                                             text = { Text("Bookmarks") },

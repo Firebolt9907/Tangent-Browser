@@ -780,6 +780,13 @@ fun LuminaRoot(
                     }
                     showSyncedTabs = true
                 }
+                FirefoxSyncEvent.LoggedOutRemotely -> {
+                    android.widget.Toast.makeText(
+                        appContext,
+                        "Firefox Sync was signed out on another device",
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                }
             }
         }
     }

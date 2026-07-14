@@ -34,6 +34,9 @@ import mozilla.components.concept.sync.DeviceConfig
 import mozilla.components.concept.sync.DeviceType
 import mozilla.components.concept.sync.FxAEntryPoint
 import mozilla.components.concept.push.PushProcessor
+import mozilla.components.concept.sync.AccountObserver
+import mozilla.components.concept.sync.OAuthAccount
+import mozilla.components.concept.sync.Profile
 import mozilla.components.feature.accounts.push.FxaPushSupportFeature
 import mozilla.components.feature.accounts.push.SendTabFeature
 import mozilla.components.feature.push.AutoPushFeature
@@ -131,10 +134,43 @@ class FirefoxSyncController(
         if (loginsStorage != null) listOf(SyncEngine.Tabs, SyncEngine.Passwords) else listOf(SyncEngine.Tabs)
 
     @Volatile private var authInFlight = false
+    /** True while a *local* [signOut] is running, so [accountObserver.onLoggedOut] can tell an
+     * intentional local sign-out apart from a remote disconnect and skip the "signed out remotely"
+     * event/message for the former. */
+    @Volatile private var localSignOutInFlight = false
     @Volatile private var lastHandoffSyncAtMs = 0L
     @Volatile private var dismissedHandoffKey: String? = null
     @Volatile private var foregroundSyncJob: Job? = null
     @Volatile private var pushFeature: AutoPushFeature? = null
+
+    /**
+     * Watches the FxA account for a sign-out that originated *elsewhere* — a remote device
+     * disconnecting this one, a password change, or a revoked token. The manager reports these two
+     * ways depending on how the news arrives, and both land us in a signed-out state here.
+     */
+    private val accountObserver = object : AccountObserver {
+        override fun onLoggedOut() {
+            // Fires for both a local [signOut] and a remote disconnect. The localSignOutInFlight
+            // guard keeps us from double-reporting the deliberate local case (signOut already set
+            // the "Signed out" state and doesn't want the "signed out remotely" event).
+            stopForegroundPeriodicSync()
+            if (localSignOutInFlight) return
+            resetToSignedOut("Firefox Sync was signed out on another device")
+            _events.tryEmit(FirefoxSyncEvent.LoggedOutRemotely)
+        }
+
+        override fun onAuthenticationProblems() {
+            // A sync found the stored credentials no longer valid (remote disconnect / password
+            // change discovered lazily). Treat it as a remote sign-out and prompt re-auth.
+            stopForegroundPeriodicSync()
+            resetToSignedOut("Firefox Sync signed you out — sign in again to resume")
+            _events.tryEmit(FirefoxSyncEvent.LoggedOutRemotely)
+        }
+
+        override fun onAuthenticated(account: OAuthAccount, authType: AuthType) = Unit
+        override fun onProfileUpdated(profile: Profile) = Unit
+        override fun onReady(authenticatedAccount: OAuthAccount?) = Unit
+    }
 
     init {
         GlobalSyncableStoreProvider.configureStore(SyncEngine.Tabs to lazy { remoteTabsStorage })
@@ -144,6 +180,11 @@ class FirefoxSyncController(
             )
         }
         syncedTabsStorage.start()
+        // Detect a remote sign-out: another device disconnecting this one, a password change, or a
+        // server-side token revocation. The account manager surfaces these as onLoggedOut (when a
+        // push/device event tells us outright) or onAuthenticationProblems (when a sync discovers
+        // the credentials are no longer valid). Both must flip the UI back to signed-out.
+        accountManager.register(accountObserver)
         scope.launch {
             setBusy("Preparing Firefox Sync...")
             runCatching {
@@ -547,13 +588,20 @@ class FirefoxSyncController(
     fun signOut() {
         scope.launch {
             setBusy("Signing out...")
+            localSignOutInFlight = true
             runCatching {
                 accountManager.logout()
                 _state.value = FirefoxSyncUiState(message = "Signed out")
             }.onFailure { throwable ->
                 setError("Could not sign out: ${throwable.readableMessage()}")
             }
+            localSignOutInFlight = false
         }
+    }
+
+    /** Clear all account-derived state back to a signed-out shell carrying [message]. */
+    private fun resetToSignedOut(message: String) {
+        _state.value = FirefoxSyncUiState(message = message, isError = true)
     }
 
     private fun refreshAccountState() {
@@ -624,6 +672,9 @@ data class FirefoxSyncedTab(
 
 sealed interface FirefoxSyncEvent {
     data object AuthenticationCompleted : FirefoxSyncEvent
+
+    /** The account was signed out from another device (or its credentials were revoked). */
+    data object LoggedOutRemotely : FirefoxSyncEvent
 }
 
 private enum class LuminaFxAEntryPoint(override val entryName: String) : FxAEntryPoint {

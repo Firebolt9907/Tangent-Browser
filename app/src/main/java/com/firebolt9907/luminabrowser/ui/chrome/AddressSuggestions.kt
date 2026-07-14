@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +43,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -190,6 +192,24 @@ fun AddressSheet(
         emptyList()
     }
 
+    // Paste & Go (Safari/Arc-style): while the field is empty or still holds the untouched current
+    // URL, offer the clipboard as a one-tap destination. We only probe the clip *description* for a
+    // text MIME type here — the content itself is read lazily on tap, so opening the address bar
+    // never triggers Android's clipboard-access notification.
+    val context = LocalContext.current
+    val systemClipboard = remember(context) {
+        context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+    }
+    var pasteAvailable by remember { mutableStateOf(false) }
+    LaunchedEffect(visible, rowsActive) {
+        pasteAvailable = visible && !rowsActive && run {
+            val clip = systemClipboard ?: return@run false
+            clip.hasPrimaryClip() && (clip.primaryClipDescription?.let {
+                it.hasMimeType("text/plain") || it.hasMimeType("text/html")
+            } ?: false)
+        }
+    }
+
     fun endDrag(velocityY: Float) {
         val dismiss = rawDragPx > travelPx * 0.5f || velocityY > 2200f
         // Ride the real keyboard to its resting state (preserves the frame-locked feel on release).
@@ -302,6 +322,20 @@ fun AddressSheet(
                             } + bottomInset + 64.dp,
                         ),
                 ) {
+                    if (pasteAvailable) {
+                        PasteRow(onClick = {
+                            // Reading the clip item here (coerceToText) is the only place we touch
+                            // the actual content — so the OS paste-access notification fires on the
+                            // user's explicit tap, not merely on opening the address bar.
+                            val text = systemClipboard
+                                ?.primaryClip
+                                ?.getItemAt(0)
+                                ?.coerceToText(context)
+                                ?.toString()
+                                ?.trim()
+                            if (!text.isNullOrEmpty()) onSubmit(text)
+                        })
+                    }
                     rows.forEach { suggestion ->
                         SuggestionRow(
                             suggestion = suggestion,
@@ -343,6 +377,38 @@ private fun buildSuggestionRows(
         rows[typedKey] = AddressSuggestion(title = typed, url = typed, kind = AddressSuggestionKind.Search)
     }
     return rows.values.take(max).toList()
+}
+
+/**
+ * Top-of-list clipboard shortcut shown when the address field is empty/untouched. Deliberately shows
+ * no preview of the clipboard text — the content is only read on tap (see the call site) to avoid the
+ * OS clipboard-access notification firing every time the address bar is opened.
+ */
+@Composable
+private fun PasteRow(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 22.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Default.ContentPaste,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.size(14.dp))
+        Text(
+            text = "Paste and go",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 @Composable

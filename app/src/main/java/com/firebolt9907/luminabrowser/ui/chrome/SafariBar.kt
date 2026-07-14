@@ -63,6 +63,7 @@ private val CompactProgress: () -> Float = { 1f }
 fun SafariBar(
     state: BarUiState,
     onUrlTap: () -> Unit,
+    onUrlLongPress: () -> Unit = {},
     onAaTap: () -> Unit,
     onAaLongPress: () -> Unit = {},
     onEditingTextChange: (String) -> Unit,
@@ -188,6 +189,7 @@ fun SafariBar(
                     BarMode.Expanded -> BarExpanded(
                         state = state,
                         onUrlTap = onUrlTap,
+                        onUrlLongPress = onUrlLongPress,
                         onAaTap = onAaTap,
                         onAaLongPress = onAaLongPress,
                         onDragStart = onDragStart,
@@ -209,6 +211,7 @@ fun SafariBar(
                     BarMode.Compact -> BarExpanded(
                         state = state,
                         onUrlTap = onUrlTap,
+                        onUrlLongPress = onUrlLongPress,
                         onAaTap = onAaTap,
                         onAaLongPress = onAaLongPress,
                         onDragStart = onDragStart,

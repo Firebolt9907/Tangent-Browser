@@ -3058,6 +3058,14 @@ fun LuminaRoot(
                         // clears the screen entirely.
                         { readerBarHidden.value * (bottomChromeInsetPx + with(density) { 48.dp.toPx() }) }
                     }
+                    // Shared fast-copy action: bottom-toolbar Copy button + address-pill long-press.
+                    val copyCurrentUrl = {
+                        val currentUrl = selectedContent?.url.orEmpty()
+                        if (currentUrl.isNotBlank() && currentUrl != "about:blank") {
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(currentUrl))
+                            android.widget.Toast.makeText(appContext, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
                     BottomBarLayer(
                         contentSize = contentSize,
                         tabSwitchGapPx = tabSwitchGapPx,
@@ -3106,13 +3114,10 @@ fun LuminaRoot(
                         onSelectPreviousTab = { commitHorizontalRelease(0f, forceDirection = -1) },
                         onSelectNextTab = { commitHorizontalRelease(0f, forceDirection = 1) },
                         showBottomToolbar = showBottomToolbar,
-                        onCopyTap = {
-                            val currentUrl = selectedContent?.url.orEmpty()
-                            if (currentUrl.isNotBlank() && currentUrl != "about:blank") {
-                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(currentUrl))
-                                android.widget.Toast.makeText(appContext, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        },
+                        onCopyTap = copyCurrentUrl,
+                        // Long-press the address pill copies the URL — same fast-copy action as the
+                        // bottom-toolbar Copy button, reachable without the toolbar enabled.
+                        onUrlLongPress = copyCurrentUrl,
                         onForwardTap = { selectedTabId?.let { components.sessionUseCases.goForward.invoke(it, true) } },
                         onShareTap = {
                             shareUrl(appContext, selectedContent?.url.orEmpty(), selectedContent?.title)
@@ -3309,6 +3314,7 @@ private fun BottomBarLayer(
     onSelectNextTab: () -> Unit = {},
     showBottomToolbar: Boolean = false,
     onCopyTap: () -> Unit = {},
+    onUrlLongPress: () -> Unit = {},
     onForwardTap: () -> Unit = {},
     onShareTap: () -> Unit = {},
     onBookmarksTap: () -> Unit = {},
@@ -3501,6 +3507,7 @@ private fun BottomBarLayer(
         SafariBar(
             state = activeState,
             onUrlTap = onPrimaryUrlTap,
+            onUrlLongPress = onUrlLongPress,
             onAaTap = onAaTap,
             onAaLongPress = onAaLongPress,
             onEditingTextChange = callbacks.onEditingTextChange,

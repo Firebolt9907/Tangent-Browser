@@ -60,10 +60,12 @@ private fun Modifier.collapsingWidth(full: Dp, progress: () -> Float): Modifier 
     layout(w, placeable.height) { placeable.place(0, 0) }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun BarExpanded(
     state: BarUiState,
     onUrlTap: () -> Unit,
+    onUrlLongPress: () -> Unit = {},
     onAaTap: () -> Unit,
     onAaLongPress: () -> Unit = {},
     onDragStart: () -> Unit,
@@ -206,11 +208,17 @@ internal fun BarExpanded(
                         // No ripple on the address text itself — tapping it opens the editing
                         // sheet (a full surface change), where a splash reads as noise. The aA /
                         // reload chips keep their (now squircle) splash for button-like feedback.
-                        .clickable(
+                        // Long-press copies the URL (Arc/Safari-style fast copy) — only on real
+                        // pages, never on the blank new-tab preview.
+                        .combinedClickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                             enabled = controlsEnabled,
                             onClickLabel = if (blankPreview) "Open a new tab" else "Edit address",
+                            onLongClickLabel = if (blankPreview) null else "Copy link",
+                            onLongClick = if (blankPreview) null else {
+                                { haptics?.longPress(); onUrlLongPress() }
+                            },
                             onClick = { haptics?.softClick(); onUrlTap() },
                         )
                         .padding(horizontal = 4.dp),

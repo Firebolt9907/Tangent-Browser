@@ -72,13 +72,19 @@ const val DeckVisibleDepth = 2f
 /** Card crop aspect (height / width). Set high so `min(W*aspect, H)` clamps to the full viewport
  * height on phones/tablets — each card is a scaled-down full screenshot, like the app switcher. */
 const val DeckCropAspect = 2.4f
-/** Scale floor the card shrinks to while the finger drags up (before the fan-into-deck spring).
- * Shared with LuminaRoot's release capture so the commit spring starts from the drawn scale.
- * NOTE: the drag-phase card is bottom-center-anchored to the finger (ty = fingerY - H*scale in
- * Grid.kt), so a *low* floor makes the card's top collapse toward the finger faster than the body
- * lifts — it reads as "just scaling, not moving up." Keep this fairly high (~0.6+) so upward finger
- * tracking stays the dominant motion; the fan-into-deck spring on release does the rest of the shrink. */
-const val DeckDragMinScale = 0.62f
+/** Absolute scale floor for the front card during an up-drag — only reached on a long *over-pull*
+ * past full open (see [deckDragScale]). Shared, via that function, with LuminaRoot's release capture
+ * so the commit spring starts from the drawn scale. */
+const val DeckDragMinScale = 0.4f
+/** Scale the front card reaches at a *normal* full-open pull (progress 1 at [DeckTravelFrac] travel).
+ * This is the dominant drag-phase scale — the card is bottom-center-anchored to the finger, so
+ * keeping this fairly high (~0.6+) makes upward finger tracking, not shrink, the dominant motion.
+ * Past this the card keeps shrinking toward [DeckDragMinScale] on an over-pull. */
+const val DeckDragFirstStageMinScale = 0.62f
+/** Extra pull past full open — as a multiple of the full-open travel — over which the card shrinks
+ * from [DeckDragFirstStageMinScale] down to [DeckDragMinScale]. 0.5 = another half-travel (~20% of
+ * screen height at [DeckTravelFrac] = 0.4) reaches the floor. */
+const val DeckDragOvershootTravelMul = 0.5f
 /** Fraction of screen height the finger pulls up for a full open — sets drag sensitivity. Lower =
  * a shorter pull opens the deck. Kept below half a screen so a comfortable thumb flick (which rarely
  * travels more than ~40% of the height) reaches a full open without the hand leaving the pill. */
@@ -338,4 +344,24 @@ internal fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
 fun deckDragEase(x: Float): Float {
     val inv = 1f - x.coerceIn(0f, 1f)
     return 1f - inv * inv
+}
+
+/**
+ * Drag-phase scale of the front card. Two-stage:
+ *  1. Over the normal pull ([progress] 0→1, i.e. [dragPx] 0→[travelPx]) it eases 1 →
+ *     [DeckDragFirstStageMinScale] — identical to the original single-stage feel.
+ *  2. On an over-pull ([dragPx] beyond [travelPx]) it keeps shrinking [DeckDragFirstStageMinScale] →
+ *     [DeckDragMinScale] over a further [DeckDragOvershootTravelMul]·[travelPx] of travel.
+ * Both stages join continuously (deckDragEase(1)=1 ⇒ stage 1 ends exactly at the first-stage floor).
+ * Called from BOTH the draw layer and LuminaRoot's release capture so the commit spring starts from
+ * the drawn scale — keep them on this one function.
+ */
+fun deckDragScale(progress: Float, dragPx: Float, travelPx: Float): Float {
+    val firstStage =
+        (1f - deckDragEase(progress) * (1f - DeckDragFirstStageMinScale))
+            .coerceIn(DeckDragFirstStageMinScale, 1f)
+    if (travelPx <= 0f || dragPx <= travelPx) return firstStage
+    val overshootT =
+        ((dragPx - travelPx) / (travelPx * DeckDragOvershootTravelMul)).coerceIn(0f, 1f)
+    return firstStage + (DeckDragMinScale - firstStage) * overshootT
 }

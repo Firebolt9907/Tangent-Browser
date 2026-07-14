@@ -677,8 +677,7 @@ private fun GridTabCard(
                     isGesture -> {
                         // Finger-tracked carousel: cards shrink together toward the drag floor and
                         // fan into the deck only on release (commit spring).
-                        val liveScale =
-                            (1f - deckDragEase(p) * (1f - DeckDragMinScale)).coerceIn(DeckDragMinScale, 1f)
+                        val liveScale = deckDragScale(p, dragOffsetPx(), containerH * DeckTravelFrac)
                         val fingerX = containerW / 2f + selectedShiftBase + carouselShift()
                         val fingerY = containerH - dragOffsetPx()
                         scale = liveScale

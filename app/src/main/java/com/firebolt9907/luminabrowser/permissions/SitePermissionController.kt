@@ -2,12 +2,27 @@ package com.firebolt9907.luminabrowser.permissions
 
 import android.content.Context
 import androidx.core.content.edit
-import androidx.core.net.toUri
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import mozilla.components.concept.engine.permission.Permission
 import mozilla.components.concept.engine.permission.PermissionRequest
+
+/**
+ * The persistence key for a remembered site-permission decision: the request's **full origin**
+ * (`scheme://host[:port]`), lower-cased, or null if [uri] has no usable scheme+host. Scoping by
+ * origin — not by bare host — is a security boundary: a camera/microphone/geolocation grant the user
+ * gave to `https://example.com` must NOT be silently reused for `http://example.com`, otherwise an
+ * active-network attacker who downgrades or MITMs the http origin would inherit that grant with no
+ * prompt. Parsed with java.net.URI so it is a real authority parse and JVM-unit-testable.
+ */
+internal fun sitePermissionOriginKey(uri: String?): String? {
+    val parsed = uri?.let { runCatching { java.net.URI(it) }.getOrNull() } ?: return null
+    val scheme = parsed.scheme?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+    val host = parsed.host?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+    val port = parsed.port
+    return if (port >= 0) "$scheme://$host:$port" else "$scheme://$host"
+}
 
 /**
  * Bridges GeckoView permission requests to the Compose UI.
@@ -53,9 +68,9 @@ class SitePermissionController(context: Context? = null) {
 
         // Apply a remembered decision for this host without prompting, if one covers the request.
         // All requested permissions remembered as "allow" → grant; any remembered "deny" → reject.
-        val host = hostOf(request.uri)
-        if (host != null && prefs != null && request.permissions.isNotEmpty()) {
-            val decisions = request.permissions.map { rememberedDecision(host, it) }
+        val origin = sitePermissionOriginKey(request.uri)
+        if (origin != null && prefs != null && request.permissions.isNotEmpty()) {
+            val decisions = request.permissions.map { rememberedDecision(origin, it) }
             when {
                 decisions.any { it == false } -> {
                     request.reject()
@@ -106,25 +121,22 @@ class SitePermissionController(context: Context? = null) {
     private fun Permission.isAutoPlay(): Boolean =
         this is Permission.ContentAutoPlayAudible || this is Permission.ContentAutoPlayInaudible
 
-    private fun hostOf(uri: String?): String? =
-        uri?.let { runCatching { it.toUri().host }.getOrNull() }?.takeIf { it.isNotBlank() }
+    private fun keyFor(origin: String, permission: Permission): String =
+        "$origin|${permission::class.java.simpleName}"
 
-    private fun keyFor(host: String, permission: Permission): String =
-        "$host|${permission::class.java.simpleName}"
-
-    /** Remembered decision for one permission on a host: true=allow, false=deny, null=unknown. */
-    private fun rememberedDecision(host: String, permission: Permission): Boolean? {
+    /** Remembered decision for one permission on an origin: true=allow, false=deny, null=unknown. */
+    private fun rememberedDecision(origin: String, permission: Permission): Boolean? {
         val store = prefs ?: return null
-        val key = keyFor(host, permission)
+        val key = keyFor(origin, permission)
         if (!store.contains(key)) return null
         return store.getBoolean(key, false)
     }
 
     private fun rememberDecision(request: PermissionRequest, granted: Boolean) {
         val store = prefs ?: return
-        val host = hostOf(request.uri) ?: return
+        val origin = sitePermissionOriginKey(request.uri) ?: return
         store.edit {
-            request.permissions.forEach { putBoolean(keyFor(host, it), granted) }
+            request.permissions.forEach { putBoolean(keyFor(origin, it), granted) }
         }
     }
 

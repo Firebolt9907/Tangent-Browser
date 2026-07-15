@@ -32,10 +32,21 @@ internal fun String.toAddonInstallUrl(): String? {
 internal fun String.toAmoLatestXpiUrl(): String =
     "https://addons.mozilla.org/firefox/downloads/latest/$this/latest.xpi"
 
+/**
+ * True only for an add-on download hosted on `addons.mozilla.org`. This gates the **automatic**
+ * page-navigation install interception (`AddonController.installFromPageRequest`, wired to
+ * `onLoadRequest` / `onExternalResource`), so it must stay AMO-only: a page-initiated navigation to
+ * a `.xpi` on any other host (`location.href = "https://evil.com/x.xpi"`) must NOT be able to kick
+ * off a high-privilege WebExtension install. The manual AddonsSheet path (`toAddonInstallUrl`, where
+ * the user explicitly types/pastes a URL) is intentionally more permissive and is not gated by this.
+ */
 internal fun String.isAddonDownloadUrl(): Boolean {
-    val uri = this.toUri()
+    // Parse with java.net.URI (not android.net.Uri) so the host check is a real, JVM-testable
+    // authority parse and a lookalike host like "addons.mozilla.org.evil.com" can't slip through.
+    val uri = runCatching { java.net.URI(trim()) }.getOrNull() ?: return false
+    val host = uri.host?.lowercase() ?: return false
+    if (host != "addons.mozilla.org" && !host.endsWith(".addons.mozilla.org")) return false
     val path = uri.path.orEmpty()
     return path.endsWith(".xpi", ignoreCase = true) ||
-        (uri.host?.endsWith("addons.mozilla.org") == true &&
-            path.contains("/firefox/downloads/latest/"))
+        path.contains("/firefox/downloads/latest/")
 }

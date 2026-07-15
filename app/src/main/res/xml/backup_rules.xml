@@ -1,13 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+   Auto Backup rules for API 30 and below (allowBackup="true" in the manifest).
+   API 31+ uses data_extraction_rules.xml instead.
+
+   Everything is backed up by default; we exclude the credential/session material so a copy of
+   the saved-password store and the live Firefox-Sync session never lands in a Google Drive backup:
+     - lumina_logins.db (+ WAL/SHM) — the encrypted PlacesLoginsStorage password database. Its AES
+       key lives in the AndroidKeyStore (device-bound, never backed up), so a restored copy is
+       undecryptable anyway; excluding it avoids shipping credential ciphertext off-device.
+     - fxaStateAC.xml — android-components' default SharedPrefAccountStorage file holding the FxA
+       account/session state (OAuth + sync keys). Excluding it stops a restored backup from
+       carrying an authenticated sync session.
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="database" path="lumina_logins.db" />
+    <exclude domain="database" path="lumina_logins.db-wal" />
+    <exclude domain="database" path="lumina_logins.db-shm" />
+    <exclude domain="sharedpref" path="fxaStateAC.xml" />
 </full-backup-content>

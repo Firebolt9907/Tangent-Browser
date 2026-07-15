@@ -1,19 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+   Backup / transfer rules for API 31+ (allowBackup="true" in the manifest).
+
+   Everything is backed up/transferred by default; we exclude the credential and Firefox-Sync
+   session material from BOTH cloud backup and direct device-to-device transfer so it is never
+   copied off the device that generated it:
+     - lumina_logins.db (+ WAL/SHM) — the encrypted PlacesLoginsStorage password database. Its AES
+       key lives in the AndroidKeyStore (device-bound, not backed up or transferred), so a copied
+       database is undecryptable anyway; excluding it avoids shipping credential ciphertext.
+     - fxaStateAC.xml — android-components' default SharedPrefAccountStorage file holding the FxA
+       account/session state (OAuth + sync keys); excluding it stops a restored/transferred copy
+       from carrying an authenticated sync session.
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="database" path="lumina_logins.db" />
+        <exclude domain="database" path="lumina_logins.db-wal" />
+        <exclude domain="database" path="lumina_logins.db-shm" />
+        <exclude domain="sharedpref" path="fxaStateAC.xml" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="database" path="lumina_logins.db" />
+        <exclude domain="database" path="lumina_logins.db-wal" />
+        <exclude domain="database" path="lumina_logins.db-shm" />
+        <exclude domain="sharedpref" path="fxaStateAC.xml" />
     </device-transfer>
-    -->
 </data-extraction-rules>

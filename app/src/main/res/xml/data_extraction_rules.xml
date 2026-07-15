@@ -10,6 +10,9 @@
      - fxaStateAC.xml — android-components' default SharedPrefAccountStorage file holding the FxA
        account/session state (OAuth + sync keys); excluding it stops a restored/transferred copy
        from carrying an authenticated sync session.
+     - lumina_logins_key.xml — holds the logins DB key sealed under a device-bound AndroidKeyStore
+       key. The seal is useless off-device (the wrapping key isn't backed up/transferred), but we
+       exclude the credential-key ciphertext anyway, matching the DB exclusion above.
 -->
 <data-extraction-rules>
     <cloud-backup>
@@ -17,11 +20,13 @@
         <exclude domain="database" path="lumina_logins.db-wal" />
         <exclude domain="database" path="lumina_logins.db-shm" />
         <exclude domain="sharedpref" path="fxaStateAC.xml" />
+        <exclude domain="sharedpref" path="lumina_logins_key.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="database" path="lumina_logins.db" />
         <exclude domain="database" path="lumina_logins.db-wal" />
         <exclude domain="database" path="lumina_logins.db-shm" />
         <exclude domain="sharedpref" path="fxaStateAC.xml" />
+        <exclude domain="sharedpref" path="lumina_logins_key.xml" />
     </device-transfer>
 </data-extraction-rules>

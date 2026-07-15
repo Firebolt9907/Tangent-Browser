@@ -209,10 +209,15 @@ class LuminaBrowserComponents(application: Application) {
             engine.settings.lnaFeatureEnabled = prefs.lnaBlockingEnabled
         }
 
-        // Allow File Access from File URLs (File-to-File cross-access)
+        // Allow File Access from File URLs (File-to-File cross-access only). The "Allow file URL
+        // cross-access" toggle grants a local file:// page access to OTHER LOCAL FILES — nothing
+        // more. Universal access (allowUniversalAccessFromFileURLs) is deliberately kept OFF: it
+        // would let a local file:// page read ANY remote origin cross-origin and exfiltrate other
+        // local files to a server — far beyond the toggle's stated scope and a serious risk if the
+        // user ever opens a hostile downloaded HTML file. Do NOT couple it back to the pref.
         runCatching {
             engine.settings.allowFileAccessFromFileURLs = prefs.allowFileAccessFromFileURLs
-            engine.settings.allowUniversalAccessFromFileURLs = prefs.allowFileAccessFromFileURLs
+            engine.settings.allowUniversalAccessFromFileURLs = false
         }
 
         // Custom Blocked Ports Override (Banned Ports)

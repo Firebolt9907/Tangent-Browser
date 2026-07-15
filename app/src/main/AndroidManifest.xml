@@ -99,10 +99,13 @@
 
                 <data android:scheme="http" />
                 <data android:scheme="https" />
-                <data android:scheme="about" />
-                <!-- Intentionally NOT advertising a "javascript" scheme handler: it let any app
-                     hand the browser a javascript: URL to load. Internal navigation stays within
-                     the Gecko session and does not need it. -->
+                <!-- Only ordinary web schemes are advertised on this exported filter, matching the
+                     http/https allowlist enforced in IntentUrls.sanitizeExternalUrl. Intentionally
+                     NOT advertising "javascript" (any app could hand the browser a javascript: URL)
+                     or "about" (about:config etc. are privileged internal pages an external caller
+                     must never route to); both are rejected by the sanitizer anyway, so advertising
+                     a handler we refuse only widens the exported surface. Internal about:/js
+                     navigation stays within the Gecko session and does not need an intent filter. -->
             </intent-filter>
 
             <intent-filter>

@@ -100,7 +100,9 @@
                 <data android:scheme="http" />
                 <data android:scheme="https" />
                 <data android:scheme="about" />
-                <data android:scheme="javascript" />
+                <!-- Intentionally NOT advertising a "javascript" scheme handler: it let any app
+                     hand the browser a javascript: URL to load. Internal navigation stays within
+                     the Gecko session and does not need it. -->
             </intent-filter>
 
             <intent-filter>

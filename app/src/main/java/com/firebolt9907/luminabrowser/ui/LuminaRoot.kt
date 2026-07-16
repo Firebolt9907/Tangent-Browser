@@ -2706,95 +2706,12 @@ fun LuminaRoot(
                         )
                     }
                 }
-                if (leavingSnapshotBitmap != null || incomingSnapshotBitmap != null || commitAnimNewTab) {
-                    val width = contentSize.width.toFloat()
-                    val pageStride = width + tabSwitchGapPx
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background),
-                    )
-                    incomingSnapshotBitmap?.let { bitmap ->
-                        val pad = with(density) { incomingSnapshotTopPadPx.toDp() }
-                        SnapshotImage(
-                            bitmap = bitmap,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = pad)
-                                .graphicsLayer { translationX = incomingSnapshotOffsetX }
-                                .clip(switchPaneShape),
-                        )
-                    }
-                    if (commitAnimNewTab && pageStride > 0f) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                // Read the animating offset inside the graphicsLayer lambda so the
-                                // per-frame alpha update runs in the draw phase only, instead of
-                                // recomposing this block on every frame of the new-tab spring.
-                                .graphicsLayer {
-                                    translationX = incomingSnapshotOffsetX
-                                    alpha = (1f - (incomingSnapshotOffsetX / pageStride))
-                                        .coerceIn(0f, 1f)
-                                }
-                                .clip(switchPaneShape)
-                                .background(MaterialTheme.colorScheme.surface),
-                        )
-                    }
-                    val leavingPad = with(density) { leavingSnapshotTopPadPx.toDp() }
-                    if (leavingSnapshotBitmap == null && (incomingSnapshotBitmap != null || commitAnimNewTab)) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = leavingPad)
-                                .graphicsLayer { translationX = leavingSnapshotOffsetX }
-                                .clip(switchPaneShape)
-                                .background(MaterialTheme.colorScheme.background),
-                        )
-                    }
-                    leavingSnapshotBitmap?.let { bitmap ->
-                        SnapshotImage(
-                            bitmap = bitmap,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = leavingPad)
-                                .graphicsLayer { translationX = leavingSnapshotOffsetX }
-                                .clip(switchPaneShape),
-                        )
-                    }
-                }
-                stickyBackCoverSnapshot?.let { bitmap ->
-                    SnapshotImage(
-                        bitmap = bitmap,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(switchPaneShape),
-                    )
-                }
-                if (stickyBackCoverSnapshot == null && stickyBackCoverUrl != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background),
-                    )
-                }
-                if (stickyIncomingSnapshot == null && stickyIncomingTabId != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background),
-                    )
-                }
-                // Cover the grey GeckoView surface until the first paint fires.
-                // The sticky-cover system handles tab switches; this handles cold-start and
-                // any case where no sticky cover is active but Gecko hasn't composited yet.
-                if (!geckoHasPainted && stickyIncomingTabId == null && stickyBackCoverUrl == null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background),
-                    )
-                }
+                SwitchSnapshotCovers(
+                    snap = snap,
+                    contentSize = contentSize,
+                    tabSwitchGapPx = tabSwitchGapPx,
+                    switchPaneShape = switchPaneShape,
+                )
                 if (gridEngaged) {
                     val tabsList = browserState.tabs
                     val width = contentSize.width.toFloat()

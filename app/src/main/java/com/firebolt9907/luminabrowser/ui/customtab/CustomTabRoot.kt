@@ -326,6 +326,20 @@ fun CustomTabRoot(
                     )
                 }
 
+                // Crashed content-process recovery (Fenix parity), mirroring MainActivity. A killed
+                // renderer leaves the custom-tab surface blank; cover it with a restore affordance.
+                // crashRecovery handles custom tabs too (it scans tabs + customTabs).
+                if (customTab?.engineState?.crashed == true && shouldShowUi) {
+                    com.firebolt9907.luminabrowser.ui.content.CrashRestoreOverlay(
+                        onRestore = {
+                            customTabId?.let { id ->
+                                components.sessionUseCases.crashRecovery.invoke(listOf(id))
+                            }
+                        },
+                        topInset = with(density) { statusBarTopPx.toDp() },
+                    )
+                }
+
                 PromptHandler(engineSession = session)
 
                 if (shouldShowUi) {

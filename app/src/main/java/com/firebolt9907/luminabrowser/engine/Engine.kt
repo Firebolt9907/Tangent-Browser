@@ -45,7 +45,7 @@ class LuminaBrowserComponents(application: Application) {
     val bookmarksStorage = PlacesBookmarksStorage(application)
     val engine = GeckoEngine(
         application,
-        buildDefaultSettings(globalPreferencesStore, historyStorage),
+        buildDefaultSettings(application, globalPreferencesStore, historyStorage),
         buildRuntime(application, globalPreferencesStore),
     )
     val store = BrowserStore(
@@ -73,6 +73,7 @@ class LuminaBrowserComponents(application: Application) {
             store,
             sessionUseCases,
             tabsUseCases,
+            engine,
             tabPersistence,
             scope,
             searchEngine = { globalPreferencesStore.searchEngine },
@@ -85,21 +86,25 @@ class LuminaBrowserComponents(application: Application) {
     val sitePreferencesStore = SitePreferencesStore(application)
     val addonController = AddonController(engine, scope)
     val loginsStorage = PlacesLoginsStorage(application)
+    // A tab pushed here via Firefox "Send tab" raises a notification (ReceivedTabNotifications);
+    // tapping it opens the URL as a normal tab in MainActivity (single normalizeUrl entry point).
     val firefoxSyncController = FirefoxSyncController(
         application,
         store,
         scope,
         loginsStorage,
-        // A tab pushed here via Firefox "Send tab" opens as a new selected tab (goes through the
-        // single normalizeUrl entry point in GeckoTabRepository).
-        onSendTabReceived = { url, title -> tabRepository.addTab(url = url, title = title) },
     )
     val sitePermissionController =
         com.firebolt9907.luminabrowser.permissions.SitePermissionController(application)
     // Bounds live GeckoSessions to the foreground tab + a few recent ones so many open tabs stay
-    // responsive. See BackgroundTabSuspender.
+    // responsive. The keep-alive budget is scaled to the device's RAM class (a 3 GB budget phone
+    // stutters at 2 live web sessions where an 8 GB flagship handles 5), and shrinks further under
+    // system memory pressure via onTrimMemory. See BackgroundTabSuspender.
     val backgroundTabSuspender =
-        com.firebolt9907.luminabrowser.state.BackgroundTabSuspender(store)
+        com.firebolt9907.luminabrowser.state.BackgroundTabSuspender(
+            store,
+            baseKeepAliveBackground = keepAliveBudgetForDevice(application),
+        )
     // Warms connections to frecent origins so revisiting a common site (google.com etc.) lands on an
     // already-open TLS connection with its assets already in Gecko's enlarged HTTP disk cache.
     val speculativePreconnector =
@@ -458,7 +463,36 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
     null
 }
 
+/**
+ * Choose the base live-background-session budget for [BackgroundTabSuspender] from the device's RAM
+ * class. Each extra live GeckoSession is a full content process; the number a device sustains before
+ * tab switching stutters scales with physical RAM. A low-RAM device (per [ActivityManager.isLowRamDevice],
+ * which also implies Android's low-memory profile) is held to a single background session; otherwise
+ * we step the budget by total RAM. Foreground tab is always kept on top of this, so total live
+ * sessions are budget + 1.
+ */
+private fun keepAliveBudgetForDevice(application: Application): Int {
+    val am = application.getSystemService(android.content.Context.ACTIVITY_SERVICE)
+        as android.app.ActivityManager
+    if (am.isLowRamDevice) return 1
+    val totalMb = try {
+        val info = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(info)
+        info.totalMem / (1024L * 1024L)
+    } catch (_: Exception) {
+        return com.firebolt9907.luminabrowser.state.BackgroundTabSuspender.DEFAULT_KEEP_ALIVE_BACKGROUND
+    }
+    return when {
+        totalMb >= 7_000 -> 5   // ~8 GB+ flagship
+        totalMb >= 5_000 -> 4   // ~6 GB
+        totalMb >= 3_500 -> 3   // ~4 GB
+        totalMb >= 2_500 -> 2   // ~3 GB
+        else -> 1               // ~2 GB budget device
+    }
+}
+
 private fun buildDefaultSettings(
+    application: Application,
     prefs: GlobalPreferencesStore,
     historyStorage: PlacesHistoryStorage,
 ) = DefaultSettings(
@@ -469,4 +503,7 @@ private fun buildDefaultSettings(
     httpsOnlyMode = httpsModeOf(prefs),
     globalPrivacyControlEnabled = prefs.globalPrivacyControl,
     loginAutofillEnabled = prefs.loginAutofillEnabled,
+    // Branded, localized error pages (assets/error_page_js.html) for failed navigations, replacing
+    // GeckoView's raw default page. See LuminaRequestInterceptor.
+    requestInterceptor = com.firebolt9907.luminabrowser.engine.LuminaRequestInterceptor(application),
 )

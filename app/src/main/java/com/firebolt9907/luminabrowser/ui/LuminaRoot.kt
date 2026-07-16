@@ -79,6 +79,11 @@ import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -115,6 +120,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
@@ -122,6 +128,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.unit.IntSize
@@ -142,7 +149,9 @@ import com.firebolt9907.luminabrowser.ui.addons.AddonsSheet
 import com.firebolt9907.luminabrowser.ui.chrome.AaSheet
 import com.firebolt9907.luminabrowser.ui.chrome.AddressSheet
 import com.firebolt9907.luminabrowser.ui.chrome.FindInPageBar
+import com.firebolt9907.luminabrowser.ui.chrome.BottomToolbarButton
 import com.firebolt9907.luminabrowser.ui.chrome.SafariBar
+import com.firebolt9907.luminabrowser.ui.chrome.WideBarLayout
 import com.firebolt9907.luminabrowser.ui.settings.SettingsSheet
 import com.firebolt9907.luminabrowser.sync.FirefoxSyncEvent
 import mozilla.components.browser.state.action.ContentAction
@@ -223,6 +232,10 @@ private val EaseOut = CubicBezierEasing(0f, 0f, 0.2f, 1f)
 
 private const val PredictiveBackDurationMs = 220
 private val TabSwitchGap = 64.dp
+// Depth card-stack swipe (wide screens): how far the leaving/incoming page panes shrink at the
+// extremes of a swipe, and the peak darkening applied to whichever pane is receding.
+private const val DeckSwipeMinScale = 0.90f
+private const val DeckSwipeMaxDim = 0.35f
 private val PullRefreshThreshold = 96.dp
 private val PullRefreshMaxDistance = 132.dp
 private const val GridCommitVelocityPxS = 1000f
@@ -306,6 +319,17 @@ fun LuminaRoot(
     // Find-in-page state. The match counts are pushed by the engine session's onFindResult.
     var findInPageActive by remember { mutableStateOf(false) }
     var showBottomToolbar by remember { mutableStateOf(components.globalPreferencesStore.showBottomToolbar) }
+    // How the bottom bar arranges itself on wide screens (tablets / landscape); persisted, picked in
+    // Settings. Ignored on narrow/portrait phones (classic full-width bar).
+    var wideBarLayout by remember {
+        mutableStateOf(WideBarLayout.fromName(components.globalPreferencesStore.wideBarLayoutName))
+    }
+    // Wide = tablets (>=600dp width, even in portrait) OR any phone in landscape. LocalConfiguration
+    // recomposes on rotation; MainActivity handles the config change in-place, so the EngineView is
+    // never recreated. Drives the side-by-side / corner bottom-bar layouts and the depth-stack swipe.
+    val configuration = LocalConfiguration.current
+    val isWideLayout = configuration.screenWidthDp >= 600 ||
+        configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     // Which overview layout the all-tabs view renders; persisted, cycled from the overview toolbar.
     var tabViewMode by remember {
         mutableStateOf(TabViewMode.fromName(components.globalPreferencesStore.tabViewModeName))
@@ -399,6 +423,31 @@ fun LuminaRoot(
             peekReleaseRequested = false
         }
     }
+    // A pending "open the peeked page" request: (url, openInForeground). Set when the user taps Open /
+    // New tab on the glance; the peek's already-loaded EngineSession is adopted into a real tab so the
+    // page is not reloaded. Deferred until the glance card is gone (peekUrl == null) for the same
+    // reason as peekReleaseRequested — the peek view must not be released under a live AndroidView.
+    var pendingPeekAdoption by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    LaunchedEffect(pendingPeekAdoption, peekUrl) {
+        val (url, foreground) = pendingPeekAdoption ?: return@LaunchedEffect
+        if (peekUrl != null) return@LaunchedEffect
+        val adopted = peekEngine.detachSessionForAdoption()
+        peekSession = null
+        peekView = null
+        if (adopted != null) {
+            // Reuse the live, fully-loaded peek session — no network reload. createTab(engineSession=)
+            // links with skipLoading=true and seeds correct initial content state from the url.
+            components.tabRepository.addPreparedTab(
+                url = url,
+                engineSession = adopted,
+                selectTab = foreground,
+            )
+        } else {
+            // No live preview existed (low-memory static glance): fall back to a normal fresh load.
+            viewModel.onOpenNewTab(url = url, title = "", selectTab = foreground)
+        }
+        pendingPeekAdoption = null
+    }
 
     // Tabs that host an add-on action popup ("quick settings"). They must NOT become the active tab
     // for web extensions, or the popup (uBlock, Chrome Mask, …) would query itself (about:blank)
@@ -445,6 +494,8 @@ fun LuminaRoot(
     val pullRefreshThresholdPx = with(density) { PullRefreshThreshold.toPx() }
     val pullRefreshMaxDistancePx = with(density) { PullRefreshMaxDistance.toPx() }
     var bottomChromeInsetPx by remember { mutableIntStateOf(0) }
+    // Transient "Send to device" prompt shown above the pill after copying a link; null = hidden.
+    var sendLinkPrompt by remember { mutableStateOf<SendLinkPrompt?>(null) }
     var contentSize by remember { mutableStateOf(IntSize.Zero) }
     val scope = rememberCoroutineScope()
 
@@ -2401,6 +2452,20 @@ fun LuminaRoot(
                         }
                     }
                 }
+                // Crashed-tab recovery: when Gecko kills the selected tab's content process (OOM /
+                // renderer crash), the engine surface goes blank with no way back. Cover it with a
+                // restore affordance (Fenix parity); the button re-links a fresh session and reloads
+                // the tab's saved URL via SessionUseCases.crashRecovery.
+                if (selectedTab?.engineState?.crashed == true && shouldShowUi) {
+                    com.firebolt9907.luminabrowser.ui.content.CrashRestoreOverlay(
+                        onRestore = {
+                            selectedTabId?.let { id ->
+                                components.sessionUseCases.crashRecovery.invoke(listOf(id))
+                            }
+                        },
+                        topInset = with(density) { topChromeInsetPx.toDp() },
+                    )
+                }
                 // Thin determinate page-load bar under the status bar, driven by Gecko's reported
                 // load progress. Shown only while the selected tab is actively loading and the grid
                 // isn't engaged. Independent of the bottom-bar gesture system.
@@ -2508,6 +2573,14 @@ fun LuminaRoot(
                 if (overlayActive && !gridEngaged) {
                     val width = contentSize.width.toFloat()
                     val pageStride = width + tabSwitchGapPx
+                    // Depth card-stack (wide screens only): as the swipe progresses the leaving page
+                    // recedes + dims while the incoming page rises from a smaller, dimmed card to full
+                    // size. All reads happen inside graphicsLayer/drawWithContent (draw phase) so the
+                    // per-frame `offsetX` never recomposes this subtree — same discipline as the flat
+                    // slide it enhances. `overlayActive` stays true through the commit spring, so the
+                    // release animation inherits the identical curve (no visual pop). Portrait keeps
+                    // the flat slide.
+                    val depthSwipe = isWideLayout
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -2528,7 +2601,21 @@ fun LuminaRoot(
                                 .graphicsLayer {
                                     val side = if (offsetX > 0f) 1f else -1f
                                     translationX = offsetX - side * pageStride
+                                    if (depthSwipe) {
+                                        // Arrival progress: 0 fully off-screen, 1 centred.
+                                        val f = (abs(offsetX) / pageStride).coerceIn(0f, 1f)
+                                        val s = DeckSwipeMinScale + (1f - DeckSwipeMinScale) * f
+                                        scaleX = s
+                                        scaleY = s
+                                    }
                                 }
+                                .then(
+                                    if (depthSwipe) Modifier.drawWithContent {
+                                        drawContent()
+                                        val f = (abs(offsetX) / pageStride).coerceIn(0f, 1f)
+                                        drawRect(Color.Black, alpha = DeckSwipeMaxDim * (1f - f))
+                                    } else Modifier,
+                                )
                                 .clip(switchPaneShape),
                         )
                     }
@@ -2559,7 +2646,23 @@ fun LuminaRoot(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(top = currentPad)
-                                .graphicsLayer { translationX = offsetX }
+                                .graphicsLayer {
+                                    translationX = offsetX
+                                    if (depthSwipe) {
+                                        // Departure progress: 0 centred, 1 fully swiped away.
+                                        val f = (abs(offsetX) / pageStride).coerceIn(0f, 1f)
+                                        val s = 1f - (1f - DeckSwipeMinScale) * f
+                                        scaleX = s
+                                        scaleY = s
+                                    }
+                                }
+                                .then(
+                                    if (depthSwipe) Modifier.drawWithContent {
+                                        drawContent()
+                                        val f = (abs(offsetX) / pageStride).coerceIn(0f, 1f)
+                                        drawRect(Color.Black, alpha = DeckSwipeMaxDim * f)
+                                    } else Modifier,
+                                )
                                 .clip(switchPaneShape),
                         )
                     }
@@ -3239,12 +3342,25 @@ fun LuminaRoot(
                         // clears the screen entirely.
                         { readerBarHidden.value * (bottomChromeInsetPx + with(density) { 48.dp.toPx() }) }
                     }
+                    // Most-recently-used other Sync device — the Send Tab target the copy banner offers.
+                    val recentTargetDevice = remember(firefoxSyncState.targetDevices) {
+                        firefoxSyncState.targetDevices.maxByOrNull { it.lastAccessTime ?: Long.MIN_VALUE }
+                    }
                     // Shared fast-copy action: bottom-toolbar Copy button + address-pill long-press.
                     val copyCurrentUrl = {
                         val currentUrl = selectedContent?.url.orEmpty()
                         if (currentUrl.isNotBlank() && currentUrl != "about:blank") {
                             clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(currentUrl))
-                            android.widget.Toast.makeText(appContext, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
+                            // When signed in with a reachable device, surface a transient "Send to
+                            // <device>" banner above the pill instead of only the toast.
+                            if (recentTargetDevice != null) {
+                                sendLinkPrompt = SendLinkPrompt(
+                                    url = currentUrl,
+                                    title = selectedContent?.title.orEmpty(),
+                                )
+                            } else {
+                                android.widget.Toast.makeText(appContext, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
                     BottomBarLayer(
@@ -3305,6 +3421,51 @@ fun LuminaRoot(
                         },
                         onBookmarksTap = { showBookmarks = true },
                         onTabsTap = { openGrid(initialVelocityProgressPerSec = 0f) },
+                        isWideLayout = isWideLayout,
+                        wideBarLayout = wideBarLayout,
+                    )
+
+                    // Auto-retire the copy → send banner after a short window.
+                    LaunchedEffect(sendLinkPrompt) {
+                        if (sendLinkPrompt != null) {
+                            kotlinx.coroutines.delay(6000L)
+                            sendLinkPrompt = null
+                        }
+                    }
+                    com.firebolt9907.luminabrowser.ui.sync.SendToDeviceBannerHost(
+                        deviceName = if (sendLinkPrompt != null) recentTargetDevice?.name else null,
+                        deviceType = recentTargetDevice?.type,
+                        visible = sendLinkPrompt != null && recentTargetDevice != null,
+                        bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        onSend = {
+                            val prompt = sendLinkPrompt
+                            val device = recentTargetDevice
+                            if (prompt != null && device != null) {
+                                components.firefoxSyncController.sendTab(device.id, prompt.title, prompt.url)
+                            }
+                            sendLinkPrompt = null
+                        },
+                        onDismiss = { sendLinkPrompt = null },
+                    )
+
+                    // In-app banner for a tab another device just pushed here via "Send tab".
+                    // Auto-retire after a short window (the system notification persists longer).
+                    val receivedTab = firefoxSyncState.receivedTab
+                    LaunchedEffect(receivedTab?.receivedAt) {
+                        if (receivedTab != null) {
+                            kotlinx.coroutines.delay(8000L)
+                            components.firefoxSyncController.dismissReceivedTab()
+                        }
+                    }
+                    com.firebolt9907.luminabrowser.ui.sync.ReceivedTabBannerHost(
+                        received = receivedTab,
+                        visible = receivedTab != null,
+                        bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        onOpen = { tab ->
+                            components.firefoxSyncController.dismissReceivedTab()
+                            viewModel.onOpenNewTab(url = tab.url, title = tab.title, selectTab = true)
+                        },
+                        onDismiss = { components.firefoxSyncController.dismissReceivedTab() },
                     )
 
                 } else if (isVideoFullscreen && !isInPipMode) {
@@ -3337,6 +3498,9 @@ fun LuminaRoot(
                 onSettingChanged = {
                     components.applyEngineSettings()
                     showBottomToolbar = components.globalPreferencesStore.showBottomToolbar
+                    wideBarLayout = WideBarLayout.fromName(
+                        components.globalPreferencesStore.wideBarLayoutName,
+                    )
                 },
                 onClearSitePermissions = {
                     components.sitePermissionController.clearRememberedDecisions()
@@ -3469,11 +3633,14 @@ fun LuminaRoot(
                 sourceRect = peekSourceRect,
                 elementBitmap = peekElementBitmap?.asImageBitmap(),
                 onOpenHere = { u ->
-                    components.tabRepository.loadUrl(u)
+                    // Open the peeked page now, reusing its already-loaded session (no reload). It
+                    // becomes a new foreground tab; the current tab is preserved rather than replaced.
+                    pendingPeekAdoption = u to true
                     peekUrl = null
                 },
                 onOpenNewTab = { u ->
-                    viewModel.onOpenNewTab(url = u, title = "", selectTab = true)
+                    // Open in the background, also reusing the loaded session (no reload).
+                    pendingPeekAdoption = u to false
                     peekUrl = null
                 },
                 onCopy = { u ->
@@ -3532,6 +3699,10 @@ private fun BottomBarLayer(
     onShareTap: () -> Unit = {},
     onBookmarksTap: () -> Unit = {},
     onTabsTap: () -> Unit = {},
+    // Wide-screen (tablet / landscape) bottom-bar arrangement. On narrow/portrait phones the classic
+    // full-width centred bar is used regardless of [wideBarLayout].
+    isWideLayout: Boolean = false,
+    wideBarLayout: WideBarLayout = WideBarLayout.SPLIT,
 ) {
     val activeReaderActive = selectedTabId != null && activeReaderTabs.contains(selectedTabId)
     val density = LocalDensity.current
@@ -3540,6 +3711,18 @@ private fun BottomBarLayer(
         derivedStateOf { imeInsets.getBottom(density) > 0 }
     }
     val hideForKeyboard = isKeyboardVisible && activeState.mode != BarMode.Editing
+
+    // Wide layout: pin the pill (and its ghosts/toolbar) into a capped-width band at the bottom-right
+    // instead of stretching full-width. SPLIT moves the action buttons into a cluster left of the
+    // pill (toolbar beside, not above); CORNER keeps the classic stacked pill+toolbar, just corner-
+    // pinned. On phones both flags are inert.
+    val splitMode = isWideLayout && wideBarLayout == WideBarLayout.SPLIT
+    // Band width for the pill + its ghost neighbours in wide modes. Sized so a normal address pill
+    // reads comfortably without swallowing the whole tablet width.
+    val wideBandWidth = 400.dp
+    // The stacked (toolbar-above-pill) treatment is used everywhere EXCEPT SPLIT, where the buttons
+    // move beside the pill as a separate left cluster.
+    val barStackedToolbar = showBottomToolbar && !splitMode
 
     Box(
         modifier = Modifier
@@ -3579,6 +3762,16 @@ private fun BottomBarLayer(
             // against the scrim instead of blending into it.
             val scrimColor = MaterialTheme.colorScheme.surfaceContainerLow
 
+            // In wide modes the pill/ghosts/scrim live in a capped-width band pinned bottom-right; on
+            // phones they fill the screen (classic centred bar). Everything inside keeps using
+            // `.align(BottomCenter)`, which now resolves within the band.
+            val bandModifier = if (isWideLayout) {
+                Modifier.align(Alignment.BottomEnd).width(wideBandWidth)
+            } else {
+                Modifier.fillMaxSize()
+            }
+            Box(modifier = bandModifier) {
+
             if (activeState.mode != BarMode.Editing) {
                 Box(
                     modifier = Modifier
@@ -3609,13 +3802,17 @@ private fun BottomBarLayer(
             val width = contentSize.width.toFloat()
         val pageStride = width + tabSwitchGapPx
         val density = LocalDensity.current
-        val pillStride = width - with(density) { 32.dp.toPx() }
+        // The pills are spaced by the band they occupy: the full screen on phones, the capped band on
+        // wide screens. `pageStride` stays screen-width so the parallax still lands the neighbour pill
+        // at 0 exactly when the (full-width) page panes complete their swipe.
+        val pillBandPx = if (isWideLayout) with(density) { wideBandWidth.toPx() } else width
+        val pillStride = pillBandPx - with(density) { 32.dp.toPx() }
         // Parallax: the full-width page panes slide by the full `pageStride` (width + inter-tab
         // gap), but the pills are spaced only `pillStride` apart. Scaling the pill
         // translations by pillStride/pageStride makes the tab content move slightly more than the pill
         // while dragging — Safari's depth effect — and still lands both at 0 on commit.
         val pillParallax = if (pageStride > 0f) pillStride / pageStride else 1f
-        val pillWidthPx = width - with(density) { 40.dp.toPx() }
+        val pillWidthPx = pillBandPx - with(density) { 40.dp.toPx() }
         val minScale = 0.85f
 
         val getPillScale = { txRaw: Float ->
@@ -3672,7 +3869,7 @@ private fun BottomBarLayer(
                         onSelectPreviousTab()
                     }
                 },
-                showBottomToolbar = showBottomToolbar,
+                showBottomToolbar = barStackedToolbar,
                 canGoForward = previousTab.content.canGoForward,
             )
         }
@@ -3690,7 +3887,7 @@ private fun BottomBarLayer(
                         onSelectNextTab()
                     }
                 },
-                showBottomToolbar = showBottomToolbar,
+                showBottomToolbar = barStackedToolbar,
                 canGoForward = nextTab.content.canGoForward,
             )
         }
@@ -3712,7 +3909,7 @@ private fun BottomBarLayer(
                         onSelectNextTab()
                     }
                 },
-                showBottomToolbar = showBottomToolbar,
+                showBottomToolbar = barStackedToolbar,
             )
         }
         val activeEligible = selectedTabId != null && eligibleReaderTabs.contains(selectedTabId)
@@ -3746,7 +3943,7 @@ private fun BottomBarLayer(
             isReaderEligible = activeEligible,
             isReaderActive = activeActive,
             readerTheme = readerTheme,
-            showBottomToolbar = showBottomToolbar,
+            showBottomToolbar = barStackedToolbar,
             onCopyTap = onCopyTap,
             onForwardTap = onForwardTap,
             onShareTap = onShareTap,
@@ -3755,7 +3952,64 @@ private fun BottomBarLayer(
             // Only the live pill morphs its address text into the editing field; ghosts opt out.
             enableAddressHero = true,
         )
+        } // end band container
+
+        // SPLIT: the action buttons live in a cluster to the LEFT of the pill band (toolbar beside
+        // the pill, not stacked above it). It stays put during the horizontal tab-switch — only the
+        // pill + its ghosts translate — and fades/slides with the same collapse + reader-hide curve
+        // as the bar. Shown only when the user has the bottom toolbar enabled.
+        if (splitMode && showBottomToolbar && activeState.mode != BarMode.Editing &&
+            controlsEnabled && !activeReaderActive
+        ) {
+            val hasPage = activeState.pageUrl.isNotBlank() && activeState.pageUrl != "about:blank"
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = wideBandWidth)
+                    .navigationBarsPadding()
+                    .padding(bottom = 24.dp, end = 4.dp)
+                    .height(56.dp)
+                    .graphicsLayer {
+                        val collapse = barCollapseProgress()
+                        alpha = (1f - collapse).coerceIn(0f, 1f)
+                        translationY = 56.dp.toPx() * collapse + readerHideOffsetPx()
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                BottomToolbarButton(
+                    icon = Icons.Default.ContentCopy,
+                    contentDescription = "Copy link",
+                    onClick = onCopyTap,
+                    enabled = hasPage,
+                )
+                BottomToolbarButton(
+                    icon = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = "Forward",
+                    onClick = onForwardTap,
+                    enabled = canGoForward,
+                )
+                BottomToolbarButton(
+                    icon = Icons.Default.Share,
+                    contentDescription = "Share",
+                    onClick = onShareTap,
+                    enabled = hasPage,
+                )
+                BottomToolbarButton(
+                    icon = Icons.Outlined.BookmarkBorder,
+                    contentDescription = "Bookmarks",
+                    onClick = onBookmarksTap,
+                    enabled = true,
+                )
+                BottomToolbarButton(
+                    icon = Icons.Outlined.Layers,
+                    contentDescription = "Tabs",
+                    onClick = onTabsTap,
+                    enabled = true,
+                )
+            }
         }
+        } // end if (!hideForKeyboard)
     }
 }
 
@@ -3913,6 +4167,9 @@ private class BarCallbacks(
     val onEditingSubmit: () -> Unit,
     val onEditingCancel: () -> Unit,
 )
+
+/** The link a just-copied "Send to device" banner offers to push to another Sync device. */
+private data class SendLinkPrompt(val url: String, val title: String)
 
 private enum class SnapshotRequestPurpose {
     PredictiveBack,

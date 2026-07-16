@@ -97,6 +97,7 @@ dependencies {
     implementation(libs.mozilla.concept.engine)
     implementation(libs.mozilla.concept.sync)
     implementation(libs.mozilla.concept.storage)
+    implementation(libs.mozilla.concept.toolbar)
     implementation(libs.mozilla.concept.push)
     implementation(libs.mozilla.feature.session)
     implementation(libs.mozilla.feature.downloads)

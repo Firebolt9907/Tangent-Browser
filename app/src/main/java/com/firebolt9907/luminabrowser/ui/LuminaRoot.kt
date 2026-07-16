@@ -3521,6 +3521,34 @@ fun LuminaRoot(
                 onClearSitePermissions = {
                     components.sitePermissionController.clearRememberedDecisions()
                 },
+                onClearBrowsingData = { history, cookiesAndSiteData, cache ->
+                    // Cookies/site data and the on-disk cache live in the engine; history lives in
+                    // Places. Saved logins and bookmarks are deliberately left untouched.
+                    val engineTypes = buildList {
+                        if (cookiesAndSiteData) {
+                            add(mozilla.components.concept.engine.Engine.BrowsingData.COOKIES)
+                            add(mozilla.components.concept.engine.Engine.BrowsingData.DOM_STORAGES)
+                            add(mozilla.components.concept.engine.Engine.BrowsingData.AUTH_SESSIONS)
+                        }
+                        if (cache) {
+                            add(mozilla.components.concept.engine.Engine.BrowsingData.NETWORK_CACHE)
+                            add(mozilla.components.concept.engine.Engine.BrowsingData.IMAGE_CACHE)
+                        }
+                    }
+                    if (engineTypes.isNotEmpty()) {
+                        components.engine.clearData(
+                            mozilla.components.concept.engine.Engine.BrowsingData.select(
+                                *engineTypes.toIntArray()
+                            )
+                        )
+                    }
+                    if (history) {
+                        // PlacesHistoryStorage.deleteEverything is suspend and manages its own IO.
+                        scope.launch {
+                            runCatching { components.historyStorage.deleteEverything() }
+                        }
+                    }
+                },
             )
         }
 

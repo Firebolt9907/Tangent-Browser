@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.state.GlobalPreferencesStore
 import com.firebolt9907.luminabrowser.state.PreloadMode
 import com.firebolt9907.luminabrowser.state.SearchEngine
+import com.firebolt9907.luminabrowser.ui.chrome.WideBarLayout
 import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
 import com.firebolt9907.luminabrowser.ui.components.SheetCard
@@ -53,6 +55,8 @@ fun SettingsSheet(
     onDismiss: () -> Unit,
     onSettingChanged: () -> Unit,
     onClearSitePermissions: () -> Unit = {},
+    onClearBrowsingData: (history: Boolean, cookiesAndSiteData: Boolean, cache: Boolean) -> Unit =
+        { _, _, _ -> },
 ) {
     val context = LocalContext.current
     val haptics = rememberLuminaHaptics()
@@ -98,6 +102,9 @@ fun SettingsSheet(
     var queryParameterStrippingAllowList by remember { mutableStateOf(globalPrefsStore.queryParameterStrippingAllowList) }
     var crliteChannel by remember { mutableStateOf(globalPrefsStore.crliteChannel) }
     var showBottomToolbar by remember { mutableStateOf(globalPrefsStore.showBottomToolbar) }
+    var wideBarLayout by remember {
+        mutableStateOf(WideBarLayout.fromName(globalPrefsStore.wideBarLayoutName))
+    }
 
     LuminaModalSheet(onDismissRequest = onDismiss, scrollable = true) {
         SheetHeader("Settings")
@@ -588,6 +595,28 @@ fun SettingsSheet(
                     onSettingChanged()
                 },
             )
+            SheetRowDivider()
+            SettingsPicker(
+                title = "Wide screen layout",
+                subtitle = "How the bottom bar arranges itself in landscape and on tablets",
+                selectedLabel = when (wideBarLayout) {
+                    WideBarLayout.SPLIT -> "Side by side"
+                    WideBarLayout.CORNER -> "Bottom-right corner"
+                },
+                options = listOf(
+                    "Side by side" to {
+                        wideBarLayout = WideBarLayout.SPLIT
+                        globalPrefsStore.wideBarLayoutName = WideBarLayout.SPLIT.name
+                        onSettingChanged()
+                    },
+                    "Bottom-right corner" to {
+                        wideBarLayout = WideBarLayout.CORNER
+                        globalPrefsStore.wideBarLayoutName = WideBarLayout.CORNER.name
+                        onSettingChanged()
+                    },
+                ),
+                haptics = haptics,
+            )
         }
 
         Spacer(Modifier.height(20.dp))
@@ -702,6 +731,47 @@ fun SettingsSheet(
 
         Spacer(Modifier.height(20.dp))
 
+        SheetSectionHeader("Browsing data")
+        Spacer(Modifier.height(8.dp))
+        SheetCard {
+            var showClearDialog by remember { mutableStateOf(false) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        haptics.select()
+                        showClearDialog = true
+                    }
+                    .padding(vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Clear browsing data",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+            if (showClearDialog) {
+                ClearBrowsingDataDialog(
+                    onDismiss = { showClearDialog = false },
+                    onConfirm = { history, cookies, cache ->
+                        showClearDialog = false
+                        haptics.remove()
+                        onClearBrowsingData(history, cookies, cache)
+                        Toast.makeText(context, "Browsing data cleared", Toast.LENGTH_SHORT).show()
+                    },
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
         SheetSectionHeader("Site permissions")
         Spacer(Modifier.height(8.dp))
         SheetCard {
@@ -756,6 +826,57 @@ fun SettingsSheet(
 
 private fun formatCacheSize(mb: Int): String =
     if (mb >= 1024) "${mb / 1024} GB" else "$mb MB"
+
+/**
+ * "Delete browsing data" chooser (Fenix parity): pick which categories to wipe, then confirm.
+ * History and open bookmarks/passwords are separate — this only clears browsing history, cookies/
+ * site data, and the on-disk cache, leaving saved logins and bookmarks intact. Clearing is a
+ * destructive one-shot, so it's gated behind this dialog rather than a bare row tap.
+ */
+@Composable
+private fun ClearBrowsingDataDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (history: Boolean, cookiesAndSiteData: Boolean, cache: Boolean) -> Unit,
+) {
+    var history by remember { mutableStateOf(true) }
+    var cookies by remember { mutableStateOf(true) }
+    var cache by remember { mutableStateOf(true) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Clear browsing data") },
+        text = {
+            Column {
+                ClearDataCheckbox("Browsing history", history) { history = it }
+                ClearDataCheckbox("Cookies and site data", cookies) { cookies = it }
+                ClearDataCheckbox("Cached images and files", cache) { cache = it }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = history || cookies || cache,
+                onClick = { onConfirm(history, cookies, cache) },
+            ) { Text("Clear") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun ClearDataCheckbox(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, role = Role.Checkbox, onValueChange = onCheckedChange)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked, onCheckedChange = null)
+        Spacer(Modifier.size(12.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+    }
+}
 
 /**
  * A settings row whose value is chosen from a dropdown. [options] pairs each visible label with the

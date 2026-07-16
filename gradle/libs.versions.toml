@@ -48,6 +48,7 @@ mozilla-browser-storage-sync = { group = "org.mozilla.components", name = "brows
 mozilla-concept-engine = { group = "org.mozilla.components", name = "concept-engine", version.ref = "mozillaComponents" }
 mozilla-concept-sync = { group = "org.mozilla.components", name = "concept-sync", version.ref = "mozillaComponents" }
 mozilla-concept-storage = { group = "org.mozilla.components", name = "concept-storage", version.ref = "mozillaComponents" }
+mozilla-concept-toolbar = { group = "org.mozilla.components", name = "concept-toolbar", version.ref = "mozillaComponents" }
 mozilla-concept-push = { group = "org.mozilla.components", name = "concept-push", version.ref = "mozillaComponents" }
 mozilla-feature-session = { group = "org.mozilla.components", name = "feature-session", version.ref = "mozillaComponents" }
 mozilla-feature-downloads = { group = "org.mozilla.components", name = "feature-downloads", version.ref = "mozillaComponents" }

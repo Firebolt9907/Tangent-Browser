@@ -22,7 +22,14 @@ class LuminaRequestInterceptor(private val context: Context) : RequestIntercepto
         session: EngineSession,
         errorType: ErrorType,
         uri: String?,
-    ): RequestInterceptor.ErrorResponse {
+    ): RequestInterceptor.ErrorResponse? {
+        // HTTPS-Only failures need the per-site "Continue to HTTP site" escape hatch, which only
+        // Gecko's built-in error page (via document.reloadWithHttpsOnlyException) provides. Returning
+        // null defers to that native page so a user who opted into HTTPS-Only can still reach an
+        // HTTP-only site. Our branded page has no such control, so serving it here would strand them.
+        // (Bad-cert errors intentionally stay on our page — we do NOT offer a silent cert bypass.)
+        if (errorType == ErrorType.ERROR_HTTPS_ONLY) return null
+
         val errorPage = ErrorPages.createUrlEncodedErrorPage(
             context = context,
             errorType = errorType,

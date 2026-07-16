@@ -447,51 +447,54 @@ fun LuminaRoot(
     var fadingCoverJob by snap.fadingCoverJob
     val fadingCoverAlpha = snap.fadingCoverAlpha
     var commitAnimNewTab by remember { mutableStateOf(false) }
-    var gridDragPx by remember { mutableFloatStateOf(0f) }
-    var gridGestureActive by remember { mutableStateOf(false) }
-    var gridOpen by remember { mutableStateOf(false) }
-    var gridAnimationJob by remember { mutableStateOf<Job?>(null) }
-    val gridProgressState = remember { Animatable(0f) }
+    // Grid open/close gesture state (invariants #4, #5, #5a) grouped in GridGestureState; local
+    // `var x by grid.x` delegate aliases keep every existing read/write site unchanged.
+    val grid = rememberGridGestureState()
+    var gridDragPx by grid.gridDragPx
+    var gridGestureActive by grid.gridGestureActive
+    var gridOpen by grid.gridOpen
+    var gridAnimationJob by grid.gridAnimationJob
+    val gridProgressState = grid.gridProgressState
     // Decoupled X-axis progress for grid cell layout. While the gesture is active this stays at 0
     // so the tab being dragged keeps its carousel-relative X (under the finger). On release it
     // springs to its destination (1 for openGrid, 0 for cancel/closeGrid) in lockstep with
     // gridProgressState, so cells slide to their columns only after the user lets go — like the
     // iOS app switcher.
-    val gridXProgressState = remember { Animatable(0f) }
+    val gridXProgressState = grid.gridXProgressState
     // Direct drag progress during gesture — avoids scope.launch per delta frame.
     // gridProgressState is only used for spring animations; this drives the render during drag.
-    var gridDragProgress by remember { mutableFloatStateOf(0f) }
+    var gridDragProgress by grid.gridDragProgress
     // True once the upward drag has crossed the grid-commit threshold (50% of travel) so we fire
     // the confirmation haptic exactly once on crossing, and don't re-fire it on release.
-    var gridThresholdHapticFired by remember { mutableStateOf(false) }
+    var gridThresholdHapticFired by grid.gridThresholdHapticFired
     // Set when a pill gesture is judged (once, at the vertical slop crossing) to be a horizontal
     // tab swipe; vertical motion is ignored for the rest of that gesture. Reset on drag start.
-    var gridAxisLockedHorizontal by remember { mutableStateOf(false) }
+    var gridAxisLockedHorizontal by grid.gridAxisLockedHorizontal
     // Mid-switch handoff: when grid grabbed during a horizontal commit spring, the leaving and
     // incoming tabs' frozen X offsets seed the grid animation. Otherwise these stay null and the
     // grid derives live tabs dynamically from offsetX/selectedTabId/previousTabId/nextTabId.
-    var gridHandoffSelectedTabId by remember { mutableStateOf<String?>(null) }
-    var gridHandoffLeavingTabId by remember { mutableStateOf<String?>(null) }
-    var gridHandoffSelectedOffsetX by remember { mutableFloatStateOf(0f) }
-    var gridHandoffLeavingOffsetX by remember { mutableFloatStateOf(0f) }
-    var gridHandoffSelectedTopPadPx by remember { mutableIntStateOf(0) }
-    var gridHandoffLeavingTopPadPx by remember { mutableIntStateOf(0) }
+    var gridHandoffSelectedTabId by grid.gridHandoffSelectedTabId
+    var gridHandoffLeavingTabId by grid.gridHandoffLeavingTabId
+    var gridHandoffSelectedOffsetX by grid.gridHandoffSelectedOffsetX
+    var gridHandoffLeavingOffsetX by grid.gridHandoffLeavingOffsetX
+    var gridHandoffSelectedTopPadPx by grid.gridHandoffSelectedTopPadPx
+    var gridHandoffLeavingTopPadPx by grid.gridHandoffLeavingTopPadPx
     // Finger-tracking positions captured at drag release; drive the commit animation from
     // drag-end to grid cells. Cleared after the spring finishes or when the grid closes.
-    var gridCommitFromPositions: List<Triple<Float, Float, Float>>? by remember { mutableStateOf(null) }
-    var gridCommitFromProgress by remember { mutableFloatStateOf(0f) }
-    var gridCancelFromProgress by remember { mutableFloatStateOf(0f) }
+    var gridCommitFromPositions: List<Triple<Float, Float, Float>>? by grid.gridCommitFromPositions
+    var gridCommitFromProgress by grid.gridCommitFromProgress
+    var gridCancelFromProgress by grid.gridCancelFromProgress
     // Stays true from closeGrid(animateBack=true) until afterClose() completes, keeping gridEngaged
     // true so the tab cards at progress=0 (fullscreen position) cover the live Gecko view during
     // the gap between animation-end and the deferred tab selection in afterClose.
-    var gridWaitingForAfterClose by remember { mutableStateOf(false) }
+    var gridWaitingForAfterClose by grid.gridWaitingForAfterClose
     // True while the grid is closing after the user tapped the "+" cell. The "+" cell animates
     // to fullscreen instead of the previously-selected tab; real tabs animate off-screen left.
-    var gridNewTabSelected by remember { mutableStateOf(false) }
+    var gridNewTabSelected by grid.gridNewTabSelected
     // Measured height of the grid's floating bottom controls (nav-bar inset + toolbar + the handoff
     // banner when present). Drives how far the last grid row clears the bottom, so the clearance
     // tracks button vs gesture navigation and the banner's visibility instead of a fixed guess.
-    var gridBottomControlsHeightPx by remember { mutableIntStateOf(0) }
+    var gridBottomControlsHeightPx by grid.gridBottomControlsHeightPx
     var currentSnapshotRequestPurpose by snap.currentSnapshotRequestPurpose
     var currentSnapshotRequestId by snap.currentSnapshotRequestId
 

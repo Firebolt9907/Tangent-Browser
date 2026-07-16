@@ -2756,170 +2756,27 @@ fun LuminaRoot(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        val handoff = firefoxSyncState.handoffTab
-                        AnimatedVisibility(
-                            visible = handoff != null,
-                            enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
-                            exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(),
-                        ) {
-                            var lastHandoff by remember { mutableStateOf(handoff) }
-                            if (handoff != null) lastHandoff = handoff
-                            lastHandoff?.let { tab ->
-                                HandoffCard(
-                                    tab = tab,
-                                    onOpen = {
-                                        components.firefoxSyncController.dismissHandoff()
-                                        viewModel.onOpenNewTab(url = tab.url, title = tab.title, selectTab = true)
-                                        closeGrid(animateBack = true)
-                                    },
-                                    onDismiss = {
-                                        components.firefoxSyncController.dismissHandoff()
-                                    }
-                                )
-                            }
-                        }
-
-                        Surface(
-                            shape = RoundedCornerShape(28.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            tonalElevation = 3.dp,
-                            shadowElevation = 6.dp,
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                // This is a composition input, but it has only one transition
-                                // per open/close animation instead of invalidating the toolbar on
-                                // every animation frame.
-                                val toolbarEnabled by remember {
-                                    derivedStateOf { gridProgressState.value > 0.65f }
-                                }
-                                FilledTonalIconButton(
-                                    onClick = { openNewTabFromGrid() },
-                                    enabled = toolbarEnabled,
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = "New Tab")
-                                }
-                                // Synced Tabs is a labeled button, not an anonymous cloud icon —
-                                // it's the primary reason to open this hub on a second device, so it
-                                // reads clearly instead of hiding behind mystery-meat iconography.
-                                // A count badge signals there are actually tabs waiting from other
-                                // devices, so it's discoverable rather than a shot in the dark.
-                                val syncedTabCount = firefoxSyncState.devices.sumOf { it.tabs.size }
-                                BadgedBox(
-                                    badge = {
-                                        if (syncedTabCount > 0) {
-                                            Badge { Text(if (syncedTabCount > 99) "99+" else "$syncedTabCount") }
-                                        }
-                                    },
-                                ) {
-                                    FilledTonalButton(
-                                        onClick = { showSyncedTabs = true },
-                                        enabled = toolbarEnabled,
-                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                                    ) {
-                                        Icon(
-                                            Icons.Default.CloudSync,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Synced")
-                                    }
-                                }
-                                // Secondary library/settings destinations live in an overflow menu
-                                // so the bar stays focused on tab actions (New Tab, layout, sync).
-                                Box {
-                                    var overflowOpen by remember { mutableStateOf(false) }
-                                    val reopenableCount by components.tabRepository.reopenableCount
-                                        .collectAsStateWithLifecycle()
-                                    FilledTonalIconButton(
-                                        onClick = { overflowOpen = true },
-                                        enabled = toolbarEnabled,
-                                    ) {
-                                        Icon(Icons.Default.MoreHoriz, contentDescription = "More")
-                                    }
-                                    DropdownMenu(
-                                        expanded = overflowOpen,
-                                        onDismissRequest = { overflowOpen = false },
-                                    ) {
-                                        // Tab layout is a display preference, not a primary action —
-                                        // it lives here as three explicit, checkmarked choices rather
-                                        // than a mystery-meat cycle button on the bar.
-                                        TabViewMode.values().forEach { mode ->
-                                            val (modeLabel, modeIcon) = when (mode) {
-                                                TabViewMode.DECK -> "Deck" to Icons.Default.ViewCarousel
-                                                TabViewMode.PIXEL -> "Filmstrip" to Icons.Default.ViewColumn
-                                                TabViewMode.GRID -> "Grid" to Icons.Default.GridView
-                                            }
-                                            DropdownMenuItem(
-                                                text = { Text(modeLabel) },
-                                                leadingIcon = { Icon(modeIcon, contentDescription = null) },
-                                                trailingIcon = if (mode == tabViewMode) {
-                                                    { Icon(Icons.Default.Check, contentDescription = "Selected") }
-                                                } else null,
-                                                onClick = {
-                                                    overflowOpen = false
-                                                    if (mode != tabViewMode) {
-                                                        tabViewMode = mode
-                                                        components.globalPreferencesStore.tabViewModeName = mode.name
-                                                        luminaHaptics.select()
-                                                    }
-                                                },
-                                            )
-                                        }
-                                        // Reopen the last closed tab (Safari/Arc). Disabled — not
-                                        // hidden — when the stack is empty, so its slot is stable.
-                                        DropdownMenuItem(
-                                            text = { Text("Reopen Closed Tab") },
-                                            leadingIcon = {
-                                                Icon(
-                                                    Icons.AutoMirrored.Filled.Undo,
-                                                    contentDescription = null,
-                                                )
-                                            },
-                                            enabled = reopenableCount > 0,
-                                            onClick = {
-                                                overflowOpen = false
-                                                components.tabRepository.reopenLastClosedTab()
-                                                luminaHaptics.create()
-                                                closeGrid(animateBack = true)
-                                            },
-                                        )
-                                        HorizontalDivider()
-                                        DropdownMenuItem(
-                                            text = { Text("Bookmarks") },
-                                            leadingIcon = { Icon(Icons.Outlined.BookmarkBorder, contentDescription = null) },
-                                            onClick = { overflowOpen = false; showBookmarks = true },
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("History") },
-                                            leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
-                                            onClick = { overflowOpen = false; showHistory = true },
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("Downloads") },
-                                            leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
-                                            onClick = { overflowOpen = false; showDownloads = true },
-                                        )
-                                        // Divide browsing data (above) from app/account items (below).
-                                        HorizontalDivider()
-                                        DropdownMenuItem(
-                                            text = { Text("Passwords") },
-                                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                                            onClick = { overflowOpen = false; showPasswords = true },
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("Settings") },
-                                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                                            onClick = { overflowOpen = false; showSettings = true },
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        GridOverviewControls(
+                            grid = grid,
+                            syncState = firefoxSyncState,
+                            components = components,
+                            viewModel = viewModel,
+                            haptics = luminaHaptics,
+                            tabViewMode = tabViewMode,
+                            onNewTab = { openNewTabFromGrid() },
+                            onCloseGrid = { closeGrid(animateBack = true) },
+                            onSelectTabViewMode = { mode ->
+                                tabViewMode = mode
+                                components.globalPreferencesStore.tabViewModeName = mode.name
+                                luminaHaptics.select()
+                            },
+                            onShowSyncedTabs = { showSyncedTabs = true },
+                            onShowBookmarks = { showBookmarks = true },
+                            onShowHistory = { showHistory = true },
+                            onShowDownloads = { showDownloads = true },
+                            onShowPasswords = { showPasswords = true },
+                            onShowSettings = { showSettings = true },
+                        )
                     }
                 }
                 // Arc/Zen-style refresh line: a horizontal primary-coloured line that fills from the

@@ -1,0 +1,255 @@
+package com.firebolt9907.luminabrowser.ui
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ViewCarousel
+import androidx.compose.material.icons.filled.ViewColumn
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.firebolt9907.luminabrowser.engine.LuminaBrowserComponents
+import com.firebolt9907.luminabrowser.state.LuminaViewModel
+import com.firebolt9907.luminabrowser.sync.FirefoxSyncUiState
+import com.firebolt9907.luminabrowser.ui.grid.TabViewMode
+import com.firebolt9907.luminabrowser.ui.sync.HandoffCard
+
+/**
+ * The floating bottom controls of the tab overview (deck/pixel/grid): the Firefox-Sync handoff
+ * card and the toolbar row (New Tab, Synced, overflow → layout mode / reopen-closed / bookmarks /
+ * history / downloads / passwords / settings). Extracted verbatim from LuminaRoot's `if
+ * (gridEngaged)` block. Pure chrome — it touches none of the gesture/snapshot invariants; the only
+ * draw-phase read is the fade [alpha], which reads [GridGestureState.gridProgressState] inside a
+ * `graphicsLayer` (invariant #4: read-only, no `snapTo`).
+ *
+ * Rendered by the caller only while `!gridGestureActive` (controls stay hidden during an active
+ * drag), so its height is measured back into [GridGestureState.gridBottomControlsHeightPx] only
+ * when the finger is up.
+ */
+@Composable
+internal fun ColumnScope.GridOverviewControls(
+    grid: GridGestureState,
+    syncState: FirefoxSyncUiState,
+    components: LuminaBrowserComponents,
+    viewModel: LuminaViewModel,
+    haptics: LuminaHaptics,
+    tabViewMode: TabViewMode,
+    onNewTab: () -> Unit,
+    onCloseGrid: () -> Unit,
+    onSelectTabViewMode: (TabViewMode) -> Unit,
+    onShowSyncedTabs: () -> Unit,
+    onShowBookmarks: () -> Unit,
+    onShowHistory: () -> Unit,
+    onShowDownloads: () -> Unit,
+    onShowPasswords: () -> Unit,
+    onShowSettings: () -> Unit,
+) {
+    val handoff = syncState.handoffTab
+    AnimatedVisibility(
+        visible = handoff != null,
+        enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(),
+    ) {
+        var lastHandoff by remember { mutableStateOf(handoff) }
+        if (handoff != null) lastHandoff = handoff
+        lastHandoff?.let { tab ->
+            HandoffCard(
+                tab = tab,
+                onOpen = {
+                    components.firefoxSyncController.dismissHandoff()
+                    viewModel.onOpenNewTab(url = tab.url, title = tab.title, selectTab = true)
+                    onCloseGrid()
+                },
+                onDismiss = {
+                    components.firefoxSyncController.dismissHandoff()
+                }
+            )
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 3.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // This is a composition input, but it has only one transition
+            // per open/close animation instead of invalidating the toolbar on
+            // every animation frame.
+            val toolbarEnabled by remember {
+                derivedStateOf { grid.gridProgressState.value > 0.65f }
+            }
+            FilledTonalIconButton(
+                onClick = { onNewTab() },
+                enabled = toolbarEnabled,
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "New Tab")
+            }
+            // Synced Tabs is a labeled button, not an anonymous cloud icon —
+            // it's the primary reason to open this hub on a second device, so it
+            // reads clearly instead of hiding behind mystery-meat iconography.
+            // A count badge signals there are actually tabs waiting from other
+            // devices, so it's discoverable rather than a shot in the dark.
+            val syncedTabCount = syncState.devices.sumOf { it.tabs.size }
+            BadgedBox(
+                badge = {
+                    if (syncedTabCount > 0) {
+                        Badge { Text(if (syncedTabCount > 99) "99+" else "$syncedTabCount") }
+                    }
+                },
+            ) {
+                FilledTonalButton(
+                    onClick = { onShowSyncedTabs() },
+                    enabled = toolbarEnabled,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    Icon(
+                        Icons.Default.CloudSync,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Synced")
+                }
+            }
+            // Secondary library/settings destinations live in an overflow menu
+            // so the bar stays focused on tab actions (New Tab, layout, sync).
+            Box {
+                var overflowOpen by remember { mutableStateOf(false) }
+                val reopenableCount by components.tabRepository.reopenableCount
+                    .collectAsStateWithLifecycle()
+                FilledTonalIconButton(
+                    onClick = { overflowOpen = true },
+                    enabled = toolbarEnabled,
+                ) {
+                    Icon(Icons.Default.MoreHoriz, contentDescription = "More")
+                }
+                DropdownMenu(
+                    expanded = overflowOpen,
+                    onDismissRequest = { overflowOpen = false },
+                ) {
+                    // Tab layout is a display preference, not a primary action —
+                    // it lives here as three explicit, checkmarked choices rather
+                    // than a mystery-meat cycle button on the bar.
+                    TabViewMode.values().forEach { mode ->
+                        val (modeLabel, modeIcon) = when (mode) {
+                            TabViewMode.DECK -> "Deck" to Icons.Default.ViewCarousel
+                            TabViewMode.PIXEL -> "Filmstrip" to Icons.Default.ViewColumn
+                            TabViewMode.GRID -> "Grid" to Icons.Default.GridView
+                        }
+                        DropdownMenuItem(
+                            text = { Text(modeLabel) },
+                            leadingIcon = { Icon(modeIcon, contentDescription = null) },
+                            trailingIcon = if (mode == tabViewMode) {
+                                { Icon(Icons.Default.Check, contentDescription = "Selected") }
+                            } else null,
+                            onClick = {
+                                overflowOpen = false
+                                if (mode != tabViewMode) {
+                                    onSelectTabViewMode(mode)
+                                }
+                            },
+                        )
+                    }
+                    // Reopen the last closed tab (Safari/Arc). Disabled — not
+                    // hidden — when the stack is empty, so its slot is stable.
+                    DropdownMenuItem(
+                        text = { Text("Reopen Closed Tab") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Undo,
+                                contentDescription = null,
+                            )
+                        },
+                        enabled = reopenableCount > 0,
+                        onClick = {
+                            overflowOpen = false
+                            components.tabRepository.reopenLastClosedTab()
+                            haptics.create()
+                            onCloseGrid()
+                        },
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Bookmarks") },
+                        leadingIcon = { Icon(Icons.Outlined.BookmarkBorder, contentDescription = null) },
+                        onClick = { overflowOpen = false; onShowBookmarks() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("History") },
+                        leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
+                        onClick = { overflowOpen = false; onShowHistory() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Downloads") },
+                        leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
+                        onClick = { overflowOpen = false; onShowDownloads() },
+                    )
+                    // Divide browsing data (above) from app/account items (below).
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Passwords") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                        onClick = { overflowOpen = false; onShowPasswords() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Settings") },
+                        leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                        onClick = { overflowOpen = false; onShowSettings() },
+                    )
+                }
+            }
+        }
+    }
+}

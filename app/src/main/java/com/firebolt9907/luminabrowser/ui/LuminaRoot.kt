@@ -2541,66 +2541,13 @@ fun LuminaRoot(
                     )
                 }
                 if (predictiveBackActive) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background),
+                    PredictiveBackOverlay(
+                        predictiveBackOffsetPxProvider = { predictiveBackOffsetPx },
+                        contentWidth = contentWidth,
+                        easing = predictiveBackEasing,
+                        primarySnapshot = activePredictiveBackSnapshot ?: predictiveBackSnapshot,
+                        gestureCurrentSnapshot = gestureCurrentSnapshot,
                     )
-                    (activePredictiveBackSnapshot ?: predictiveBackSnapshot)?.let { bitmap ->
-                        SnapshotImage(
-                            bitmap = bitmap,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    val reveal = predictiveBackEasing.transform(
-                                        if (contentWidth > 0f) {
-                                            (predictiveBackOffsetPx / contentWidth).coerceIn(0f, 1f)
-                                        } else 0f
-                                    )
-                                    translationX =
-                                        if (contentWidth > 0f) -contentWidth * 0.14f * (1f - reveal) else 0f
-                                },
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .drawBehind {
-                                    val reveal = predictiveBackEasing.transform(
-                                        if (contentWidth > 0f) {
-                                            (predictiveBackOffsetPx / contentWidth).coerceIn(0f, 1f)
-                                        } else 0f
-                                    )
-                                    drawRect(Color.Black, alpha = 0.16f * (1f - reveal))
-                                },
-                        )
-                    }
-                    gestureCurrentSnapshot?.let { bitmap ->
-                        SnapshotImage(
-                            bitmap = bitmap,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    translationX = predictiveBackOffsetPx
-                                    shadowElevation = 18f * (
-                                        if (contentWidth > 0f) {
-                                            (predictiveBackOffsetPx / contentWidth).coerceIn(0f, 1f)
-                                        } else 0f
-                                    )
-                                    clip = true
-                                },
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer { translationX = predictiveBackOffsetPx - 10f }
-                                .drawBehind {
-                                    val p = if (contentWidth > 0f) {
-                                        (predictiveBackOffsetPx / contentWidth).coerceIn(0f, 1f)
-                                    } else 0f
-                                    drawRect(Color.Black, alpha = 0.10f * p)
-                                },
-                        )
-                    }
                 }
                 stickyIncomingSnapshot?.let { bitmap ->
                     val pad = with(density) { stickyIncomingTopPadPx.toDp() }

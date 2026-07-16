@@ -181,6 +181,13 @@ fun PromptHandler(engineSession: EngineSession?) {
                 onDismiss = { request.onDismiss(); promptRequest = null },
             )
         }
+        is PromptRequest.TimeSelection -> {
+            // Native date/time picker for <input type=date|time|datetime-local|month>. Fired once
+            // per request; the helper always calls back to clear the pending prompt.
+            LaunchedEffect(request) {
+                showTimeSelectionPrompt(context, request) { promptRequest = null }
+            }
+        }
         else -> {
             android.util.Log.w("PromptHandler", "Unhandled prompt: ${request?.javaClass?.simpleName}")
         }

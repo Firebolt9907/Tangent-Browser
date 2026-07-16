@@ -4,6 +4,9 @@ import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Box
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.runtime.DisposableEffect
+import androidx.core.net.toUri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -108,6 +111,10 @@ fun SettingsSheet(
 
     LuminaModalSheet(onDismissRequest = onDismiss, scrollable = true) {
         SheetHeader("Settings")
+
+        Spacer(Modifier.height(20.dp))
+
+        DefaultBrowserCard()
 
         Spacer(Modifier.height(20.dp))
 
@@ -826,6 +833,103 @@ fun SettingsSheet(
 
 private fun formatCacheSize(mb: Int): String =
     if (mb >= 1024) "${mb / 1024} GB" else "$mb MB"
+
+/**
+ * "Set as default browser" prompt (Fenix parity). On Android 10+ this launches the system role
+ * request dialog ([android.app.role.RoleManager.ROLE_BROWSER]); on older versions it opens the
+ * system default-apps settings. Reflects the current default state and hides itself once Lumina is
+ * already the default. State is re-checked whenever the sheet resumes (the user may have changed it
+ * in system settings).
+ */
+@Composable
+private fun DefaultBrowserCard() {
+    val context = LocalContext.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var isDefault by remember { mutableStateOf(isDefaultBrowser(context)) }
+
+    val launcher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    ) { isDefault = isDefaultBrowser(context) }
+
+    // Re-check on resume: the user may set/unset the default from system settings and return.
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                isDefault = isDefaultBrowser(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    if (isDefault) return
+
+    SheetCard {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { launchDefaultBrowserRequest(context, launcher) }
+                .padding(vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Set Lumina as your default browser",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = "Open links from other apps in Lumina",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+    }
+}
+
+/** Whether Lumina currently holds the browser role / is the default handler for web links. */
+private fun isDefaultBrowser(context: android.content.Context): Boolean {
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        val rm = context.getSystemService(android.app.role.RoleManager::class.java)
+        if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_BROWSER)) {
+            return rm.isRoleHeld(android.app.role.RoleManager.ROLE_BROWSER)
+        }
+    }
+    // Fallback: resolve a generic web intent and compare the winning package to ours.
+    val probe = android.content.Intent(
+        android.content.Intent.ACTION_VIEW,
+        "http://example.com".toUri(),
+    ).addCategory(android.content.Intent.CATEGORY_BROWSABLE)
+    val resolved = context.packageManager.resolveActivity(probe, 0)?.activityInfo?.packageName
+    return resolved == context.packageName
+}
+
+private fun launchDefaultBrowserRequest(
+    context: android.content.Context,
+    launcher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>,
+) {
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        val rm = context.getSystemService(android.app.role.RoleManager::class.java)
+        if (rm != null && rm.isRoleAvailable(android.app.role.RoleManager.ROLE_BROWSER)) {
+            runCatching {
+                launcher.launch(rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_BROWSER))
+            }.onSuccess { return }
+        }
+    }
+    // Older devices (or if the role intent failed): open the system default-apps settings.
+    runCatching {
+        launcher.launch(android.content.Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+    }.onFailure {
+        Toast.makeText(context, "Open Settings to change your default browser", Toast.LENGTH_SHORT).show()
+    }
+}
 
 /**
  * "Delete browsing data" chooser (Fenix parity): pick which categories to wipe, then confirm.

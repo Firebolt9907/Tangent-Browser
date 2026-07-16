@@ -3,6 +3,7 @@ package com.firebolt9907.luminabrowser.ui.content
 import androidx.activity.BackEventCompat
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -49,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -73,6 +75,15 @@ import mozilla.components.concept.engine.EngineView
 import mozilla.components.concept.engine.HitResult
 
 /**
+ * M3 "emphasized decelerate" curve for the reverse morph. The card leaves quickly then eases to a
+ * gentle stop as it shrinks — softer and more premium than the linear/accelerate feel, which read as
+ * the card being "sucked into a point." Paired with the tail-weighted exit fade below (the card
+ * dissolves as it collapses, so it's mostly gone before it reaches chip size), never a springy tail
+ * that keeps the element bitmap lingering on screen.
+ */
+private val PeekExitEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
+
+/**
  * The navigable link URL carried by a long-press [HitResult], or null when the hit isn't a web link.
  * A plain `<a href>` reports [HitResult.UNKNOWN] (link in `src`); a linked image reports
  * [HitResult.IMAGE_SRC] (link in `uri`). Only http(s) targets are peekable.
@@ -83,6 +94,19 @@ fun linkUrlFromHitResult(hit: HitResult?): String? {
         is HitResult.IMAGE_SRC -> hit.uri
         else -> null
     } ?: return null
+    return raw.takeIf {
+        it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true)
+    }
+}
+
+/**
+ * The image URL carried by a long-press [HitResult] on a *bare* image (an `<img>` that is not itself
+ * wrapped in a link), or null otherwise. A bare image reports [HitResult.IMAGE] with the source in
+ * `src`; a linked image reports [HitResult.IMAGE_SRC], which is handled by [linkUrlFromHitResult] as
+ * a peekable link instead so the two paths never both fire. Only http(s) sources are actionable.
+ */
+fun imageSrcFromHitResult(hit: HitResult?): String? {
+    val raw = (hit as? HitResult.IMAGE)?.src ?: return null
     return raw.takeIf {
         it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true)
     }
@@ -184,9 +208,11 @@ fun LinkPeekCard(
         morph.animateTo(
             targetValue = 1f,
             animationSpec = spring(
-                dampingRatio = 0.85f,
+                // A gentle, barely-there overshoot — the card gives a subtle nudge past the full
+                // size and settles, without the exaggerated bounce that read as too springy.
+                dampingRatio = 0.78f,
                 // ~1.5x faster open than StiffnessLow (200): spring speed scales with √stiffness,
-                // so 450 ≈ 1.5x. Kept slightly under-damped for a bit of snap.
+                // so 450 ≈ 1.5x.
                 stiffness = 450f,
             ),
         )
@@ -200,13 +226,10 @@ fun LinkPeekCard(
         if (!dismissing) {
             dismissing = true
             scope.launch {
-                morph.animateTo(
-                    targetValue = 0f,
-                    animationSpec = spring(
-                        dampingRatio = 0.9f,
-                        stiffness = Spring.StiffnessMedium,
-                    ),
-                )
+                // Crisp, bounded exit — a spring's asymptotic tail kept the element bitmap on screen
+                // long after it looked done; a short eased tween discards it fast and fires onDismiss
+                // on time, while the accelerate curve gives the shrink-back some momentum.
+                morph.animateTo(targetValue = 0f, animationSpec = tween(260, easing = PeekExitEasing))
                 onDismiss()
             }
         }
@@ -230,13 +253,11 @@ fun LinkPeekCard(
             if (!dismissing) {
                 dismissing = true
                 scope.launch {
-                    back.animateTo(0f, spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMedium))
+                    back.animateTo(0f, tween(260, easing = PeekExitEasing))
                 }
                 scope.launch {
-                    morph.animateTo(
-                        targetValue = 0f,
-                        animationSpec = spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMedium),
-                    )
+                    // Short eased tween, not a spring — the spring tail is what made the bitmap linger.
+                    morph.animateTo(targetValue = 0f, animationSpec = tween(260, easing = PeekExitEasing))
                     onDismiss()
                 }
             }
@@ -270,11 +291,14 @@ fun LinkPeekCard(
         val targetLeft = (fullW - targetW) / 2f
         val targetTop = (fullH - targetH) / 2f
 
-        // Source: the pressed link's measured rect when the probe resolved it, else a small
-        // link-sized chip centred on the finger. Either way clamped on-screen.
+        // Source: the pressed link's measured rect when the probe resolved it, else a tiny
+        // fingertip-sized chip centred on the finger. The fallback is deliberately small (smaller
+        // than the fingertip) so that before the captured element pixels arrive, the bare morph
+        // container starts hidden under the finger rather than flashing a visible coloured box.
+        // Either way clamped on-screen.
         val probe = morphSource
-        val rawSrcW = probe?.width ?: minOf(targetW, with(density) { 220.dp.toPx() })
-        val rawSrcH = probe?.height ?: with(density) { 52.dp.toPx() }
+        val rawSrcW = probe?.width ?: with(density) { 36.dp.toPx() }
+        val rawSrcH = probe?.height ?: with(density) { 36.dp.toPx() }
         val srcW = rawSrcW.coerceIn(with(density) { 16.dp.toPx() }, fullW)
         val srcH = rawSrcH.coerceIn(with(density) { 16.dp.toPx() }, fullH)
         val srcCenterX = probe?.let { it.left + it.width / 2f } ?: origin.x
@@ -293,11 +317,35 @@ fun LinkPeekCard(
         // text — this is what makes it read as a morph, not a zoom.
         val contentAlpha = ((p - 0.35f) / 0.65f).coerceIn(0f, 1f)
 
+        // Until we have something real to draw — the captured element pixels, or the content
+        // cross-fading in — keep the container fully transparent (no surface fill, no tonal/shadow
+        // elevation). Otherwise the bare morph chip renders as a solid surface-coloured, primary-
+        // tinted box with a drop shadow for the split second before the capture lands, which reads
+        // as a flash at the finger. The captured [elementBitmap] paints opaque over the surface
+        // anyway, so hiding the fill while it's absent costs nothing.
+        val hasVisual = elementBitmap != null || contentAlpha > 0f
+
+        // Arc-style exit: the reverse morph collapses ONLY the captured pixels of the original page
+        // element — the live preview EngineView takes no part in it. The instant dismissal begins we
+        // swap the live web view out for the static [elementBitmap] and stop composing the peek
+        // EngineView entirely, so its z-ordered GeckoView surface detaches immediately instead of
+        // shrinking on screen (a shrinking GeckoView surface was what left a stale frame stuck over
+        // the page until a redraw). Only applies when we actually captured the element; the low-
+        // memory static glance (no bitmap, no live view) just fades out as before.
+        val exitToBitmap = dismissing && elementBitmap != null
+
         // Predictive-back preview: scale the whole card down and push it away from the swiped edge.
         // Pure graphicsLayer, so the peek EngineView is never resized (that was the source of lag).
         val backProgress = back.value
         val backScale = lerp(1f, 0.78f, backProgress)
         val backShiftPx = with(density) { 64.dp.toPx() } * backProgress * backEdgeSign
+
+        // Exit dissolve: while the reverse morph is shrinking the card back into the link, fade the
+        // whole card out — but only over the last ~40% of the collapse (full opacity until then).
+        // This way the card is nearly gone by the time it reaches chip size, so the eye never catches
+        // the tiny endpoint popping out of existence. Gated on `dismissing` so the enter morph, which
+        // shares `morph`, stays fully opaque as it grows.
+        val exitAlpha = if (dismissing) (p / 0.4f).coerceIn(0f, 1f) else 1f
 
         Box(
             modifier = Modifier
@@ -307,6 +355,7 @@ fun LinkPeekCard(
                     scaleX = backScale
                     scaleY = backScale
                     translationX = backShiftPx
+                    alpha = exitAlpha
                 },
         ) {
         Surface(
@@ -328,9 +377,9 @@ fun LinkPeekCard(
                     onClick = {},
                 ),
             shape = RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 3.dp,
-            shadowElevation = 16.dp,
+            color = if (hasVisual) MaterialTheme.colorScheme.surface else Color.Transparent,
+            tonalElevation = if (hasVisual) 3.dp else 0.dp,
+            shadowElevation = if (hasVisual) 16.dp else 0.dp,
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 // The captured element pixels sit behind the card content and cross-fade out as the
@@ -342,12 +391,16 @@ fun LinkPeekCard(
                         contentScale = ContentScale.FillBounds,
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer { alpha = (1f - contentAlpha).coerceIn(0f, 1f) },
+                            // During the exit the captured pixels are the whole show, so hold them
+                            // fully opaque as the card collapses; otherwise cross-fade with content.
+                            .graphicsLayer {
+                                alpha = if (exitToBitmap) 1f else (1f - contentAlpha).coerceIn(0f, 1f)
+                            },
                     )
                 }
             Column(modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = contentAlpha }
+                .graphicsLayer { alpha = if (exitToBitmap) 0f else contentAlpha }
             ) {
                 // ---- Header: favicon + title/host + close ----
                 Row(
@@ -387,14 +440,23 @@ fun LinkPeekCard(
                     contentAlignment = Alignment.Center,
                 ) {
                     if (hasLive && peekView != null) {
-                        // Live preview: the reused peek EngineView, faded in once the page loads.
-                        AndroidView(
-                            factory = { peekView.asView() },
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer { alpha = bodyAlpha },
-                        )
-                        if (!loaded) {
+                        // Live preview: the reused peek EngineView, mounted ONLY once the new page has
+                        // finished loading. It is a shared view reused across peeks, so before the new
+                        // URL paints its z-ordered GeckoView surface still holds the *previous* peek's
+                        // last frame — and a SurfaceView composites that regardless of Compose alpha,
+                        // which flashed the old preview in for a beat as the card grew. Deferring the
+                        // mount until [loaded] means the surface only ever attaches showing the right
+                        // page. Also dropped the instant the exit begins (see [exitToBitmap]) so its
+                        // surface detaches at once rather than shrinking on screen.
+                        if (loaded && !exitToBitmap) {
+                            AndroidView(
+                                factory = { peekView.asView() },
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer { alpha = bodyAlpha },
+                            )
+                        }
+                        if (!loaded && !exitToBitmap) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(28.dp),
                                 strokeWidth = 3.dp,

@@ -157,6 +157,7 @@ import com.firebolt9907.luminabrowser.sync.FirefoxSyncEvent
 import mozilla.components.browser.state.action.ContentAction
 import mozilla.components.browser.state.action.EngineAction
 import mozilla.components.browser.state.state.TabSessionState
+import mozilla.components.browser.state.state.content.DownloadState
 import mozilla.components.browser.state.state.content.HistoryState
 import com.firebolt9907.luminabrowser.ui.content.ContentHost
 import com.firebolt9907.luminabrowser.ui.content.LinkPeekCard
@@ -164,6 +165,8 @@ import com.firebolt9907.luminabrowser.ui.content.LinkRectProbe
 import com.firebolt9907.luminabrowser.ui.content.PeekEngineHolder
 import com.firebolt9907.luminabrowser.ui.content.loadJavascriptUrl
 import com.firebolt9907.luminabrowser.ui.content.linkUrlFromHitResult
+import com.firebolt9907.luminabrowser.ui.content.imageSrcFromHitResult
+import com.firebolt9907.luminabrowser.ui.content.ImageContextSheet
 import com.firebolt9907.luminabrowser.ui.grid.DeckTravelFrac
 import com.firebolt9907.luminabrowser.ui.grid.deckDragScale
 import com.firebolt9907.luminabrowser.ui.grid.GridTab
@@ -359,6 +362,9 @@ fun LuminaRoot(
     // capture the target URL, consume the hitResult (so the same link can be pressed again), and
     // show a LinkPeekCard. Cleared on dismiss / action.
     var peekUrl by remember { mutableStateOf<String?>(null) }
+    // Long-press on a bare (non-linked) image opens a context sheet (save / copy / share / open in
+    // new tab) instead of the link glance — Fenix's standard image context actions.
+    var imageMenuUrl by remember { mutableStateOf<String?>(null) }
     // The finger-down position of the most recent press anywhere in the content region, used as the
     // hero-transition origin so the glance card grows out of the link the user held.
     var lastPressPos by remember { mutableStateOf(Offset.Zero) }
@@ -625,6 +631,16 @@ fun LuminaRoot(
             selectedEngineSession?.loadJavascriptUrl(
                 LinkRectProbe.buildScript(link, origin.x, origin.y)
             )
+        } else {
+            // Not a navigable link — if the press landed on a bare image, surface the image context
+            // sheet (save / copy / share / open). Consume the hit result so the same image can be
+            // long-pressed again after the sheet is dismissed.
+            val image = imageSrcFromHitResult(selectedContent?.hitResult)
+            if (image != null) {
+                imageMenuUrl = image
+                luminaHaptics.longPress()
+                selectedTabId?.let { components.store.dispatch(ContentAction.ConsumeHitResultAction(it)) }
+            }
         }
     }
     // Crop the full capture to the element rect once both arrive, then immediately release the full
@@ -3653,6 +3669,31 @@ fun LuminaRoot(
                     peekUrl = null
                 },
                 onDismiss = { peekUrl = null },
+            )
+        }
+        imageMenuUrl?.let { imageUrl ->
+            ImageContextSheet(
+                imageUrl = imageUrl,
+                onOpenNewTab = { u -> viewModel.onOpenNewTab(url = u, title = "", selectTab = true) },
+                onSave = { u ->
+                    // Route the image through DownloadsFeature (started in LuminaBrowserActivity):
+                    // it observes ContentState.download and hands the URL to the system
+                    // DownloadManager (notification + storage handled by the OS).
+                    actualSelectedTabId?.let { id ->
+                        components.store.dispatch(
+                            ContentAction.UpdateDownloadAction(
+                                id,
+                                DownloadState(url = u, private = selectedContent?.private == true),
+                            )
+                        )
+                    }
+                },
+                onCopy = { u ->
+                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(u))
+                    android.widget.Toast.makeText(appContext, "Image address copied", android.widget.Toast.LENGTH_SHORT).show()
+                },
+                onShare = { u -> shareUrl(appContext, u) },
+                onDismiss = { imageMenuUrl = null },
             )
         }
     }

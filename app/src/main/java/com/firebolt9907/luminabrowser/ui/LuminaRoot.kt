@@ -409,8 +409,12 @@ fun LuminaRoot(
     // longer recomposes every frame of the gesture.
     val predictiveBackActive by remember { derivedStateOf { predictiveBackOffsetPx > 0f } }
     var dragCommitted by remember { mutableStateOf(false) }
-    var stickyIncomingSnapshot by remember { mutableStateOf<Bitmap?>(null) }
-    var stickyIncomingTabId by remember { mutableStateOf<String?>(null) }
+    // Snapshot/cover state machine (invariant #7) is grouped in SnapshotCoverState so it can travel
+    // to extracted gesture render blocks as one object. Local `var x by snap.x` delegate aliases
+    // (the same idiom as offsetXState above) keep every existing read/write site unchanged.
+    val snap = rememberSnapshotCoverState()
+    var stickyIncomingSnapshot by snap.stickyIncomingSnapshot
+    var stickyIncomingTabId by snap.stickyIncomingTabId
     // False until Gecko fires its first paint callback for the current tab. Covers the grey
     // surface that GeckoView shows before any content has been composited.
     var geckoHasPainted by remember { mutableStateOf(false) }
@@ -419,29 +423,29 @@ fun LuminaRoot(
     var pendingGeckoSelectCreatedTab by remember { mutableStateOf(false) }
     var pendingGeckoEditBlankTab by remember { mutableStateOf(false) }
     var pendingGeckoAfterSelect by remember { mutableStateOf<(() -> Unit)?>(null) }
-    var stickyBackCoverSnapshot by remember { mutableStateOf<Bitmap?>(null) }
-    var stickyBackCoverUrl by remember { mutableStateOf<String?>(null) }
-    var gestureCurrentSnapshot by remember { mutableStateOf<Bitmap?>(null) }
-    var activePredictiveBackSnapshot by remember { mutableStateOf<Bitmap?>(null) }
-    var tabSwitchCurrentSnapshot by remember { mutableStateOf<Bitmap?>(null) }
-    var leavingSnapshotBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var leavingSnapshotOffsetX by remember { mutableFloatStateOf(0f) }
-    var leavingSnapshotTopPadPx by remember { mutableIntStateOf(0) }
-    var leavingSnapshotTabId by remember { mutableStateOf<String?>(null) }
-    var leavingSnapshotJob by remember { mutableStateOf<Job?>(null) }
-    var incomingSnapshotBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var incomingSnapshotOffsetX by remember { mutableFloatStateOf(0f) }
-    var incomingSnapshotTopPadPx by remember { mutableIntStateOf(0) }
-    var incomingSnapshotTabId by remember { mutableStateOf<String?>(null) }
-    var stickyIncomingTopPadPx by remember { mutableIntStateOf(0) }
+    var stickyBackCoverSnapshot by snap.stickyBackCoverSnapshot
+    var stickyBackCoverUrl by snap.stickyBackCoverUrl
+    var gestureCurrentSnapshot by snap.gestureCurrentSnapshot
+    var activePredictiveBackSnapshot by snap.activePredictiveBackSnapshot
+    var tabSwitchCurrentSnapshot by snap.tabSwitchCurrentSnapshot
+    var leavingSnapshotBitmap by snap.leavingSnapshotBitmap
+    var leavingSnapshotOffsetX by snap.leavingSnapshotOffsetX
+    var leavingSnapshotTopPadPx by snap.leavingSnapshotTopPadPx
+    var leavingSnapshotTabId by snap.leavingSnapshotTabId
+    var leavingSnapshotJob by snap.leavingSnapshotJob
+    var incomingSnapshotBitmap by snap.incomingSnapshotBitmap
+    var incomingSnapshotOffsetX by snap.incomingSnapshotOffsetX
+    var incomingSnapshotTopPadPx by snap.incomingSnapshotTopPadPx
+    var incomingSnapshotTabId by snap.incomingSnapshotTabId
+    var stickyIncomingTopPadPx by snap.stickyIncomingTopPadPx
     // Fade-out phase of the sticky incoming cover: when the cover is dismissed because the tab
     // underneath has appeared (paint callback / fallback timeout), it moves into these slots and
     // fades over the live page instead of popping off. Gesture takeovers bypass the fade.
-    var fadingCoverBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var fadingCoverTopPadPx by remember { mutableIntStateOf(0) }
-    var fadingCoverActive by remember { mutableStateOf(false) }
-    var fadingCoverJob by remember { mutableStateOf<Job?>(null) }
-    val fadingCoverAlpha = remember { Animatable(0f) }
+    var fadingCoverBitmap by snap.fadingCoverBitmap
+    var fadingCoverTopPadPx by snap.fadingCoverTopPadPx
+    var fadingCoverActive by snap.fadingCoverActive
+    var fadingCoverJob by snap.fadingCoverJob
+    val fadingCoverAlpha = snap.fadingCoverAlpha
     var commitAnimNewTab by remember { mutableStateOf(false) }
     var gridDragPx by remember { mutableFloatStateOf(0f) }
     var gridGestureActive by remember { mutableStateOf(false) }
@@ -488,8 +492,8 @@ fun LuminaRoot(
     // banner when present). Drives how far the last grid row clears the bottom, so the clearance
     // tracks button vs gesture navigation and the banner's visibility instead of a fixed guess.
     var gridBottomControlsHeightPx by remember { mutableIntStateOf(0) }
-    var currentSnapshotRequestPurpose by remember { mutableStateOf<SnapshotRequestPurpose?>(null) }
-    var currentSnapshotRequestId by remember { mutableIntStateOf(0) }
+    var currentSnapshotRequestPurpose by snap.currentSnapshotRequestPurpose
+    var currentSnapshotRequestId by snap.currentSnapshotRequestId
 
     // Link "glance" long-press → capture pixels + rect, then show the morphing LinkPeekCard. Placed
     // here (not with the peek state vars above) because it drives the shared snapshot-request state

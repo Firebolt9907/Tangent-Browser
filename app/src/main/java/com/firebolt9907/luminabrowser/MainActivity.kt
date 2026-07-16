@@ -47,6 +47,15 @@ class MainActivity : LuminaBrowserActivity() {
     // persisted tab (no reader auto-attempt / Custom-Tab surface).
     private fun handleIncomingIntent(intent: Intent?) {
         intent ?: return
+        // Web-search (assistant / "search the web for…") and process-text (a text selection in any app
+        // → "Search in Lumina") intents carry a query or selected text, not a URL. Treat them as a
+        // search: the engine's searchUrl URL-encodes the text into an https search URL, so external
+        // text can never be interpreted as a privileged scheme (file:/javascript:/…).
+        extractSearchQuery(intent)?.let { query ->
+            val searchUrl = app.components.globalPreferencesStore.searchEngine.searchUrl(query)
+            app.components.tabRepository.addTab(url = searchUrl, title = "")
+            return
+        }
         // A Firefox "Send tab" notification tap (see ReceivedTabNotifications) carries the URL to
         // open as a normal, persisted tab — same single normalizeUrl path as a home-shortcut open.
         // MainActivity is exported (LAUNCHER), so any app can craft an explicit intent with this
@@ -60,6 +69,13 @@ class MainActivity : LuminaBrowserActivity() {
         val url = IntentUrls.extractUrl(intent) ?: return
         app.components.tabRepository.addTab(url = url, title = "")
     }
+
+    /** The search query carried by an ACTION_WEB_SEARCH or ACTION_PROCESS_TEXT intent, if any. */
+    private fun extractSearchQuery(intent: Intent): String? = when (intent.action) {
+        Intent.ACTION_WEB_SEARCH -> intent.getStringExtra(android.app.SearchManager.QUERY)
+        Intent.ACTION_PROCESS_TEXT -> intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
+        else -> null
+    }?.trim()?.takeIf { it.isNotBlank() }
 
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return

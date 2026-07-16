@@ -71,6 +71,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.APP_BROWSER" />
             </intent-filter>
+            <!-- Web search (assistant / other apps' "search the web for…"). Handled as a search. -->
+            <intent-filter>
+                <action android:name="android.intent.action.WEB_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- Text-selection "Search in Lumina" from any app: the selected text is searched. -->
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
         <!--

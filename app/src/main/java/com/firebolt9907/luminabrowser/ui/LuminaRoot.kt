@@ -777,44 +777,6 @@ fun LuminaRoot(
         }
     }
 
-    /**
-     * Instantly removes the sticky incoming cover *and* any in-flight fade. Used by gesture
-     * takeovers (a new drag / predictive back), where a lingering translucent cover would sit
-     * on top of the freshly-rendered gesture overlay.
-     */
-    fun clearStickyCover() {
-        stickyIncomingSnapshot = null
-        stickyIncomingTabId = null
-        fadingCoverJob?.cancel()
-        fadingCoverJob = null
-        fadingCoverBitmap = null
-        fadingCoverActive = false
-    }
-
-    /**
-     * Dismisses the sticky incoming cover by cross-fading it into the live page underneath,
-     * instead of the instant pop [clearStickyCover] does. For the natural end of a cover's life:
-     * the covered tab has painted (or the fallback timeout decided it must have). A null bitmap
-     * cover (the plain background placeholder) fades the same way. Note this nulls the sticky
-     * state immediately — all gating logic treats the cover as gone; only the visual lingers.
-     */
-    fun fadeOutStickyCover() {
-        if (stickyIncomingSnapshot == null && stickyIncomingTabId == null) return
-        fadingCoverBitmap = stickyIncomingSnapshot
-        fadingCoverTopPadPx = stickyIncomingTopPadPx
-        fadingCoverActive = true
-        stickyIncomingSnapshot = null
-        stickyIncomingTabId = null
-        fadingCoverJob?.cancel()
-        fadingCoverJob = scope.launch {
-            fadingCoverAlpha.snapTo(1f)
-            fadingCoverAlpha.animateTo(0f, animationSpec = tween(durationMillis = 220))
-            fadingCoverBitmap = null
-            fadingCoverActive = false
-            fadingCoverJob = null
-        }
-    }
-
     fun visualBarStateForUrl(
         url: String,
         count: Int,
@@ -838,31 +800,12 @@ fun LuminaRoot(
         )
     }
 
-    fun clearPredictiveBackCover() {
-        stickyBackCoverSnapshot = null
-        stickyBackCoverUrl = null
-    }
-
     fun resetPredictiveBackGesture() {
         predictiveBackOffsetPx = 0f
         gestureCurrentSnapshot = null
         activePredictiveBackSnapshot = null
         if (currentSnapshotRequestPurpose == SnapshotRequestPurpose.PredictiveBack) {
             currentSnapshotRequestPurpose = null
-        }
-    }
-
-    fun resetTabSwitchSnapshot() {
-        tabSwitchCurrentSnapshot = null
-        if (currentSnapshotRequestPurpose == SnapshotRequestPurpose.TabSwitch) {
-            currentSnapshotRequestPurpose = null
-        }
-    }
-
-    fun requestTabSwitchSnapshot() {
-        if (currentSnapshotRequestPurpose != SnapshotRequestPurpose.TabSwitch) {
-            currentSnapshotRequestPurpose = SnapshotRequestPurpose.TabSwitch
-            currentSnapshotRequestId += 1
         }
     }
 
@@ -1288,16 +1231,16 @@ fun LuminaRoot(
         if (delta != 0f) {
             if (offsetX == 0f && tabSwitchCurrentSnapshot == null) {
                 tabSwitchCurrentSnapshot = currentPageSnapshot
-                requestTabSwitchSnapshot()
+                snap.requestTabSwitchSnapshot()
             }
             switchAnimationJob?.cancel()
             switchAnimationJob = null
             cancelLeavingSnapshot()
-            clearStickyCover()
+            snap.clearStickyCover()
             predictiveBackAnimationJob?.cancel()
             predictiveBackAnimationJob = null
             predictiveBackOffsetPx = 0f
-            clearPredictiveBackCover()
+            snap.clearPredictiveBackCover()
         }
         // A drag that grabbed a mid-switch commit spring seeds gridHandoff* with the spring's
         // frozen offsets so a grab-and-lift continues into the grid without a pop. But once the
@@ -1353,7 +1296,7 @@ fun LuminaRoot(
         newTabThresholdHapticFired = false
         newTabRamp.reset()
         if (offsetX == 0f && forceDirection == null) {
-            resetTabSwitchSnapshot()
+            snap.resetTabSwitchSnapshot()
             return
         }
         val width = contentSize.width.toFloat()
@@ -1417,7 +1360,7 @@ fun LuminaRoot(
             val leavingPadDp = topPadDpFor(currentUrl)
             dragCommitted = true
             offsetX = 0f
-            resetTabSwitchSnapshot()
+            snap.resetTabSwitchSnapshot()
             leavingSnapshotJob?.cancel()
             commitAnimNewTab = isNewTab
             leavingSnapshotBitmap = leavingBitmap
@@ -1459,7 +1402,7 @@ fun LuminaRoot(
                     initialVelocity = velocity,
                     animationSpec = switchSpring(velocity, Spring.StiffnessMedium),
                 ) { v, _ -> offsetX = v }
-                resetTabSwitchSnapshot()
+                snap.resetTabSwitchSnapshot()
                 switchAnimationJob = null
             }
         }
@@ -1508,9 +1451,9 @@ fun LuminaRoot(
         switchAnimationJob?.cancel()
         switchAnimationJob = null
         leavingSnapshotJob?.cancel()
-        clearStickyCover()
-        clearPredictiveBackCover()
-        resetTabSwitchSnapshot()
+        snap.clearStickyCover()
+        snap.clearPredictiveBackCover()
+        snap.resetTabSwitchSnapshot()
         offsetX = 0f
         dragCommitted = true
         commitAnimNewTab = true
@@ -1675,8 +1618,8 @@ fun LuminaRoot(
             leavingSnapshotBitmap = null
             incomingSnapshotBitmap = null
             commitAnimNewTab = false
-            clearStickyCover()
-            clearPredictiveBackCover()
+            snap.clearStickyCover()
+            snap.clearPredictiveBackCover()
             // Re-seed drag progress from the frozen animation value so the grid starts
             // visually where the spring left off, not at 0.
             val currentProgress = gridProgressState.value
@@ -1696,7 +1639,7 @@ fun LuminaRoot(
             // Existing horizontal-switch snapshot prep (was previously inside onDragStart).
             if (tabSwitchCurrentSnapshot == null) {
                 tabSwitchCurrentSnapshot = currentPageSnapshot
-                requestTabSwitchSnapshot()
+                snap.requestTabSwitchSnapshot()
             }
         }
     }
@@ -1828,7 +1771,7 @@ fun LuminaRoot(
             // Vertical wins: open grid. Snap any horizontal carousel motion back to 0 so the
             // selected tab stays selected — Safari's behavior.
             offsetX = 0f
-            resetTabSwitchSnapshot()
+            snap.resetTabSwitchSnapshot()
             cancelLeavingSnapshot()
             // Seed the spring with velocity normalised to progress-units (velocity / travelPx), but
             // cap it against the range still left to open so a far/fast swipe still plays the settle
@@ -1900,8 +1843,8 @@ fun LuminaRoot(
         if (progressPx != 0f) {
             predictiveBackAnimationJob?.cancel()
             predictiveBackAnimationJob = null
-            clearStickyCover()
-            clearPredictiveBackCover()
+            snap.clearStickyCover()
+            snap.clearPredictiveBackCover()
             if (gestureCurrentSnapshot == null) {
                 gestureCurrentSnapshot = currentPageSnapshot
             }
@@ -1972,8 +1915,8 @@ fun LuminaRoot(
         predictiveBackAnimationJob?.cancel()
         predictiveBackAnimationJob = null
         resetPredictiveBackGesture()
-        resetTabSwitchSnapshot()
-        clearPredictiveBackCover()
+        snap.resetTabSwitchSnapshot()
+        snap.clearPredictiveBackCover()
         userScrollInteractionActive = false
         expandUrlBar()
         resetPullRefresh()
@@ -2081,12 +2024,12 @@ fun LuminaRoot(
         if (actualSelectedTabId != null && actualSelectedTabId == stickyIncomingTabId) {
             delay(700)
             if (actualSelectedTabId == stickyIncomingTabId) {
-                fadeOutStickyCover()
+                snap.fadeOutStickyCover(scope)
             }
         } else if (stickyIncomingTabId != null) {
             delay(250)
             if (actualSelectedTabId != stickyIncomingTabId) {
-                fadeOutStickyCover()
+                snap.fadeOutStickyCover(scope)
             }
         }
     }
@@ -2100,7 +2043,7 @@ fun LuminaRoot(
             selectedContent?.url == targetUrl &&
             selectedContent.loading != true
         ) {
-            clearPredictiveBackCover()
+            snap.clearPredictiveBackCover()
         }
     }
 
@@ -2108,7 +2051,7 @@ fun LuminaRoot(
         val targetUrl = stickyBackCoverUrl ?: return@LaunchedEffect
         delay(PredictiveBackCoverMaxMs)
         if (stickyBackCoverUrl == targetUrl) {
-            clearPredictiveBackCover()
+            snap.clearPredictiveBackCover()
         }
     }
 
@@ -2128,8 +2071,8 @@ fun LuminaRoot(
                     if (width <= 0f) return@collect
                     predictiveBackAnimationJob?.cancel()
                     predictiveBackAnimationJob = null
-                    clearStickyCover()
-                    clearPredictiveBackCover()
+                    snap.clearStickyCover()
+                    snap.clearPredictiveBackCover()
                     predictiveBackOffsetPx = (backEvent.progress.coerceIn(0f, 1f) * width)
                 }
 
@@ -2167,7 +2110,7 @@ fun LuminaRoot(
                     }
                 } finally {
                     resetPredictiveBackGesture()
-                    clearPredictiveBackCover()
+                    snap.clearPredictiveBackCover()
                 }
             }
         }
@@ -2275,7 +2218,7 @@ fun LuminaRoot(
                             scope.launch {
                                 delay(80)
                                 if (paintedTabId == actualSelectedTabId && paintedTabId == stickyIncomingTabId) {
-                                    fadeOutStickyCover()
+                                    snap.fadeOutStickyCover(scope)
                                 }
                             }
                         }
@@ -2287,7 +2230,7 @@ fun LuminaRoot(
                                     stickyBackCoverUrl != null &&
                                     selectedContent?.url == stickyBackCoverUrl
                                 ) {
-                                    clearPredictiveBackCover()
+                                    snap.clearPredictiveBackCover()
                                 }
                             }
                         }
@@ -2946,7 +2889,7 @@ fun LuminaRoot(
                             visualSelectedTabId = tabId
                             // Clear the old tab's gesture-local snapshot so the close
                             // animation shows the tapped tab's own cached snapshot.
-                            resetTabSwitchSnapshot()
+                            snap.resetTabSwitchSnapshot()
                             tappedTab?.let {
                                 pendingActiveBarState = visualBarStateForUrl(
                                     url = it.content.url,

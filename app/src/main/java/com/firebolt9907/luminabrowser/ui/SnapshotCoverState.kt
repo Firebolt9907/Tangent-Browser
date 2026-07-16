@@ -10,8 +10,11 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /**
  * Storage holder for the tab-switch / predictive-back snapshot + sticky-cover state machine
@@ -70,6 +73,63 @@ internal class SnapshotCoverState {
     // Set by cancelLeavingSnapshot when a "+"-cell commit created a new tab; drives the
     // new-tab commit animation instead of the tab-switch one.
     val commitAnimNewTab: MutableState<Boolean> = mutableStateOf(false)
+
+    /**
+     * Instantly removes the sticky incoming cover *and* any in-flight fade. Used by gesture
+     * takeovers (a new drag / predictive back), where a lingering translucent cover would sit
+     * on top of the freshly-rendered gesture overlay.
+     */
+    fun clearStickyCover() {
+        stickyIncomingSnapshot.value = null
+        stickyIncomingTabId.value = null
+        fadingCoverJob.value?.cancel()
+        fadingCoverJob.value = null
+        fadingCoverBitmap.value = null
+        fadingCoverActive.value = false
+    }
+
+    /**
+     * Dismisses the sticky incoming cover by cross-fading it into the live page underneath,
+     * instead of the instant pop [clearStickyCover] does. For the natural end of a cover's life:
+     * the covered tab has painted (or the fallback timeout decided it must have). A null bitmap
+     * cover (the plain background placeholder) fades the same way. Note this nulls the sticky
+     * state immediately — all gating logic treats the cover as gone; only the visual lingers.
+     */
+    fun fadeOutStickyCover(scope: CoroutineScope) {
+        if (stickyIncomingSnapshot.value == null && stickyIncomingTabId.value == null) return
+        fadingCoverBitmap.value = stickyIncomingSnapshot.value
+        fadingCoverTopPadPx.intValue = stickyIncomingTopPadPx.intValue
+        fadingCoverActive.value = true
+        stickyIncomingSnapshot.value = null
+        stickyIncomingTabId.value = null
+        fadingCoverJob.value?.cancel()
+        fadingCoverJob.value = scope.launch {
+            fadingCoverAlpha.snapTo(1f)
+            fadingCoverAlpha.animateTo(0f, animationSpec = tween(durationMillis = 220))
+            fadingCoverBitmap.value = null
+            fadingCoverActive.value = false
+            fadingCoverJob.value = null
+        }
+    }
+
+    fun clearPredictiveBackCover() {
+        stickyBackCoverSnapshot.value = null
+        stickyBackCoverUrl.value = null
+    }
+
+    fun resetTabSwitchSnapshot() {
+        tabSwitchCurrentSnapshot.value = null
+        if (currentSnapshotRequestPurpose.value == SnapshotRequestPurpose.TabSwitch) {
+            currentSnapshotRequestPurpose.value = null
+        }
+    }
+
+    fun requestTabSwitchSnapshot() {
+        if (currentSnapshotRequestPurpose.value != SnapshotRequestPurpose.TabSwitch) {
+            currentSnapshotRequestPurpose.value = SnapshotRequestPurpose.TabSwitch
+            currentSnapshotRequestId.intValue += 1
+        }
+    }
 }
 
 /** Remembers a single [SnapshotCoverState] for the lifetime of the host composable. */

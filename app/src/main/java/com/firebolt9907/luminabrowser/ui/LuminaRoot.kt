@@ -3652,6 +3652,10 @@ fun LuminaRoot(
                     findTotalMatches = 0
                     findInPageActive = true
                 },
+                onPrint = {
+                    // GeckoView opens the Android print dialog (physical printers + Save as PDF).
+                    selectedTabId?.let { components.sessionUseCases.printContent.invoke(it) }
+                },
                 pageUrl = currentUrl.orEmpty(),
                 pageTitle = selectedContent?.title.orEmpty(),
                 initialTab = aaInitialTab,

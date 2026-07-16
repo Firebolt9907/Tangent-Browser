@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -137,6 +138,7 @@ fun AaSheet(
     onOpenAddonSettings: (InstalledAddon) -> Unit = {},
     onOpenAddonQuickSettings: (InstalledAddon) -> Unit = {},
     onFindInPage: () -> Unit = {},
+    onPrint: () -> Unit = {},
     pageUrl: String = "",
     pageTitle: String = "",
     initialTab: Int = 0,
@@ -247,6 +249,7 @@ fun AaSheet(
                     globalPrefsStore = globalPrefsStore,
                     onDismiss = onDismiss,
                     onFindInPage = onFindInPage,
+                    onPrint = onPrint,
                     pageUrl = pageUrl,
                     pageTitle = pageTitle,
                     tabId = tabId,
@@ -284,6 +287,7 @@ private fun PageTabContent(
     globalPrefsStore: GlobalPreferencesStore,
     onDismiss: () -> Unit,
     onFindInPage: () -> Unit = {},
+    onPrint: () -> Unit = {},
     pageUrl: String,
     pageTitle: String = "",
     tabId: String? = null,
@@ -846,6 +850,17 @@ private fun PageTabContent(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     ActionRowContent(icon = Icons.AutoMirrored.Filled.MenuBook, text = "Add to Reading List")
+                }
+            }
+
+            // Print / Save as PDF — routes through GeckoView's print flow, which opens the Android
+            // print dialog (physical printers plus the system "Save as PDF" printer).
+            if (isWebPage) {
+                TextButton(
+                    onClick = { haptics.softClick(); onPrint(); onDismiss() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    ActionRowContent(icon = Icons.Default.Print, text = "Print / Save as PDF")
                 }
             }
 

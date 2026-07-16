@@ -400,15 +400,18 @@ fun LuminaRoot(
     var contentSize by remember { mutableStateOf(IntSize.Zero) }
     val scope = rememberCoroutineScope()
 
-    val offsetXState = remember { mutableFloatStateOf(0f) }
+    // Horizontal tab-switch / predictive-back drag gesture (invariant #5) grouped in
+    // HorizontalGestureState; local `var x by hdrag.x` delegate aliases keep every site unchanged.
+    val hdrag = rememberHorizontalGestureState()
+    val offsetXState = hdrag.offsetX
     var offsetX by offsetXState
-    var predictiveBackOffsetPx by remember { mutableFloatStateOf(0f) }
+    var predictiveBackOffsetPx by hdrag.predictiveBackOffsetPx
     // Boolean gate for the predictive-back overlay. Derived so the per-frame predictiveBackOffsetPx
     // updates during a back-swipe flip this only at the 0↔>0 boundary; the overlay's own transforms
     // already read the raw value inside graphicsLayer/drawBehind (draw phase), so the subtree no
     // longer recomposes every frame of the gesture.
     val predictiveBackActive by remember { derivedStateOf { predictiveBackOffsetPx > 0f } }
-    var dragCommitted by remember { mutableStateOf(false) }
+    var dragCommitted by hdrag.dragCommitted
     // Snapshot/cover state machine (invariant #7) is grouped in SnapshotCoverState so it can travel
     // to extracted gesture render blocks as one object. Local `var x by snap.x` delegate aliases
     // (the same idiom as offsetXState above) keep every existing read/write site unchanged.
@@ -417,7 +420,7 @@ fun LuminaRoot(
     var stickyIncomingTabId by snap.stickyIncomingTabId
     // False until Gecko fires its first paint callback for the current tab. Covers the grey
     // surface that GeckoView shows before any content has been composited.
-    var geckoHasPainted by remember { mutableStateOf(false) }
+    var geckoHasPainted by snap.geckoHasPainted
     var pendingActiveBarState by remember { mutableStateOf<BarUiState?>(null) }
     var pendingGeckoSelectTabId by remember { mutableStateOf<String?>(null) }
     var pendingGeckoSelectCreatedTab by remember { mutableStateOf(false) }
@@ -446,7 +449,7 @@ fun LuminaRoot(
     var fadingCoverActive by snap.fadingCoverActive
     var fadingCoverJob by snap.fadingCoverJob
     val fadingCoverAlpha = snap.fadingCoverAlpha
-    var commitAnimNewTab by remember { mutableStateOf(false) }
+    var commitAnimNewTab by snap.commitAnimNewTab
     // Grid open/close gesture state (invariants #4, #5, #5a) grouped in GridGestureState; local
     // `var x by grid.x` delegate aliases keep every existing read/write site unchanged.
     val grid = rememberGridGestureState()
@@ -569,8 +572,8 @@ fun LuminaRoot(
     // dismissed, to force the z-ordered GeckoView surface to recomposite. Without this the surface
     // keeps showing its stale pre-overlay frame — which covers the pill — until the user scrolls.
     var engineRefreshTick by remember { mutableIntStateOf(0) }
-    var switchAnimationJob by remember { mutableStateOf<Job?>(null) }
-    var predictiveBackAnimationJob by remember { mutableStateOf<Job?>(null) }
+    var switchAnimationJob by hdrag.switchAnimationJob
+    var predictiveBackAnimationJob by hdrag.predictiveBackAnimationJob
     var barCollapseAnimationJob by remember { mutableStateOf<Job?>(null) }
     var barCollapseIdleJob by remember { mutableStateOf<Job?>(null) }
     var pageScrollFrameJob by remember { mutableStateOf<Job?>(null) }

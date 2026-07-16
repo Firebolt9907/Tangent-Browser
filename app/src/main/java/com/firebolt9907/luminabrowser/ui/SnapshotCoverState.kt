@@ -63,6 +63,13 @@ internal class SnapshotCoverState {
     // Shared single-slot snapshot request routed to EngineView.captureThumbnail (invariant #6).
     val currentSnapshotRequestPurpose: MutableState<SnapshotRequestPurpose?> = mutableStateOf(null)
     val currentSnapshotRequestId: MutableIntState = mutableIntStateOf(0)
+
+    // False until Gecko fires its first paint callback for the current tab — gates cover clearing
+    // (invariant #7) so a cover isn't dropped over the grey pre-composite GeckoView surface.
+    val geckoHasPainted: MutableState<Boolean> = mutableStateOf(false)
+    // Set by cancelLeavingSnapshot when a "+"-cell commit created a new tab; drives the
+    // new-tab commit animation instead of the tab-switch one.
+    val commitAnimNewTab: MutableState<Boolean> = mutableStateOf(false)
 }
 
 /** Remembers a single [SnapshotCoverState] for the lifetime of the host composable. */

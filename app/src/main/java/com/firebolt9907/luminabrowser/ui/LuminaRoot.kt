@@ -3513,288 +3513,81 @@ fun LuminaRoot(
             }
         }
 
-        if (showAddons) {
-            AddonsSheet(
-                controller = components.addonController,
-                onDismiss = { showAddons = false },
-            )
-        }
-
-        if (showSettings) {
-            SettingsSheet(
-                globalPrefsStore = components.globalPreferencesStore,
-                onDismiss = { showSettings = false },
-                onSettingChanged = {
-                    components.applyEngineSettings()
-                    showBottomToolbar = components.globalPreferencesStore.showBottomToolbar
-                    wideBarLayout = WideBarLayout.fromName(
-                        components.globalPreferencesStore.wideBarLayoutName,
-                    )
-                    showSearchTermsInBar = components.globalPreferencesStore.showSearchTermsInBar
-                    barSearchEngine = components.globalPreferencesStore.searchEngine
-                    viewModel.refreshDisplayPrefs()
-                },
-                onClearSitePermissions = {
-                    components.sitePermissionController.clearRememberedDecisions()
-                },
-                onReplayOnboarding = {
-                    showSettings = false
-                    showOnboarding = true
-                },
-                onClearBrowsingData = { history, cookiesAndSiteData, cache ->
-                    // Cookies/site data and the on-disk cache live in the engine; history lives in
-                    // Places. Saved logins and bookmarks are deliberately left untouched.
-                    val engineTypes = buildList {
-                        if (cookiesAndSiteData) {
-                            add(mozilla.components.concept.engine.Engine.BrowsingData.COOKIES)
-                            add(mozilla.components.concept.engine.Engine.BrowsingData.DOM_STORAGES)
-                            add(mozilla.components.concept.engine.Engine.BrowsingData.AUTH_SESSIONS)
-                        }
-                        if (cache) {
-                            add(mozilla.components.concept.engine.Engine.BrowsingData.NETWORK_CACHE)
-                            add(mozilla.components.concept.engine.Engine.BrowsingData.IMAGE_CACHE)
-                        }
-                    }
-                    if (engineTypes.isNotEmpty()) {
-                        components.engine.clearData(
-                            mozilla.components.concept.engine.Engine.BrowsingData.select(
-                                *engineTypes.toIntArray()
-                            )
-                        )
-                    }
-                    if (history) {
-                        // PlacesHistoryStorage.deleteEverything is suspend and manages its own IO.
-                        scope.launch {
-                            runCatching { components.historyStorage.deleteEverything() }
-                        }
-                    }
-                },
-            )
-        }
-
-        // Onboarding replayed from Settings ("Show onboarding again"). A full-screen opaque overlay;
-        // dismisses back to the browser when finished/skipped. (First-run onboarding is gated
-        // separately in MainActivity.)
-        if (showOnboarding) {
-            com.firebolt9907.luminabrowser.ui.onboarding.LuminaOnboarding(
-                onFinish = { showOnboarding = false },
-            )
-        }
-
-        if (showSyncedTabs) {
-            SyncedTabsSheet(
-                controller = components.firefoxSyncController,
-                onDismiss = { showSyncedTabs = false },
-                onOpenTab = { url ->
-                    viewModel.onOpenNewTab(url = url, title = "", selectTab = true)
-                    if (gridEngaged) closeGrid(animateBack = true)
-                },
-                onSignInUrl = { url ->
-                    // Run the OAuth flow in a standalone card over the current page rather than a real
-                    // tab. The card's onIntercept feeds every navigation to handleOAuthRedirect, which
-                    // completes the sign-in on the success redirect and dismisses the card.
-                    utilityWeb = UtilityWebRequest.Url(title = "Firefox Sign In", url = url)
-                    showSyncedTabs = false
-                    if (gridEngaged) closeGrid(animateBack = false)
-                },
-                currentPageUrl = selectedContent?.url.orEmpty(),
-                currentPageTitle = selectedContent?.title.orEmpty(),
-            )
-        }
-
-        SitePermissionDialog(controller = components.sitePermissionController)
-
-        PromptHandler(engineSession = selectedEngineSession)
-
-        if (showPasswords) {
-            PasswordsSheet(
-                loginsStorage = components.loginsStorage,
-                onDismiss = { showPasswords = false },
-            )
-        }
-
-        if (showHistory) {
-            val recentlyClosedTabs by components.tabRepository.recentlyClosedTabs.collectAsStateWithLifecycle()
-            HistorySheet(
-                historyStorage = components.historyStorage,
-                onOpenUrl = { url ->
-                    viewModel.onOpenNewTab(url = url, title = "", selectTab = true)
-                    showHistory = false
-                    if (gridEngaged) closeGrid(animateBack = true)
-                },
-                onDismiss = { showHistory = false },
-                recentlyClosed = recentlyClosedTabs,
-                onReopenClosed = { closed ->
-                    components.tabRepository.reopenClosedTab(closed.id)
-                    showHistory = false
-                    if (gridEngaged) closeGrid(animateBack = true)
-                },
-            )
-        }
-
-        if (showBookmarks) {
-            BookmarksSheet(
-                bookmarksStorage = components.bookmarksStorage,
-                currentPageUrl = selectedContent?.url.orEmpty(),
-                currentPageTitle = selectedContent?.title.orEmpty(),
-                onOpenUrl = { url ->
-                    viewModel.onOpenNewTab(url = url, title = "", selectTab = true)
-                    showBookmarks = false
-                    if (gridEngaged) closeGrid(animateBack = true)
-                },
-                onDismiss = { showBookmarks = false },
-            )
-        }
-
-        if (showDownloads) {
-            DownloadsSheet(
-                onDismiss = { showDownloads = false },
-            )
-        }
-
-        if (showAa) {
-            AaSheet(
-                host = currentHost,
-                store = sitePrefsStore,
-                globalPrefsStore = components.globalPreferencesStore,
-                addonController = components.addonController,
-                onDismiss = {
-                    showAa = false
-                    // The appearance sheet's opaque backdrop pauses the GeckoView compositor while
-                    // it covers the engine; on dismiss the surface keeps showing a stale frame that
-                    // covers the pill until the user scrolls. Bump this to wake the compositor now.
-                    engineRefreshTick += 1
-                },
-                onOpenAddonSettings = { addon ->
-                    // Render the options page in a standalone card over the current page instead of a
-                    // real tab: the user stays on their page and it remains the active tab for
-                    // extensions, so options that act on "the current page" target it — not the
-                    // options document itself.
-                    addon.optionsPageUrl?.let { url ->
-                        utilityWeb = UtilityWebRequest.Url(title = "${addon.name} Settings", url = url)
-                        showAa = false
-                        if (gridEngaged) closeGrid(animateBack = false)
-                    }
-                },
-                onOpenAddonQuickSettings = { addon ->
-                    // Dismiss the sheet first; the popup arrives asynchronously via
-                    // onActionPopupTabRequested, which renders the popup session in a UtilityWebCard.
-                    // The originating page stays the active tab for extensions (setActiveSession is
-                    // never repointed at the card), so the popup binds to it.
-                    showAa = false
-                    if (gridEngaged) closeGrid(animateBack = false)
-                    components.addonController.openPopup(addon.id)
-                },
-                onFindInPage = {
-                    findQuery = ""
-                    findActiveMatch = 0
-                    findTotalMatches = 0
-                    findInPageActive = true
-                },
-                onPrint = {
-                    // GeckoView opens the Android print dialog (physical printers + Save as PDF).
-                    selectedTabId?.let { components.sessionUseCases.printContent.invoke(it) }
-                },
-                trackingProtectionEnabledGlobally = components.globalPreferencesStore.trackingProtection,
-                siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
-                onToggleSiteTrackingProtection = { disable ->
-                    selectedTabId?.let { id ->
-                        if (disable) {
-                            components.trackingProtectionUseCases.addException(id)
-                        } else {
-                            components.trackingProtectionUseCases.removeException(id)
-                        }
-                        siteTrackingProtectionDisabled = disable
-                        // Re-run the page so the new policy takes effect immediately.
-                        components.sessionUseCases.reload.invoke(id)
-                    }
-                },
-                pageUrl = currentUrl.orEmpty(),
-                pageTitle = selectedContent?.title.orEmpty(),
-                initialTab = aaInitialTab,
-                tabId = selectedTabId,
-                engineSession = selectedEngineSession,
-                backgroundSnapshot = currentPageSnapshot,
-                statusBarTopPad = with(density) { topChromeInsetPx.toDp() },
-                bookmarksStorage = components.bookmarksStorage,
-                pageIcon = selectedContent?.icon,
-                showBottomToolbar = showBottomToolbar,
-            )
-        }
-
-        // Add-on quick settings / options page / Firefox sign-in, floated over the current page in a
-        // standalone GeckoView card (never a real tab). onIntercept handles the two navigations that
-        // should close the card: an add-on .xpi install request and the FxA OAuth success redirect.
-        utilityWeb?.let { request ->
-            UtilityWebCard(
-                request = request,
-                engine = components.engine,
-                onIntercept = { url ->
-                    components.firefoxSyncController.handleOAuthRedirect(url) ||
-                        components.addonController.installFromPageRequest(url)
-                },
-                onDismiss = { utilityWeb = null },
-            )
-        }
-
-        // Link glance (Safari/Arc). Drawn last so it floats above the content, chrome and grid.
-        peekUrl?.let { link ->
-            // The cropped element pixels (small) are produced off-band by the crop effect above,
-            // which then frees the full-screen capture — so nothing large is retained here.
-            LinkPeekCard(
-                url = link,
-                peekSession = peekSession,
-                peekView = peekView,
-                origin = peekOrigin,
-                sourceRect = peekSourceRect,
-                elementBitmap = peekElementBitmap?.asImageBitmap(),
-                onOpenHere = { u ->
-                    // Open the peeked page now, reusing its already-loaded session (no reload). It
-                    // becomes a new foreground tab; the current tab is preserved rather than replaced.
-                    pendingPeekAdoption = u to true
-                    peekUrl = null
-                },
-                onOpenNewTab = { u ->
-                    // Open in the background, also reusing the loaded session (no reload).
-                    pendingPeekAdoption = u to false
-                    peekUrl = null
-                },
-                onCopy = { u ->
-                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(u))
-                    android.widget.Toast.makeText(appContext, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
-                    peekUrl = null
-                },
-                onShare = { u ->
-                    shareUrl(appContext, u)
-                    peekUrl = null
-                },
-                onDismiss = { peekUrl = null },
-            )
-        }
-        imageMenuUrl?.let { imageUrl ->
-            ImageContextSheet(
-                imageUrl = imageUrl,
-                onOpenNewTab = { u -> viewModel.onOpenNewTab(url = u, title = "", selectTab = true) },
-                onSave = { u ->
-                    // Route the image through DownloadsFeature (started in LuminaBrowserActivity):
-                    // it observes ContentState.download and hands the URL to the system
-                    // DownloadManager (notification + storage handled by the OS).
-                    actualSelectedTabId?.let { id ->
-                        components.store.dispatch(
-                            ContentAction.UpdateDownloadAction(
-                                id,
-                                DownloadState(url = u, private = selectedContent?.private == true),
-                            )
-                        )
-                    }
-                },
-                onCopy = { u ->
-                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(u))
-                    android.widget.Toast.makeText(appContext, "Image address copied", android.widget.Toast.LENGTH_SHORT).show()
-                },
-                onShare = { u -> shareUrl(appContext, u) },
-                onDismiss = { imageMenuUrl = null },
-            )
-        }
+        LuminaOverlaySheets(
+            components = components,
+            viewModel = viewModel,
+            scope = scope,
+            selectedContent = selectedContent,
+            selectedTabId = selectedTabId,
+            actualSelectedTabId = actualSelectedTabId,
+            selectedEngineSession = selectedEngineSession,
+            currentHost = currentHost,
+            currentUrl = currentUrl,
+            currentPageSnapshot = currentPageSnapshot,
+            topChromeInsetPx = topChromeInsetPx,
+            showBottomToolbar = showBottomToolbar,
+            gridEngaged = gridEngaged,
+            onCloseGrid = { animateBack -> closeGrid(animateBack = animateBack) },
+            onOpenUtilityUrl = { title, url ->
+                utilityWeb = UtilityWebRequest.Url(title = title, url = url)
+            },
+            showAddons = showAddons,
+            onDismissAddons = { showAddons = false },
+            showSettings = showSettings,
+            onDismissSettings = { showSettings = false },
+            onSettingChanged = {
+                components.applyEngineSettings()
+                showBottomToolbar = components.globalPreferencesStore.showBottomToolbar
+                wideBarLayout = WideBarLayout.fromName(
+                    components.globalPreferencesStore.wideBarLayoutName,
+                )
+                showSearchTermsInBar = components.globalPreferencesStore.showSearchTermsInBar
+                barSearchEngine = components.globalPreferencesStore.searchEngine
+                viewModel.refreshDisplayPrefs()
+            },
+            onReplayOnboarding = {
+                showSettings = false
+                showOnboarding = true
+            },
+            showOnboarding = showOnboarding,
+            onFinishOnboarding = { showOnboarding = false },
+            showSyncedTabs = showSyncedTabs,
+            onDismissSyncedTabs = { showSyncedTabs = false },
+            showPasswords = showPasswords,
+            onDismissPasswords = { showPasswords = false },
+            showHistory = showHistory,
+            onDismissHistory = { showHistory = false },
+            showBookmarks = showBookmarks,
+            onDismissBookmarks = { showBookmarks = false },
+            showDownloads = showDownloads,
+            onDismissDownloads = { showDownloads = false },
+            showAa = showAa,
+            aaInitialTab = aaInitialTab,
+            onDismissAa = { showAa = false },
+            onAaEngineRefresh = { engineRefreshTick += 1 },
+            onFindInPage = {
+                findQuery = ""
+                findActiveMatch = 0
+                findTotalMatches = 0
+                findInPageActive = true
+            },
+            siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
+            onSiteTrackingProtectionDisabledChange = { siteTrackingProtectionDisabled = it },
+            utilityWeb = utilityWeb,
+            onDismissUtilityWeb = { utilityWeb = null },
+            peekUrl = peekUrl,
+            peekSession = peekSession,
+            peekView = peekView,
+            peekOrigin = peekOrigin,
+            peekSourceRect = peekSourceRect,
+            peekElementBitmap = peekElementBitmap,
+            onPeekAdopt = { url, foreground ->
+                pendingPeekAdoption = url to foreground
+                peekUrl = null
+            },
+            onDismissPeek = { peekUrl = null },
+            imageMenuUrl = imageMenuUrl,
+            onDismissImageMenu = { imageMenuUrl = null },
+        )
     }
 }

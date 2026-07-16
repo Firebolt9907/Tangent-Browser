@@ -2,6 +2,9 @@ package com.firebolt9907.luminabrowser.state
 
 import kotlinx.coroutines.flow.StateFlow
 
+/** A reopenable recently-closed tab (URL + title only; no session history is retained). */
+data class ClosedTabInfo(val id: String, val url: String, val title: String)
+
 interface TabRepository {
     val tabs: StateFlow<List<LuminaTab>>
     val selectedTabId: StateFlow<String?>
@@ -33,4 +36,10 @@ interface TabRepository {
      * is nothing to reopen.
      */
     fun reopenLastClosedTab(): String?
+
+    /** Recently-closed tabs (most-recent first) for the "Recently closed" list. */
+    val recentlyClosedTabs: StateFlow<List<ClosedTabInfo>>
+
+    /** Reopen a specific recently-closed tab by id; returns the new tab id, or null if gone. */
+    fun reopenClosedTab(id: String): String?
 }

@@ -55,6 +55,8 @@ fun HistorySheet(
     historyStorage: HistoryStorage,
     onOpenUrl: (String) -> Unit,
     onDismiss: () -> Unit,
+    recentlyClosed: List<com.firebolt9907.luminabrowser.state.ClosedTabInfo> = emptyList(),
+    onReopenClosed: (com.firebolt9907.luminabrowser.state.ClosedTabInfo) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var visits by remember { mutableStateOf<List<VisitInfo>>(emptyList()) }
@@ -120,6 +122,37 @@ fun HistorySheet(
         )
 
         Spacer(Modifier.height(8.dp))
+
+        // Recently closed tabs (URL+title, most-recent first). Hidden while searching so the query
+        // filters history only. Tapping a row reopens the tab and dismisses the sheet.
+        if (searchQuery.isBlank() && recentlyClosed.isNotEmpty()) {
+            DateSectionHeader("Recently closed")
+            recentlyClosed.take(5).forEach { closed ->
+                ListItem(
+                    modifier = Modifier.clickable {
+                        onReopenClosed(closed)
+                        onDismiss()
+                    },
+                    leadingContent = { Favicon(closed.url) },
+                    headlineContent = {
+                        Text(
+                            text = closed.title.takeIf { it.isNotBlank() } ?: closed.url,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    supportingContent = {
+                        Text(
+                            text = closed.url,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+        }
 
         when {
             loading -> {

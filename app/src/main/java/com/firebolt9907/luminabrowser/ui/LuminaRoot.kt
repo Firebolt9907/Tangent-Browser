@@ -3598,6 +3598,7 @@ fun LuminaRoot(
         }
 
         if (showHistory) {
+            val recentlyClosedTabs by components.tabRepository.recentlyClosedTabs.collectAsStateWithLifecycle()
             HistorySheet(
                 historyStorage = components.historyStorage,
                 onOpenUrl = { url ->
@@ -3606,6 +3607,12 @@ fun LuminaRoot(
                     if (gridEngaged) closeGrid(animateBack = true)
                 },
                 onDismiss = { showHistory = false },
+                recentlyClosed = recentlyClosedTabs,
+                onReopenClosed = { closed ->
+                    components.tabRepository.reopenClosedTab(closed.id)
+                    showHistory = false
+                    if (gridEngaged) closeGrid(animateBack = true)
+                },
             )
         }
 

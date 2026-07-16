@@ -10,16 +10,21 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import mozilla.components.browser.state.action.EngineAction
 import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.browser.state.state.SessionState
+import mozilla.components.browser.state.state.recover.RecoverableTab
+import mozilla.components.browser.state.state.recover.TabState
 import mozilla.components.browser.state.store.BrowserStore
+import mozilla.components.concept.engine.Engine
 import mozilla.components.concept.engine.EngineSession
+import mozilla.components.concept.engine.EngineSessionState
 import mozilla.components.feature.session.SessionUseCases
 import mozilla.components.feature.tabs.TabsUseCases
 import com.firebolt9907.luminabrowser.ui.content.extractCacheHtml
 
 /** A closed tab remembered for the "Reopen Closed Tab" action — URL + title, no session history. */
-private data class ClosedTab(val url: String, val title: String)
+private data class ClosedTab(val id: String, val url: String, val title: String)
 
 /** Upper bound on the recently-closed-tab stack so a long session can't grow it without limit. */
 private const val MAX_CLOSED_TABS = 25
@@ -32,6 +37,9 @@ class GeckoTabRepository(
     private val store: BrowserStore,
     private val sessionUseCases: SessionUseCases,
     private val tabsUseCases: TabsUseCases,
+    // Deserializes persisted EngineSessionState blobs on restore. Nullable so tests that don't
+    // exercise persistence can omit it; when null, restored tabs fall back to a URL-only load.
+    private val engine: Engine? = null,
     private val persistence: TabPersistence? = null,
     private val scope: CoroutineScope? = null,
     // Resolves the user's current search engine at call time, so a settings change takes effect
@@ -56,6 +64,17 @@ class GeckoTabRepository(
     private val _reopenableCount = MutableStateFlow(0)
     /** Number of reopenable closed tabs; UI enables "Reopen Closed Tab" when > 0. */
     override val reopenableCount: StateFlow<Int> = _reopenableCount.asStateFlow()
+    private val _recentlyClosedTabs = MutableStateFlow<List<ClosedTabInfo>>(emptyList())
+    /** Recently-closed tabs, most-recent first, for the "Recently closed" list. */
+    override val recentlyClosedTabs: StateFlow<List<ClosedTabInfo>> = _recentlyClosedTabs.asStateFlow()
+
+    /** Republish the public most-recent-first snapshot after any change to [closedTabs]. */
+    private fun publishClosedTabs() {
+        _reopenableCount.value = closedTabs.size
+        _recentlyClosedTabs.value = closedTabs.asReversed().map {
+            ClosedTabInfo(id = it.id, url = it.url, title = it.title)
+        }
+    }
 
     /** Last time each tab was the selected/foreground tab, keyed by tab id. */
     private val lastAccessById = mutableMapOf<String, Long>()
@@ -90,6 +109,14 @@ class GeckoTabRepository(
      * [maxAgeMillis] (72h auto-discard). Falls back to a single blank tab when there is
      * nothing to restore so the browser always has a foreground tab. No-op if the store
      * already has tabs.
+     *
+     * Tabs are restored through [TabsUseCases.RestoreUseCase] as [RecoverableTab]s carrying their
+     * serialized [EngineSessionState], so each tab comes back with its back/forward history stack,
+     * scroll position and form data intact rather than a fresh top-of-page reload. A tab with no
+     * captured engine state (e.g. persisted before it was ever rendered, or the engine handle is
+     * absent) restores from its URL alone — the previous behaviour. The engine session itself is
+     * still created lazily: only the selected tab is rendered on launch; others restore their state
+     * the first time they're selected.
      */
     fun restoreOrSeedBlank(maxAgeMillis: Long) {
         if (store.state.tabs.isNotEmpty()) return
@@ -100,16 +127,63 @@ class GeckoTabRepository(
             return
         }
         var selectedId: String? = null
-        persisted.forEach { tab ->
-            val id = tabsUseCases.addTab.invoke(
-                url = normalizeUrl(tab.url, searchEngine()),
-                selectTab = false,
-                title = tab.title,
-            )
-            lastAccessById[id] = tab.lastAccess
+        val recoverables = persisted.mapIndexed { index, tab ->
+            val id = java.util.UUID.randomUUID().toString()
             if (tab.selected) selectedId = id
+            lastAccessById[id] = tab.lastAccess
+            RecoverableTab(
+                engineSessionState = tab.engineStateJson?.let(::engineStateFromJson),
+                state = TabState(
+                    id = id,
+                    url = normalizeUrl(tab.url, searchEngine()),
+                    title = tab.title,
+                    lastAccess = tab.lastAccess,
+                    index = index,
+                ),
+            )
         }
-        (selectedId ?: store.state.tabs.firstOrNull()?.id)?.let(tabsUseCases.selectTab::invoke)
+        tabsUseCases.restore.invoke(
+            recoverables,
+            selectTabId = selectedId ?: recoverables.firstOrNull()?.state?.id,
+        )
+    }
+
+    /**
+     * Serialize an [EngineSessionState] to a JSON string for [TabPersistence], or null if it can't
+     * be written. The inverse of [engineStateFromJson].
+     */
+    private fun engineStateToJson(state: EngineSessionState): String? = runCatching {
+        val writer = java.io.StringWriter()
+        android.util.JsonWriter(writer).use { state.writeTo(it) }
+        writer.toString().takeIf { it.isNotBlank() && it != "null" }
+    }.getOrNull()
+
+    /**
+     * Rebuild an [EngineSessionState] from a persisted JSON blob via the engine, or null if the
+     * engine is absent or the blob can't be parsed (in which case the tab restores URL-only).
+     */
+    private fun engineStateFromJson(json: String): EngineSessionState? {
+        val engine = engine ?: return null
+        return runCatching {
+            android.util.JsonReader(java.io.StringReader(json)).use(engine::createSessionStateFrom)
+        }.getOrNull()
+    }
+
+    /**
+     * Ask Gecko to write the selected tab's current history/scroll state into the store, so a
+     * subsequent [schedulePersist] captures fresh state before the process can be killed. Guarded on
+     * a live session — the engine middleware would otherwise recreate one just to flush it. Called
+     * on app background; background tabs are already flushed as they leave the foreground by
+     * [BackgroundTabSuspender].
+     */
+    fun flushActiveTabState() {
+        val selectedId = store.state.selectedTabId ?: return
+        val hasLiveSession = store.state.tabs.any {
+            it.id == selectedId && it.engineState.engineSession != null
+        }
+        if (hasLiveSession) {
+            store.dispatch(EngineAction.FlushEngineSessionStateAction(selectedId))
+        }
     }
 
     private fun schedulePersist() {
@@ -118,21 +192,28 @@ class GeckoTabRepository(
         persistJob?.cancel()
         persistJob = scope.launch {
             delay(500)
-            val selected = store.state.selectedTabId
+            // Snapshot store state + access times on the store/main thread, then serialize and write
+            // on IO. EngineSessionState.writeTo can be non-trivial for pages with deep history, so it
+            // must not run on the main thread; the immutable BrowserState snapshot is safe to read off it.
+            val state = store.state
+            val selected = state.selectedTabId
             val now = System.currentTimeMillis()
-            val snapshot = store.state.tabs
-                .filter {
-                    it.content.url.isNotBlank() && it.content.url != "about:blank"
-                }
-                .map { tab ->
-                    TabPersistence.PersistedTab(
-                        url = tab.content.url,
-                        title = tab.content.title,
-                        lastAccess = lastAccessById[tab.id] ?: now,
-                        selected = tab.id == selected,
-                    )
-                }
-            withContext(Dispatchers.IO) { persistence.save(snapshot) }
+            val tabs = state.tabs
+            val accessById = HashMap(lastAccessById)
+            withContext(Dispatchers.IO) {
+                val snapshot = tabs
+                    .filter { it.content.url.isNotBlank() && it.content.url != "about:blank" }
+                    .map { tab ->
+                        TabPersistence.PersistedTab(
+                            url = tab.content.url,
+                            title = tab.content.title,
+                            lastAccess = accessById[tab.id] ?: now,
+                            selected = tab.id == selected,
+                            engineStateJson = tab.engineState.engineSessionState?.let(::engineStateToJson),
+                        )
+                    }
+                persistence.save(snapshot)
+            }
         }
     }
 
@@ -189,9 +270,9 @@ class GeckoTabRepository(
         val tab = store.state.tabs.firstOrNull { it.id == id } ?: return
         val url = tab.content.url
         if (url.isBlank() || url == "about:blank" || url == "about:home") return
-        closedTabs.addLast(ClosedTab(url = url, title = tab.content.title))
+        closedTabs.addLast(ClosedTab(id = java.util.UUID.randomUUID().toString(), url = url, title = tab.content.title))
         while (closedTabs.size > MAX_CLOSED_TABS) closedTabs.removeFirst()
-        _reopenableCount.value = closedTabs.size
+        publishClosedTabs()
     }
 
     /**
@@ -201,7 +282,20 @@ class GeckoTabRepository(
      */
     override fun reopenLastClosedTab(): String? {
         val closed = closedTabs.removeLastOrNull() ?: return null
-        _reopenableCount.value = closedTabs.size
+        publishClosedTabs()
+        return addTab(url = closed.url, title = closed.title)
+    }
+
+    /**
+     * Reopen a specific closed tab by its [ClosedTabInfo.id] (from the "Recently closed" list),
+     * removing it from the stack and selecting the new tab. Returns the new tab id, or null when the
+     * entry is no longer present.
+     */
+    override fun reopenClosedTab(id: String): String? {
+        val index = closedTabs.indexOfLast { it.id == id }
+        if (index < 0) return null
+        val closed = closedTabs.removeAt(index)
+        publishClosedTabs()
         return addTab(url = closed.url, title = closed.title)
     }
 

@@ -2805,32 +2805,10 @@ fun LuminaRoot(
                     val gridOpenFraction = remember {
                         { if (gridGestureActive) gridDragProgress else gridProgressState.value }
                     }
-                        val cornerMaskDp = with(density) { (topChromeInsetPx * 1.6f).toDp() }
-                        val maskColor = MaterialTheme.colorScheme.background
-                        val maskShape = remember(cornerMaskDp) { SquircleShape(cornerMaskDp) }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    alpha = (1f - gridOpenFraction()).coerceIn(0f, 1f)
-                                }
-                                .drawWithCache {
-                                    // SquircleShape yields Outline.Rectangle when the radius/size
-                                    // resolves to 0 (e.g. a zero-size first draw); only a Generic
-                                    // outline has corners to mask.
-                                    val inner = (maskShape.createOutline(size, layoutDirection, this)
-                                        as? Outline.Generic)?.path
-                                    val mask = if (inner != null) {
-                                        val full = Path().apply {
-                                            addRect(Rect(0f, 0f, size.width, size.height))
-                                        }
-                                        Path.combine(PathOperation.Difference, full, inner)
-                                    } else {
-                                        null
-                                    }
-                                    onDrawBehind { mask?.let { drawPath(it, color = maskColor) } }
-                                },
-                        )
+                    RoundedCornerViewportMask(
+                        cornerMaskDp = with(density) { (topChromeInsetPx * 1.6f).toDp() },
+                        gridOpenFractionProvider = gridOpenFraction,
+                    )
                 }
                 AddressSheet(
                     query = state.editingText,

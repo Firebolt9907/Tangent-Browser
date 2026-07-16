@@ -2514,8 +2514,6 @@ fun LuminaRoot(
                     SquircleShape(switchCornerRadiusDp)
                 }
                 if (overlayActive && !gridEngaged) {
-                    val width = contentSize.width.toFloat()
-                    val pageStride = width + tabSwitchGapPx
                     // Depth card-stack (wide screens only): as the swipe progresses the leaving page
                     // recedes + dims while the incoming page rises from a smaller, dimmed card to full
                     // size. All reads happen inside graphicsLayer/drawWithContent (draw phase) so the
@@ -2523,92 +2521,24 @@ fun LuminaRoot(
                     // slide it enhances. `overlayActive` stays true through the commit spring, so the
                     // release animation inherits the identical curve (no visual pop). Portrait keeps
                     // the flat slide.
-                    val depthSwipe = isWideLayout
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background),
-                    )
-                    adjacentSnapshot?.let { bitmap ->
-                        val adjacentUrl = if (adjacentDirection > 0) {
-                            previousTab?.content?.url
-                        } else {
-                            nextTab?.content?.url
-                        }
-                        val adjacentPad = topPadDpFor(adjacentUrl)
-                        SnapshotImage(
-                            bitmap = bitmap,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = adjacentPad)
-                                .graphicsLayer {
-                                    val side = if (offsetX > 0f) 1f else -1f
-                                    translationX = offsetX - side * pageStride
-                                    if (depthSwipe) {
-                                        // Arrival progress: 0 fully off-screen, 1 centred.
-                                        val f = (abs(offsetX) / pageStride).coerceIn(0f, 1f)
-                                        val s = DeckSwipeMinScale + (1f - DeckSwipeMinScale) * f
-                                        scaleX = s
-                                        scaleY = s
-                                    }
-                                }
-                                .then(
-                                    if (depthSwipe) Modifier.drawWithContent {
-                                        drawContent()
-                                        val f = (abs(offsetX) / pageStride).coerceIn(0f, 1f)
-                                        drawRect(Color.Black, alpha = DeckSwipeMaxDim * (1f - f))
-                                    } else Modifier,
-                                )
-                                .clip(switchPaneShape),
-                        )
-                    }
-                    if (showNewTabPane) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    translationX = offsetX + pageStride
-                                }
-                                .clip(switchPaneShape)
-                                .background(MaterialTheme.colorScheme.surface),
-                        )
-                    }
-                    val currentPad = topPadDpFor(currentUrl)
-                    if (movingCurrentSnapshot == null) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = currentPad)
-                                .graphicsLayer { translationX = offsetX }
-                                .clip(switchPaneShape)
-                                .background(MaterialTheme.colorScheme.background),
-                        )
+                    val adjacentUrl = if (adjacentDirection > 0) {
+                        previousTab?.content?.url
                     } else {
-                        SnapshotImage(
-                            bitmap = movingCurrentSnapshot,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = currentPad)
-                                .graphicsLayer {
-                                    translationX = offsetX
-                                    if (depthSwipe) {
-                                        // Departure progress: 0 centred, 1 fully swiped away.
-                                        val f = (abs(offsetX) / pageStride).coerceIn(0f, 1f)
-                                        val s = 1f - (1f - DeckSwipeMinScale) * f
-                                        scaleX = s
-                                        scaleY = s
-                                    }
-                                }
-                                .then(
-                                    if (depthSwipe) Modifier.drawWithContent {
-                                        drawContent()
-                                        val f = (abs(offsetX) / pageStride).coerceIn(0f, 1f)
-                                        drawRect(Color.Black, alpha = DeckSwipeMaxDim * f)
-                                    } else Modifier,
-                                )
-                                .clip(switchPaneShape),
-                        )
+                        nextTab?.content?.url
                     }
+                    HorizontalSwitchOverlay(
+                        offsetXProvider = { offsetX },
+                        contentSize = contentSize,
+                        tabSwitchGapPx = tabSwitchGapPx,
+                        depthSwipe = isWideLayout,
+                        adjacentSnapshot = adjacentSnapshot,
+                        adjacentUrl = adjacentUrl,
+                        showNewTabPane = showNewTabPane,
+                        currentUrl = currentUrl,
+                        movingCurrentSnapshot = movingCurrentSnapshot,
+                        switchPaneShape = switchPaneShape,
+                        topPadDpFor = ::topPadDpFor,
+                    )
                 }
                 if (predictiveBackActive) {
                     Box(

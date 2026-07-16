@@ -10,8 +10,13 @@ import org.json.JSONObject
  *
  * Each tab is stored with the last time it was viewed; [load] drops any tab whose last
  * access is older than [maxAgeMillis] (72h auto-discard). State is written as a small JSON
- * file in the app's private storage — no engine session bytes are serialized, tabs are
- * re-created lazily from their URL on restore.
+ * file in the app's private storage.
+ *
+ * [PersistedTab.engineStateJson] is an opaque serialized GeckoView `EngineSessionState`
+ * (back/forward history stack, scroll position, form data). It is produced/consumed by
+ * [GeckoTabRepository] — this class treats it as a JSON blob and never interprets it — so a
+ * restored tab comes back exactly where the user left it instead of a fresh top-of-page reload.
+ * Tabs with no captured engine state (never rendered) persist url+title only and load from URL.
  */
 class TabPersistence(context: Context) {
 
@@ -22,6 +27,8 @@ class TabPersistence(context: Context) {
         val title: String,
         val lastAccess: Long,
         val selected: Boolean,
+        /** Serialized `EngineSessionState` JSON, or null when none was captured for this tab. */
+        val engineStateJson: String? = null,
     )
 
     /** Read persisted tabs, dropping any not accessed within [maxAgeMillis] of [now]. */
@@ -39,6 +46,7 @@ class TabPersistence(context: Context) {
                     title = obj.optString("title"),
                     lastAccess = lastAccess,
                     selected = obj.optBoolean("selected", false),
+                    engineStateJson = obj.optString("engineState").takeIf { it.isNotBlank() },
                 )
             }
         }.getOrElse { emptyList() }
@@ -53,7 +61,8 @@ class TabPersistence(context: Context) {
                         .put("url", tab.url)
                         .put("title", tab.title)
                         .put("lastAccess", tab.lastAccess)
-                        .put("selected", tab.selected),
+                        .put("selected", tab.selected)
+                        .apply { tab.engineStateJson?.let { put("engineState", it) } },
                 )
             }
             // Write to a temp file then atomically rename, so a crash or process kill

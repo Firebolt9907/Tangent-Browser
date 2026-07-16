@@ -12,20 +12,14 @@ import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.util.lerp
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -34,6 +28,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Rect
@@ -42,6 +37,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
@@ -125,12 +121,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -143,7 +142,9 @@ import com.firebolt9907.luminabrowser.state.BarMode
 import com.firebolt9907.luminabrowser.state.BarUiState
 import com.firebolt9907.luminabrowser.state.LuminaViewModel
 import com.firebolt9907.luminabrowser.state.SitePreferences
+import com.firebolt9907.luminabrowser.state.addressBarLabel
 import com.firebolt9907.luminabrowser.state.compactHost
+import com.firebolt9907.luminabrowser.state.SearchEngine
 import com.firebolt9907.luminabrowser.state.hostFromUrl
 import com.firebolt9907.luminabrowser.ui.addons.AddonsSheet
 import com.firebolt9907.luminabrowser.ui.chrome.AaSheet
@@ -158,11 +159,13 @@ import mozilla.components.browser.state.action.ContentAction
 import mozilla.components.browser.state.action.EngineAction
 import mozilla.components.browser.state.state.TabSessionState
 import mozilla.components.browser.state.state.content.DownloadState
-import mozilla.components.browser.state.state.content.HistoryState
 import com.firebolt9907.luminabrowser.ui.content.ContentHost
 import com.firebolt9907.luminabrowser.ui.content.LinkPeekCard
 import com.firebolt9907.luminabrowser.ui.content.LinkRectProbe
 import com.firebolt9907.luminabrowser.ui.content.PeekEngineHolder
+import com.firebolt9907.luminabrowser.ui.content.UtilityWebCard
+import com.firebolt9907.luminabrowser.ui.content.UtilityWebRequest
+import com.firebolt9907.luminabrowser.ui.content.ThemeColorProbe
 import com.firebolt9907.luminabrowser.ui.content.loadJavascriptUrl
 import com.firebolt9907.luminabrowser.ui.content.linkUrlFromHitResult
 import com.firebolt9907.luminabrowser.ui.content.imageSrcFromHitResult
@@ -197,85 +200,6 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sign
-
-private const val SwitchDistanceThresholdPx = 120f
-private const val SwitchVelocityThresholdPxS = 800f
-private const val PredictiveBackVelocityThresholdPxS = 900f
-private const val PredictiveBackCommitProgressThreshold = 0.33f
-private const val PredictiveBackCoverFallbackMs = 900L
-private const val PredictiveBackCoverMaxMs = 2500L
-// Scroll travel (px) that flips the pill between expanded and compact. Two thresholds give
-// hysteresis so tiny scroll reversals don't flicker the state: scroll down past the snap threshold
-// to collapse, up past the (lower) expand threshold to expand. The accumulator is clamped to
-// [0, snap] so the pill stays responsive both ways — a compact pill expands after ~60 px of up-scroll
-// no matter how far you'd scrolled down.
-private const val BarCollapseSnapThresholdPx = 180f
-private const val BarExpandSnapThresholdPx = 120f
-// Pre-snap "indication": as the scroll accumulator approaches the threshold that would flip the
-// pill's state, the collapse progress is nudged this far toward the opposite state — a small,
-// eased *morph* preview (expanded starts shrinking toward compact, compact starts growing toward
-// expanded). Because it lives on the same progress value the snap animates, the flip continues
-// seamlessly from the indicated shape instead of popping back to the resting size.
-private const val BarCollapsePreviewMax = 0.12f
-// Hoisted constant collapse-progress provider for the always-expanded blank new-tab ghost.
-private val ZeroCollapseProgress: () -> Float = { 0f }
-// After scrolling stops mid-band, spring the preview back to its resting state so the indication
-// nudge doesn't linger; this is the idle delay before that settle runs.
-private const val BarCollapseIdleSettleMs = 140L
-// Min reader scroll travel (px) before the pill auto-hides/reveals, so tiny jitter doesn't toggle it.
-private const val ReaderBarHideSlopPx = 6f
-// Cap on the URL-keyed in-memory snapshot map so a long browsing session can't retain a
-// screen-sized bitmap for every page ever visited. Evicted entries still live in the disk cache.
-private const val MaxRecentPageSnapshots = 24
-private const val CompactInteractionThreshold = 0.5f
-// Decelerate-only curve for gesture-release slides (predictive back, grid dismiss): the motion
-// continues from the finger and eases into the target without re-accelerating, matching iOS's
-// interactive-pop settle. Default FastOutSlowIn eases in *and* out, which feels wrong mid-gesture.
-private val EaseOut = CubicBezierEasing(0f, 0f, 0.2f, 1f)
-
-private const val PredictiveBackDurationMs = 220
-private val TabSwitchGap = 64.dp
-// Depth card-stack swipe (wide screens): how far the leaving/incoming page panes shrink at the
-// extremes of a swipe, and the peak darkening applied to whichever pane is receding.
-private const val DeckSwipeMinScale = 0.90f
-private const val DeckSwipeMaxDim = 0.35f
-private val PullRefreshThreshold = 96.dp
-private val PullRefreshMaxDistance = 132.dp
-private const val GridCommitVelocityPxS = 1000f
-// The open spring seeds the finger's release velocity so the settle carries momentum. But a big/fast
-// swipe releases with gridDragProgress ≈ 1 (little range left) AND a high velocity, which rushes
-// gridProgressState 0.95→1 in a couple frames — collapsing the card's commit morph into an instant
-// SNAP (the "no hero on large swipes" report). Cap the seed velocity relative to the range still to
-// travel so the open always keeps ~≥1/this-many seconds of settle regardless of how far you dragged;
-// smaller swipes (lots of range left) keep their full natural finger velocity. Tuning this lower =
-// gentler/longer open, higher = snappier.
-private const val GridOpenMaxVelocityPerRange = 5f
-
-// Safari-style motion for the tab-overview (grid) transitions. iOS springs are authored as a
-// "response" (seconds to settle) + damping fraction; Compose's stiffness maps as
-// stiffness = (2*PI / response)^2. Safari's overview zoom is a soft, lightly-damped settle that
-// carries the finger's release velocity rather than snapping. Tuned to iOS's grace: response
-// ~0.46s (softer/longer than a snappy Material spring) with a lively-but-controlled damping so the
-// motion eases in and settles crisply rather than crawling to rest. Centralised here so the
-// open/settle/cancel/close phases stay one coherent feel.
-private object LuminaMotion {
-    // Overview zoom-in (carousel → grid). response ~0.46s. Damping 0.8 gives the barely-there
-    // overshoot-and-settle that reads as "iOS smooth" instead of a hard stop.
-    val GridOpen = spring<Float>(dampingRatio = 0.8f, stiffness = 190f)
-    // Settle to a target and cancel-return. Same softness, a hair more damped so a cancel doesn't
-    // visibly bounce back into the chrome.
-    val GridSettle = spring<Float>(dampingRatio = 0.85f, stiffness = 200f)
-    // Overview zoom-out (grid → fullscreen tab): tap-to-select / back / new-tab exit. Symmetric
-    // softness with GridOpen so entry and exit feel like one motion. Damping 0.9 keeps it crisp
-    // (no dead critical-damping crawl at the end) — the render clamps progress to [0,1], so the
-    // sub-percent undershoot a light damping produces can't show as an overshoot past the tab.
-    val GridClose = spring<Float>(dampingRatio = 0.9f, stiffness = 200f)
-    // Toolbar collapse/expand — the single spring that drives both directions (Safari-style). No
-    // finger-tracking preview: crossing the scroll threshold animates the pill smoothly between the
-    // expanded and compact states with this one spring, so up and down feel identical. Near-critical
-    // damping (0.9) + a medium-low stiffness give a quick, smooth glide with no visible bounce.
-    val BarCollapse = spring<Float>(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow)
-}
 
 @OptIn(ExperimentalActivityApi::class)
 @Composable
@@ -322,6 +246,10 @@ fun LuminaRoot(
     // Find-in-page state. The match counts are pushed by the engine session's onFindResult.
     var findInPageActive by remember { mutableStateOf(false) }
     var showBottomToolbar by remember { mutableStateOf(components.globalPreferencesStore.showBottomToolbar) }
+    // When on, a search-results page shows the typed query in the bar instead of the engine's host.
+    // Persisted; toggled in Settings. Paired with the current search engine for label resolution.
+    var showSearchTermsInBar by remember { mutableStateOf(components.globalPreferencesStore.showSearchTermsInBar) }
+    var barSearchEngine by remember { mutableStateOf(components.globalPreferencesStore.searchEngine) }
     // How the bottom bar arranges itself on wide screens (tablets / landscape); persisted, picked in
     // Settings. Ignored on narrow/portrait phones (classic full-width bar).
     var wideBarLayout by remember {
@@ -389,6 +317,12 @@ fun LuminaRoot(
     // and release the held session. Requested from the ComponentCallbacks below; the release runs
     // once the card is gone so we never pull the view out from under a live AndroidView.
     var peekReleaseRequested by remember { mutableStateOf(false) }
+    // Add-on quick settings / add-on options page / Firefox sign-in, rendered in a standalone
+    // GeckoView card ([UtilityWebCard]) that floats over the current page instead of opening a real
+    // tab — so the user never leaves their page and the current tab stays active for web extensions.
+    // Deliberately independent of the peek engine's low-memory drop below: a sign-in or options page
+    // must survive a transient onTrimMemory.
+    var utilityWeb by remember { mutableStateOf<UtilityWebRequest?>(null) }
     val activityManager = remember {
         appContext.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
     }
@@ -455,15 +389,11 @@ fun LuminaRoot(
         pendingPeekAdoption = null
     }
 
-    // Tabs that host an add-on action popup ("quick settings"). They must NOT become the active tab
-    // for web extensions, or the popup (uBlock, Chrome Mask, …) would query itself (about:blank)
-    // instead of the page the user opened it from.
-    val popupTabIds = remember { mutableSetOf<String>() }
     // Mirror WebExtensionSupport: tell the add-on controller which tab is "current" so it can attach
     // per-tab action handlers (the source of every action update) and mark it active for extensions.
+    // Add-on popups now render in a standalone UtilityWebCard rather than a real tab, so no tab is
+    // ever a popup tab — the current tab always stays the active extension tab.
     LaunchedEffect(actualSelectedTabId, selectedEngineSession) {
-        val current = actualSelectedTabId ?: return@LaunchedEffect
-        if (current in popupTabIds) return@LaunchedEffect
         components.addonController.setActiveSession(selectedEngineSession)
     }
     val actualSelectedContent = actualSelectedTab?.content
@@ -679,7 +609,7 @@ fun LuminaRoot(
     var showBookmarks by remember { mutableStateOf(false) }
     var showDownloads by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
-    var firefoxSignInTabId by remember { mutableStateOf<String?>(null) }
+    var showOnboarding by remember { mutableStateOf(false) }
     var showAa by remember { mutableStateOf(false) }
     var aaInitialTab by remember { mutableIntStateOf(0) }
     // Whether the selected tab is on the tracking-protection exception list (drives the aA sheet's
@@ -854,11 +784,12 @@ fun LuminaRoot(
         components.firefoxSyncController.events.collect { event ->
             when (event) {
                 FirefoxSyncEvent.AuthenticationCompleted -> {
-                    firefoxSignInTabId?.let { tabId ->
-                        components.tabRepository.removeTab(tabId)
-                        firefoxSignInTabId = null
-                    }
-                    showSyncedTabs = true
+                    // The sign-in ran in a UtilityWebCard which dismisses itself on the success
+                    // redirect (via onIntercept → handleOAuthRedirect); reopen the synced-tabs sheet
+                    // to show the now-signed-in state — but NOT while onboarding is up, where the user
+                    // stays on the onboarding page to finish the remaining steps.
+                    utilityWeb = null
+                    if (!showOnboarding) showSyncedTabs = true
                 }
                 FirefoxSyncEvent.LoggedOutRemotely -> {
                     android.widget.Toast.makeText(
@@ -918,7 +849,7 @@ fun LuminaRoot(
         val host = if (url.isBlank() || url == "about:blank") {
             "about:blank"
         } else {
-            compactHost(url)
+            addressBarLabel(url, barSearchEngine, showSearchTermsInBar)
         }
         val visualMode = if (mode == BarMode.Editing) BarMode.Expanded else mode
         return BarUiState(
@@ -1165,6 +1096,63 @@ fun LuminaRoot(
         val host = hostFromUrl(url.orEmpty())
         if (host.isEmpty()) return 0.dp
         return if (sitePrefsStore.get(host).topPaddingFix) topChromeInsetDp else 0.dp
+    }
+    // Per-host theme colors, sampled by ThemeColorProbe (the same `<meta name="theme-color">` tag
+    // Safari reads) whenever a top-padding site is showing. Keyed by host so the tint stays stable
+    // across pages of the same site — matching how the top-padding preference itself is scoped. A
+    // missing entry means the site declared no theme color, so consumers fall back to the primary.
+    val themeColorsByHost = remember { mutableStateMapOf<String, Color>() }
+    DisposableEffect(Unit) {
+        ThemeColorProbe.listener = { _, url, colorInt ->
+            val host = hostFromUrl(url)
+            if (host.isNotEmpty()) {
+                // The probe fires on Gecko's thread; marshal the state write back to main.
+                scope.launch {
+                    if (colorInt != null) themeColorsByHost[host] = Color(colorInt)
+                    else themeColorsByHost.remove(host)
+                }
+            }
+        }
+        onDispose { ThemeColorProbe.listener = null }
+    }
+    // The color to paint the exposed top strip / status bar for the current tab: the site's declared
+    // theme color when top-padding-fix is on and one was found, otherwise the system primary color.
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val topStripColorActive = currentSitePrefs.topPaddingFix && currentHost.isNotEmpty()
+    val topStripColor = if (topStripColorActive) {
+        themeColorsByHost[currentHost] ?: primaryColor
+    } else {
+        primaryColor
+    }
+    // Keep the status-bar icons legible over whatever fills the strip: dark icons on a light tint,
+    // light icons on a dark one. When the strip is not active, restore the system-theme default.
+    val systemDarkTheme = isSystemInDarkTheme()
+    val view = LocalView.current
+    val statusBarController = remember(view) {
+        var ctx: android.content.Context? = view.context
+        while (ctx is android.content.ContextWrapper && ctx !is android.app.Activity) {
+            ctx = ctx.baseContext
+        }
+        (ctx as? android.app.Activity)?.window?.let { window ->
+            WindowCompat.getInsetsController(window, view)
+        }
+    }
+    LaunchedEffect(statusBarController, topStripColorActive, topStripColor, systemDarkTheme) {
+        val controller = statusBarController ?: return@LaunchedEffect
+        controller.isAppearanceLightStatusBars = if (topStripColorActive) {
+            topStripColor.luminance() > 0.5f
+        } else {
+            !systemDarkTheme
+        }
+    }
+    // Resolves a tab's theme-color strip fill for the tab switcher: the site's sampled theme color,
+    // or null when none was declared (the card falls back to the primary color).
+    val gridThemeColorProvider: (String) -> Color? = remember {
+        { tabId ->
+            val url = components.store.state.tabs.firstOrNull { it.id == tabId }?.content?.url
+            val host = hostFromUrl(url.orEmpty())
+            if (host.isEmpty()) null else themeColorsByHost[host]
+        }
     }
     val currentSession by rememberUpdatedState(selectedEngineSession)
     val callbacks = remember(viewModel, currentUrl) {
@@ -2069,16 +2057,11 @@ fun LuminaRoot(
             }
         }
         components.addonController.onActionPopupTabRequested = { title, engineSession ->
-            // The popup document is loaded into engineSession by Gecko; open a foreground tab that
-            // renders it. editBlankTab stays false so we show the popup, not the URL editor. Record
-            // the id so the active-session effect leaves the originating page active for extensions.
-            val popupTabId = openTabToRight(
-                url = "about:blank",
-                title = title,
-                preparedEngineSession = engineSession,
-                editBlankTab = false,
-            )
-            popupTabIds.add(popupTabId)
+            // The popup document is loaded into engineSession by Gecko; render it in a standalone
+            // card floating over the current page rather than a real tab. Because the card session is
+            // never added to the store, the user's page stays the active tab for extensions, so the
+            // popup (uBlock, Chrome Mask, …) acts on that page — no popupTabIds bookkeeping needed.
+            utilityWeb = UtilityWebRequest.Popup(title = title, session = engineSession)
         }
     }
 
@@ -2449,6 +2432,20 @@ fun LuminaRoot(
                     barCollapseProgress = barCollapseProgressProvider,
                     tabIsLoading = actualSelectedContent?.loading == true,
                 )
+                // Fill the status-bar-height gap the top-padding fix opens above the padded-down
+                // EngineView with the site's declared theme color (Safari-style), falling back to
+                // the system primary. Drawn here — right after the engine, before the horizontal-
+                // switch / grid / cover overlays — so those opaque overlays paint over it naturally
+                // and it only shows in the normal browse layer.
+                if (topStripColorActive && shouldShowUi && topChromeInsetPx > 0) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(topChromeInsetDp)
+                            .align(Alignment.TopStart)
+                            .background(topStripColor),
+                    )
+                }
                 if (selectedContent?.url.isBlankPageUrl() && shouldShowUi) {
                     Box(
                         modifier = Modifier
@@ -3030,6 +3027,7 @@ fun LuminaRoot(
                             releasePositions = gridCommitFromPositions,
                             snapshotVersion = snapshotCacheVersionState,
                             snapshotProvider = gridSnapshotProvider,
+                            themeColorProvider = gridThemeColorProvider,
                             bottomControlsHeightPx = gridBottomControlsHeightPx,
                         )
                     } else {
@@ -3054,6 +3052,7 @@ fun LuminaRoot(
                             releasePositions = gridCommitFromPositions,
                             snapshotVersion = snapshotCacheVersionState,
                             snapshotProvider = gridSnapshotProvider,
+                            themeColorProvider = gridThemeColorProvider,
                             iconProvider = { tabId ->
                                 val tab = tabsList.firstOrNull { it.id == tabId }
                                 tab?.content?.url?.let { faviconCache[it] } ?: tab?.content?.icon
@@ -3451,6 +3450,8 @@ fun LuminaRoot(
                         onTabsTap = { openGrid(initialVelocityProgressPerSec = 0f) },
                         isWideLayout = isWideLayout,
                         wideBarLayout = wideBarLayout,
+                        searchEngine = barSearchEngine,
+                        showSearchTermsInBar = showSearchTermsInBar,
                     )
 
                     // Auto-retire the copy → send banner after a short window.
@@ -3529,9 +3530,16 @@ fun LuminaRoot(
                     wideBarLayout = WideBarLayout.fromName(
                         components.globalPreferencesStore.wideBarLayoutName,
                     )
+                    showSearchTermsInBar = components.globalPreferencesStore.showSearchTermsInBar
+                    barSearchEngine = components.globalPreferencesStore.searchEngine
+                    viewModel.refreshDisplayPrefs()
                 },
                 onClearSitePermissions = {
                     components.sitePermissionController.clearRememberedDecisions()
+                },
+                onReplayOnboarding = {
+                    showSettings = false
+                    showOnboarding = true
                 },
                 onClearBrowsingData = { history, cookiesAndSiteData, cache ->
                     // Cookies/site data and the on-disk cache live in the engine; history lives in
@@ -3564,6 +3572,15 @@ fun LuminaRoot(
             )
         }
 
+        // Onboarding replayed from Settings ("Show onboarding again"). A full-screen opaque overlay;
+        // dismisses back to the browser when finished/skipped. (First-run onboarding is gated
+        // separately in MainActivity.)
+        if (showOnboarding) {
+            com.firebolt9907.luminabrowser.ui.onboarding.LuminaOnboarding(
+                onFinish = { showOnboarding = false },
+            )
+        }
+
         if (showSyncedTabs) {
             SyncedTabsSheet(
                 controller = components.firefoxSyncController,
@@ -3573,11 +3590,10 @@ fun LuminaRoot(
                     if (gridEngaged) closeGrid(animateBack = true)
                 },
                 onSignInUrl = { url ->
-                    firefoxSignInTabId = viewModel.onOpenNewTab(
-                        url = url,
-                        title = "Firefox Sign In",
-                        selectTab = true,
-                    )
+                    // Run the OAuth flow in a standalone card over the current page rather than a real
+                    // tab. The card's onIntercept feeds every navigation to handleOAuthRedirect, which
+                    // completes the sign-in on the success redirect and dismisses the card.
+                    utilityWeb = UtilityWebRequest.Url(title = "Firefox Sign In", url = url)
                     showSyncedTabs = false
                     if (gridEngaged) closeGrid(animateBack = false)
                 },
@@ -3650,17 +3666,21 @@ fun LuminaRoot(
                     engineRefreshTick += 1
                 },
                 onOpenAddonSettings = { addon ->
+                    // Render the options page in a standalone card over the current page instead of a
+                    // real tab: the user stays on their page and it remains the active tab for
+                    // extensions, so options that act on "the current page" target it — not the
+                    // options document itself.
                     addon.optionsPageUrl?.let { url ->
-                        viewModel.onOpenNewTab(url = url, title = "${addon.name} Settings", selectTab = true)
+                        utilityWeb = UtilityWebRequest.Url(title = "${addon.name} Settings", url = url)
                         showAa = false
                         if (gridEngaged) closeGrid(animateBack = false)
                     }
                 },
                 onOpenAddonQuickSettings = { addon ->
                     // Dismiss the sheet first; the popup arrives asynchronously via
-                    // onActionPopupTabRequested, which opens a tab backed by the popup session. The
-                    // originating page is already the active tab for extensions (setActiveSession),
-                    // so the popup binds to it rather than the blank popup tab.
+                    // onActionPopupTabRequested, which renders the popup session in a UtilityWebCard.
+                    // The originating page stays the active tab for extensions (setActiveSession is
+                    // never repointed at the card), so the popup binds to it.
                     showAa = false
                     if (gridEngaged) closeGrid(animateBack = false)
                     components.addonController.openPopup(addon.id)
@@ -3699,6 +3719,21 @@ fun LuminaRoot(
                 bookmarksStorage = components.bookmarksStorage,
                 pageIcon = selectedContent?.icon,
                 showBottomToolbar = showBottomToolbar,
+            )
+        }
+
+        // Add-on quick settings / options page / Firefox sign-in, floated over the current page in a
+        // standalone GeckoView card (never a real tab). onIntercept handles the two navigations that
+        // should close the card: an add-on .xpi install request and the FxA OAuth success redirect.
+        utilityWeb?.let { request ->
+            UtilityWebCard(
+                request = request,
+                engine = components.engine,
+                onIntercept = { url ->
+                    components.firefoxSyncController.handleOAuthRedirect(url) ||
+                        components.addonController.installFromPageRequest(url)
+                },
+                onDismiss = { utilityWeb = null },
             )
         }
 
@@ -3760,617 +3795,6 @@ fun LuminaRoot(
                 onShare = { u -> shareUrl(appContext, u) },
                 onDismiss = { imageMenuUrl = null },
             )
-        }
-    }
-}
-
-@Composable
-private fun BottomBarLayer(
-    contentSize: IntSize,
-    tabSwitchGapPx: Float,
-    previousTab: TabSessionState?,
-    nextTab: TabSessionState?,
-    tabCount: Int,
-    activeState: BarUiState,
-    callbacks: BarCallbacks,
-    onPrimaryUrlTap: () -> Unit,
-    onDragStart: () -> Unit,
-    onDragDelta: (androidx.compose.ui.geometry.Offset) -> Unit,
-    onDragEnd: (totalDelta: androidx.compose.ui.geometry.Offset, velocity: androidx.compose.ui.geometry.Offset) -> Unit,
-    onReload: () -> Unit,
-    onReloadLongPress: () -> Unit = {},
-    canGoForward: Boolean = false,
-    onAaTap: () -> Unit,
-    onAaLongPress: () -> Unit = {},
-    // Read only inside graphicsLayer blocks: these change on every frame of a drag, commit
-    // spring, or grid gesture, and must never be read during composition (see the call site).
-    activeOffsetX: () -> Float,
-    onBottomInsetMeasured: (Int) -> Unit,
-    barCollapseProgress: () -> Float = { 0f },
-    pillInteractive: Boolean = true,
-    controlsEnabled: Boolean = true,
-    gridProgress: () -> Float = { 0f },
-    showNewTabGhost: Boolean = false,
-    selectedTabId: String? = null,
-    eligibleReaderTabs: Set<String> = emptySet(),
-    activeReaderTabs: Set<String> = emptySet(),
-    readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme = com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.System,
-    readerHideOffsetPx: () -> Float = { 0f },
-    onSelectPreviousTab: () -> Unit = {},
-    onSelectNextTab: () -> Unit = {},
-    showBottomToolbar: Boolean = false,
-    onCopyTap: () -> Unit = {},
-    onUrlLongPress: () -> Unit = {},
-    onForwardTap: () -> Unit = {},
-    onShareTap: () -> Unit = {},
-    onBookmarksTap: () -> Unit = {},
-    onTabsTap: () -> Unit = {},
-    // Wide-screen (tablet / landscape) bottom-bar arrangement. On narrow/portrait phones the classic
-    // full-width centred bar is used regardless of [wideBarLayout].
-    isWideLayout: Boolean = false,
-    wideBarLayout: WideBarLayout = WideBarLayout.SPLIT,
-) {
-    val activeReaderActive = selectedTabId != null && activeReaderTabs.contains(selectedTabId)
-    val density = LocalDensity.current
-    val imeInsets = WindowInsets.ime
-    val isKeyboardVisible by remember(density, imeInsets) {
-        derivedStateOf { imeInsets.getBottom(density) > 0 }
-    }
-    val hideForKeyboard = isKeyboardVisible && activeState.mode != BarMode.Editing
-
-    // Wide layout: pin the pill (and its ghosts/toolbar) into a capped-width band at the bottom-right
-    // instead of stretching full-width. SPLIT moves the action buttons into a cluster left of the
-    // pill (toolbar beside, not above); CORNER keeps the classic stacked pill+toolbar, just corner-
-    // pinned. On phones both flags are inert.
-    val splitMode = isWideLayout && wideBarLayout == WideBarLayout.SPLIT
-    // Band width for the pill + its ghost neighbours in wide modes. Sized so a normal address pill
-    // reads comfortably without swallowing the whole tablet width.
-    val wideBandWidth = 400.dp
-    // The stacked (toolbar-above-pill) treatment is used everywhere EXCEPT SPLIT, where the buttons
-    // move beside the pill as a separate left cluster.
-    val barStackedToolbar = showBottomToolbar && !splitMode
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .imePadding()
-            .graphicsLayer {
-                val baseAlpha = (1f - (gridProgress() * 1.5f).coerceIn(0f, 1f)).coerceIn(0f, 1f)
-                alpha = if (hideForKeyboard) 0f else baseAlpha
-            },
-    ) {
-        if (!hideForKeyboard) {
-            val barHeight = if (activeState.mode == BarMode.Editing) {
-                72.dp
-            } else {
-                56.dp
-            }
-            val toolbarHeight = if (showBottomToolbar && activeState.mode != BarMode.Editing) 48.dp else 0.dp
-            val navBarHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-            val bottomPadding = navBarHeight.coerceAtLeast(24.dp)
-            val totalHeight = barHeight + bottomPadding + toolbarHeight
-            // We want the gradient to extend through the entire height of the bottom taskbar plus
-            // a 150.dp extension above it.
-            val gradientExtension = 120.dp
-            val boxHeight = totalHeight + gradientExtension
-
-            // To keep the system navigation buttons or gesture bar completely opaque, we sum
-            // the system navigation bar height and a fixed opaque chrome height.
-            val opaqueChromeHeight = 0.dp
-            val boxHeightPx = with(density) { boxHeight.toPx() }
-            val opaqueHeightPx = with(density) { (opaqueChromeHeight + navBarHeight).toPx() }
-            val fadeStartFraction = if (boxHeightPx > 0f) {
-                (1f - (opaqueHeightPx / boxHeightPx)).coerceIn(0f, 1f)
-            } else {
-                0.7f
-            }
-            // A lower tone than the pill (surfaceContainerHighest) so the pill has clear contrast
-            // against the scrim instead of blending into it.
-            val scrimColor = MaterialTheme.colorScheme.surfaceContainerLow
-
-            // In wide modes the pill/ghosts/scrim live in a capped-width band pinned bottom-right; on
-            // phones they fill the screen (classic centred bar). Everything inside keeps using
-            // `.align(BottomCenter)`, which now resolves within the band.
-            val bandModifier = if (isWideLayout) {
-                Modifier.align(Alignment.BottomEnd).width(wideBandWidth)
-            } else {
-                Modifier.fillMaxSize()
-            }
-            Box(modifier = bandModifier) {
-
-            if (activeState.mode != BarMode.Editing) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .requiredHeight(boxHeight)
-                        .align(Alignment.BottomCenter)
-                        .graphicsLayer {
-                            val collapse = barCollapseProgress()
-                            val readerHide = readerHideOffsetPx()
-                            alpha = (1f - collapse).coerceIn(0f, 1f)
-                            translationY = (toolbarHeight.toPx() + bottomPadding.toPx()) * collapse + readerHide
-                        }
-                        .background(
-                            Brush.verticalGradient(
-                                *arrayOf(
-                                    0.0f to Color.Transparent,
-                                    (fadeStartFraction * 0.35f) to scrimColor.copy(alpha = 0.2f),
-                                    (fadeStartFraction * 0.6f) to scrimColor.copy(alpha = 0.5f),
-                                    (fadeStartFraction * 0.82f) to scrimColor.copy(alpha = 0.8f),
-                                    fadeStartFraction to scrimColor,
-                                    1.0f to scrimColor
-                                )
-                            )
-                        )
-                )
-            }
-
-            val width = contentSize.width.toFloat()
-        val pageStride = width + tabSwitchGapPx
-        val density = LocalDensity.current
-        // The pills are spaced by the band they occupy: the full screen on phones, the capped band on
-        // wide screens. `pageStride` stays screen-width so the parallax still lands the neighbour pill
-        // at 0 exactly when the (full-width) page panes complete their swipe.
-        val pillBandPx = if (isWideLayout) with(density) { wideBandWidth.toPx() } else width
-        val pillStride = pillBandPx - with(density) { 32.dp.toPx() }
-        // Parallax: the full-width page panes slide by the full `pageStride` (width + inter-tab
-        // gap), but the pills are spaced only `pillStride` apart. Scaling the pill
-        // translations by pillStride/pageStride makes the tab content move slightly more than the pill
-        // while dragging — Safari's depth effect — and still lands both at 0 on commit.
-        val pillParallax = if (pageStride > 0f) pillStride / pageStride else 1f
-        val pillWidthPx = pillBandPx - with(density) { 40.dp.toPx() }
-        val minScale = 0.85f
-
-        val getPillScale = { txRaw: Float ->
-            if (pillStride > 0f) {
-                val fraction = (abs(txRaw) / pillStride).coerceIn(0f, 1f)
-                1f - (1f - minScale) * fraction
-            } else {
-                1f
-            }
-        }
-
-        val activeTx = { activeOffsetX() * pillParallax }
-        val activeScale = { getPillScale(activeTx()) }
-
-        val prevTxRaw = { activeOffsetX() * pillParallax - pillStride }
-        val prevScale = { getPillScale(prevTxRaw()) }
-        val prevTx = {
-            val raw = prevTxRaw()
-            val scale = prevScale()
-            raw + (1f - scale) * (pillWidthPx / 2f)
-        }
-
-        val nextTxRaw = { activeOffsetX() * pillParallax + pillStride }
-        val nextScale = { getPillScale(nextTxRaw()) }
-        val nextTx = {
-            val raw = nextTxRaw()
-            val scale = nextScale()
-            raw - (1f - scale) * (pillWidthPx / 2f)
-        }
-
-        val ghostTxRaw = { activeOffsetX() * pillParallax + pillStride }
-        val ghostScale = { getPillScale(ghostTxRaw()) }
-        val ghostTx = {
-            val raw = ghostTxRaw()
-            val scale = ghostScale()
-            raw - (1f - scale) * (pillWidthPx / 2f)
-        }
-
-        // Neighbor / ghost pills are the horizontal tab-switch peek preview. While editing the
-        // address bar they must not render — the editing pill is a distinct input surface, and the
-        // adjacent pills peeking at the screen edges are just visual noise behind the sheet.
-        val showNeighborPills = activeState.mode != BarMode.Editing
-        if (previousTab != null && width > 0f && !activeReaderActive && showNeighborPills) {
-            GhostSafariBar(
-                state = ghostBarState(previousTab, tabCount, activeState.mode),
-                barCollapseProgress = barCollapseProgress,
-                pillTranslationX = prevTx,
-                pillScale = prevScale,
-                isReaderEligible = eligibleReaderTabs.contains(previousTab.id),
-                isReaderActive = activeReaderTabs.contains(previousTab.id),
-                readerTheme = readerTheme,
-                onClick = {
-                    if (controlsEnabled) {
-                        onSelectPreviousTab()
-                    }
-                },
-                showBottomToolbar = barStackedToolbar,
-                canGoForward = previousTab.content.canGoForward,
-            )
-        }
-        if (nextTab != null && width > 0f && !activeReaderActive && showNeighborPills) {
-            GhostSafariBar(
-                state = ghostBarState(nextTab, tabCount, activeState.mode),
-                barCollapseProgress = barCollapseProgress,
-                pillTranslationX = nextTx,
-                pillScale = nextScale,
-                isReaderEligible = eligibleReaderTabs.contains(nextTab.id),
-                isReaderActive = activeReaderTabs.contains(nextTab.id),
-                readerTheme = readerTheme,
-                onClick = {
-                    if (controlsEnabled) {
-                        onSelectNextTab()
-                    }
-                },
-                showBottomToolbar = barStackedToolbar,
-                canGoForward = nextTab.content.canGoForward,
-            )
-        }
-        if (showNewTabGhost && nextTab == null && width > 0f && !activeReaderActive && showNeighborPills) {
-            GhostSafariBar(
-                state = BarUiState(
-                    displayUrl = "",
-                    tabCount = tabCount,
-                    mode = BarMode.Expanded,
-                    editingText = "",
-                    blankNewTabPreview = true,
-                ),
-                barCollapseProgress = barCollapseProgress,
-                collapseProgress = ZeroCollapseProgress,
-                pillTranslationX = ghostTx,
-                pillScale = ghostScale,
-                onClick = {
-                    if (controlsEnabled) {
-                        onSelectNextTab()
-                    }
-                },
-                showBottomToolbar = barStackedToolbar,
-            )
-        }
-        val activeEligible = selectedTabId != null && eligibleReaderTabs.contains(selectedTabId)
-        val activeActive = selectedTabId != null && activeReaderTabs.contains(selectedTabId)
-        SafariBar(
-            state = activeState,
-            onUrlTap = onPrimaryUrlTap,
-            onUrlLongPress = onUrlLongPress,
-            onAaTap = onAaTap,
-            onAaLongPress = onAaLongPress,
-            onEditingTextChange = callbacks.onEditingTextChange,
-            onEditingSubmit = callbacks.onEditingSubmit,
-            onEditingCancel = callbacks.onEditingCancel,
-            onDragStart = onDragStart,
-            onDragDelta = onDragDelta,
-            onDragEnd = onDragEnd,
-            onReload = onReload,
-            onReloadLongPress = onReloadLongPress,
-            canGoForward = canGoForward,
-            interactive = pillInteractive,
-            controlsEnabled = controlsEnabled,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .graphicsLayer {
-                    translationY = readerHideOffsetPx()
-                },
-            pillTranslationX = activeTx,
-            pillScale = activeScale,
-            onBottomInsetMeasured = onBottomInsetMeasured,
-            collapseProgress = barCollapseProgress,
-            isReaderEligible = activeEligible,
-            isReaderActive = activeActive,
-            readerTheme = readerTheme,
-            showBottomToolbar = barStackedToolbar,
-            onCopyTap = onCopyTap,
-            onForwardTap = onForwardTap,
-            onShareTap = onShareTap,
-            onBookmarksTap = onBookmarksTap,
-            onTabsTap = onTabsTap,
-            // Only the live pill morphs its address text into the editing field; ghosts opt out.
-            enableAddressHero = true,
-        )
-        } // end band container
-
-        // SPLIT: the action buttons live in a cluster to the LEFT of the pill band (toolbar beside
-        // the pill, not stacked above it). It stays put during the horizontal tab-switch — only the
-        // pill + its ghosts translate — and fades/slides with the same collapse + reader-hide curve
-        // as the bar. Shown only when the user has the bottom toolbar enabled.
-        if (splitMode && showBottomToolbar && activeState.mode != BarMode.Editing &&
-            controlsEnabled && !activeReaderActive
-        ) {
-            val hasPage = activeState.pageUrl.isNotBlank() && activeState.pageUrl != "about:blank"
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = wideBandWidth)
-                    .navigationBarsPadding()
-                    .padding(bottom = 24.dp, end = 4.dp)
-                    .height(56.dp)
-                    .graphicsLayer {
-                        val collapse = barCollapseProgress()
-                        alpha = (1f - collapse).coerceIn(0f, 1f)
-                        translationY = 56.dp.toPx() * collapse + readerHideOffsetPx()
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                BottomToolbarButton(
-                    icon = Icons.Default.ContentCopy,
-                    contentDescription = "Copy link",
-                    onClick = onCopyTap,
-                    enabled = hasPage,
-                )
-                BottomToolbarButton(
-                    icon = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = "Forward",
-                    onClick = onForwardTap,
-                    enabled = canGoForward,
-                )
-                BottomToolbarButton(
-                    icon = Icons.Default.Share,
-                    contentDescription = "Share",
-                    onClick = onShareTap,
-                    enabled = hasPage,
-                )
-                BottomToolbarButton(
-                    icon = Icons.Outlined.BookmarkBorder,
-                    contentDescription = "Bookmarks",
-                    onClick = onBookmarksTap,
-                    enabled = true,
-                )
-                BottomToolbarButton(
-                    icon = Icons.Outlined.Layers,
-                    contentDescription = "Tabs",
-                    onClick = onTabsTap,
-                    enabled = true,
-                )
-            }
-        }
-        } // end if (!hideForKeyboard)
-    }
-}
-
-/**
- * Arc/Zen-style refresh indicator: a thin horizontal line.
- *  - While pulling: a centre-out fill whose width and brightness track [progress]; at the
- *    threshold (progress == 1) it reaches full brightness (the haptic is fired by the caller).
- *  - While [refreshing]: a bright band sweeps horizontally across a faint full-width track.
- */
-@Composable
-private fun PullRefreshLine(
-    progress: () -> Float,
-    refreshing: Boolean,
-    color: Color,
-    modifier: Modifier = Modifier,
-) {
-    val sweep by rememberInfiniteTransition(label = "refreshSweep").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 850, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "sweep",
-    )
-    Canvas(modifier = modifier) {
-        // Read the live pull magnitude in the draw phase so a pull frame repaints this line without
-        // recomposing it (or LuminaRoot).
-        val progressValue = progress()
-        val w = size.width
-        val cy = size.height / 2f
-        val stroke = size.height
-        // Faint full-width track.
-        drawLine(
-            color = color.copy(alpha = 0.15f),
-            start = Offset(0f, cy),
-            end = Offset(w, cy),
-            strokeWidth = stroke,
-            cap = StrokeCap.Round,
-        )
-        if (refreshing) {
-            val band = w * 0.35f
-            val start = -band + sweep * (w + band)
-            drawLine(
-                color = color,
-                start = Offset(start.coerceAtLeast(0f), cy),
-                end = Offset((start + band).coerceAtMost(w), cy),
-                strokeWidth = stroke,
-                cap = StrokeCap.Round,
-            )
-        } else if (progressValue > 0f) {
-            val fill = w * progressValue
-            val left = (w - fill) / 2f
-            drawLine(
-                color = color.copy(alpha = lerp(0.45f, 1f, progressValue)),
-                start = Offset(left, cy),
-                end = Offset(left + fill, cy),
-                strokeWidth = stroke,
-                cap = StrokeCap.Round,
-            )
-        }
-    }
-}
-
-/**
- * A page-snapshot overlay layer — the remember(asImageBitmap) + cropped Image idiom every
- * switch/predictive-back/sticky-cover overlay uses. Call sites pass their full modifier chain
- * (fillMaxSize/padding/graphicsLayer/clip) unchanged: the draw-phase transform contracts live at
- * the call sites, not here.
- */
-@Composable
-private fun SnapshotImage(bitmap: android.graphics.Bitmap, modifier: Modifier = Modifier) {
-    val img = remember(bitmap) { bitmap.asImageBitmap() }
-    Image(
-        bitmap = img,
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier,
-    )
-}
-
-/**
- * A non-interactive SafariBar used for the tab-switch peek previews — the previous/next neighbor
- * pills and the blank new-tab ghost. All input callbacks are no-ops (the only interaction is
- * [onClick] on the pill itself), and the whole bar fades out with the collapse progress. Was
- * copy-pasted three times before being extracted; keep the ghosts on this one wrapper.
- */
-@Composable
-private fun BoxScope.GhostSafariBar(
-    state: BarUiState,
-    barCollapseProgress: () -> Float,
-    pillTranslationX: () -> Float,
-    pillScale: () -> Float,
-    onClick: () -> Unit,
-    showBottomToolbar: Boolean,
-    collapseProgress: () -> Float = barCollapseProgress,
-    isReaderEligible: Boolean = false,
-    isReaderActive: Boolean = false,
-    readerTheme: com.firebolt9907.luminabrowser.ui.reader.ReaderTheme =
-        com.firebolt9907.luminabrowser.ui.reader.ReaderTheme.System,
-    canGoForward: Boolean = false,
-) {
-    SafariBar(
-        state = state,
-        onUrlTap = {},
-        onAaTap = {},
-        onEditingTextChange = {},
-        onEditingSubmit = {},
-        onEditingCancel = {},
-        onDragStart = {},
-        onDragDelta = { _ -> },
-        onDragEnd = { _, _ -> },
-        onReload = {},
-        interactive = false,
-        controlsEnabled = false,
-        collapseProgress = collapseProgress,
-        modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .graphicsLayer {
-                alpha = (1f - barCollapseProgress()).coerceIn(0f, 1f)
-            },
-        pillTranslationX = pillTranslationX,
-        pillScale = pillScale,
-        isReaderEligible = isReaderEligible,
-        isReaderActive = isReaderActive,
-        readerTheme = readerTheme,
-        onClick = onClick,
-        showBottomToolbar = showBottomToolbar,
-        onCopyTap = {},
-        canGoForward = canGoForward,
-    )
-}
-
-private fun ghostBarState(
-    tab: TabSessionState,
-    tabCount: Int,
-    activeMode: BarMode,
-): BarUiState {
-    val url = tab.content.url
-    val host = if (url.isNotEmpty()) compactHost(url) else ""
-    val mode = if (activeMode == BarMode.Editing) BarMode.Expanded else activeMode
-    return BarUiState(
-        displayUrl = host,
-        tabCount = tabCount,
-        mode = mode,
-        editingText = "",
-        compactDisplayUrl = host,
-        pageUrl = url,
-    )
-}
-
-private class BarCallbacks(
-    val onUrlTap: () -> Unit,
-    val onEditingTextChange: (String) -> Unit,
-    val onEditingSubmit: () -> Unit,
-    val onEditingCancel: () -> Unit,
-)
-
-/** The link a just-copied "Send to device" banner offers to push to another Sync device. */
-private data class SendLinkPrompt(val url: String, val title: String)
-
-private enum class SnapshotRequestPurpose {
-    PredictiveBack,
-    TabSwitch,
-    LinkPeek,
-}
-
-/**
- * Crop [full] (a capture of the whole engine view) to [rect] (element bounds in root px). The
- * capture may be at a different pixel scale than the layout, so [viewW]/[viewH] (the view's root-px
- * size) are used to rescale the rect into bitmap space. Returns null if the region is degenerate.
- */
-private fun cropBitmapToRect(
-    full: Bitmap,
-    rect: androidx.compose.ui.geometry.Rect,
-    viewW: Float,
-    viewH: Float,
-): Bitmap? {
-    if (viewW <= 0f || viewH <= 0f) return null
-    val sx = full.width / viewW
-    val sy = full.height / viewH
-    val left = (rect.left * sx).toInt().coerceIn(0, full.width - 1)
-    val top = (rect.top * sy).toInt().coerceIn(0, full.height - 1)
-    val width = (rect.width * sx).toInt().coerceAtLeast(1).coerceAtMost(full.width - left)
-    val height = (rect.height * sy).toInt().coerceAtLeast(1).coerceAtMost(full.height - top)
-    if (width <= 0 || height <= 0) return null
-    return runCatching { Bitmap.createBitmap(full, left, top, width, height) }.getOrNull()
-}
-
-private fun predictiveBackTargetUrl(
-    history: HistoryState,
-    visibleUrl: String?,
-    loading: Boolean,
-): String? {
-    val currentHistoryUrl = history.items.getOrNull(history.currentIndex)
-        ?.uri
-        ?.takeUnless(::isBlankHistoryUrl)
-    if (loading && currentHistoryUrl != null && currentHistoryUrl != visibleUrl) {
-        return currentHistoryUrl
-    }
-    val previousIndex = history.currentIndex - 1
-    return history.items.getOrNull(previousIndex)?.uri?.takeUnless(::isBlankHistoryUrl)
-}
-
-private fun isBlankHistoryUrl(url: String): Boolean {
-    return url.isBlankPageUrl()
-}
-
-private fun String?.isBlankPageUrl(): Boolean = isNullOrBlank() || this == "about:blank"
-
-// Horizontal tab-switch commit spring: damping scales with the finger's release velocity (fast
-// flicks settle looser for a livelier feel) while stiffness varies by destination — softer when
-// committing to the adjacent tab, snappier when snapping back to the current one.
-private fun switchSpring(velocity: Float, stiffness: Float) =
-    spring<Float>(dampingRatio = dampingForVelocity(velocity), stiffness = stiffness)
-
-/**
- * A memory-light RGB_565 copy for the in-memory snapshot maps — half the heap of the ARGB_8888
- * captureThumbnail output, and opaque web pages lose nothing visually (the disk cache stores 565
- * for the same reason). Falls back to the original if the copy fails (OOM).
- */
-private fun Bitmap.toResidentSnapshot(): Bitmap {
-    if (config == Bitmap.Config.RGB_565) return this
-    return runCatching { copy(Bitmap.Config.RGB_565, false) }.getOrNull() ?: this
-}
-
-/** Fraction of a raw drag applied at the very edge of an overscroll; falls to 0 as you pull further. */
-private const val EdgeRubberBandTension = 0.55f
-
-/**
- * iOS-style edge rubber-band. When there is no tab to swipe to, the page still follows the finger —
- * but with resistance that grows as you pull further from rest (asymptotically walling off), and it
- * tracks the finger 1:1 on the way back. This replaces a dead hard-stop with Safari's elastic pull,
- * and pairs with the existing spring-back in [commitHorizontalRelease] for the release bounce.
- * [current] and the result stay on the overscrolled side (the caller coerces to be safe).
- */
-private fun rubberBand(current: Float, delta: Float, dimension: Float): Float {
-    if (dimension <= 0f) return current
-    val outward = (current == 0f && delta != 0f) || sign(delta) == sign(current)
-    if (!outward) return current + delta // returning toward rest: 1:1 finger tracking
-    val pulled = (abs(current) / dimension).coerceIn(0f, 1f)
-    return current + delta * (1f - pulled) * EdgeRubberBandTension
-}
-
-private fun dampingForVelocity(velocity: Float): Float {
-    val v = abs(velocity)
-    return when {
-        v < 400f -> 1.0f
-        v >= 1500f -> 0.82f
-        else -> {
-            // Linearly ease from critically damped (slow flicks) to a light 0.82 settle at the
-            // fast-flick threshold. Target must match the >=1500 branch so damping stays continuous
-            // across the boundary — a mismatch there makes the tab-switch spring visibly jump feel.
-            val t = (v - 400f) / 1100f
-            1.0f + (0.82f - 1.0f) * t
         }
     }
 }

@@ -287,7 +287,7 @@ fun LinkPeekCard(
 
         // Destination: the full centred card (matches the previous 0.92 × 0.72 sizing).
         val targetW = fullW * 0.92f
-        val targetH = fullH * 0.72f
+        val targetH = fullH * 0.85f
         val targetLeft = (fullW - targetW) / 2f
         val targetTop = (fullH - targetH) / 2f
 
@@ -466,7 +466,7 @@ fun LinkPeekCard(
                         // Static glance: the device is low on memory, so we don't spin up a content
                         // process just to preview. The link's actions below still work.
                         Text(
-                            text = "Live preview paused to save memory",
+                            text = "Live preview paused due to low system memory",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(24.dp),

@@ -53,6 +53,7 @@ import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -139,6 +140,9 @@ fun ClassicTabGridOverlay(
     /** Bumps when a snapshot lands; cards re-resolve their bitmap through [snapshotProvider]. */
     snapshotVersion: State<Int>,
     snapshotProvider: (String) -> Bitmap? = { null },
+    /** Resolves a tab's declared theme color (`<meta name="theme-color">`) for the top-padding
+     * strip drawn on padded-site cards; null → fall back to the primary color. */
+    themeColorProvider: (String) -> Color? = { null },
     /**
      * Measured height (px) of the floating bottom controls — nav-bar inset + toolbar + the handoff
      * banner when shown. The last row's bottom clearance is derived from this so it tracks button vs
@@ -231,6 +235,7 @@ fun ClassicTabGridOverlay(
     val carouselShiftHolder = rememberUpdatedState(carouselShift)
     val dragOffsetHolder = rememberUpdatedState(dragOffsetPx)
     val snapshotProviderHolder = rememberUpdatedState(snapshotProvider)
+    val themeColorProviderHolder = rememberUpdatedState(themeColorProvider)
     val onTabSelectedHolder = rememberUpdatedState(onTabSelected)
     val onCloseTabHolder = rememberUpdatedState(onCloseTab)
     val progressFwd: () -> Float = remember { { progressHolder.value() } }
@@ -238,6 +243,7 @@ fun ClassicTabGridOverlay(
     val carouselShiftFwd: () -> Float = remember { { carouselShiftHolder.value() } }
     val dragOffsetFwd: () -> Float = remember { { dragOffsetHolder.value() } }
     val snapshotProviderFwd: (String) -> Bitmap? = remember { { id -> snapshotProviderHolder.value(id) } }
+    val themeColorProviderFwd: (String) -> Color? = remember { { id -> themeColorProviderHolder.value(id) } }
     val onTabSelectedFwd: (String) -> Unit = remember { { id -> onTabSelectedHolder.value(id) } }
     val onCloseTabFwd: (String) -> Unit = remember { { id -> onCloseTabHolder.value(id) } }
     // Cells become tappable once the grid is mostly open. Checked at click time rather than via a
@@ -424,6 +430,7 @@ fun ClassicTabGridOverlay(
                                 scrollEnabled = scrollEnabledState,
                                 snapshotVersion = snapshotVersion,
                                 snapshotProvider = snapshotProviderFwd,
+                                themeColorProvider = themeColorProviderFwd,
                                 cellsClickable = cellsClickableFwd,
                                 onTabSelected = onTabSelectedFwd,
                                 onCloseTab = onCloseTabFwd,
@@ -614,6 +621,7 @@ private fun GridTabCard(
     scrollEnabled: State<Boolean>,
     snapshotVersion: State<Int>,
     snapshotProvider: (String) -> Bitmap?,
+    themeColorProvider: (String) -> Color?,
     cellsClickable: () -> Boolean,
     onTabSelected: (String) -> Unit,
     onCloseTab: (String) -> Unit,
@@ -623,6 +631,9 @@ private fun GridTabCard(
     val density = LocalDensity.current
     val padDp = with(density) { tab.browseTopPadPx.toDp() }
     val padPx = tab.browseTopPadPx.toFloat()
+    // Fill of the top-padding strip on a padded-site card: the site's declared theme color, or the
+    // primary color when none was declared — matching the browse-view status-bar tint.
+    val topStripColor = themeColorProvider(tab.id) ?: MaterialTheme.colorScheme.primary
     val tabLabel = remember(tab.url, tab.title) {
         if (tab.url.isBlankTabUrl()) "New tab page"
         else tab.title.ifBlank { hostLabel(tab.url).ifEmpty { tab.url } }
@@ -632,9 +643,11 @@ private fun GridTabCard(
             .fillMaxWidth()
             // Constant layout height: the fullscreen→3:4 page crop animates via
             // the layer's crop shape below, not via layout, so a drag frame never
-            // measures or lays anything out.
+            // measures or lays anything out. The top-padding inset is applied to the
+            // card CONTENT below (strip + inset snapshot), NOT as outer padding —
+            // outer padding would shift this transform's origin down by padPx and
+            // float a padded-site card lower than its neighbours.
             .height(containerHDp)
-            .padding(top = padDp)
             .graphicsLayer {
                 val p = progress().coerceIn(0f, 1f)
                 val scrollOffset = scrollState.value.toFloat()
@@ -701,9 +714,11 @@ private fun GridTabCard(
                     // Local (pre-scale) visible height of the card. At fullscreen
                     // (progress 0) it is the full viewport so the open/close morph
                     // matches the browse layer; as the grid opens it shrinks to the
-                    // 3:4 page slice, cropping everything below the fold. The pad
-                    // is subtracted because the layer sits below the top padding.
-                    cropHeightPx = lerp(containerH, croppedPageHeightPx, p) - padPx,
+                    // 3:4 page slice, cropping everything below the fold. The card is
+                    // full-height including its top strip (laid out inside), so the
+                    // crop is NOT reduced by padPx — that keeps every cell the same
+                    // height and top-aligned regardless of the per-site top padding.
+                    cropHeightPx = lerp(containerH, croppedPageHeightPx, p),
                 )
             }
             .background(
@@ -827,7 +842,10 @@ private fun GridTabCard(
 
             val showPlaceholder = snapshot == null || (prev == null && animAlpha < 1f)
 
-            Box(modifier = Modifier.fillMaxSize()) {
+            // Inset the page content (snapshot / placeholder) below the top-padding strip, exactly
+            // as the browse view pads the EngineView down. The captured snapshot already excludes
+            // the strip region, so this keeps the cell a faithful miniature of the padded page.
+            Box(modifier = Modifier.fillMaxSize().padding(top = padDp)) {
                 if (showPlaceholder) {
                     val placeholderAlpha = if (snapshot == null) {
                         1f
@@ -892,6 +910,17 @@ private fun GridTabCard(
                         )
                     }
                 }
+            }
+            // Theme-color strip over the reserved top-padding band (Safari-style tint), matching the
+            // browse-view status bar. Only padded-site cells have a non-zero strip.
+            if (padPx > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(padDp)
+                        .align(Alignment.TopStart)
+                        .background(topStripColor),
+                )
             }
         }
     }

@@ -312,7 +312,7 @@ fun SafariBar(
  * ones fade to a muted onSurface tone (iOS-style, subtler than full-opacity gray).
  */
 @Composable
-private fun BottomToolbarButton(
+internal fun BottomToolbarButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String,
     onClick: () -> Unit,

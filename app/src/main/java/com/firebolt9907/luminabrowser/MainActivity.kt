@@ -7,6 +7,10 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.firebolt9907.luminabrowser.ui.LuminaRoot
 
@@ -22,11 +26,23 @@ class MainActivity : LuminaBrowserActivity() {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
         setContent {
-            LuminaRoot(
-                isInPipMode = isInPipMode,
-                onFullScreenChanged = { isVideoFullscreen = it },
-                onRequestPipMode = ::requestPipMode
-            )
+            var showOnboarding by remember {
+                mutableStateOf(!app.components.globalPreferencesStore.onboardingComplete)
+            }
+            if (showOnboarding) {
+                com.firebolt9907.luminabrowser.ui.onboarding.LuminaOnboarding(
+                    onFinish = {
+                        app.components.globalPreferencesStore.onboardingComplete = true
+                        showOnboarding = false
+                    },
+                )
+            } else {
+                LuminaRoot(
+                    isInPipMode = isInPipMode,
+                    onFullScreenChanged = { isVideoFullscreen = it },
+                    onRequestPipMode = ::requestPipMode
+                )
+            }
         }
         // Only handle the launch intent on a fresh start. On recreation (process-death restore or a
         // config change) onCreate re-runs with the original launch intent still set as getIntent(),

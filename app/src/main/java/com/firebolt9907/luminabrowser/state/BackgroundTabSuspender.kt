@@ -49,10 +49,17 @@ import mozilla.components.browser.state.store.BrowserStore
  */
 class BackgroundTabSuspender(
     private val store: BrowserStore,
-    private val keepAliveBackground: Int = DEFAULT_KEEP_ALIVE_BACKGROUND,
+    private val baseKeepAliveBackground: Int = DEFAULT_KEEP_ALIVE_BACKGROUND,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Main),
     private val quietPeriodMs: Long = SUSPEND_QUIET_PERIOD_MS,
 ) {
+    /**
+     * The live-background-session budget in effect right now. Starts at [baseKeepAliveBackground]
+     * (a device-RAM-class base chosen by the caller) and is temporarily lowered by [onTrimMemory]
+     * under system memory pressure, then restored by [restoreBudget] when the app returns to the
+     * foreground. Only mutated under the instance monitor, so plain visibility is sufficient.
+     */
+    private var keepAliveBackground: Int = baseKeepAliveBackground
     /** Tab ids ordered most-recently-selected first; decides which background sessions survive. */
     private val recency = ArrayDeque<String>()
 
@@ -124,6 +131,39 @@ class BackgroundTabSuspender(
                     store.dispatch(EngineAction.SuspendEngineSessionAction(tab.id))
                 }
             }
+    }
+
+    /**
+     * Lower the live-session budget in response to a system memory-trim callback and tear down the
+     * newly-over-budget sessions immediately (no quiet period — memory pressure is urgent, and there
+     * is no switching streak to protect while the app is under trim). Called from
+     * [com.firebolt9907.luminabrowser.LuminaApplication.onTrimMemory].
+     *
+     * The budget is only ever ratcheted **down** here; it never rises above the current value on a
+     * trim (a lighter trim level arriving after a heavier one must not undo the tightening). It is
+     * restored to the device-class base by [restoreBudget] on the next foreground.
+     */
+    @Synchronized
+    fun onTrimMemory(level: Int) {
+        val target = when {
+            level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> 0
+            level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> 1
+            else -> return
+        }
+        if (target >= keepAliveBackground) return
+        keepAliveBackground = target
+        suspendOverBudgetTabs()
+    }
+
+    /**
+     * Restore the budget to the device-class base once memory pressure has passed. Called on app
+     * foreground ([com.firebolt9907.luminabrowser.LuminaApplication] lifecycle `onStart`): being
+     * interactively foregrounded is the clearest signal the trim episode is over, and it lets the
+     * LRU pool refill to the device's normal capacity as the user resumes switching tabs.
+     */
+    @Synchronized
+    fun restoreBudget() {
+        keepAliveBackground = baseKeepAliveBackground
     }
 
     /**

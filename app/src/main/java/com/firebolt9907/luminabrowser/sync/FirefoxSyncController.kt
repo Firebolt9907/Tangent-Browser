@@ -1,9 +1,12 @@
 package com.firebolt9907.luminabrowser.sync
 
 import android.app.Application
+import android.content.Context
+import android.content.res.Configuration
 import android.net.Uri
 import androidx.core.net.toUri
 import com.firebolt9907.luminabrowser.R
+import com.firebolt9907.luminabrowser.state.GlobalPreferencesStore
 import com.firebolt9907.luminabrowser.sync.zen.Sync15StorageClient
 import com.firebolt9907.luminabrowser.sync.zen.ZEN_WORKSPACES_COLLECTION
 import com.firebolt9907.luminabrowser.sync.zen.ZenWorkspaceRecords
@@ -85,13 +88,18 @@ private const val PushSyncDebounceMs = 5_000L
  */
 private const val ForegroundSyncIntervalMs = 30L * 60L * 1000L
 
+/**
+ * Cadence of the foreground-only "Send tab" command poll ([FirefoxSyncController.pollIncomingCommands]).
+ * Short, because it's the sole receive path for sent tabs (no working push) and users expect a sent
+ * tab to land within seconds; the poll is a light request and the loop is cancelled on ON_PAUSE.
+ */
+private const val CommandPollIntervalMs = 25L * 1000L
+
 class FirefoxSyncController(
     private val application: Application,
     private val store: BrowserStore,
     private val scope: CoroutineScope,
     private val loginsStorage: PlacesLoginsStorage? = null,
-    /** Opens a tab another device pushed here via "Send tab". Null disables Send-Tab receipt. */
-    private val onSendTabReceived: ((url: String, title: String) -> Unit)? = null,
 ) {
     private val crashReporter = object : CrashReporting {
         override fun submitCaughtException(throwable: Throwable): Job = Job()
@@ -103,7 +111,7 @@ class FirefoxSyncController(
         serverConfig = ServerConfig(FxaServer.Release, FxAClientId, FxARedirectUrl),
         deviceConfig = DeviceConfig(
             name = "${application.getString(R.string.app_name)} on Android",
-            type = DeviceType.MOBILE,
+            type = if (application.isTabletFormFactor()) DeviceType.TABLET else DeviceType.MOBILE,
             capabilities = setOf(DeviceCapability.SEND_TAB, DeviceCapability.CLOSE_TABS),
             secureStateAtRest = true,
         ),
@@ -113,6 +121,8 @@ class FirefoxSyncController(
         ),
         crashReporter = crashReporter,
     )
+
+    private val globalPrefs = GlobalPreferencesStore(application)
 
     private val sync15StorageClient = Sync15StorageClient(HttpURLConnectionClient())
 
@@ -151,7 +161,10 @@ class FirefoxSyncController(
     @Volatile private var lastHandoffSyncAtMs = 0L
     @Volatile private var dismissedHandoffKey: String? = null
     @Volatile private var foregroundSyncJob: Job? = null
+    @Volatile private var foregroundCommandJob: Job? = null
     @Volatile private var pushFeature: AutoPushFeature? = null
+    /** Guards [installSendTabFeature] against double-registering the receipt observer. */
+    @Volatile private var sendTabInstalled = false
 
     /**
      * Watches the FxA account for a sign-out that originated *elsewhere* — a remote device
@@ -211,6 +224,12 @@ class FirefoxSyncController(
         // push/device event tells us outright) or onAuthenticationProblems (when a sync discovers
         // the credentials are no longer valid). Both must flip the UI back to signed-out.
         accountManager.register(accountObserver)
+        // Register "Send tab" receipt before starting the account manager, so the observer is live
+        // for the initial command poll that start() does for a restored account. This is the real
+        // delivery path: instant FxA push is unavailable to us (Mozilla's push server bridges only
+        // its own Firebase project and rejects our sender id — see initPush), so received tabs are
+        // pulled by pollIncomingCommands() on our sync passes instead.
+        installSendTabFeature()
         scope.launch {
             setBusy("Preparing Firefox Sync...")
             runCatching {
@@ -219,24 +238,32 @@ class FirefoxSyncController(
                 if (accountManager.authenticatedAccount() != null) {
                     // Catch a sign-out that happened remotely while the app was dead.
                     verifyAccount()
+                    pollIncomingCommands()
                     refreshSyncedTabs()
                 }
             }.onFailure { throwable ->
                 setError("Firefox Sync is unavailable: ${throwable.readableMessage()}")
             }
-            // Isolated so a push-setup failure never surfaces as a sync error: push is a fast-path
-            // optimization layered over the foreground polling fallback, not a hard dependency.
+            // Best-effort push fast-path. Inert against Mozilla's hosted server for a third-party
+            // Firebase project (subscription is rejected), but harmless and isolated so it never
+            // fails sync; kept so a future self-hosted autopush needs only a serverHost change.
             runCatching { initPush() }
         }
     }
 
     /**
-     * Wire up FxA push so a remote device's tab change (or a "Send tab") re-syncs this device
-     * near-instantly instead of waiting for the foreground poll — the same mechanism vanilla
-     * Firefox uses. No-op unless a real `google-services.json` was supplied at build time: the
-     * Google Services plugin generates a `gcm_defaultSenderId` string resource, which we look up by
-     * name (a compile-time `R.string` reference would break the no-Firebase build) and bail on when
-     * absent. Idempotent; all failures are swallowed.
+     * Best-effort FxA push fast-path so a remote device's tab change re-syncs this device instantly
+     * instead of waiting for a foreground poll — the mechanism vanilla Firefox uses.
+     *
+     * **This does not currently deliver anything with our own Firebase project.** Mozilla's hosted
+     * push server (`updates.push.services.mozilla.com`) bridges only Mozilla's own FCM project; a
+     * subscription for a third-party sender id is rejected (`400 "invalid app ID"`), so FxA never
+     * gets a push endpoint for this device. Actual "Send tab" receipt therefore rides
+     * [pollIncomingCommands] on our sync passes, not push. This scaffolding is kept — isolated and
+     * failure-swallowing — so wiring a self-hosted autopush later needs only a `PushConfig`
+     * `serverHost` change. No-op unless a real `google-services.json` was supplied at build time
+     * (the plugin generates `gcm_defaultSenderId`, looked up by name so the no-Firebase build still
+     * compiles). Idempotent.
      */
     private fun initPush() {
         if (pushFeature != null) return
@@ -250,20 +277,14 @@ class FirefoxSyncController(
         PushProcessor.install(push)
         push.initialize()
 
-        // Binds push to the account: subscribes the FxA push scope, delivers Send-Tab commands, and
-        // processes incoming account events. The returned Job doesn't need awaiting.
+        // Binds push to the account: subscribes the FxA push scope and processes incoming account
+        // events. The returned Job doesn't need awaiting.
         FxaPushSupportFeature(
             context = application,
             accountManager = accountManager,
             pushFeature = push,
             crashReporter = crashReporter,
         ).initialize()
-
-        // Deliberate "send tab to this device" → open each received tab (no-op if the host didn't
-        // provide an opener).
-        SendTabFeature(accountManager) { _, tabs ->
-            onSendTabReceived?.let { open -> tabs.forEach { tab -> open(tab.url, tab.title) } }
-        }
 
         // Any push for this account (a remote device uploaded/changed its open tabs) → sync almost
         // immediately and re-evaluate the handoff candidate. The short PushSyncDebounceMs floor
@@ -284,6 +305,58 @@ class FirefoxSyncController(
         )
         if (resId == 0) return null
         return application.getString(resId).takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Register receipt of "Send tab to this device" commands, unconditionally (independent of push /
+     * Firebase). [SendTabFeature] observes the account for incoming
+     * [mozilla.components.concept.sync.DeviceCommandIncoming] commands; those are dispatched when the
+     * constellation is polled ([pollIncomingCommands]) or — if push ever works — when an FxA push
+     * arrives. Each received tab raises a system notification ([ReceivedTabNotifications]); tapping
+     * it opens the URL as a normal tab in [com.firebolt9907.luminabrowser.MainActivity]. Idempotent.
+     */
+    private fun installSendTabFeature() {
+        if (sendTabInstalled) return
+        sendTabInstalled = true
+        SendTabFeature(accountManager) { device, tabs ->
+            // Notification (works while backgrounded) for each tab...
+            tabs.forEach { tab ->
+                ReceivedTabNotifications.notify(application, tab.url, tab.title, device?.displayName)
+            }
+            // ...and an in-app banner for the newest one, so an open app shows receipt immediately
+            // without the user leaving to the notification shade.
+            tabs.lastOrNull()?.let { tab ->
+                _state.update {
+                    it.copy(
+                        receivedTab = FirefoxReceivedTab(
+                            deviceName = device?.displayName,
+                            deviceType = device?.let { deviceTypeLabel(it.deviceType, it.displayName) }.orEmpty(),
+                            title = tab.title,
+                            url = tab.url,
+                            receivedAt = System.currentTimeMillis(),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    /** Clear the received-tab banner (tapped-through, dismissed, or auto-expired by the host). */
+    fun dismissReceivedTab() {
+        _state.update { it.copy(receivedTab = null) }
+    }
+
+    /**
+     * Poll the device constellation for pending incoming commands (notably "Send tab"). This is the
+     * actual receive path for sent tabs — instant FxA push is unavailable to us (see [initPush]) —
+     * so it runs after every foreground sync pass. The registered [SendTabFeature] observer fires
+     * for each command found. Wrapped so a poll failure never surfaces as a sync error; a no-op when
+     * signed out.
+     */
+    private suspend fun pollIncomingCommands() {
+        runCatching {
+            accountManager.authenticatedAccount()?.deviceConstellation()?.pollForCommands()
+        }
     }
 
     fun beginSignIn(openUrl: (String) -> Unit) {
@@ -350,6 +423,7 @@ class FirefoxSyncController(
                 refreshTargetDevices()
 
                 awaitSync(syncEngines)
+                pollIncomingCommands()
 
                 val devices = readSyncedDevices()
                 _state.update {
@@ -420,6 +494,7 @@ class FirefoxSyncController(
             if (now - lastHandoffSyncAtMs >= minSyncSpacingMs) {
                 lastHandoffSyncAtMs = now
                 runCatching { awaitSync(listOf(SyncEngine.Tabs)) }
+                pollIncomingCommands()
             }
             refreshDevicesFromStorage()
         }
@@ -433,23 +508,40 @@ class FirefoxSyncController(
      * Idempotent: an already-running loop is left alone. Cancelled by [stopForegroundPeriodicSync].
      */
     fun startForegroundPeriodicSync() {
-        if (foregroundSyncJob?.isActive == true) return
-        foregroundSyncJob = scope.launch {
-            while (isActive) {
-                delay(ForegroundSyncIntervalMs)
-                if (usableAccount() == null) continue
-                lastHandoffSyncAtMs = System.currentTimeMillis()
-                runCatching { awaitSync(syncEngines) }
-                refreshDevicesFromStorage()
-                refreshZenWorkspaces()
+        if (foregroundSyncJob?.isActive != true) {
+            foregroundSyncJob = scope.launch {
+                while (isActive) {
+                    delay(ForegroundSyncIntervalMs)
+                    if (usableAccount() == null) continue
+                    lastHandoffSyncAtMs = System.currentTimeMillis()
+                    runCatching { awaitSync(syncEngines) }
+                    pollIncomingCommands()
+                    refreshDevicesFromStorage()
+                    refreshZenWorkspaces()
+                }
+            }
+        }
+        // A separate, much faster loop that ONLY polls incoming commands (notably "Send tab"). This
+        // is the responsiveness path: since instant FxA push is unavailable to us (see initPush), a
+        // sent tab would otherwise wait up to the 30-min full-sync tick. pollForCommands is a light
+        // request, so a short cadence while foregrounded is cheap; the loop stops on ON_PAUSE.
+        if (foregroundCommandJob?.isActive != true) {
+            foregroundCommandJob = scope.launch {
+                while (isActive) {
+                    delay(CommandPollIntervalMs)
+                    if (usableAccount() == null) continue
+                    pollIncomingCommands()
+                }
             }
         }
     }
 
-    /** Stop the foreground periodic sync loop. Call from ON_PAUSE. */
+    /** Stop the foreground sync + command-poll loops. Call from ON_PAUSE. */
     fun stopForegroundPeriodicSync() {
         foregroundSyncJob?.cancel()
         foregroundSyncJob = null
+        foregroundCommandJob?.cancel()
+        foregroundCommandJob = null
     }
 
     /** Hide the handoff banner and keep this device+URL pair from resurfacing it. */
@@ -478,6 +570,10 @@ class FirefoxSyncController(
     }
 
     private fun updateHandoffFromDevices(devices: List<FirefoxSyncedDevice>) {
+        if (!globalPrefs.handoffEnabled) {
+            if (_state.value.handoffTab != null) _state.update { it.copy(handoffTab = null) }
+            return
+        }
         val cutoff = System.currentTimeMillis() - HandoffWindowMs
         // Tabs already open locally aren't worth handing off (this also naturally retires the
         // banner right after the user accepts it). No upper bound on lastUsed: a remote clock
@@ -509,7 +605,8 @@ class FirefoxSyncController(
             FirefoxTargetDevice(
                 id = device.id,
                 name = device.displayName,
-                type = device.deviceType.displayLabel(),
+                type = deviceTypeLabel(device.deviceType, device.displayName),
+                lastAccessTime = device.lastAccessTime,
             )
         }
         _state.update { it.copy(targetDevices = targets) }
@@ -590,7 +687,7 @@ class FirefoxSyncController(
             FirefoxSyncedDevice(
                 id = deviceTabs.device.id,
                 name = deviceTabs.device.displayName,
-                type = deviceTabs.device.deviceType.displayLabel(),
+                type = deviceTypeLabel(deviceTabs.device.deviceType, deviceTabs.device.displayName),
                 tabs = deviceTabs.tabs.mapNotNull { tab ->
                     val active = runCatching { tab.active() }.getOrNull() ?: return@mapNotNull null
                     FirefoxSyncedTab(
@@ -702,10 +799,21 @@ data class FirefoxSyncUiState(
     val devices: List<FirefoxSyncedDevice> = emptyList(),
     val targetDevices: List<FirefoxTargetDevice> = emptyList(),
     val handoffTab: FirefoxHandoffTab? = null,
+    /** A tab another device just pushed here via "Send tab"; drives the in-app received-tab banner. */
+    val receivedTab: FirefoxReceivedTab? = null,
     val zenWorkspaces: ZenWorkspacesSnapshot = ZenWorkspacesSnapshot.EMPTY,
     val isBusy: Boolean = false,
     val message: String? = null,
     val isError: Boolean = false,
+)
+
+/** A tab deliberately sent to this device via Firefox "Send tab", surfaced as a banner while open. */
+data class FirefoxReceivedTab(
+    val deviceName: String?,
+    val deviceType: String,
+    val title: String,
+    val url: String,
+    val receivedAt: Long,
 )
 
 /** A tab freshly active on another device, offered for continuation on this one. */
@@ -733,6 +841,8 @@ data class FirefoxTargetDevice(
     val id: String,
     val name: String,
     val type: String,
+    /** Constellation last-access time; drives "most recently used device" selection. Null = unknown. */
+    val lastAccessTime: Long? = null,
 )
 
 data class FirefoxSyncedTab(
@@ -771,6 +881,46 @@ private fun String.oauthValues(): Map<String, String> {
 private fun Throwable.readableMessage(): String =
     message ?: javaClass.simpleName
 
+/**
+ * Whether this device is a tablet (vs a phone), so we self-report the right [DeviceType] to Firefox
+ * Sync. Uses the smallest-width qualifier (>= 600dp = tablet), the same threshold Android's resource
+ * system and Fenix use to classify tablets.
+ */
+private fun Context.isTabletFormFactor(): Boolean =
+    resources.configuration.smallestScreenWidthDp >= 600
+
 /** Human label for a constellation device type, e.g. MOBILE → "Mobile". */
 private fun DeviceType.displayLabel(): String =
     name.lowercase().replaceFirstChar(Char::titlecase)
+
+/**
+ * Best-effort form-factor label for a synced device. Firefox self-reports [Device.deviceType]
+ * correctly, but non-Firefox sync clients (Zen and other forks, third-party sync clients) commonly
+ * register as [DeviceType.UNKNOWN]. Rather than show a generic phone icon / "Unknown" for those, we
+ * infer the form factor from the device's display name (Firefox names devices "<Browser> on
+ * <machine>", so the machine name is usually present) and fall back to Desktop — a sync client that
+ * omits its type is far more likely to be a desktop browser than a phone.
+ */
+private fun deviceTypeLabel(deviceType: DeviceType, displayName: String): String =
+    if (deviceType != DeviceType.UNKNOWN) deviceType.displayLabel()
+    else inferDeviceTypeFromName(displayName)
+
+private val TabletNameHints = listOf("ipad", "tablet", "kindle", "galaxy tab", "surface pro")
+private val MobileNameHints = listOf(
+    "iphone", "phone", "pixel", "galaxy", "android", "oneplus", "moto", "nexus",
+    "xiaomi", "redmi", "huawei", "oppo", "vivo", "nokia",
+)
+private val DesktopNameHints = listOf(
+    "macbook", "imac", "mac mini", "mac ", " mac", "laptop", "desktop", "windows", "linux",
+    "ubuntu", "fedora", "debian", "thinkpad", "surface", "chromebook", "computer", "pc", "workstation",
+)
+
+private fun inferDeviceTypeFromName(displayName: String): String {
+    val name = " ${displayName.lowercase()} "
+    return when {
+        TabletNameHints.any { it in name } -> "Tablet"
+        MobileNameHints.any { it in name } -> "Mobile"
+        DesktopNameHints.any { it in name } -> "Desktop"
+        else -> "Desktop"
+    }
+}

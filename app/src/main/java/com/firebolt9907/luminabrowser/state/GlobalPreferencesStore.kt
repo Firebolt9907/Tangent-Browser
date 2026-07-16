@@ -65,6 +65,24 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("showBottomToolbar", false)
         set(value) { prefs.edit { putBoolean("showBottomToolbar", value) } }
 
+    // When off, the "Continue from <device>" handoff banner (a tab recently active on another
+    // Firefox Sync device) is never surfaced. Read by FirefoxSyncController when picking a handoff
+    // candidate. On by default. Does not affect received "Send tab" pushes or synced-tab lists.
+    var handoffEnabled: Boolean
+        get() = prefs.getBoolean("handoffEnabled", true)
+        set(value) { prefs.edit { putBoolean("handoffEnabled", value) } }
+
+    var onboardingComplete: Boolean
+        get() = prefs.getBoolean("onboardingComplete", false)
+        set(value) { prefs.edit { putBoolean("onboardingComplete", value) } }
+
+    // How the bottom bar arranges itself on wide screens (tablets / landscape). Stored by name
+    // (WideBarLayout enum) as a raw String so the state layer stays independent of the ui.chrome
+    // package; the UI parses it via WideBarLayout.fromName. null/unknown falls back to SPLIT.
+    var wideBarLayoutName: String?
+        get() = prefs.getString("wideBarLayout", null)
+        set(value) { prefs.edit { putString("wideBarLayout", value) } }
+
     // Which "all tabs" overview to render (TabViewMode enum, stored by name). Kept as a raw String
     // here so the state layer doesn't depend on the ui.grid package; the UI parses it via
     // TabViewMode.fromName. null/unknown falls back to the caller's default (DECK).
@@ -116,6 +134,12 @@ class GlobalPreferencesStore(context: Context) {
     var searchEngine: SearchEngine
         get() = SearchEngine.fromName(prefs.getString("searchEngine", null))
         set(value) { prefs.edit { putString("searchEngine", value.name) } }
+
+    // When on, a search-results page for the current [searchEngine] shows the typed query in the
+    // address bar instead of the engine's host (e.g. "cat videos" rather than "google.com").
+    var showSearchTermsInBar: Boolean
+        get() = prefs.getBoolean("showSearchTermsInBar", true)
+        set(value) { prefs.edit { putBoolean("showSearchTermsInBar", value) } }
 
     // When off, the address sheet shows only local (history/bookmark) suggestions and never sends
     // keystrokes to the search engine's suggestion endpoint.

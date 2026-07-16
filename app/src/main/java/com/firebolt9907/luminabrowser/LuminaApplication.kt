@@ -48,6 +48,9 @@ class LuminaApplication : Application() {
         if (!componentsLazy.isInitialized()) return
         components.store.dispatch(SystemAction.LowMemoryAction(level))
         components.tabSnapshotCache.trimMemory(level)
+        // Shrink the live-session LRU budget so the pool doesn't refill to its normal device-class
+        // size while the system is still under pressure. Restored on the next foreground (onStart).
+        components.backgroundTabSuspender.onTrimMemory(level)
     }
 
     /**
@@ -64,15 +67,25 @@ class LuminaApplication : Application() {
             // whole app lifetime after a single "Listen to Page". releaseIfIdle() no-ops while
             // actively reading, so background playback is unaffected.
             com.firebolt9907.luminabrowser.ui.reader.PageSpeaker.releaseIfIdle()
-            if (componentsLazy.isInitialized() &&
-                components.globalPreferencesStore.keepAliveInBackground
-            ) {
-                BrowsingKeepAliveService.start(this@LuminaApplication)
+            if (componentsLazy.isInitialized()) {
+                // Capture the foreground tab's current history/scroll into the store now, while its
+                // GeckoSession is still alive, so the debounced persist writes fresh session state
+                // before the OS can kill this backgrounded process. Background tabs were already
+                // flushed as they left the foreground.
+                components.tabRepository.flushActiveTabState()
+                if (components.globalPreferencesStore.keepAliveInBackground) {
+                    BrowsingKeepAliveService.start(this@LuminaApplication)
+                }
             }
         }
 
         override fun onStart(owner: LifecycleOwner) {
             BrowsingKeepAliveService.stop(this@LuminaApplication)
+            // Foreground = the memory-pressure episode is over; let the live-session LRU pool refill
+            // to the device-class base as the user resumes browsing.
+            if (componentsLazy.isInitialized()) {
+                components.backgroundTabSuspender.restoreBudget()
+            }
         }
     }
 }

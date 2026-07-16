@@ -23,14 +23,30 @@ class LuminaViewModel(
     private val repo: TabRepository =
         (application as LuminaApplication).components.tabRepository
 
+    private val prefs: GlobalPreferencesStore =
+        (application as LuminaApplication).components.globalPreferencesStore
+
     private val mode = MutableStateFlow(BarMode.Expanded)
     private val editingText = MutableStateFlow("")
 
+    // Search engine + "show search terms in bar" pref, snapshotted into a flow so a Settings toggle
+    // (which mutates SharedPreferences, not a flow) can force `state` to re-emit with the new label
+    // via refreshDisplayPrefs(). Without this, the active pill wouldn't update until the next tab event.
+    private val displayPrefs =
+        MutableStateFlow(prefs.searchEngine to prefs.showSearchTermsInBar)
+
+    fun refreshDisplayPrefs() {
+        displayPrefs.value = prefs.searchEngine to prefs.showSearchTermsInBar
+    }
+
     val state: StateFlow<BarUiState> =
-        combine(repo.tabs, repo.selectedTabId, mode, editingText) { tabs, selectedId, m, edit ->
+        combine(repo.tabs, repo.selectedTabId, mode, editingText, displayPrefs) {
+                tabs, selectedId, m, edit, (engine, showTerms) ->
             val selected = tabs.firstOrNull { it.id == selectedId } ?: tabs.firstOrNull()
             val pageUrl = selected?.url.orEmpty()
-            val host = pageUrl.takeIf { it.isNotEmpty() }?.let(::compactHost).orEmpty()
+            val host = pageUrl.takeIf { it.isNotEmpty() }
+                ?.let { addressBarLabel(it, engine, showTerms) }
+                .orEmpty()
             BarUiState(
                 displayUrl = host,
                 tabCount = tabs.size,

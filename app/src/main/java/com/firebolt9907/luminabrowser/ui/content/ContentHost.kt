@@ -113,6 +113,12 @@ fun ContentHost(
     val topChromeInsetCssPx = with(density) {
         topChromeInsetPx.toDp().value.toInt().coerceAtLeast(0)
     }
+    // CSS-px height of the bottom pill / SafariBar reserve, injected as page-bottom scroll room so
+    // in-flow footer content can be scrolled clear of the (translucent, scrolled-under) pill. See
+    // buildBottomSpacerScript / injectViewportSpacers.
+    val bottomChromeInsetCssPx = with(density) {
+        bottomChromeInsetPx.toDp().value.toInt().coerceAtLeast(0)
+    }
     val engineView = remember(engine) {
         engine.createView(context).also { it.setActivityContext(context) }
     }
@@ -347,7 +353,7 @@ fun ContentHost(
 
 
 
-    DisposableEffect(engineSession, topChromeInsetCssPx, tabId, topPaddingFixActive) {
+    DisposableEffect(engineSession, topChromeInsetCssPx, bottomChromeInsetCssPx, tabId, topPaddingFixActive) {
         if (engineSession == null) {
             onDispose { }
         } else {
@@ -390,15 +396,22 @@ fun ContentHost(
                 hostView.postDelayed(runnable, SpaSettleCaptureDelayMs)
             }
             fun injectSpacer(force: Boolean = false) {
-                if (topChromeInsetCssPx <= 0) return
+                if (topChromeInsetCssPx <= 0 && bottomChromeInsetCssPx <= 0) return
                 if (injectedForCurrentLoad && !force) return
                 injectedForCurrentLoad = true
                 suppressJavascriptLoadCallback = true
                 engineSession.injectViewportSpacers(
                     topPx = if (topPaddingFixActive) 0 else topChromeInsetCssPx,
+                    bottomPx = bottomChromeInsetCssPx,
                     skipHeaderInsets = topPaddingFixActive,
                 )
                 engineSession.injectPageZoom(pageZoomFactor)
+                // When the page is padded down by the status-bar inset, sample its declared
+                // theme-color (Safari-style) so the exposed strip / status bar can be tinted to
+                // match. Falls back to the system primary color natively when none is declared.
+                if (topPaddingFixActive) {
+                    engineSession.loadJavascriptUrl(ThemeColorProbe.buildScript())
+                }
             }
             fun injectAmoInstaller(url: String, force: Boolean = false) {
                 if (addonController == null || !url.isAmoPageUrl()) return

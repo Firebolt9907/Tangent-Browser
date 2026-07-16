@@ -4,4 +4,8 @@
     <string name="keep_alive_channel_description">Keeps Lumina running so your tabs aren\'t closed when memory is low.</string>
     <string name="keep_alive_notification_title">Lumina is running</string>
     <string name="keep_alive_notification_text">Keeping your tabs ready in the background.</string>
+    <string name="received_tab_channel_name">Received tabs</string>
+    <string name="received_tab_channel_description">Tabs sent to this device from Firefox on your other devices.</string>
+    <string name="received_tab_from">Tab from %1$s</string>
+    <string name="received_tab_generic">Tab sent to this device</string>
 </resources>

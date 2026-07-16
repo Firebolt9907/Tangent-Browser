@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBackIos
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -60,6 +61,7 @@ fun SettingsSheet(
     onClearSitePermissions: () -> Unit = {},
     onClearBrowsingData: (history: Boolean, cookiesAndSiteData: Boolean, cache: Boolean) -> Unit =
         { _, _, _ -> },
+    onReplayOnboarding: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val haptics = rememberLuminaHaptics()
@@ -71,6 +73,7 @@ fun SettingsSheet(
     var keepAliveInBackground by remember { mutableStateOf(globalPrefsStore.keepAliveInBackground) }
     var searchEngine by remember { mutableStateOf(globalPrefsStore.searchEngine) }
     var searchSuggestionsEnabled by remember { mutableStateOf(globalPrefsStore.searchSuggestionsEnabled) }
+    var showSearchTermsInBar by remember { mutableStateOf(globalPrefsStore.showSearchTermsInBar) }
     var httpCacheSizeMb by remember { mutableStateOf(globalPrefsStore.httpCacheSizeMb) }
     var preloadMode by remember { mutableStateOf(globalPrefsStore.preloadMode) }
     var useGoogleCache by remember { mutableStateOf(globalPrefsStore.useGoogleCache) }
@@ -105,11 +108,84 @@ fun SettingsSheet(
     var queryParameterStrippingAllowList by remember { mutableStateOf(globalPrefsStore.queryParameterStrippingAllowList) }
     var crliteChannel by remember { mutableStateOf(globalPrefsStore.crliteChannel) }
     var showBottomToolbar by remember { mutableStateOf(globalPrefsStore.showBottomToolbar) }
+    var handoffEnabled by remember { mutableStateOf(globalPrefsStore.handoffEnabled) }
     var wideBarLayout by remember {
         mutableStateOf(WideBarLayout.fromName(globalPrefsStore.wideBarLayoutName))
     }
 
+    // The sheet has two pages: a curated main page and an "Advanced" page holding the long tail of
+    // power-user toggles. They share all the hoisted state above, so switching is just a branch.
+    var showAdvanced by remember { mutableStateOf(false) }
+
     LuminaModalSheet(onDismissRequest = onDismiss, scrollable = true) {
+        if (showAdvanced) {
+            AdvancedSettingsPage(
+                globalPrefsStore = globalPrefsStore,
+                haptics = haptics,
+                onSettingChanged = onSettingChanged,
+                onBack = { haptics.softClick(); showAdvanced = false },
+                globalPrivacyControl = globalPrivacyControl,
+                onGlobalPrivacyControlChange = { globalPrivacyControl = it },
+                cookieBehaviorOptInPartitioning = cookieBehaviorOptInPartitioning,
+                onCookieBehaviorOptInPartitioningChange = { cookieBehaviorOptInPartitioning = it },
+                fingerprintingProtection = fingerprintingProtection,
+                onFingerprintingProtectionChange = { fingerprintingProtection = it },
+                fdlibmMathEnabled = fdlibmMathEnabled,
+                onFdlibmMathEnabledChange = { fdlibmMathEnabled = it },
+                queryParameterStripping = queryParameterStripping,
+                onQueryParameterStrippingChange = { queryParameterStripping = it },
+                queryParameterStrippingStripList = queryParameterStrippingStripList,
+                onQueryParameterStrippingStripListChange = { queryParameterStrippingStripList = it },
+                queryParameterStrippingAllowList = queryParameterStrippingAllowList,
+                onQueryParameterStrippingAllowListChange = { queryParameterStrippingAllowList = it },
+                dohSettingsMode = dohSettingsMode,
+                onDohSettingsModeChange = { dohSettingsMode = it },
+                dohProviderUrl = dohProviderUrl,
+                onDohProviderUrlChange = { dohProviderUrl = it },
+                enterpriseRootsEnabled = enterpriseRootsEnabled,
+                onEnterpriseRootsEnabledChange = { enterpriseRootsEnabled = it },
+                domStorageEnabled = domStorageEnabled,
+                onDomStorageEnabledChange = { domStorageEnabled = it },
+                allowFileAccess = allowFileAccess,
+                onAllowFileAccessChange = { allowFileAccess = it },
+                allowFileAccessFromFileURLs = allowFileAccessFromFileURLs,
+                onAllowFileAccessFromFileURLsChange = { allowFileAccessFromFileURLs = it },
+                postQuantumKeyExchangeEnabled = postQuantumKeyExchangeEnabled,
+                onPostQuantumKeyExchangeEnabledChange = { postQuantumKeyExchangeEnabled = it },
+                safeBrowsingV5Enabled = safeBrowsingV5Enabled,
+                onSafeBrowsingV5EnabledChange = { safeBrowsingV5Enabled = it },
+                emailTrackerBlockingPrivateBrowsing = emailTrackerBlockingPrivateBrowsing,
+                onEmailTrackerBlockingPrivateBrowsingChange = { emailTrackerBlockingPrivateBrowsing = it },
+                cookieBannerHandlingGlobalRulesSubFrames = cookieBannerHandlingGlobalRulesSubFrames,
+                onCookieBannerHandlingGlobalRulesSubFramesChange = { cookieBannerHandlingGlobalRulesSubFrames = it },
+                lnaBlockingEnabled = lnaBlockingEnabled,
+                onLnaBlockingEnabledChange = { lnaBlockingEnabled = it },
+                bannedPorts = bannedPorts,
+                onBannedPortsChange = { bannedPorts = it },
+                crliteChannel = crliteChannel,
+                onCrliteChannelChange = { crliteChannel = it },
+                javaScriptEnabled = javaScriptEnabled,
+                onJavaScriptEnabledChange = { javaScriptEnabled = it },
+                webFontsEnabled = webFontsEnabled,
+                onWebFontsEnabledChange = { webFontsEnabled = it },
+                suspendMediaWhenInactive = suspendMediaWhenInactive,
+                onSuspendMediaWhenInactiveChange = { suspendMediaWhenInactive = it },
+                scrollBarsEnabled = scrollBarsEnabled,
+                onScrollBarsEnabledChange = { scrollBarsEnabled = it },
+                forceUserScalableContent = forceUserScalableContent,
+                onForceUserScalableContentChange = { forceUserScalableContent = it },
+                automaticFontSizeAdjustment = automaticFontSizeAdjustment,
+                onAutomaticFontSizeAdjustmentChange = { automaticFontSizeAdjustment = it },
+                automaticLanguageAdjustment = automaticLanguageAdjustment,
+                onAutomaticLanguageAdjustmentChange = { automaticLanguageAdjustment = it },
+                wideBarLayout = wideBarLayout,
+                onWideBarLayoutChange = { wideBarLayout = it },
+                httpCacheSizeMb = httpCacheSizeMb,
+                onHttpCacheSizeMbChange = { httpCacheSizeMb = it },
+            )
+            return@LuminaModalSheet
+        }
+
         SheetHeader("Settings")
 
         Spacer(Modifier.height(20.dp))
@@ -133,17 +209,6 @@ fun SettingsSheet(
             )
             SheetRowDivider()
             SettingsToggle(
-                title = "Global Privacy Control",
-                subtitle = "Tell sites not to sell or share your data",
-                checked = globalPrivacyControl,
-                onCheckedChange = {
-                    globalPrivacyControl = it
-                    globalPrefsStore.globalPrivacyControl = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
                 title = "HTTPS-Only Mode",
                 subtitle = "Require secure connections for all sites",
                 checked = httpsOnly,
@@ -153,76 +218,6 @@ fun SettingsSheet(
                     onSettingChanged()
                 },
             )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Total Cookie Protection",
-                subtitle = "Isolate cookies to block cross-site tracking",
-                checked = cookieBehaviorOptInPartitioning,
-                onCheckedChange = {
-                    cookieBehaviorOptInPartitioning = it
-                    globalPrefsStore.cookieBehaviorOptInPartitioning = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Fingerprinting Protection",
-                subtitle = "Block scripts trying to identify your device profile",
-                checked = fingerprintingProtection,
-                onCheckedChange = {
-                    fingerprintingProtection = it
-                    globalPrefsStore.fingerprintingProtection = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Platform-independent math (fdlibm)",
-                subtitle = "Use standardized floating point calculations to prevent fingerprinting",
-                checked = fdlibmMathEnabled,
-                onCheckedChange = {
-                    fdlibmMathEnabled = it
-                    globalPrefsStore.fdlibmMathEnabled = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Query Parameter Stripping",
-                subtitle = "Remove tracking parameters (like fbclid, utm_*) from URLs",
-                checked = queryParameterStripping,
-                onCheckedChange = {
-                    queryParameterStripping = it
-                    globalPrefsStore.queryParameterStripping = it
-                    onSettingChanged()
-                },
-            )
-            if (queryParameterStripping) {
-                SheetRowDivider()
-                SettingsTextField(
-                    title = "Custom parameters to strip",
-                    subtitle = "Comma-separated list of tracking parameters to strip from URLs",
-                    value = queryParameterStrippingStripList,
-                    onValueChange = {
-                        queryParameterStrippingStripList = it
-                        globalPrefsStore.queryParameterStrippingStripList = it
-                        onSettingChanged()
-                    },
-                    haptics = haptics,
-                )
-                SheetRowDivider()
-                SettingsTextField(
-                    title = "Custom parameters to keep",
-                    subtitle = "Comma-separated list of parameters to exclude from stripping",
-                    value = queryParameterStrippingAllowList,
-                    onValueChange = {
-                        queryParameterStrippingAllowList = it
-                        globalPrefsStore.queryParameterStrippingAllowList = it
-                        onSettingChanged()
-                    },
-                    haptics = haptics,
-                )
-            }
             SheetRowDivider()
             SettingsPicker(
                 title = "Cookie banner auto-dismiss",
@@ -251,177 +246,6 @@ fun SettingsSheet(
                 ),
                 haptics = haptics,
             )
-            SheetRowDivider()
-            SettingsPicker(
-                title = "DNS over HTTPS (DoH)",
-                subtitle = "Encrypt DNS queries to prevent tracking by your ISP",
-                selectedLabel = when (dohSettingsMode) {
-                    1 -> "Default"
-                    2 -> "Increased"
-                    3 -> "Max"
-                    else -> "Off"
-                },
-                options = listOf(
-                    "Off" to {
-                        dohSettingsMode = 0
-                        globalPrefsStore.dohSettingsMode = 0
-                        onSettingChanged()
-                    },
-                    "Default" to {
-                        dohSettingsMode = 1
-                        globalPrefsStore.dohSettingsMode = 1
-                        onSettingChanged()
-                    },
-                    "Increased" to {
-                        dohSettingsMode = 2
-                        globalPrefsStore.dohSettingsMode = 2
-                        onSettingChanged()
-                    },
-                    "Max" to {
-                        dohSettingsMode = 3
-                        globalPrefsStore.dohSettingsMode = 3
-                        onSettingChanged()
-                    }
-                ),
-                haptics = haptics,
-            )
-            if (dohSettingsMode > 0) {
-                SheetRowDivider()
-                SettingsTextField(
-                    title = "Custom DoH URL",
-                    subtitle = "Optional custom DNS over HTTPS provider URL",
-                    value = dohProviderUrl,
-                    onValueChange = {
-                        dohProviderUrl = it
-                        globalPrefsStore.dohProviderUrl = it
-                        onSettingChanged()
-                    },
-                    haptics = haptics,
-                )
-            }
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Trust enterprise roots",
-                subtitle = "Trust system-installed CA certificates (useful for VPNs/proxies)",
-                checked = enterpriseRootsEnabled,
-                onCheckedChange = {
-                    enterpriseRootsEnabled = it
-                    globalPrefsStore.enterpriseRootsEnabled = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "DOM Storage",
-                subtitle = "Enable LocalStorage and SessionStorage on web pages",
-                checked = domStorageEnabled,
-                onCheckedChange = {
-                    domStorageEnabled = it
-                    globalPrefsStore.domStorageEnabled = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Local file access",
-                subtitle = "Allow websites to request access to local files (file:///)",
-                checked = allowFileAccess,
-                onCheckedChange = {
-                    allowFileAccess = it
-                    globalPrefsStore.allowFileAccess = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Allow file URL cross-access",
-                subtitle = "Allow local file:/// pages to access other local files",
-                checked = allowFileAccessFromFileURLs,
-                onCheckedChange = {
-                    allowFileAccessFromFileURLs = it
-                    globalPrefsStore.allowFileAccessFromFileURLs = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Post-quantum cryptography",
-                subtitle = "Secure HTTPS connections against future quantum attacks",
-                checked = postQuantumKeyExchangeEnabled,
-                onCheckedChange = {
-                    postQuantumKeyExchangeEnabled = it
-                    globalPrefsStore.postQuantumKeyExchangeEnabled = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Safe Browsing V5",
-                subtitle = "Real-time enhanced protection against malware and phishing",
-                checked = safeBrowsingV5Enabled,
-                onCheckedChange = {
-                    safeBrowsingV5Enabled = it
-                    globalPrefsStore.safeBrowsingV5Enabled = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Email Tracker Blocking",
-                subtitle = "Block common email tracking pixels/scripts on web pages",
-                checked = emailTrackerBlockingPrivateBrowsing,
-                onCheckedChange = {
-                    emailTrackerBlockingPrivateBrowsing = it
-                    globalPrefsStore.emailTrackerBlockingPrivateBrowsing = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Dismiss subframe cookie banners",
-                subtitle = "Automatically dismiss cookie banners inside sub-frames/iframes",
-                checked = cookieBannerHandlingGlobalRulesSubFrames,
-                onCheckedChange = {
-                    cookieBannerHandlingGlobalRulesSubFrames = it
-                    globalPrefsStore.cookieBannerHandlingGlobalRulesSubFrames = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Local Network Access protection",
-                subtitle = "Block public websites from probing/scanning your local network",
-                checked = lnaBlockingEnabled,
-                onCheckedChange = {
-                    lnaBlockingEnabled = it
-                    globalPrefsStore.lnaBlockingEnabled = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsTextField(
-                title = "Banned ports override",
-                subtitle = "Comma-separated list of ports to override/block",
-                value = bannedPorts,
-                onValueChange = {
-                    bannedPorts = it
-                    globalPrefsStore.bannedPorts = it
-                    onSettingChanged()
-                },
-                haptics = haptics,
-            )
-            SheetRowDivider()
-            SettingsTextField(
-                title = "CRLite Channel",
-                subtitle = "Certificate revocation list update channel",
-                value = crliteChannel,
-                onValueChange = {
-                    crliteChannel = it
-                    globalPrefsStore.crliteChannel = it
-                    onSettingChanged()
-                },
-                haptics = haptics,
-            )
         }
 
         Spacer(Modifier.height(20.dp))
@@ -436,17 +260,6 @@ fun SettingsSheet(
                 onCheckedChange = {
                     blockPopUps = it
                     globalPrefsStore.blockPopUps = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "JavaScript",
-                subtitle = "Enable JavaScript on web pages",
-                checked = javaScriptEnabled,
-                onCheckedChange = {
-                    javaScriptEnabled = it
-                    globalPrefsStore.javaScriptEnabled = it
                     onSettingChanged()
                 },
             )
@@ -472,57 +285,13 @@ fun SettingsSheet(
                     onSettingChanged()
                 },
             )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Web Fonts",
-                subtitle = "Allow web pages to load custom fonts",
-                checked = webFontsEnabled,
-                onCheckedChange = {
-                    webFontsEnabled = it
-                    globalPrefsStore.webFontsEnabled = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Suspend media when inactive",
-                subtitle = "Pause background audio/video playback when a tab is inactive",
-                checked = suspendMediaWhenInactive,
-                onCheckedChange = {
-                    suspendMediaWhenInactive = it
-                    globalPrefsStore.suspendMediaWhenInactive = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Show scrollbars",
-                subtitle = "Render scrollbars when scrolling web content",
-                checked = scrollBarsEnabled,
-                onCheckedChange = {
-                    scrollBarsEnabled = it
-                    globalPrefsStore.scrollBarsEnabled = it
-                    onSettingChanged()
-                },
-            )
         }
 
         Spacer(Modifier.height(20.dp))
 
-        SheetSectionHeader("Accessibility & Appearance")
+        SheetSectionHeader("Appearance")
         Spacer(Modifier.height(8.dp))
         SheetCard {
-            SettingsToggle(
-                title = "Force user zoom",
-                subtitle = "Override website blocks to allow pinch-to-zoom",
-                checked = forceUserScalableContent,
-                onCheckedChange = {
-                    forceUserScalableContent = it
-                    globalPrefsStore.forceUserScalableContent = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
             SettingsPicker(
                 title = "Text zoom",
                 subtitle = "Adjust text scale factor on web pages",
@@ -571,28 +340,6 @@ fun SettingsSheet(
             )
             SheetRowDivider()
             SettingsToggle(
-                title = "Sync with system font size",
-                subtitle = "Automatically adjust text scale based on Android settings",
-                checked = automaticFontSizeAdjustment,
-                onCheckedChange = {
-                    automaticFontSizeAdjustment = it
-                    globalPrefsStore.automaticFontSizeAdjustment = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
-                title = "Sync with system language",
-                subtitle = "Request web content in Android's system language",
-                checked = automaticLanguageAdjustment,
-                onCheckedChange = {
-                    automaticLanguageAdjustment = it
-                    globalPrefsStore.automaticLanguageAdjustment = it
-                    onSettingChanged()
-                },
-            )
-            SheetRowDivider()
-            SettingsToggle(
                 title = "Show bottom toolbar",
                 subtitle = "Show Back, Forward, Share, Bookmarks, and Tabs below the address bar",
                 checked = showBottomToolbar,
@@ -601,28 +348,6 @@ fun SettingsSheet(
                     globalPrefsStore.showBottomToolbar = it
                     onSettingChanged()
                 },
-            )
-            SheetRowDivider()
-            SettingsPicker(
-                title = "Wide screen layout",
-                subtitle = "How the bottom bar arranges itself in landscape and on tablets",
-                selectedLabel = when (wideBarLayout) {
-                    WideBarLayout.SPLIT -> "Side by side"
-                    WideBarLayout.CORNER -> "Bottom-right corner"
-                },
-                options = listOf(
-                    "Side by side" to {
-                        wideBarLayout = WideBarLayout.SPLIT
-                        globalPrefsStore.wideBarLayoutName = WideBarLayout.SPLIT.name
-                        onSettingChanged()
-                    },
-                    "Bottom-right corner" to {
-                        wideBarLayout = WideBarLayout.CORNER
-                        globalPrefsStore.wideBarLayoutName = WideBarLayout.CORNER.name
-                        onSettingChanged()
-                    },
-                ),
-                haptics = haptics,
             )
         }
 
@@ -653,6 +378,33 @@ fun SettingsSheet(
                     globalPrefsStore.searchSuggestionsEnabled = it
                 },
             )
+            SheetRowDivider()
+            SettingsToggle(
+                title = "Show search terms in address bar",
+                subtitle = "On a ${searchEngine.label} results page, show what you searched instead of the site address.",
+                checked = showSearchTermsInBar,
+                onCheckedChange = {
+                    showSearchTermsInBar = it
+                    globalPrefsStore.showSearchTermsInBar = it
+                    onSettingChanged()
+                },
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        SheetSectionHeader("Sync")
+        Spacer(Modifier.height(8.dp))
+        SheetCard {
+            SettingsToggle(
+                title = "Handoff",
+                subtitle = "Show a banner to continue a tab that was just open on another Firefox Sync device.",
+                checked = handoffEnabled,
+                onCheckedChange = {
+                    handoffEnabled = it
+                    globalPrefsStore.handoffEnabled = it
+                },
+            )
         }
 
         Spacer(Modifier.height(20.dp))
@@ -668,19 +420,6 @@ fun SettingsSheet(
                     keepAliveInBackground = it
                     globalPrefsStore.keepAliveInBackground = it
                 },
-            )
-            SheetRowDivider()
-            SettingsPicker(
-                title = "Web cache size",
-                subtitle = "A larger cache reloads frequently-visited sites faster. Kept in Android's cache storage (not app data). Takes effect after restart.",
-                selectedLabel = formatCacheSize(httpCacheSizeMb),
-                options = listOf(128, 256, 512, 1024, 2048).map { mb ->
-                    formatCacheSize(mb) to {
-                        httpCacheSizeMb = mb
-                        globalPrefsStore.httpCacheSizeMb = mb
-                    }
-                },
-                haptics = haptics,
             )
             SheetRowDivider()
             SettingsPicker(
@@ -813,6 +552,65 @@ fun SettingsSheet(
 
         Spacer(Modifier.height(20.dp))
 
+        SheetCard {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { haptics.select(); showAdvanced = true }
+                    .padding(vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Advanced settings",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        text = "Fingerprinting, DNS-over-HTTPS, JavaScript, file access, and more",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        SheetSectionHeader("About")
+        Spacer(Modifier.height(8.dp))
+        SheetCard {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        haptics.select()
+                        onReplayOnboarding()
+                    }
+                    .padding(vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Show onboarding again",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
         val versionName = remember {
             runCatching {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
@@ -833,6 +631,483 @@ fun SettingsSheet(
 
 private fun formatCacheSize(mb: Int): String =
     if (mb >= 1024) "${mb / 1024} GB" else "$mb MB"
+
+/**
+ * The "Advanced settings" sub-page. Holds the long tail of power-user toggles that were previously
+ * flattened into the main sheet — the ones a typical user should never need to touch. State lives in
+ * the parent [SettingsSheet] (so it survives page switches); each control is passed its current value
+ * plus a setter that also writes the pref and notifies. The parent renders this instead of the main
+ * page when its `showAdvanced` flag is set.
+ */
+@Composable
+private fun AdvancedSettingsPage(
+    globalPrefsStore: GlobalPreferencesStore,
+    haptics: com.firebolt9907.luminabrowser.ui.LuminaHaptics,
+    onSettingChanged: () -> Unit,
+    onBack: () -> Unit,
+    globalPrivacyControl: Boolean,
+    onGlobalPrivacyControlChange: (Boolean) -> Unit,
+    cookieBehaviorOptInPartitioning: Boolean,
+    onCookieBehaviorOptInPartitioningChange: (Boolean) -> Unit,
+    fingerprintingProtection: Boolean,
+    onFingerprintingProtectionChange: (Boolean) -> Unit,
+    fdlibmMathEnabled: Boolean,
+    onFdlibmMathEnabledChange: (Boolean) -> Unit,
+    queryParameterStripping: Boolean,
+    onQueryParameterStrippingChange: (Boolean) -> Unit,
+    queryParameterStrippingStripList: String,
+    onQueryParameterStrippingStripListChange: (String) -> Unit,
+    queryParameterStrippingAllowList: String,
+    onQueryParameterStrippingAllowListChange: (String) -> Unit,
+    dohSettingsMode: Int,
+    onDohSettingsModeChange: (Int) -> Unit,
+    dohProviderUrl: String,
+    onDohProviderUrlChange: (String) -> Unit,
+    enterpriseRootsEnabled: Boolean,
+    onEnterpriseRootsEnabledChange: (Boolean) -> Unit,
+    domStorageEnabled: Boolean,
+    onDomStorageEnabledChange: (Boolean) -> Unit,
+    allowFileAccess: Boolean,
+    onAllowFileAccessChange: (Boolean) -> Unit,
+    allowFileAccessFromFileURLs: Boolean,
+    onAllowFileAccessFromFileURLsChange: (Boolean) -> Unit,
+    postQuantumKeyExchangeEnabled: Boolean,
+    onPostQuantumKeyExchangeEnabledChange: (Boolean) -> Unit,
+    safeBrowsingV5Enabled: Boolean,
+    onSafeBrowsingV5EnabledChange: (Boolean) -> Unit,
+    emailTrackerBlockingPrivateBrowsing: Boolean,
+    onEmailTrackerBlockingPrivateBrowsingChange: (Boolean) -> Unit,
+    cookieBannerHandlingGlobalRulesSubFrames: Boolean,
+    onCookieBannerHandlingGlobalRulesSubFramesChange: (Boolean) -> Unit,
+    lnaBlockingEnabled: Boolean,
+    onLnaBlockingEnabledChange: (Boolean) -> Unit,
+    bannedPorts: String,
+    onBannedPortsChange: (String) -> Unit,
+    crliteChannel: String,
+    onCrliteChannelChange: (String) -> Unit,
+    javaScriptEnabled: Boolean,
+    onJavaScriptEnabledChange: (Boolean) -> Unit,
+    webFontsEnabled: Boolean,
+    onWebFontsEnabledChange: (Boolean) -> Unit,
+    suspendMediaWhenInactive: Boolean,
+    onSuspendMediaWhenInactiveChange: (Boolean) -> Unit,
+    scrollBarsEnabled: Boolean,
+    onScrollBarsEnabledChange: (Boolean) -> Unit,
+    forceUserScalableContent: Boolean,
+    onForceUserScalableContentChange: (Boolean) -> Unit,
+    automaticFontSizeAdjustment: Boolean,
+    onAutomaticFontSizeAdjustmentChange: (Boolean) -> Unit,
+    automaticLanguageAdjustment: Boolean,
+    onAutomaticLanguageAdjustmentChange: (Boolean) -> Unit,
+    wideBarLayout: WideBarLayout,
+    onWideBarLayoutChange: (WideBarLayout) -> Unit,
+    httpCacheSizeMb: Int,
+    onHttpCacheSizeMbChange: (Int) -> Unit,
+) {
+    SheetHeader(
+        title = "Advanced",
+        leadingIcon = {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBackIos,
+                contentDescription = "Back",
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable(role = Role.Button) { onBack() },
+            )
+        },
+    )
+
+    Spacer(Modifier.height(20.dp))
+
+    SheetSectionHeader("Privacy & Security")
+    Spacer(Modifier.height(8.dp))
+    SheetCard {
+        SettingsToggle(
+            title = "Global Privacy Control",
+            subtitle = "Tell sites not to sell or share your data",
+            checked = globalPrivacyControl,
+            onCheckedChange = {
+                onGlobalPrivacyControlChange(it)
+                globalPrefsStore.globalPrivacyControl = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Total Cookie Protection",
+            subtitle = "Isolate cookies to block cross-site tracking",
+            checked = cookieBehaviorOptInPartitioning,
+            onCheckedChange = {
+                onCookieBehaviorOptInPartitioningChange(it)
+                globalPrefsStore.cookieBehaviorOptInPartitioning = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Fingerprinting Protection",
+            subtitle = "Block scripts trying to identify your device profile",
+            checked = fingerprintingProtection,
+            onCheckedChange = {
+                onFingerprintingProtectionChange(it)
+                globalPrefsStore.fingerprintingProtection = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Platform-independent math (fdlibm)",
+            subtitle = "Use standardized floating point calculations to prevent fingerprinting",
+            checked = fdlibmMathEnabled,
+            onCheckedChange = {
+                onFdlibmMathEnabledChange(it)
+                globalPrefsStore.fdlibmMathEnabled = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Query Parameter Stripping",
+            subtitle = "Remove tracking parameters (like fbclid, utm_*) from URLs",
+            checked = queryParameterStripping,
+            onCheckedChange = {
+                onQueryParameterStrippingChange(it)
+                globalPrefsStore.queryParameterStripping = it
+                onSettingChanged()
+            },
+        )
+        if (queryParameterStripping) {
+            SheetRowDivider()
+            SettingsTextField(
+                title = "Custom parameters to strip",
+                subtitle = "Comma-separated list of tracking parameters to strip from URLs",
+                value = queryParameterStrippingStripList,
+                onValueChange = {
+                    onQueryParameterStrippingStripListChange(it)
+                    globalPrefsStore.queryParameterStrippingStripList = it
+                    onSettingChanged()
+                },
+                haptics = haptics,
+            )
+            SheetRowDivider()
+            SettingsTextField(
+                title = "Custom parameters to keep",
+                subtitle = "Comma-separated list of parameters to exclude from stripping",
+                value = queryParameterStrippingAllowList,
+                onValueChange = {
+                    onQueryParameterStrippingAllowListChange(it)
+                    globalPrefsStore.queryParameterStrippingAllowList = it
+                    onSettingChanged()
+                },
+                haptics = haptics,
+            )
+        }
+        SheetRowDivider()
+        SettingsPicker(
+            title = "DNS over HTTPS (DoH)",
+            subtitle = "Encrypt DNS queries to prevent tracking by your ISP",
+            selectedLabel = when (dohSettingsMode) {
+                1 -> "Default"
+                2 -> "Increased"
+                3 -> "Max"
+                else -> "Off"
+            },
+            options = listOf(
+                "Off" to {
+                    onDohSettingsModeChange(0)
+                    globalPrefsStore.dohSettingsMode = 0
+                    onSettingChanged()
+                },
+                "Default" to {
+                    onDohSettingsModeChange(1)
+                    globalPrefsStore.dohSettingsMode = 1
+                    onSettingChanged()
+                },
+                "Increased" to {
+                    onDohSettingsModeChange(2)
+                    globalPrefsStore.dohSettingsMode = 2
+                    onSettingChanged()
+                },
+                "Max" to {
+                    onDohSettingsModeChange(3)
+                    globalPrefsStore.dohSettingsMode = 3
+                    onSettingChanged()
+                }
+            ),
+            haptics = haptics,
+        )
+        if (dohSettingsMode > 0) {
+            SheetRowDivider()
+            SettingsTextField(
+                title = "Custom DoH URL",
+                subtitle = "Optional custom DNS over HTTPS provider URL",
+                value = dohProviderUrl,
+                onValueChange = {
+                    onDohProviderUrlChange(it)
+                    globalPrefsStore.dohProviderUrl = it
+                    onSettingChanged()
+                },
+                haptics = haptics,
+            )
+        }
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Trust enterprise roots",
+            subtitle = "Trust system-installed CA certificates (useful for VPNs/proxies)",
+            checked = enterpriseRootsEnabled,
+            onCheckedChange = {
+                onEnterpriseRootsEnabledChange(it)
+                globalPrefsStore.enterpriseRootsEnabled = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "DOM Storage",
+            subtitle = "Enable LocalStorage and SessionStorage on web pages",
+            checked = domStorageEnabled,
+            onCheckedChange = {
+                onDomStorageEnabledChange(it)
+                globalPrefsStore.domStorageEnabled = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Local file access",
+            subtitle = "Allow websites to request access to local files (file:///)",
+            checked = allowFileAccess,
+            onCheckedChange = {
+                onAllowFileAccessChange(it)
+                globalPrefsStore.allowFileAccess = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Allow file URL cross-access",
+            subtitle = "Allow local file:/// pages to access other local files",
+            checked = allowFileAccessFromFileURLs,
+            onCheckedChange = {
+                onAllowFileAccessFromFileURLsChange(it)
+                globalPrefsStore.allowFileAccessFromFileURLs = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Post-quantum cryptography",
+            subtitle = "Secure HTTPS connections against future quantum attacks",
+            checked = postQuantumKeyExchangeEnabled,
+            onCheckedChange = {
+                onPostQuantumKeyExchangeEnabledChange(it)
+                globalPrefsStore.postQuantumKeyExchangeEnabled = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Safe Browsing V5",
+            subtitle = "Real-time enhanced protection against malware and phishing",
+            checked = safeBrowsingV5Enabled,
+            onCheckedChange = {
+                onSafeBrowsingV5EnabledChange(it)
+                globalPrefsStore.safeBrowsingV5Enabled = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Email Tracker Blocking",
+            subtitle = "Block common email tracking pixels/scripts on web pages",
+            checked = emailTrackerBlockingPrivateBrowsing,
+            onCheckedChange = {
+                onEmailTrackerBlockingPrivateBrowsingChange(it)
+                globalPrefsStore.emailTrackerBlockingPrivateBrowsing = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Dismiss subframe cookie banners",
+            subtitle = "Automatically dismiss cookie banners inside sub-frames/iframes",
+            checked = cookieBannerHandlingGlobalRulesSubFrames,
+            onCheckedChange = {
+                onCookieBannerHandlingGlobalRulesSubFramesChange(it)
+                globalPrefsStore.cookieBannerHandlingGlobalRulesSubFrames = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Local Network Access protection",
+            subtitle = "Block public websites from probing/scanning your local network",
+            checked = lnaBlockingEnabled,
+            onCheckedChange = {
+                onLnaBlockingEnabledChange(it)
+                globalPrefsStore.lnaBlockingEnabled = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsTextField(
+            title = "Banned ports override",
+            subtitle = "Comma-separated list of ports to override/block",
+            value = bannedPorts,
+            onValueChange = {
+                onBannedPortsChange(it)
+                globalPrefsStore.bannedPorts = it
+                onSettingChanged()
+            },
+            haptics = haptics,
+        )
+        SheetRowDivider()
+        SettingsTextField(
+            title = "CRLite Channel",
+            subtitle = "Certificate revocation list update channel",
+            value = crliteChannel,
+            onValueChange = {
+                onCrliteChannelChange(it)
+                globalPrefsStore.crliteChannel = it
+                onSettingChanged()
+            },
+            haptics = haptics,
+        )
+    }
+
+    Spacer(Modifier.height(20.dp))
+
+    SheetSectionHeader("Content")
+    Spacer(Modifier.height(8.dp))
+    SheetCard {
+        SettingsToggle(
+            title = "JavaScript",
+            subtitle = "Enable JavaScript on web pages",
+            checked = javaScriptEnabled,
+            onCheckedChange = {
+                onJavaScriptEnabledChange(it)
+                globalPrefsStore.javaScriptEnabled = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Web Fonts",
+            subtitle = "Allow web pages to load custom fonts",
+            checked = webFontsEnabled,
+            onCheckedChange = {
+                onWebFontsEnabledChange(it)
+                globalPrefsStore.webFontsEnabled = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Suspend media when inactive",
+            subtitle = "Pause background audio/video playback when a tab is inactive",
+            checked = suspendMediaWhenInactive,
+            onCheckedChange = {
+                onSuspendMediaWhenInactiveChange(it)
+                globalPrefsStore.suspendMediaWhenInactive = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Show scrollbars",
+            subtitle = "Render scrollbars when scrolling web content",
+            checked = scrollBarsEnabled,
+            onCheckedChange = {
+                onScrollBarsEnabledChange(it)
+                globalPrefsStore.scrollBarsEnabled = it
+                onSettingChanged()
+            },
+        )
+    }
+
+    Spacer(Modifier.height(20.dp))
+
+    SheetSectionHeader("Accessibility & Appearance")
+    Spacer(Modifier.height(8.dp))
+    SheetCard {
+        SettingsToggle(
+            title = "Force user zoom",
+            subtitle = "Override website blocks to allow pinch-to-zoom",
+            checked = forceUserScalableContent,
+            onCheckedChange = {
+                onForceUserScalableContentChange(it)
+                globalPrefsStore.forceUserScalableContent = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Sync with system font size",
+            subtitle = "Automatically adjust text scale based on Android settings",
+            checked = automaticFontSizeAdjustment,
+            onCheckedChange = {
+                onAutomaticFontSizeAdjustmentChange(it)
+                globalPrefsStore.automaticFontSizeAdjustment = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Sync with system language",
+            subtitle = "Request web content in Android's system language",
+            checked = automaticLanguageAdjustment,
+            onCheckedChange = {
+                onAutomaticLanguageAdjustmentChange(it)
+                globalPrefsStore.automaticLanguageAdjustment = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsPicker(
+            title = "Wide screen layout",
+            subtitle = "How the bottom bar arranges itself in landscape and on tablets",
+            selectedLabel = when (wideBarLayout) {
+                WideBarLayout.SPLIT -> "Side by side"
+                WideBarLayout.CORNER -> "Bottom-right corner"
+            },
+            options = listOf(
+                "Side by side" to {
+                    onWideBarLayoutChange(WideBarLayout.SPLIT)
+                    globalPrefsStore.wideBarLayoutName = WideBarLayout.SPLIT.name
+                    onSettingChanged()
+                },
+                "Bottom-right corner" to {
+                    onWideBarLayoutChange(WideBarLayout.CORNER)
+                    globalPrefsStore.wideBarLayoutName = WideBarLayout.CORNER.name
+                    onSettingChanged()
+                },
+            ),
+            haptics = haptics,
+        )
+    }
+
+    Spacer(Modifier.height(20.dp))
+
+    SheetSectionHeader("Performance")
+    Spacer(Modifier.height(8.dp))
+    SheetCard {
+        SettingsPicker(
+            title = "Web cache size",
+            subtitle = "A larger cache reloads frequently-visited sites faster. Kept in Android's cache storage (not app data). Takes effect after restart.",
+            selectedLabel = formatCacheSize(httpCacheSizeMb),
+            options = listOf(128, 256, 512, 1024, 2048).map { mb ->
+                formatCacheSize(mb) to {
+                    onHttpCacheSizeMbChange(mb)
+                    globalPrefsStore.httpCacheSizeMb = mb
+                }
+            },
+            haptics = haptics,
+        )
+    }
+
+    Spacer(Modifier.height(20.dp))
+}
 
 /**
  * "Set as default browser" prompt (Fenix parity). On Android 10+ this launches the system role

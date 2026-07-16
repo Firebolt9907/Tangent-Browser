@@ -10,17 +10,55 @@ import mozilla.components.concept.engine.EngineSession
  * content into the safe area, re-running on a MutationObserver. Pass `true` when the
  * EngineView itself is padded (per-site top-padding-fix) to avoid a restyle loop.
  *
- * Bottom inset is intentionally NOT handled here. The bottom chrome (pill / SafariBar)
- * space is reserved natively by GeckoView's dynamic-toolbar clipping
- * (`EngineView.setDynamicToolbarMaxHeight` / `setVerticalClipping` in [ContentHost]).
- * Injecting a bottom spacer `<div>` + `scroll-padding-bottom` on top of that double-pads
- * the page and fights the native toolbar, so it was removed.
+ * [bottomPx] appends an end-of-document spacer `<div>` sized to the bottom pill / SafariBar so
+ * ordinary in-flow content at the very bottom of the page (a footer link, a "forgot password"
+ * button) gains enough scroll room to be brought clear of the pill and tapped. Unlike the top
+ * inset this does NOT push content up: the pill stays a translucent overlay the page still scrolls
+ * under; the spacer only lengthens the scrollable document by the pill's height. Pass 0 to skip it
+ * (e.g. video fullscreen, where there is no bottom chrome).
  */
 internal fun EngineSession.injectViewportSpacers(
     topPx: Int,
+    bottomPx: Int = 0,
     skipHeaderInsets: Boolean = false,
 ) {
     loadJavascriptUrl(buildViewportSpacerScript(topPx, skipHeaderInsets))
+    if (bottomPx > 0) loadJavascriptUrl(buildBottomSpacerScript(bottomPx))
+}
+
+/**
+ * Builds the end-of-document bottom-spacer `javascript:` URL as a plain flattened string (JVM-unit
+ * testable; pure). Appends a fixed-height spacer `<div>` as the last child of `<body>` and sets
+ * `scroll-padding-bottom` so `scrollIntoView` for a bottom control also clears the pill. The spacer
+ * self-heals: SPAs that rebuild `<body>` (or append their own trailing nodes) can drop or bury it,
+ * so a bounded MutationObserver re-appends / re-floats it to the end. Use only `/* */` comments —
+ * the script is flattened to one line, so a `//` would comment out the rest.
+ */
+internal fun buildBottomSpacerScript(bottomPx: Int): String {
+    return """
+        javascript:(()=> {
+        const bottomPx=${bottomPx};
+        const bottom=bottomPx+'px';
+        const spacerId='lumina-bottom-scroll-spacer';
+        const styleId='lumina-viewport-bottom-style';
+        function ensureStyle(){let s=document.getElementById(styleId);if(!s){s=document.createElement('style');s.id=styleId;(document.head||document.documentElement).appendChild(s)}s.textContent='html,body{scroll-padding-bottom:'+bottom+'!important;}'}
+        function opaque(c){if(!c)return false;c=c.replace(/\s+/g,'');if(c==='transparent')return false;var m=c.match(/^rgba?\(([^)]+)\)${'$'}/i);if(m){var p=m[1].split(',');if(p.length>=4&&parseFloat(p[3])===0)return false}return true}
+        /* Match the strip to the page: sample the element the spacer sits below, walking up its
+           ancestors to the first real (opaque) background, then fall back to the body / html base
+           color. Makes the reserved band read as a seamless continuation of the page instead of a
+           transparent gap under a colored footer. */
+        function bgColor(el){for(var n=el?el.previousElementSibling:null;n;n=n.parentElement){try{var c=getComputedStyle(n).backgroundColor;if(opaque(c))return c}catch(e){}}try{var b=getComputedStyle(document.body).backgroundColor;if(opaque(b))return b}catch(e){}try{var h=getComputedStyle(document.documentElement).backgroundColor;if(opaque(h))return h}catch(e){}return ''}
+        function ensureSpacer(){const host=document.body;if(!host)return;let el=document.getElementById(spacerId);if(!el){el=document.createElement('div');el.id=spacerId}el.setAttribute('aria-hidden','true');el.dataset.luminaIgnoreSafeTop='true';if(host.lastElementChild!==el){host.appendChild(el)}const bg=bgColor(el);el.style.cssText='height:'+bottom+'!important;min-height:'+bottom+'!important;width:100%!important;flex:0 0 auto!important;pointer-events:none!important;margin:0!important;padding:0!important;border:0!important;background:'+(bg||'transparent')+'!important;'}
+        function apply(){ensureStyle();ensureSpacer()}
+        apply();
+        function schedule(){if(window.__luminaBottomPending)return;window.__luminaBottomPending=true;requestAnimationFrame(function(){window.__luminaBottomPending=false;apply()})}
+        setTimeout(schedule,1000);setTimeout(schedule,3000);
+        if(window.__luminaBottomObserver){window.__luminaBottomObserver.disconnect();window.__luminaBottomObserver=null}
+        window.__luminaBottomObserver=new MutationObserver(function(records){const allOurs=records.every(function(r){return r.target&&r.target.id===spacerId});if(allOurs)return;schedule()});
+        try{window.__luminaBottomObserver.observe(document.documentElement,{childList:true,subtree:true})}catch(e){}
+        if(!window.__luminaBottomListenersBound){window.__luminaBottomListenersBound=true;window.addEventListener('load',function(){schedule()},{passive:true});var wrapHist=function(n){var o=history[n];if(typeof o==='function'&&!o.__luminaBottomWrapped){var w=function(){var r=o.apply(this,arguments);schedule();setTimeout(schedule,300);return r};w.__luminaBottomWrapped=true;try{history[n]=w}catch(e){}}};wrapHist('pushState');wrapHist('replaceState');window.addEventListener('popstate',function(){schedule();setTimeout(schedule,300)});}
+        })()
+    """.trimIndent().replace("\n", "")
 }
 
 /**

@@ -144,6 +144,9 @@ fun TabGridOverlay(
     /** Bumps when a snapshot lands; cards re-resolve their bitmap through [snapshotProvider]. */
     snapshotVersion: State<Int>,
     snapshotProvider: (String) -> Bitmap? = { null },
+    /** Resolves a tab's declared theme color (`<meta name="theme-color">`) for the top-padding
+     * strip drawn on padded-site cards; null → fall back to the primary color. */
+    themeColorProvider: (String) -> Color? = { null },
     /** Resolves a tab's favicon (ContentState.icon) for the caption; null → no icon shown. */
     iconProvider: (String) -> Bitmap? = { null },
     /** Which overview layout to render. Selects the per-card slot function ([deckSlot]/[pixelSlot])
@@ -351,6 +354,7 @@ fun TabGridOverlay(
     val carouselShiftHolder = rememberUpdatedState(carouselShift)
     val dragOffsetHolder = rememberUpdatedState(dragOffsetPx)
     val snapshotProviderHolder = rememberUpdatedState(snapshotProvider)
+    val themeColorProviderHolder = rememberUpdatedState(themeColorProvider)
     val iconProviderHolder = rememberUpdatedState(iconProvider)
     val onTabSelectedHolder = rememberUpdatedState(onTabSelected)
     val onCloseTabHolder = rememberUpdatedState(onCloseTab)
@@ -364,6 +368,7 @@ fun TabGridOverlay(
         { (if (deckDragging) deckScrollDrag else deckScrollAnim.value) / stepPx }
     }
     val snapshotProviderFwd: (String) -> Bitmap? = remember { { id -> snapshotProviderHolder.value(id) } }
+    val themeColorProviderFwd: (String) -> Color? = remember { { id -> themeColorProviderHolder.value(id) } }
     val iconProviderFwd: (String) -> Bitmap? = remember { { id -> iconProviderHolder.value(id) } }
     val onTabSelectedFwd: (String) -> Unit = remember { { id -> onTabSelectedHolder.value(id) } }
     val onCloseTabFwd: (String) -> Unit = remember { { id -> onCloseTabHolder.value(id) } }
@@ -523,6 +528,7 @@ fun TabGridOverlay(
                             scrollEnabled = scrollEnabledState,
                             snapshotVersion = snapshotVersion,
                             snapshotProvider = snapshotProviderFwd,
+                            themeColorProvider = themeColorProviderFwd,
                             cellsClickable = cellsClickableFwd,
                             onTabSelected = onTabSelectedFwd,
                             onCloseTab = onCloseTabFwd,
@@ -641,6 +647,7 @@ private fun GridTabCard(
     scrollEnabled: State<Boolean>,
     snapshotVersion: State<Int>,
     snapshotProvider: (String) -> Bitmap?,
+    themeColorProvider: (String) -> Color?,
     cellsClickable: () -> Boolean,
     onTabSelected: (String) -> Unit,
     onCloseTab: (String) -> Unit,
@@ -650,6 +657,9 @@ private fun GridTabCard(
     val density = LocalDensity.current
     val padDp = with(density) { tab.browseTopPadPx.toDp() }
     val padPx = tab.browseTopPadPx.toFloat()
+    // Fill of the top-padding strip on a padded-site card: the site's declared theme color, or the
+    // primary color when none was declared — matching the browse-view status-bar tint.
+    val topStripColor = themeColorProvider(tab.id) ?: MaterialTheme.colorScheme.primary
     val tabLabel = remember(tab.url, tab.title) {
         if (tab.url.isBlankTabUrl()) "New tab page"
         else tab.title.ifBlank { hostLabel(tab.url).ifEmpty { tab.url } }
@@ -659,8 +669,10 @@ private fun GridTabCard(
             .fillMaxWidth()
             // Constant layout height: the fullscreen→deck page crop animates via the layer's crop
             // shape below, not via layout, so a drag frame never measures or lays anything out.
+            // The top-padding inset is applied to the card's CONTENT below (a colored strip + the
+            // inset snapshot), NOT as outer padding: outer padding would shift this transform's
+            // origin down by padPx and float a padded-site card lower than its neighbours.
             .height(containerHDp)
-            .padding(top = padDp)
             .graphicsLayer {
                 val p = progress().coerceIn(0f, 1f)
                 // Per-card offset that animates surviving cards into the gap left by a closed tab
@@ -731,7 +743,10 @@ private fun GridTabCard(
                     radiusPx = lerp(browseCornerPx, deckCornerPx, p),
                     // Local (pre-scale) visible height of the card: full viewport at progress 0 (so
                     // the open/close morph matches the browse layer), shrinking to the deck slice.
-                    cropHeightPx = lerp(containerH, croppedPageHeightPx, p) - padPx,
+                    // The card is full-height including its top strip (the strip + snapshot are laid
+                    // out inside), so the crop is NOT reduced by padPx — that keeps every card the
+                    // same height and top-aligned regardless of the per-site top padding.
+                    cropHeightPx = lerp(containerH, croppedPageHeightPx, p),
                 )
                 // Drop shadow behind every card so each reads as physically lifted off the
                 // surfaceDim backdrop. The squircle `shape` above is reused as the shadow outline;
@@ -863,7 +878,10 @@ private fun GridTabCard(
 
             val showPlaceholder = snapshot == null || (prev == null && animAlpha < 1f)
 
-            Box(modifier = Modifier.fillMaxSize()) {
+            // Inset the page content (snapshot / placeholder) below the top-padding strip, exactly
+            // as the browse view pads the EngineView down. The captured snapshot already excludes
+            // the strip region, so this keeps the card a faithful miniature of the padded page.
+            Box(modifier = Modifier.fillMaxSize().padding(top = padDp)) {
                 if (showPlaceholder) {
                     val placeholderAlpha = if (snapshot == null) {
                         1f
@@ -928,6 +946,17 @@ private fun GridTabCard(
                         )
                     }
                 }
+            }
+            // Theme-color strip over the reserved top-padding band (Safari-style tint), matching the
+            // browse-view status bar. Only padded-site cards have a non-zero strip.
+            if (padPx > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(padDp)
+                        .align(Alignment.TopStart)
+                        .background(topStripColor),
+                )
             }
         }
     }

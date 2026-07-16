@@ -36,6 +36,28 @@ class PeekEngineHolder(private val engine: Engine) {
         return s to v
     }
 
+    /**
+     * Hand the live peek session off to a caller that will adopt it into a real store tab (so the
+     * already-loaded page is reused instead of reloaded). Releases the peek [EngineView] — which
+     * detaches the `GeckoSession` from the peek `GeckoView` so it is free to bind to another view —
+     * but deliberately does **not** `close()` the session. Clears the holder; the next peek lazily
+     * recreates a fresh session + view. Returns null when there is no live session (e.g. the
+     * low-memory static-glance path never created one), in which case the caller must fall back to a
+     * normal load.
+     *
+     * Caller contract: only invoke this once the glance card's `AndroidView` has been detached
+     * (peek URL cleared and the card removed), so the view isn't released out from under a live
+     * `AndroidView` — the same rule the deferred [release] path in `LuminaRoot` observes.
+     */
+    fun detachSessionForAdoption(): EngineSession? {
+        val s = session ?: return null
+        view?.let { runCatching { it.release() } }
+        view = null
+        session = null
+        isPrivate = false
+        return s
+    }
+
     /** Tear down the session + view (frees the content process). Safe to call when already empty. */
     fun release() {
         view?.let { runCatching { it.release() } }

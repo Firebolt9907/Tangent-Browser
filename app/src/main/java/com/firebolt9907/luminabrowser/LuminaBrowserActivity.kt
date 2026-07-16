@@ -81,6 +81,13 @@ abstract class LuminaBrowserActivity : ComponentActivity(), ActivityDelegate {
             statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
         )
+        // Pre-Android-11 has no animated IME inset, and the manifest's `adjustNothing` makes the
+        // window entirely blind to the keyboard (verified on the S8: no visible-frame change, no
+        // insets). Switch older devices to `adjustResize` so the keyboard surfaces in the window
+        // insets and the address bar can clear it. API 30+ keeps `adjustNothing` + WindowInsets.ime.
+        if (android.os.Build.VERSION.SDK_INT < 30) {
+            window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false
         }

@@ -70,32 +70,49 @@ complementary; removing one degrades a different scenario:
    `LuminaRoot`'s lifecycle observer (ON_RESUME start, ON_PAUSE / onDispose stop). A quiet full sync
    every `ForegroundSyncIntervalMs` (30 min). This is the **fallback** for missed pushes — it was
    10 min before push existed; keep it relaxed while push is the fast path.
-3. **FxA push (fast path)** — `initPush()`. When another device changes its open tabs, the FxA/sync
-   server sends an FCM push and this device re-syncs near-instantly (this is how vanilla Firefox
-   does it, and how "Send tab" is instant).
+3. **FxA push (fast path) — currently INERT for us; see below** — `initPush()`. In vanilla Firefox a
+   remote tab change triggers an FCM push and this device re-syncs instantly. For us the push
+   subscription is **rejected by Mozilla's server**, so this trigger delivers nothing; triggers 1–2
+   plus command polling are what actually keep tabs fresh.
 
-### FxA push is opt-in via `google-services.json`
+### Why FxA push doesn't work here (and must not be "fixed" by retrying it)
 
-- Transport is **Firebase Cloud Messaging**. `AutoPushFeature` + `FxaPushSupportFeature` +
-  `SendTabFeature` are wired in `initPush()`; the FCM entry point is `sync/LuminaFirebasePushService`
-  (manifest `com.google.firebase.MESSAGING_EVENT` service). `PushProcessor.install(autoPushFeature)`
-  is what routes system-delivered FCM messages to the feature.
-- **The whole thing is inert without a real `app/google-services.json`.** The Google Services Gradle
-  plugin is applied conditionally (`if (file("google-services.json").exists())` in
-  `app/build.gradle.kts`), and `initPush()` looks up the generated `gcm_defaultSenderId` string **by
-  name at runtime** (`resources.getIdentifier`) and bails when absent — a compile-time `R.string`
-  reference would break the no-Firebase build. So: **do not add a hard `R.string.gcm_defaultSenderId`
-  reference**, and do not make push a hard dependency; sync must keep working via triggers 1–2 when
-  Firebase isn't configured. `google-services.json` is gitignored (contains the FCM API key).
-- To enable push: create a Firebase project with package `com.firebolt9907.luminabrowser`, download
-  its `google-services.json` into `app/`, rebuild. No code change needed.
-- A push observer calls `checkForHandoffTab(PushSyncDebounceMs)` — a **5s** floor, vs the 60s
-  `HandoffSyncDebounceMs` used by the routine ON_RESUME check. The short push floor is deliberate:
-  the app is used as an iCloud-Handoff clone against Zen (Firefox-family, so it uploads real Sync
-  tab records), and a push means the remote device genuinely just changed tabs, so we sync almost
-  immediately while still collapsing rapid remote tab-switch bursts into one sync. Received Send-Tab
-  tabs open via the `onSendTabReceived` lambda wired in `Engine.kt` → `tabRepository.addTab` (stays
-  on the single `normalizeUrl` path, invariant #9).
+- Mozilla's hosted push server (`updates.push.services.mozilla.com`) is an FCM **bridge to Mozilla's
+  own Firebase project**. Registering a subscription for a *third-party* sender id returns
+  `400 {"errno":106,"message":"User has invalid app ID <senderId>"}`. Our `google-services.json` is a
+  personal Firebase project, so every autopush `subscribe()` fails and FxA never gets a push endpoint
+  for this device (`currentDevice.subscription == null`). FCM token retrieval itself succeeds — the
+  wall is Mozilla's bridge, not Google.
+- Desktop Firefox/Zen get instant push because desktop uses a **direct WebSocket** to autopush (no
+  FCM, no app-id gate). Mobile Firefox (Fenix) uses the FCM bridge but with **Mozilla's** sender id /
+  Firebase project, which the bridge accepts. F-Droid forks (Fennec, Mull) ship **no** FCM and rely
+  on polling — which is what we do.
+- The only ways to get real push on our own project: self-host an autopush bridge to our Firebase and
+  point `PushConfig(serverHost=…)` at it, or piggyback Mozilla's sender id (works but is against
+  Mozilla's ToS and fragile). **Do not** re-plumb receipt onto push expecting it to work with the
+  personal project.
+- `initPush()` scaffolding is intentionally kept (isolated, failure-swallowing) so a future
+  self-hosted autopush needs only a `serverHost` change. It stays inert without a real
+  `app/google-services.json`: the Google Services Gradle plugin is applied conditionally
+  (`if (file("google-services.json").exists())`), and `initPush()` looks up `gcm_defaultSenderId`
+  **by name at runtime** (`resources.getIdentifier`) — **do not add a hard `R.string.gcm_defaultSenderId`
+  reference** (breaks the no-Firebase build). `google-services.json` is gitignored.
+
+### Receiving "Send tab" — via command polling (the real path)
+
+`SendTabFeature` is registered **unconditionally** in `installSendTabFeature()` (from `init`, before
+`accountManager.start()`), independent of push/Firebase. Incoming commands are pulled by
+`pollIncomingCommands()` → `deviceConstellation().pollForCommands()`, called after every foreground
+sync pass (startup, the ON_RESUME handoff check, the 30-min foreground loop, `refreshSyncedTabs`).
+`SendTabFeature`'s observer fires per command found. Latency is seconds-while-foregrounded / instant
+on app open — not push-instant, but it needs no server. **Do not** gate `installSendTabFeature()` or
+`pollIncomingCommands()` behind `firebaseSenderId()`; that would make receipt depend on the dead push
+path.
+
+A received tab does **not** auto-open. It raises a system notification (`sync/ReceivedTabNotifications`,
+channel `received_tabs`, needs `POST_NOTIFICATIONS` — `MainActivity` requests it at launch); tapping
+it launches `MainActivity` with `EXTRA_OPEN_URL`, which opens the URL as a normal tab via
+`tabRepository.addTab` — still the single `normalizeUrl` path, invariant #9.
 
 ## Critical invariants — do not violate
 
@@ -211,8 +228,9 @@ Adding direct `barCollapsePx` mutations outside this path can cause unbounded co
 
 ### 11. CSS/JS spacer injection guard
 
-`ContentHost` / `PageBottomSpacer` inject a **top-only** viewport spacer JavaScript on FCP and
-load-complete. `suppressJavascriptLoadCallback` prevents the `javascript:` URL itself from
+`ContentHost` / `PageBottomSpacer` inject viewport spacer JavaScript on FCP and load-complete — a
+top spacer (status bar / SafariBar top safe area) and a bottom spacer (in-flow footer clearance for
+the pill; see below). `suppressJavascriptLoadCallback` prevents the `javascript:` URL itself from
 re-triggering injection. If you add a new JS injection site, you must check/set this guard first.
 
 The injected script self-heals: `applyHeaderInsets` re-ensures the top spacer `<div>` and the
@@ -220,11 +238,23 @@ The injected script self-heals: `applyHeaderInsets` re-ensures the top spacer `<
 uses an adaptive cooldown (500ms → 2000ms once the chosen header set is stable) to bound its
 steady-state full-document walk.
 
-**Bottom inset is native-only — do NOT re-add a JS bottom spacer.** The pill / SafariBar space is
-reserved by GeckoView's dynamic-toolbar clipping (`EngineView.setDynamicToolbarMaxHeight` /
-`setVerticalClipping` in `ContentHost`). A JS bottom spacer `<div>` + `scroll-padding-bottom` on top
-of that double-pads the page and fights the native toolbar; it was removed deliberately.
-(`injectViewportSpacers` takes only `topPx` now. `PageBottomSpacer.kt` keeps its legacy name.)
+**Bottom inset — two complementary mechanisms, keep both:**
+- **Native dynamic-toolbar clipping** (`EngineView.setDynamicToolbarMaxHeight` /
+  `setVerticalClipping` in `ContentHost`) reserves the pill / SafariBar space in the *visual
+  viewport* (`svh`/`dvh`), so `position: fixed`/`sticky` bottom elements sit above the pill and the
+  page still scrolls translucently *under* it. Do NOT remove this — it is what viewport-relative
+  bottom UI relies on.
+- **JS bottom spacer** (`buildBottomSpacerScript`, injected by `injectViewportSpacers(bottomPx=…)`)
+  appends an end-of-document spacer `<div>` (+ `scroll-padding-bottom`) sized to the pill so
+  ordinary **in-flow** content at the very bottom of a page (footer links, a "forgot password"
+  button) gets enough scroll room to be brought clear of the always-visible compact pill and
+  tapped. This was previously removed as a double-pad, then deliberately re-added: it does NOT push
+  content up (the pill stays a scrolled-under overlay), it only lengthens the scrollable document.
+  It marks itself `data-luminaIgnoreSafeTop` so the top-inset walk skips it, and self-heals via a
+  bounded MutationObserver for SPAs that rebuild `<body>`.
+
+Any NEW JS injection site must still check/set `suppressJavascriptLoadCallback` first (it prevents
+the `javascript:` URL from re-triggering injection).
 
 ### 12. WebAuthn/passkeys are native — no JS shim, no pref overrides
 
@@ -258,7 +288,7 @@ tab switching is intentionally disabled there to prevent accidental tab changes 
 | Using `EngineSession.captureThumbnail` | Compile error — method does not exist |
 | Adding a JS injection without `suppressJavascriptLoadCallback` guard | Injection loop; corrupts snapshot captures with transitional frames |
 | Gating `BarPill`'s `pointerInput` on `tabSwitchingEnabled` | Tears down gesture listener mid-drag |
-| Re-adding a JS bottom spacer / `scroll-padding-bottom` | Double-pads with the native dynamic-toolbar clipping; fights the toolbar |
+| Sizing the JS bottom spacer to push content up / removing the native dynamic-toolbar clipping | Breaks the scroll-under-pill look and `fixed`/`sticky` bottom UI; the spacer is scroll room only, the native clipping owns the visual viewport (see #11) |
 | Overriding `navigator.credentials` via JS or enabling `webauthn_enable_softtoken` | Fake/silent passkeys that never touch Google Password Manager; RPs reject the signatures |
 
 ## Testing

@@ -188,6 +188,23 @@ fun PromptHandler(engineSession: EngineSession?) {
                 showTimeSelectionPrompt(context, request) { promptRequest = null }
             }
         }
+        is PromptRequest.Color -> {
+            // <input type="color"> chooser.
+            ColorPickerDialog(
+                initialColor = request.defaultColor,
+                onConfirm = { hex -> request.onConfirm(hex); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
+        is PromptRequest.Share -> {
+            // Web Share API (navigator.share). Launch the system share sheet, then resolve or reject
+            // the page's promise based on whether a share target could be launched.
+            LaunchedEffect(request) {
+                val launched = shareWebData(context, request.data.title, request.data.text, request.data.url)
+                if (launched) request.onSuccess() else request.onFailure()
+                promptRequest = null
+            }
+        }
         else -> {
             android.util.Log.w("PromptHandler", "Unhandled prompt: ${request?.javaClass?.simpleName}")
         }

@@ -205,6 +205,20 @@ fun PromptHandler(engineSession: EngineSession?) {
                 promptRequest = null
             }
         }
+        is PromptRequest.Popup -> {
+            // A blocked pop-up asked to open. Let the user allow it (e.g. a bank's OTP window) or keep
+            // it blocked; dismissing defaults to deny.
+            val target = com.firebolt9907.luminabrowser.state.compactHost(request.targetUri)
+            JsConfirmDialog(
+                title = "Allow pop-up?",
+                message = if (target.isNotBlank()) "This page wants to open a window for $target." else "This page wants to open a pop-up window.",
+                positiveLabel = "Allow",
+                negativeLabel = "Block",
+                onPositive = { request.onAllow(); promptRequest = null },
+                onNegative = { request.onDeny(); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
         else -> {
             android.util.Log.w("PromptHandler", "Unhandled prompt: ${request?.javaClass?.simpleName}")
         }

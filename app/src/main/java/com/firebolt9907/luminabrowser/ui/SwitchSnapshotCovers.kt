@@ -15,13 +15,13 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntSize
 
 /**
- * The horizontal tab-switch / predictive-back snapshot cover stack (invariant #7). Renders, in
- * z-order, the leaving/incoming frozen snapshots of a tab swipe, the new-tab commit fade, the
- * predictive-back cover, and the cold-start grey-surface cover — all driven purely by
- * [SnapshotCoverState] plus a few layout constants. Extracted verbatim from LuminaRoot's
- * composition tree; it reads no gesture callbacks and owns no state, so it is a pure function of
- * [snap]. Per-frame offset/alpha are read inside the `graphicsLayer` blocks (draw phase) so a swipe
- * does not recompose this subtree.
+ * The tab-switch / predictive-back snapshot cover stack (invariant #7). Renders, in z-order: the
+ * sticky-incoming cover, its cross-fade-out layer, the leaving/incoming frozen snapshots of a tab
+ * swipe, the new-tab commit fade, the predictive-back cover, and the cold-start grey-surface cover
+ * — all driven purely by [SnapshotCoverState] plus a few layout constants. Extracted verbatim from
+ * LuminaRoot's composition tree; it reads no gesture callbacks and owns no state, so it is a pure
+ * function of [snap]. Per-frame offset/alpha are read inside the `graphicsLayer` blocks (draw
+ * phase) so a swipe does not recompose this subtree.
  *
  * Must be rendered only on the `!gridEngaged` path (invariant #5 — never simultaneously with the
  * grid overlay).
@@ -45,7 +45,47 @@ internal fun SwitchSnapshotCovers(
     val stickyBackCoverUrl by snap.stickyBackCoverUrl
     val stickyIncomingSnapshot by snap.stickyIncomingSnapshot
     val stickyIncomingTabId by snap.stickyIncomingTabId
+    val stickyIncomingTopPadPx by snap.stickyIncomingTopPadPx
+    val fadingCoverActive by snap.fadingCoverActive
+    val fadingCoverBitmap by snap.fadingCoverBitmap
+    val fadingCoverTopPadPx by snap.fadingCoverTopPadPx
+    val fadingCoverAlpha = snap.fadingCoverAlpha
     val geckoHasPainted by snap.geckoHasPainted
+
+    stickyIncomingSnapshot?.let { bitmap ->
+        val pad = with(density) { stickyIncomingTopPadPx.toDp() }
+        SnapshotImage(
+            bitmap = bitmap,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = pad)
+                .clip(switchPaneShape),
+        )
+    }
+    // The dismissed sticky cover cross-fading into the live page (see
+    // fadeOutStickyCover). Same layer as the sticky cover above; the alpha is read
+    // in graphicsLayer so the fade animates in the draw phase only.
+    if (fadingCoverActive) {
+        val fadingBitmap = fadingCoverBitmap
+        val pad = with(density) { fadingCoverTopPadPx.toDp() }
+        if (fadingBitmap != null) {
+            SnapshotImage(
+                bitmap = fadingBitmap,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = pad)
+                    .graphicsLayer { alpha = fadingCoverAlpha.value }
+                    .clip(switchPaneShape),
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = fadingCoverAlpha.value }
+                    .background(MaterialTheme.colorScheme.background),
+            )
+        }
+    }
 
     if (leavingSnapshotBitmap != null || incomingSnapshotBitmap != null || commitAnimNewTab) {
         val width = contentSize.width.toFloat()

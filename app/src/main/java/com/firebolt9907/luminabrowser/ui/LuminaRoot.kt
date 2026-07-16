@@ -441,14 +441,8 @@ fun LuminaRoot(
     var incomingSnapshotTopPadPx by snap.incomingSnapshotTopPadPx
     var incomingSnapshotTabId by snap.incomingSnapshotTabId
     var stickyIncomingTopPadPx by snap.stickyIncomingTopPadPx
-    // Fade-out phase of the sticky incoming cover: when the cover is dismissed because the tab
-    // underneath has appeared (paint callback / fallback timeout), it moves into these slots and
-    // fades over the live page instead of popping off. Gesture takeovers bypass the fade.
-    var fadingCoverBitmap by snap.fadingCoverBitmap
-    var fadingCoverTopPadPx by snap.fadingCoverTopPadPx
-    var fadingCoverActive by snap.fadingCoverActive
-    var fadingCoverJob by snap.fadingCoverJob
-    val fadingCoverAlpha = snap.fadingCoverAlpha
+    // Fade-out phase of the sticky incoming cover (fadingCover* state + fadeOutStickyCover) now
+    // lives entirely on SnapshotCoverState and renders inside SwitchSnapshotCovers.
     var commitAnimNewTab by snap.commitAnimNewTab
     // Grid open/close gesture state (invariants #4, #5, #5a) grouped in GridGestureState; local
     // `var x by grid.x` delegate aliases keep every existing read/write site unchanged.
@@ -2548,40 +2542,6 @@ fun LuminaRoot(
                         primarySnapshot = activePredictiveBackSnapshot ?: predictiveBackSnapshot,
                         gestureCurrentSnapshot = gestureCurrentSnapshot,
                     )
-                }
-                stickyIncomingSnapshot?.let { bitmap ->
-                    val pad = with(density) { stickyIncomingTopPadPx.toDp() }
-                    SnapshotImage(
-                        bitmap = bitmap,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = pad)
-                            .clip(switchPaneShape),
-                    )
-                }
-                // The dismissed sticky cover cross-fading into the live page (see
-                // fadeOutStickyCover). Same layer as the sticky cover above; the alpha is read
-                // in graphicsLayer so the fade animates in the draw phase only.
-                if (fadingCoverActive) {
-                    val fadingBitmap = fadingCoverBitmap
-                    val pad = with(density) { fadingCoverTopPadPx.toDp() }
-                    if (fadingBitmap != null) {
-                        SnapshotImage(
-                            bitmap = fadingBitmap,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = pad)
-                                .graphicsLayer { alpha = fadingCoverAlpha.value }
-                                .clip(switchPaneShape),
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer { alpha = fadingCoverAlpha.value }
-                                .background(MaterialTheme.colorScheme.background),
-                        )
-                    }
                 }
                 SwitchSnapshotCovers(
                     snap = snap,

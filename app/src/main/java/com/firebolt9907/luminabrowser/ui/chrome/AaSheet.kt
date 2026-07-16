@@ -139,6 +139,9 @@ fun AaSheet(
     onOpenAddonQuickSettings: (InstalledAddon) -> Unit = {},
     onFindInPage: () -> Unit = {},
     onPrint: () -> Unit = {},
+    trackingProtectionEnabledGlobally: Boolean = false,
+    siteTrackingProtectionDisabled: Boolean = false,
+    onToggleSiteTrackingProtection: (disable: Boolean) -> Unit = {},
     pageUrl: String = "",
     pageTitle: String = "",
     initialTab: Int = 0,
@@ -250,6 +253,9 @@ fun AaSheet(
                     onDismiss = onDismiss,
                     onFindInPage = onFindInPage,
                     onPrint = onPrint,
+                    trackingProtectionEnabledGlobally = trackingProtectionEnabledGlobally,
+                    siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
+                    onToggleSiteTrackingProtection = onToggleSiteTrackingProtection,
                     pageUrl = pageUrl,
                     pageTitle = pageTitle,
                     tabId = tabId,
@@ -288,6 +294,9 @@ private fun PageTabContent(
     onDismiss: () -> Unit,
     onFindInPage: () -> Unit = {},
     onPrint: () -> Unit = {},
+    trackingProtectionEnabledGlobally: Boolean = false,
+    siteTrackingProtectionDisabled: Boolean = false,
+    onToggleSiteTrackingProtection: (disable: Boolean) -> Unit = {},
     pageUrl: String,
     pageTitle: String = "",
     tabId: String? = null,
@@ -779,6 +788,27 @@ private fun PageTabContent(
             onToggle = { pageSettingsExpanded = !pageSettingsExpanded },
             haptics = haptics,
         ) {
+            // Per-site tracking protection (only meaningful when ETP is on globally). "Checked" =
+            // protected; unchecking adds this site to the exception list so its trackers load — the
+            // standard "shield off for this site" escape hatch when ETP breaks a page.
+            if (trackingProtectionEnabledGlobally && canEdit) {
+                var siteProtected by remember(pageUrl) {
+                    mutableStateOf(!siteTrackingProtectionDisabled)
+                }
+                AaToggleRow(
+                    title = "Block trackers on this site",
+                    subtitle = "Turn off if tracking protection breaks this site",
+                    checked = siteProtected,
+                    enabled = true,
+                    onToggle = {
+                        siteProtected = !siteProtected
+                        onToggleSiteTrackingProtection(!siteProtected)
+                        haptics.toggle(siteProtected)
+                    },
+                )
+                Spacer(Modifier.height(12.dp))
+            }
+
             AaToggleRow(
                 title = "Add top padding for this site",
                 subtitle = "Use when site headers don't move into the safe area",

@@ -682,6 +682,18 @@ fun LuminaRoot(
     var firefoxSignInTabId by remember { mutableStateOf<String?>(null) }
     var showAa by remember { mutableStateOf(false) }
     var aaInitialTab by remember { mutableIntStateOf(0) }
+    // Whether the selected tab is on the tracking-protection exception list (drives the aA sheet's
+    // per-site "Block trackers" toggle). Queried asynchronously each time the sheet opens.
+    var siteTrackingProtectionDisabled by remember { mutableStateOf(false) }
+    LaunchedEffect(showAa, actualSelectedTabId) {
+        if (showAa) {
+            actualSelectedTabId?.let { id ->
+                components.trackingProtectionUseCases.containsException(id) { excepted ->
+                    siteTrackingProtectionDisabled = excepted
+                }
+            }
+        }
+    }
     var sitePrefsVersion by remember { mutableIntStateOf(0) }
     var barCollapsePx by remember { mutableFloatStateOf(0f) }
     var barCollapseCompact by remember { mutableStateOf(false) }
@@ -3655,6 +3667,20 @@ fun LuminaRoot(
                 onPrint = {
                     // GeckoView opens the Android print dialog (physical printers + Save as PDF).
                     selectedTabId?.let { components.sessionUseCases.printContent.invoke(it) }
+                },
+                trackingProtectionEnabledGlobally = components.globalPreferencesStore.trackingProtection,
+                siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
+                onToggleSiteTrackingProtection = { disable ->
+                    selectedTabId?.let { id ->
+                        if (disable) {
+                            components.trackingProtectionUseCases.addException(id)
+                        } else {
+                            components.trackingProtectionUseCases.removeException(id)
+                        }
+                        siteTrackingProtectionDisabled = disable
+                        // Re-run the page so the new policy takes effect immediately.
+                        components.sessionUseCases.reload.invoke(id)
+                    }
                 },
                 pageUrl = currentUrl.orEmpty(),
                 pageTitle = selectedContent?.title.orEmpty(),

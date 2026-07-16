@@ -54,6 +54,10 @@ class LuminaBrowserComponents(application: Application) {
     )
     val sessionUseCases = SessionUseCases(store)
     val tabsUseCases = TabsUseCases(store)
+    // Per-site tracking-protection exceptions (the "shield" toggle): lets the user disable ETP for a
+    // single site when it breaks the page, without turning protection off globally.
+    val trackingProtectionUseCases =
+        mozilla.components.feature.session.TrackingProtectionUseCases(store, engine)
     // Loads real site favicons (memory + disk cached) for the tab overview captions, via the
     // HttpURLConnection fetch client. Falls back to a letter tile in the UI when a site has none.
     val icons = BrowserIcons(application, mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient())

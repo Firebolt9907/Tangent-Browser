@@ -1,34 +1,56 @@
-# Lumina Browser
+# Expedition Browser
 
-An Android browser with an iOS Safari–style bottom URL/tab pill, powered by Mozilla GeckoView. Single-window, Compose-only, no chrome at the top of the screen — pages render edge-to-edge under the status bar.
+An Android web browser with an iOS Safari–style bottom URL/tab pill, powered by Mozilla
+GeckoView. Single-window, Jetpack-Compose-only, no chrome at the top of the screen — pages render
+edge-to-edge under the status bar.
 
-This README is the entry point. For deeper material:
-
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — top-down tour of the code, intended for new contributors.
-- [`IMPLEMENTATION.md`](IMPLEMENTATION.md) — running notes on non-obvious design decisions, gotchas, and "tried and reverted" experiments. Trust the source over the notes if they disagree.
-- [`PLAN.md`](PLAN.md) — historical day-by-day build plan. Useful for context, not a roadmap.
-- [`docs/packages/`](docs/packages/) — one short doc per Kotlin package describing what lives there.
+> **Status:** personal project, released as open source under the [GPL-3.0](LICENSE). It builds and
+> runs, but it is not on any app store and the release build is signed with a local debug keystore
+> (not distribution-ready). Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+>
+> **Naming note:** the app is *Expedition Browser*, but the codebase namespace and internal
+> identifiers still use the project's original name, *Lumina* (package
+> `com.firebolt9907.luminabrowser`, classes like `LuminaRoot`, `LuminaApplication`). A full code
+> rename hasn't happened yet — when you see "Lumina" in source paths or symbols, that's Expedition.
 
 ## What it does
 
-- Bottom **SafariBar** pill that's URL field, tab switcher, and action surface in one.
-  - **Expanded** at rest. **Compact** when scrolling. **Editing** with full-width text field + keyboard.
-  - **Horizontal swipe** on the pill switches to the adjacent tab; the page slides with it.
-  - **Swipe up** on the pill opens a 2D **tab grid**.
-  - **Past-last-tab swipe** reveals a new-tab affordance and creates an `about:blank` tab on release.
-- **Predictive back** uses the system gesture; the previous-page snapshot animates in over the live engine view.
-- **Snapshots** of every tab are cached (16 in memory, JPEG on disk) so tab switches stay visually continuous while GeckoView rebinds.
-- **Firefox add-ons** can be installed from an AMO slug, AMO page URL, or direct `.xpi` URL — including via the "Add to Firefox" button on AMO detail pages.
-- **Per-site preferences**: page zoom (50–200%) and an opt-in "top padding fix" for sites whose fixed headers don't respect the status-bar inset.
-- **Share / view intents** open in a new tab.
+**The bottom pill (`SafariBar`)** is the URL field, tab switcher, and action surface in one.
+- **Expanded** at rest, **compact** when scrolling, **editing** with a full-width field + keyboard.
+- **Horizontal swipe** on the pill switches to the adjacent tab; the live page slides with it.
+- **Swipe up** opens the tab overview, which has three selectable layouts (`TabViewMode`): an iOS
+  app-switcher **deck**, a constant-scale **pixel** filmstrip, and a classic 2-column **grid**.
+- **Past-last-tab swipe** creates a new tab.
 
-Not built (intentionally): tab/profile persistence, history, bookmarks, downloads, find-in-page, reader mode, multi-window, browser/page-action toolbar surfaces for extensions.
+**Browsing**
+- **Predictive back** — the system back gesture animates the previous-page snapshot in over the
+  live engine view.
+- **Per-tab snapshots** cached in memory + JPEG on disk, so tab switches stay visually continuous
+  while GeckoView rebinds its single surface.
+- **Reader mode** — content extraction with a per-site include/strip rules engine.
+- **Custom Tabs** — links opened from other apps land in a separate slim surface
+  (`CustomTabActivity`), not your main tab set; "Open in Expedition" migrates them to a real tab.
+- **Downloads, history, bookmarks** with their own Compose sheets.
+- **Passkeys / WebAuthn** via GeckoView's native FIDO2 / Credential Manager integration.
+- **Video fullscreen** and **per-site preferences** (page zoom, opt-in status-bar top-padding fix).
+
+**Firefox account & sync** (optional; sign in via FxA)
+- **Synced tabs** from your other Firefox devices, plus **Send Tab** receipt via command polling.
+- **Passwords** — encrypted login storage (`PlacesLoginsStorage`) with a management sheet.
+- **Read-only Zen Spaces** sync (Sync 1.5 crypto, decrypted client-side).
+
+**Extensions**
+- Install **Firefox add-ons** from an AMO slug, AMO page URL, direct `.xpi` URL, or the "Add to
+  Firefox" button on AMO detail pages.
 
 ## Stack
 
-- Kotlin 2.2, Compose, Material 3, edge-to-edge.
-- Min SDK 26, target/compile SDK 36.
-- Browser engine: **GeckoView** via `mozilla-components` 147.0.4 (`browser-engine-gecko`, `browser-state`, `feature-session`, `feature-tabs`).
+- **Kotlin** 2.2.21, **Jetpack Compose** (BOM 2024.09), **Material 3**, edge-to-edge.
+- **AGP** 8.13.2 · **compileSdk / targetSdk** 36 · **minSdk** 26.
+- **Browser engine:** GeckoView via [`mozilla-components`](https://github.com/mozilla-mobile/firefox-android)
+  147.0.4 (`browser-engine-gecko`, `browser-state`, `feature-session`/`-tabs`/`-customtabs`/
+  `-downloads`/`-syncedtabs`, `service-firefox-accounts`, `browser-storage-sync`, …).
+- **Coil** for image loading, **BouncyCastle** for the Sync 1.5 crypto path.
 - Single Gradle module under `app/`.
 
 ## Build & run
@@ -37,59 +59,68 @@ Not built (intentionally): tab/profile persistence, history, bookmarks, download
 ./gradlew :app:installDebug
 ```
 
-The dev build defaults to a **single-ABI** APK (`arm64-v8a`) to keep size around 200 MB. To build a multi-ABI APK:
+The dev build defaults to a **single-ABI** APK (`arm64-v8a`) to keep the size around 200 MB
+(GeckoView is large). Build a multi-ABI APK with:
 
 ```sh
 ./gradlew :app:assembleDebug -PsingleAbi=false
 ```
 
-Release builds are signed with the local debug keystore (`~/.android/debug.keystore`) — intentional for now; not distribution-ready. ProGuard + resource shrinking are on for release.
-
-There are no tests of interest yet (just the auto-generated `ExampleUnitTest` / `ExampleInstrumentedTest`).
+Notes:
+- Release builds are signed with the local **debug** keystore (`~/.android/debug.keystore`) —
+  intentional for local use, not distribution.
+- **Firebase / FxA push is optional.** `app/google-services.json` is gitignored; without it the
+  build drops the Google Services plugin and sync falls back to its foreground poll (see
+  [`AGENTS.md`](AGENTS.md) → *Firefox Sync*). The app builds and syncs fine with no Firebase project.
+- JVM unit tests: `./gradlew :app:test`. Instrumented tests need a device/emulator.
 
 ## Repo layout
 
 ```
 app/src/main/java/com/firebolt9907/luminabrowser/
-├── LuminaApplication.kt        # Application; owns the components graph
-├── MainActivity.kt             # Single activity; edge-to-edge; share/view intents
-├── engine/
-│   └── Engine.kt               # LuminaBrowserComponents — DI root
-├── state/
-│   ├── BarUiState.kt           # Bottom-bar state + BarMode enum
-│   ├── LuminaTab.kt            # UI-facing tab model
-│   ├── LuminaViewModel.kt      # Bridges TabRepository → SafariBar state
-│   ├── TabRepository.kt        # Interface
-│   ├── GeckoTabRepository.kt   # GeckoView-backed impl + URL normalization
-│   ├── MockTabRepository.kt    # Compose preview backing
-│   ├── SitePreferencesStore.kt # Per-host zoom + top-padding-fix
-│   └── TabSnapshotCache.kt     # In-memory LRU + JPEG-on-disk
-├── addons/
-│   └── AddonController.kt      # Thin wrapper over Gecko WebExtensionRuntime
+├── LuminaApplication.kt        # Application; owns the components (DI) graph
+├── LuminaBrowserActivity.kt    # Shared activity base (lifecycle, delegates, downloads)
+├── MainActivity.kt             # The browser — hosts LuminaRoot (singleTask, launcher)
+├── CustomTabActivity.kt        # External VIEW/SEND links — hosts CustomTabRoot (own task)
+├── IntentUrls.kt               # Shared intent-URL parsing
+├── engine/                     # GeckoEngine + BrowserStore DI graph
+├── state/                      # Data layer (repos, snapshot cache, view models, prefs)
+├── addons/                     # WebExtension install/runtime wrapper
+├── permissions/                # Runtime permission plumbing
+├── service/                    # Custom Tabs service, keep-alive foreground service
+├── sync/                       # Firefox Sync, FxA, encrypted logins; sync/zen = Zen Spaces
 └── ui/
-    ├── LuminaRoot.kt           # The whole UI (~1700 lines; see IMPLEMENTATION.md)
-    ├── chrome/                 # SafariBar — Expanded / Compact / Editing / Pill
-    ├── content/                # ContentHost — single EngineView + capture pipeline
-    ├── grid/                   # 2D tab grid overlay
+    ├── LuminaRoot.kt           # Main composable — all gesture orchestration
+    ├── chrome/                 # SafariBar — Pill / Expanded / Compact / Editing / aA sheet
+    ├── content/                # ContentHost — the single EngineView + capture pipeline
+    ├── grid/                   # Tab overview (deck / pixel / classic grid)
+    ├── reader/                 # Reader mode: extractor + view + rules engine
+    ├── passwords/ sync/        # Password management + synced-tabs / spaces UI
+    ├── bookmarks/ history/ downloads/   # Library sheets
+    ├── onboarding/ settings/ video/ addons/  # First-run, settings, fullscreen video, AMO UI
     ├── shape/                  # SquircleShape (iOS-style continuous corners)
-    ├── addons/                 # Bottom sheet for AMO install/manage
     └── theme/                  # Material 3 colors, type, theme
 ```
 
-## Where to start reading
+## Documentation
 
-If you're new:
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — top-down tour of the code for new contributors.
+- [`AGENTS.md`](AGENTS.md) — the load-bearing invariants and gotchas. **Read before changing gesture,
+  snapshot, sync, or injection code.**
+- [`docs/packages/`](docs/packages/) — one short doc per Kotlin package.
+- [`IMPLEMENTATION.md`](IMPLEMENTATION.md) — deep running notes on non-obvious decisions and
+  reverted experiments. Trust the source over the notes if they disagree.
 
-1. Skim this README.
-2. Read [`ARCHITECTURE.md`](ARCHITECTURE.md) — gives you the data flow and the names you'll see in every file.
-3. Open `engine/Engine.kt` — it's the DI graph in 50 lines.
-4. Open `state/LuminaViewModel.kt` to see how UI state is composed.
-5. Then dive into whichever package matches what you're changing (see [`docs/packages/`](docs/packages/)).
-6. When something in `ui/LuminaRoot.kt` looks weird, search [`IMPLEMENTATION.md`](IMPLEMENTATION.md) first — there's almost certainly a note explaining why.
+## Contributing
 
-## Known limitations
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, coding conventions, and the review checklist,
+and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) for community expectations. The invariants in
+[`AGENTS.md`](AGENTS.md) are not optional style preferences — several guard against subtle snapshot,
+gesture, and sync regressions.
 
-- Tab state is in-memory only; the three seeded demo tabs (Apple, NYT, Wikipedia) reseed on every cold start.
-- No browser-action / page-action UI for extensions yet.
-- No status-bar blur — GeckoView renders to a `SurfaceView`, which Compose can't blur. The status-bar area shows the page directly under the system bar icons.
-- Native debug symbols are not stripped from release builds (adds ~80 MB).
+## License
+
+[GPL-3.0](LICENSE). Expedition builds on Mozilla GeckoView and `mozilla-components` (MPL-2.0), which
+remain under their own licenses. You are free to use, study, modify, and redistribute Expedition; if
+you distribute a modified version, it must stay open under the GPL.
+```

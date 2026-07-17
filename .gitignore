@@ -1,20 +1,34 @@
+# Build
 *.iml
 .gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
 /build
+/app/build
 /captures
 .externalNativeBuild
 .cxx
+.kotlin/
+
+# IDE
+/.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Local config (machine-specific SDK path, signing, etc.)
+/local.properties
 local.properties
 
+# Node deps for the top-padding test harness
+/tools/**/node_modules/
+
+# Extracted dependency artifacts — decompiled/unzipped from GeckoView & friends.
+# These are NOT part of the app source set; do not commit them.
+/org/
+/androidx/
+/mozilla/
+
 # Firebase Cloud Messaging config for FxA push. Local-only: the build degrades gracefully to the
-# foreground sync-poll fallback when absent (see AGENTS.md → FxA push). Remove this line if you
+# foreground sync-poll fallback when absent (see AGENTS.md -> FxA push). Remove this line if you
 # want push to build on CI / other machines.
 /app/google-services.json

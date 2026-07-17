@@ -1,30 +1,45 @@
-# Lumina Browser — Claude Code Guide
+# Expedition Browser — Agent & Contributor Guide
 
-Architecture context and non-obvious invariants that agents MUST respect to avoid regressions.
-For full rationale see `IMPLEMENTATION.md`; this file captures the rules an agent is most likely
-to violate.
+Architecture context and non-obvious invariants that anyone (human or AI agent) changing this code
+MUST respect to avoid regressions. For full rationale see `IMPLEMENTATION.md`; this file captures the
+rules most likely to be violated. New contributors should read this after `README.md` /
+`ARCHITECTURE.md`.
+
+> **Naming:** the app is *Expedition Browser*; the codebase still uses the original name *Lumina* in
+> its package (`com.firebolt9907.luminabrowser`), class names (`LuminaRoot`, `LuminaApplication`),
+> and on-disk files (`lumina_tabs.json`). Those are Expedition — a full code rename is pending, so
+> this guide keeps the real symbol names.
 
 ## Project layout
 
 ```
 app/src/main/java/com/firebolt9907/luminabrowser/
   engine/         # GeckoEngine + BrowserStore DI graph
-  state/          # Data layer (repos, cache, view models)
+  state/          # Data layer (repos, snapshot cache, view models, prefs stores)
   addons/         # WebExtension install/runtime wrapper
-  sync/           # Firefox Sync + PlacesLoginsStorage (encrypted password store)
+  permissions/    # Runtime permission plumbing
+  service/        # Custom Tabs service + browsing keep-alive foreground service
+  sync/           # Firefox Sync, FxA, PlacesLoginsStorage (encrypted logins); sync/zen = Zen Spaces
   ui/
-    chrome/       # SafariBar, BarPill, BarExpanded, BarCompact, BarEditing
+    chrome/       # SafariBar, BarPill, BarExpanded, BarCompact, BarEditing, aA sheet
     content/      # ContentHost (the single EngineView), page JS injection
     grid/         # Tab overview — iOS deck / pixel filmstrip / classic 2-col (TabViewMode)
+    reader/       # Reader mode: extractor + view + per-site rules engine
+    passwords/    # PasswordsSheet — password management UI
+    sync/         # SyncedTabsSheet + spaces UI — tab/space sync
+    bookmarks/ history/ downloads/  # Library sheets
+    onboarding/   # First-run feature pages
+    settings/     # SettingsSheet
+    video/        # Fullscreen video overlay
+    customtab/    # CustomTabRoot — slim surface for external-link Custom Tabs
     shape/        # SquircleShape
     addons/       # AddonsSheet UI
     theme/        # Material 3 colors/type
-    passwords/    # PasswordsSheet — password management UI
-    sync/         # SyncedTabsSheet — tab sync UI
-    customtab/    # CustomTabRoot — slim surface for external-link Custom Tabs
-  LuminaRoot.kt      # ~2000-line main composable — all gesture orchestration lives here
-  MainActivity.kt    # the browser (LuminaRoot). Own singleTask task. LAUNCHER + home-shortcut only.
+  LuminaRoot.kt        # ~3000-line main composable — most gesture orchestration lives here
+  LuminaBrowserActivity.kt # shared activity base (lifecycle, ActivityDelegate, downloads)
+  MainActivity.kt      # the browser (LuminaRoot). Own singleTask task. LAUNCHER + home-shortcut only.
   CustomTabActivity.kt # external ACTION_VIEW/SEND links → a Custom Tab (own document task)
+  IntentUrls.kt        # shared intent-URL parsing (both activities)
 ```
 
 ## Two activities / external links
@@ -34,7 +49,7 @@ They open in **`CustomTabActivity`**, a separate own-task activity (manifest: de
 `taskAffinity` + `launchMode="singleTask"` + `autoRemoveFromRecents`) that hosts
 `ui/customtab/CustomTabRoot`. The page is a mozilla-components **custom-tab session**
 (`store.state.customTabs`, created via `components.customTabsUseCases.add`) — it is NOT a normal tab,
-so it never appears in the tab grid, `lumina_tabs.json`, or Firefox Sync. "Open in Lumina" migrates
+so it never appears in the tab grid, `lumina_tabs.json`, or Firefox Sync. "Open in Expedition" migrates
 it into a real tab (`customTabsUseCases.migrate`) and hands off to `MainActivity`.
 
 Exit animation (two paths — do not collapse them):

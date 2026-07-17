@@ -1,6 +1,6 @@
 # `addons/` — Firefox add-on installation
 
-One class: `AddonController`. Thin wrapper over Gecko's built-in `WebExtensionRuntime` — Lumina deliberately does *not* depend on the larger `feature-addons` UI stack.
+`AddonController` (the runtime/install logic) plus `AddonInstallUrls.kt` (the pure, unit-testable AMO/`.xpi` URL parsing, split out so the controller holds no URL string-munging). Thin wrapper over Gecko's built-in `WebExtensionRuntime` — the app deliberately does *not* depend on the larger `feature-addons` UI stack.
 
 ## Responsibilities
 

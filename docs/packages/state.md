@@ -63,6 +63,46 @@ Disk keys use the page URL when available (`v2:https://...`) and fall back to `v
 
 `hostFromUrl(url)` is a convenience that yields `""` for `about:blank` / empty / non-host URLs — letting callers treat "no host" as "no prefs".
 
+### `GlobalPreferencesStore.kt`
+App-wide (not per-host) preferences in `SharedPreferences` — search engine, tab-view mode, wide-bar
+layout, preload mode, keep-alive-in-background, the "tint pages" boost, and the rest of the settings
+sheet's toggles. Each is exposed as a value + setter; consumers observe changes where they need to.
+
+### `TabPersistence.kt`
+Lightweight on-disk persistence of the open tab set (a small JSON file) so tabs survive app restarts.
+Each tab stores its last-viewed time; `load` drops any tab older than `maxAgeMillis` (72h
+auto-discard). This is what turned the old "reseed three demo tabs on cold start" behavior into real
+tab restoration.
+
+### `BackgroundTabSuspender.kt`
+Bounds the number of live `GeckoSession`s so a window with many tabs stays responsive. mozilla-
+components lazily creates a live session (its own content process) the first time a tab is rendered
+and never tears it down; after visiting 20 tabs you'd have ~20 live content processes. This suspends
+the least-recently-used ones back to saved state.
+
+### Search — `SearchEngine.kt`, `SearchSuggestionProvider.kt`, `AddressSuggestionProvider.kt`
+- `SearchEngine` — the user-selectable engine: its results URL (used by `normalizeUrl` for non-URL
+  input) and its suggestion endpoint. Every `suggestUrl` returns the OpenSearch/"Firefox client" JSON
+  array shape so one parser handles them all. `addressBarLabel(...)` decides what the bar shows.
+- `SearchSuggestionProvider` — fetches live query completions from that endpoint; empty list on blank
+  query or any network/parse failure so the sheet silently falls back to local suggestions.
+- `AddressSuggestionProvider` — assembles the address-sheet suggestion list from search + local history
+  + bookmarks; `AddressSuggestionKind` drives each row's leading icon.
+
+### Preloading — `SpeculativePreconnector.kt`, `ExternalLinkPreloader.kt`, `PreloadPolicy.kt`
+The speed-tuning layer (see the performance-tuning memory):
+- `SpeculativePreconnector` — warms DNS + TCP + TLS to origins the user is likely to hit next, so the
+  first request lands on an open connection (this + the enlarged Gecko HTTP cache is what makes
+  revisits feel instant).
+- `ExternalLinkPreloader` — for a Custom Tabs `mayLaunchUrl` signal, actually *loads* the page in a
+  short-lived headless `EngineSession` so it's warm when opened.
+- `PreloadPolicy` — gates the heavy full-page preloads by data-cost preference (`PreloadMode`);
+  lightweight `speculativeConnect` warmups are always allowed.
+
+### Tab groups — `TabGroups.kt`, `TabGroupsRepository.kt`
+`LuminaTabGroup` + `TabGroupColor` (state-layer pure; the UI maps each color to a swatch) and the
+repository that persists group membership.
+
 ## When to touch this package
 
 - New tab operation → add to `TabRepository`, implement in both impls.

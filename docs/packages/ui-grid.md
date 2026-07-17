@@ -1,44 +1,58 @@
-# `ui/grid/` — Tab grid overlay
+# `ui/grid/` — Tab overview
 
-One file: `Grid.kt`. Renders the 2D tab switcher that opens when the user swipes up on the pill.
+The tab overview that opens when the user swipes up on the pill. It has **three selectable layouts**
+(`TabViewMode`, persisted in `GlobalPreferencesStore`, cycled from the overview toolbar); all three
+share the same layout-agnostic gesture core in `LuminaRoot` (progress, release, invariants #4/#5) and
+only swap the destination geometry. See [`AGENTS.md`](../../AGENTS.md) → invariant #5a.
 
-## Mental model
+## Files
 
-`TabGridOverlay` is a single composable that renders **every** tab simultaneously. Each tab is positioned at its true carousel slot at `progress = 0` and lerps toward its grid cell at `progress = 1`. There's no separate "browse → grid" transition — they're the same scene parameterized by progress.
+### `Grid.kt` — `TabGridOverlay` (DECK + PIXEL modes)
+The default overview. **DECK** is the iOS app-switcher look: a horizontal receding 3D deck where the
+newest tab is largest and furthest right (the front), older tabs shrink and tuck behind-left, and only
+~`DeckVisibleDepth` cards read as visible. **PIXEL** is a constant-scale horizontal filmstrip (no
+receding/stacking/fade). One `slotProvider(p)` (`deckSlot` vs `pixelSlot`) routes all per-card
+placement, read in the draw phase; the drag/scroll `stepPx` is mode-aware.
 
-For an N-tab list with `newSelIdx` and a `carouselShift` (= `offsetX` during a live drag, or the pinned handoff value during a mid-switch grab):
+### `ClassicGrid.kt` — `ClassicTabGridOverlay` (GRID mode)
+The legacy 2-column vertical grid, recovered verbatim from the `jul-8` branch. Its private helpers
+(`GridTabCard`, `GridCellChrome`, `GestureVisibleSlots`) share names with `Grid.kt`'s but are
+**file-scoped** — keep them private so they don't collide.
 
-```
-browseTranslationX_i = (i - newSelIdx) * pageStride + carouselShift
-cellTranslationX_i, cellTranslationY_i  // from the grid layout
-translationX = lerp(browseTranslationX_i, cellTranslationX_i, xProgress)
-translationY = lerp(0,                     cellTranslationY_i, p)
-scaleX = scaleY = lerp(1, cellWidth / screenWidth, p)
-```
+### `GridModel.kt`
+The non-composable model, geometry, and helpers for both overlays (`deckSlot`, `pixelSlot`,
+`gridCellRect`, the `GridTab` model, `Grid*` constants). Split out so the overlays hold rendering and
+this holds plumbing.
 
-The transform pipeline is exactly `padding(top = browseTopPadPx)` → `graphicsLayer { transformOrigin = TopLeft; translationX/Y; scaleX/Y }` → `clip(SquircleShape)`. This is identical to what the horizontal switch overlay uses, so at `progress = 0` a tab in the visible viewport is pixel-equivalent to the browse-layer snapshot — the transition has no visual seam.
+## The shared positioning trick
 
-The corner radius passed to `SquircleShape` interpolates from `browseCornerDp` (= `topChromeInsetPx * 0.8 * 2`) to `22.dp` so the radii are exactly equal at progress=0.
+Every card starts at its **true carousel position** (`GridTab.browseBaseX` + the live carousel shift,
+matching the browse-layer overlay pixel-for-pixel) at `progress = 0` and lerps toward its destination
+slot at `progress = 1`. Because the transform pipeline (`padding` → `graphicsLayer` translate/scale →
+`clip(SquircleShape)`) is identical to the horizontal-switch overlay's, a visible tab at `progress = 0`
+is pixel-equivalent to the browse snapshot — the transition has no seam. Corner radius interpolates so
+the radii match exactly at `progress = 0`.
 
-## Why off-screen tabs sit at `±N * pageStride`
+## Non-obvious rules
 
-Originally far-away tabs stacked at the center — they popped outward as the grid opened. Now they really are off-screen at progress=0, so they slide in from the side as the grid opens, which reads as a continuous motion.
-
-## Background opacity
-
-The grid background opacity is `(progress * 20).coerceIn(0, 1)` — fully opaque within the first ~5% of progress. This hides GeckoView showing through the squircle corners during the ramp-up.
-
-## Handoff with the horizontal switch
-
-When the user grabs the pill while a horizontal-commit spring is still running, `LuminaRoot` pins the leaving + incoming tab ids and X offsets into `gridHandoff*` fields and clears the commit-overlay bitmaps. The grid then derives those two tabs' carousel positions from the handoff state instead of the live `offsetX`. Without this, the grid would snap them to their static carousel slots and the user would see a discontinuity at handoff.
-
-## Snapshot source per cell
-
-- The currently selected tab uses `tabSwitchCurrentSnapshot ?: cache.get(...)` — preferring the gesture-fresh capture if one exists.
-- Every other tab uses `cache.get(url-key)` from `TabSnapshotCache`. Missing snapshots render as the neutral background; the cache will background-decode and `version` will bump, re-rendering.
+- **Deck scroll is stored in pixels**, not card-units: the spline-decay fling needs pixel-scale
+  magnitudes or inertia dies; release projects the fling then springs to the nearest card.
+- **Swipe-up on a deck card is distance-sensitive**: a gentle swipe navigates to the older tab; a
+  decisive one (~38% of the screen) closes it.
+- **Handoff with the horizontal switch**: if the user grabs the pill while a horizontal-commit spring
+  is still running, `LuminaRoot` pins the leaving/incoming tab ids + X offsets into `gridHandoff*`
+  fields; the overlay derives their carousel positions from that instead of the live `offsetX`, so
+  there's no discontinuity at handoff.
+- **Captions load real favicons** via `components.icons` (URL-keyed cache in `LuminaRoot`, pruned to
+  open tabs), falling back to `ContentState.icon` then a letter tile.
+- **Snapshot source per cell**: the selected tab prefers the gesture-fresh capture
+  (`tabSwitchCurrentSnapshot ?: cache.get(...)`); others use `TabSnapshotCache.get(url-key)`, rendering
+  the neutral background until a background decode bumps `version`.
 
 ## When to touch this package
 
-- Changing grid layout (rows, cell aspect, gaps) → `Grid.kt`, the cell-position math near the top.
-- Changing the open/close springs → those live in `LuminaRoot.kt` (`openGrid` / `closeGrid` / `springGridProgressTo`), not here.
-- Adding per-cell affordances (close button, long-press menu) → add to `TabGridOverlay`; remember the cell transform is `scale + translate`, so child sizing should be in cell-local coordinates.
+- Deck/pixel geometry → `Grid.kt` + `GridModel.kt` (`deckSlot` / `pixelSlot`).
+- Classic 2-col layout → `ClassicGrid.kt` (keep its helpers file-scoped).
+- Open/close springs live in `LuminaRoot.kt`, not here.
+- Both overlays consume the same gesture core — a new mode means a new slot function + a render path,
+  not a new gesture pipeline.

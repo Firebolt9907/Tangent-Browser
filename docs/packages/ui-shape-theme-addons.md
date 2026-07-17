@@ -21,11 +21,23 @@ The radius itself is derived from `topChromeInsetPx * 0.8` so corner curvature s
 
 ## `ui/theme/`
 
-Standard Material 3 theme setup (`Theme.kt`, `Color.kt`, `Type.kt`). Nothing app-specific — light/dark palettes and the default Compose typography. If you need to add a custom color role, do it here.
+Material 3 theme setup (`Theme.kt`, `Color.kt`, `Type.kt`) — light/dark palettes and typography, plus
+two app-specific hooks worth knowing:
+
+- **Dynamic (Material You) accent** — `Theme.kt` reads the device's system accent directly from the
+  platform (not from `MaterialTheme.colorScheme.primary`), so it stays the *true* system color even
+  when the in-app primary has been repainted (below). Pre-Android-12 devices fall back to the brand
+  primary.
+- **`siteColor` override** — `LuminaBrowserTheme` can repaint the in-app primary toward a page's
+  declared theme color / the user's accent. This powers the "Tint pages to my system color" boost,
+  whose draw-time overlay lives in `ui/content/SiteTint.kt`. So the theme is *not* purely static;
+  changing color roles here can interact with that override.
 
 ## `ui/addons/AddonsSheet.kt`
 
 `ModalBottomSheet` exposing the `AddonController` state: an install field (slug / AMO URL / `.xpi` URL), the list of installed add-ons with enable/disable/remove controls, and an inline permission-prompt sheet when `state.pendingPrompt` is non-null. Status / error messages come from the same state. The sheet is opened from the expanded SafariBar's Extensions icon.
+
+`AddonPermissionSheet.kt` is split out of `AddonsSheet` and holds the "review what this add-on can access" install/permission prompt content and its human-readable permission/origin strings.
 
 ## When to touch these
 

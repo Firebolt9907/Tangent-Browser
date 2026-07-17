@@ -1,16 +1,32 @@
 # Package guides
 
-One short doc per Kotlin package. Read these alongside the file you're editing — they're written to explain *what lives here and how the pieces relate*, not to substitute for reading the code.
+One doc per Kotlin package (or small cluster of related packages). Read these alongside the file
+you're editing — they explain *what lives where and how the pieces relate*, not as a substitute for
+reading the code. For the big picture first, read [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for the
+load-bearing invariants, [`AGENTS.md`](../../AGENTS.md).
 
-- [`engine.md`](engine.md) — `engine/` — DI root (`LuminaBrowserComponents`).
-- [`state.md`](state.md) — `state/` — Tabs, bar state, snapshot cache, site prefs.
+> The codebase still uses the project's original name, **Lumina**, in its package and class names.
+> The app is now **Expedition Browser**; a full code rename is pending.
+
+## Non-UI layers
+
+- [`top-level.md`](top-level.md) — the two activities, their shared base, `LuminaApplication`, `IntentUrls`.
+- [`engine.md`](engine.md) — `engine/` — the DI root (`LuminaBrowserComponents`) + error-page interceptor.
+- [`state.md`](state.md) — `state/` — tabs, bar state, snapshot cache, persistence, search, prefs, preloaders.
 - [`addons.md`](addons.md) — `addons/` — Firefox add-on install/manage.
-- [`ui-chrome.md`](ui-chrome.md) — `ui/chrome/` — SafariBar bottom pill.
-- [`ui-content.md`](ui-content.md) — `ui/content/` — EngineView host + page injection.
-- [`ui-grid.md`](ui-grid.md) — `ui/grid/` — 2D tab grid overlay.
-- [`ui-shape-theme-addons.md`](ui-shape-theme-addons.md) — Three small leaf packages bundled.
+- [`sync.md`](sync.md) — `sync/` + `sync/zen/` — Firefox Sync, FxA, encrypted logins, Zen Spaces.
+- [`permissions-service.md`](permissions-service.md) — `permissions/` + `service/` — site permissions, Custom Tabs service, keep-alive.
 
-Not covered separately:
+## UI
 
-- `ui/LuminaRoot.kt` lives at the package root. It's the only file in `ui/` proper. See [`ARCHITECTURE.md`](../../ARCHITECTURE.md) → "The UI" and [`IMPLEMENTATION.md`](../../IMPLEMENTATION.md) for that one.
-- `MainActivity.kt` and `LuminaApplication.kt` are two-screen-readable; no separate doc.
+- [`ui-root.md`](ui-root.md) — `ui/` root — `LuminaRoot` and its extracted overlays, state holders, haptics, prompts.
+- [`ui-chrome.md`](ui-chrome.md) — `ui/chrome/` — the SafariBar bottom pill, address sheet, aA sheet.
+- [`ui-content.md`](ui-content.md) — `ui/content/` — the single EngineView host, page JS injection, link/image glances, probes.
+- [`ui-grid.md`](ui-grid.md) — `ui/grid/` — the tab overview (deck / pixel / classic grid).
+- [`ui-reader.md`](ui-reader.md) — `ui/reader/` — reader mode: extractor, view, rules engine, TTS.
+- [`ui-sync.md`](ui-sync.md) — `ui/sync/` — synced-tabs sheet, handoff banner, Zen spaces carousel.
+- [`ui-library.md`](ui-library.md) — `ui/bookmarks/`, `ui/history/`, `ui/downloads/`, `ui/passwords/` — library sheets.
+- [`ui-onboarding-video.md`](ui-onboarding-video.md) — `ui/onboarding/` + `ui/video/` — first-run flow and fullscreen video.
+- [`ui-customtab.md`](ui-customtab.md) — `ui/customtab/` — the slim external-link surface.
+- [`ui-components.md`](ui-components.md) — `ui/components/` — shared sheet scaffolding, favicon, empty-state.
+- [`ui-shape-theme-addons.md`](ui-shape-theme-addons.md) — `ui/shape/`, `ui/theme/`, `ui/addons/` — leaf packages.

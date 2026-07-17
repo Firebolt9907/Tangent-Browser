@@ -42,7 +42,7 @@ Around that core sit four supporting subsystems:
 
 ## Data flow
 
-1. **`LuminaApplication.components`** lazily builds **`LuminaBrowserComponents`** (`engine/Engine.kt`), which is the DI root. It constructs the `GeckoEngine`, the `BrowserStore`, two use-case bundles (`SessionUseCases`, `TabsUseCases`), the `GeckoTabRepository`, the snapshot cache, the site preferences store, and the addon controller. It also seeds three demo tabs on first launch.
+1. **`LuminaApplication.components`** lazily builds **`LuminaBrowserComponents`** (`engine/Engine.kt`), which is the DI root. It constructs the `GeckoEngine`, the `BrowserStore`, two use-case bundles (`SessionUseCases`, `TabsUseCases`), the `GeckoTabRepository`, the snapshot cache, the site preferences store, the addon controller, and tab persistence. Tabs are restored from disk (`state/TabPersistence`) on launch; starter tabs are only seeded when there's nothing to restore.
 
 2. **`BrowserStore`** is the mozilla-components source of truth — it holds every tab's state, the current selection, content URL, history, loading flags, etc. Lumina mirrors it through `store.observeManually` into a `StateFlow<BrowserState>` (used by `LuminaRoot`) and a flat `StateFlow<List<LuminaTab>>` (used by `LuminaViewModel`).
 
@@ -67,7 +67,9 @@ All of these are immutable data classes; reactivity is `StateFlow` everywhere.
 
 ## The UI: `LuminaRoot.kt`
 
-This file is ~1700 lines. Don't read it linearly. Mental model:
+This file is ~3,000 lines and holds the gesture orchestration; most rendered surfaces and state
+clusters have been extracted into sibling files in `ui/` (see [`docs/packages/ui-root.md`](docs/packages/ui-root.md)).
+Don't read it linearly. Mental model:
 
 - **One `Box`** in z-order, bottom to top:
   1. `ContentHost` (the live `EngineView`).

@@ -26,6 +26,7 @@ load-bearing invariants, [`AGENTS.md`](../../AGENTS.md).
 - [`ui-reader.md`](ui-reader.md) — `ui/reader/` — reader mode: extractor, view, rules engine, TTS.
 - [`ui-sync.md`](ui-sync.md) — `ui/sync/` — synced-tabs sheet, handoff banner, Zen spaces carousel.
 - [`ui-library.md`](ui-library.md) — `ui/bookmarks/`, `ui/history/`, `ui/downloads/`, `ui/passwords/` — library sheets.
+- [`ui-containers-groups.md`](ui-containers-groups.md) — `ui/groups/` + `ui/containers/` — tab-group and container management sheets.
 - [`ui-onboarding-video.md`](ui-onboarding-video.md) — `ui/onboarding/` + `ui/video/` — first-run flow and fullscreen video.
 - [`ui-customtab.md`](ui-customtab.md) — `ui/customtab/` — the slim external-link surface.
 - [`ui-components.md`](ui-components.md) — `ui/components/` — shared sheet scaffolding, favicon, empty-state.

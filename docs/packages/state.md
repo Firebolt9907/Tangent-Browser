@@ -100,8 +100,34 @@ The speed-tuning layer (see the performance-tuning memory):
   lightweight `speculativeConnect` warmups are always allowed.
 
 ### Tab groups — `TabGroups.kt`, `TabGroupsRepository.kt`
-`LuminaTabGroup` + `TabGroupColor` (state-layer pure; the UI maps each color to a swatch) and the
-repository that persists group membership.
+An **organizational label** over open tabs, independent of the engine — grouping is *not* cookie
+isolation (see containers below).
+
+- `TabGroups.kt` — `LuminaTabGroup(id, name, color)` + `TabGroupColor` (GRAY / BLUE / CYAN / GREEN /
+  YELLOW / ORANGE / RED / PINK / PURPLE). State-layer pure (no Compose); the UI maps each color to a
+  swatch. Persisted by name; unknown/legacy names fall back to `BLUE`.
+- `TabGroupsRepository.kt` — owns the groups as `StateFlow<List<LuminaTabGroup>>`, with two-part
+  persistence mirroring how tab state is already split: the **registry** (id/name/color) is persisted
+  here to `lumina_tab_groups.json`, while **membership** rides per-tab in `TabPersistence`
+  (`PersistedTab.groupId`) because live tab ids are reassigned on restore — `GeckoTabRepository`
+  re-links each via `assignRestored`. A tab belongs to at most one group; it drops out automatically
+  when closed (the repo observes the store, so no ghost membership). Empty groups are kept — they're
+  user-managed and removed only via `deleteGroup`, so a group survives all its tabs closing and can be
+  repopulated. API: `createGroup` / `renameGroup` / `setColor` / `deleteGroup` / `addTabToGroup` /
+  `removeTabFromGroup` / `groupIdForTab`.
+
+### Containers — `ContainerRepository.kt`
+**Firefox "contextual identities"** — real isolation, distinct from a tab group's label. Each
+container is an isolated cookie/storage jar identified by a `contextId`; a tab opened in it carries
+that id (`TabSessionState.contextId`) and GeckoView keeps its cookies, localStorage, cache and logins
+fully separate from other containers and the default context.
+
+The canonical runtime state lives in `store.state.containers` (`Map<contextId, ContainerState>`,
+driven by `ContainerAction`). Because that map isn't part of the app's own tab persistence, this
+repository also persists the container **registry** to `lumina_containers.json` and re-registers it
+into the store on startup, so containers survive a process restart alongside the tabs that reference
+them (persisted `contextId`). Exposes `containers: StateFlow<List<ContainerState>>` plus
+`createContainer` / `removeContainer` / `containerFor`.
 
 ## When to touch this package
 

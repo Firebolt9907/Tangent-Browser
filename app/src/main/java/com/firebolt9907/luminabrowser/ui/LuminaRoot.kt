@@ -83,6 +83,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
@@ -131,6 +132,7 @@ import com.firebolt9907.luminabrowser.sync.FirefoxSyncEvent
 import mozilla.components.browser.state.action.ContentAction
 import mozilla.components.browser.state.action.EngineAction
 import com.firebolt9907.luminabrowser.ui.content.ContentHost
+import com.firebolt9907.luminabrowser.ui.content.LocalSiteTint
 import com.firebolt9907.luminabrowser.ui.content.LinkPeekCard
 import com.firebolt9907.luminabrowser.ui.content.LinkRectProbe
 import com.firebolt9907.luminabrowser.ui.content.PeekEngineHolder
@@ -153,6 +155,7 @@ import com.firebolt9907.luminabrowser.ui.reader.toggleReader
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 import com.firebolt9907.luminabrowser.ui.sync.HandoffCard
 import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
+import com.firebolt9907.luminabrowser.ui.theme.rememberSystemAccentColor
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineView
 import mozilla.components.concept.engine.window.WindowRequest
@@ -211,6 +214,11 @@ fun LuminaRoot(
     // Find-in-page state. The match counts are pushed by the engine session's onFindResult.
     var findInPageActive by remember { mutableStateOf(false) }
     var showBottomToolbar by remember { mutableStateOf(components.globalPreferencesStore.showBottomToolbar) }
+    // When on, the chrome recolors to the current site's declared theme color (see ThemeColorProbe /
+    // themeColorsByHost below). Persisted; toggled in Settings → Appearance.
+    var matchSiteThemeColor by remember { mutableStateOf(components.globalPreferencesStore.matchSiteThemeColor) }
+    // When on, web page content is tinted toward the system accent color (Arc-boost style). Persisted.
+    var tintPagesToSystemColor by remember { mutableStateOf(components.globalPreferencesStore.tintPagesToSystemColor) }
     // When on, a search-results page shows the typed query in the bar instead of the engine's host.
     // Persisted; toggled in Settings. Paired with the current search engine for label resolution.
     var showSearchTermsInBar by remember { mutableStateOf(components.globalPreferencesStore.showSearchTermsInBar) }
@@ -297,6 +305,21 @@ fun LuminaRoot(
         // `lowMemory` is the system's own flag; the headroom check trips a bit earlier so we back off
         // before the OS starts killing/GC-thrashing.
         return mi.lowMemory || mi.availMem < mi.threshold * 2
+    }
+    // Option A + low-memory guard: reuse one held session when memory is healthy; under pressure,
+    // skip the live preview (static glance) and free the held session now — no peek card is mounted
+    // at long-press time, so releasing the view here can't race an AndroidView. Shared by the web
+    // long-press glance and the reader-mode link long-press.
+    fun preparePeekEngine() {
+        if (deviceLowOnMemory()) {
+            peekSession = null
+            peekView = null
+            peekEngine.release()
+        } else {
+            val (s, v) = peekEngine.ensure(activityContext, selectedContent?.private == true)
+            peekSession = s
+            peekView = v
+        }
     }
     DisposableEffect(peekEngine) {
         val callbacks = object : android.content.ComponentCallbacks2 {
@@ -506,18 +529,7 @@ fun LuminaRoot(
             peekSourceRect = null
             peekCaptureBitmap = null
             peekElementBitmap = null
-            // Option A + low-memory guard: reuse one held session when memory is healthy; under
-            // pressure, skip the live preview (static glance) and free the held session now — no peek
-            // card is mounted at long-press time, so releasing the view here can't race an AndroidView.
-            if (deviceLowOnMemory()) {
-                peekSession = null
-                peekView = null
-                peekEngine.release()
-            } else {
-                val (s, v) = peekEngine.ensure(activityContext, selectedContent?.private == true)
-                peekSession = s
-                peekView = v
-            }
+            preparePeekEngine()
             peekUrl = link
             luminaHaptics.longPress()
             selectedTabId?.let { components.store.dispatch(ContentAction.ConsumeHitResultAction(it)) }
@@ -573,6 +585,7 @@ fun LuminaRoot(
     var pageScrollFrameJob by remember { mutableStateOf<Job?>(null) }
     var showAddons by remember { mutableStateOf(false) }
     var showSyncedTabs by remember { mutableStateOf(false) }
+    var showSpaces by remember { mutableStateOf(false) }
     var showPasswords by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
@@ -1027,6 +1040,20 @@ fun LuminaRoot(
         }
         onDispose { ThemeColorProbe.listener = null }
     }
+    // Current site's declared theme color when the "Match website theme color" option is on — the
+    // seed for the app-wide accent (LuminaBrowserTheme) and the bottom-bar pill tint (BottomBarLayer).
+    // Null when the option is off or the site declared no color, in which case the chrome stays on
+    // its default Material colors.
+    val activeSiteThemeColor: Color? = if (matchSiteThemeColor && currentHost.isNotEmpty()) {
+        themeColorsByHost[currentHost]
+    } else {
+        null
+    }
+    // The color the "Tint pages to my system color" boost paints onto web content, or null when off.
+    // Read from the platform accent (not the in-app primary) so the boost stays the true system color
+    // even when the chrome is matching a site's theme color above.
+    val systemAccentColor = rememberSystemAccentColor()
+    val siteTintColor: Color? = if (tintPagesToSystemColor) systemAccentColor else null
     // The color to paint the exposed top strip / status bar for the current tab: the site's declared
     // theme color when top-padding-fix is on and one was found, otherwise the system primary color.
     val primaryColor = MaterialTheme.colorScheme.primary
@@ -2049,7 +2076,7 @@ fun LuminaRoot(
         }
     }
 
-    LuminaBrowserTheme {
+    LuminaBrowserTheme(siteColor = activeSiteThemeColor) {
         BackHandler(enabled = isVideoFullscreen) {
             selectedTabId?.let { components.sessionUseCases.exitFullscreen.invoke(it) }
         }
@@ -2170,6 +2197,9 @@ fun LuminaRoot(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
+          // Publish the system-tint color to every page-snapshot draw site (grid/deck cards,
+          // tab-switch covers, scaled backdrop) so they overlay the same tint the live page shows.
+          CompositionLocalProvider(LocalSiteTint provides siteTintColor) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -2340,6 +2370,8 @@ fun LuminaRoot(
                             translationX = if (gridEngaged) offsetX else 0f
                         },
                     topPaddingFixActive = currentSitePrefs.topPaddingFix,
+                    themeColorSamplingEnabled = matchSiteThemeColor,
+                    siteTintColor = siteTintColor,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
                     barCollapseProgress = barCollapseProgressProvider,
                     tabIsLoading = actualSelectedContent?.loading == true,
@@ -2491,6 +2523,22 @@ fun LuminaRoot(
                         },
                         onLinkClick = { href ->
                             readerManager.openReaderLink(context, selectedTabId, selectedEngineSession, href)
+                        },
+                        onLinkLongPress = { href, origin ->
+                            // Peek out of a long-pressed reader link. Only http(s) targets are
+                            // peekable (LinkPeekCard requires them); other schemes fall through to a
+                            // tap. No source rect / element bitmap here — reader content isn't a live
+                            // GeckoView, so the card morphs from a chip at the touch point.
+                            val low = href.trim().lowercase()
+                            if (low.startsWith("http://") || low.startsWith("https://")) {
+                                peekOrigin = origin
+                                peekSourceRect = null
+                                peekCaptureBitmap = null
+                                peekElementBitmap = null
+                                preparePeekEngine()
+                                peekUrl = href
+                                luminaHaptics.longPress()
+                            }
                         }
                     )
                     }
@@ -2771,6 +2819,15 @@ fun LuminaRoot(
                                 luminaHaptics.select()
                             },
                             onShowSyncedTabs = { showSyncedTabs = true },
+                            // Arc-style: swipe up on the overview toolbar to summon the spaces deck.
+                            // Gated off until Zen ships tab-in-space sync (see ZenWorkspaces.kt);
+                            // only meaningful when spaces have actually synced.
+                            onSwipeUpSpaces = if (
+                                com.firebolt9907.luminabrowser.sync.zen.ZEN_SPACES_TABS_UI_ENABLED &&
+                                firefoxSyncState.zenWorkspaces.spaces.isNotEmpty()
+                            ) {
+                                { luminaHaptics.select(); showSpaces = true }
+                            } else null,
                             onShowBookmarks = { showBookmarks = true },
                             onShowHistory = { showHistory = true },
                             onShowDownloads = { showDownloads = true },
@@ -2778,6 +2835,18 @@ fun LuminaRoot(
                             onShowSettings = { showSettings = true },
                         )
                     }
+                }
+                // Arc-style spaces deck, summoned by swiping up on the overview toolbar above.
+                if (showSpaces) {
+                    com.firebolt9907.luminabrowser.ui.sync.SpacesSheet(
+                        snapshot = firefoxSyncState.zenWorkspaces,
+                        onDismiss = { showSpaces = false },
+                        onOpenTab = { url ->
+                            viewModel.onOpenNewTab(url = url, title = "", selectTab = true)
+                            showSpaces = false
+                            closeGrid(animateBack = true)
+                        }
+                    )
                 }
                 // Arc/Zen-style refresh line: a horizontal primary-coloured line that fills from the
                 // centre as you pull (driven by the live distance from PullRefreshContainer's nested
@@ -2959,6 +3028,7 @@ fun LuminaRoot(
                         wideBarLayout = wideBarLayout,
                         searchEngine = barSearchEngine,
                         showSearchTermsInBar = showSearchTermsInBar,
+                        barTintColor = activeSiteThemeColor,
                     )
 
                     // Auto-retire the copy → send banner after a short window.
@@ -3018,6 +3088,7 @@ fun LuminaRoot(
                     )
                 }
             }
+          }
         }
 
         LuminaOverlaySheets(
@@ -3050,6 +3121,8 @@ fun LuminaRoot(
                 )
                 showSearchTermsInBar = components.globalPreferencesStore.showSearchTermsInBar
                 barSearchEngine = components.globalPreferencesStore.searchEngine
+                matchSiteThemeColor = components.globalPreferencesStore.matchSiteThemeColor
+                tintPagesToSystemColor = components.globalPreferencesStore.tintPagesToSystemColor
                 viewModel.refreshDisplayPrefs()
             },
             onReplayOnboarding = {

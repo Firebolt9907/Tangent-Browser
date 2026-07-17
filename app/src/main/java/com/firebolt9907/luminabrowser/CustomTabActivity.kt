@@ -124,6 +124,7 @@ class CustomTabActivity : LuminaBrowserActivity() {
                 customTabId = customTabId,
                 hasCloseAnimation = closeAnimation != null,
                 onOpenInLumina = ::openInLumina,
+                onOpenNewLink = ::openNewLinkInLumina,
                 onClose = { finish() },
                 isInPipMode = isInPipMode,
                 onFullScreenChanged = { isVideoFullscreen = it },
@@ -209,6 +210,26 @@ class CustomTabActivity : LuminaBrowserActivity() {
         startActivity(
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
+        finish()
+    }
+
+    /**
+     * A link the page wants to open in a NEW tab (window.open / target=_blank, or the peek card's
+     * "New tab" action). A Custom Tab is a single-page surface with no tab list of its own, so we
+     * migrate the current page into the real browser and open the new link there as a fresh,
+     * foreground tab (via [MainActivity.EXTRA_OPEN_URL]) — the current page is selected only when
+     * there is no new URL to focus.
+     */
+    private fun openNewLinkInLumina(newUrl: String) {
+        val target = IntentUrls.sanitizeExternalUrl(newUrl)
+        customTabId?.let { id ->
+            app.components.customTabsUseCases.migrate.invoke(id, target == null)
+            migratedAway = true
+        }
+        val intent = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (target != null) intent.putExtra(MainActivity.EXTRA_OPEN_URL, target)
+        startActivity(intent)
         finish()
     }
 

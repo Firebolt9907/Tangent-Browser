@@ -11,6 +11,7 @@ import com.firebolt9907.luminabrowser.sync.zen.Sync15StorageClient
 import com.firebolt9907.luminabrowser.sync.zen.ZEN_WORKSPACES_COLLECTION
 import com.firebolt9907.luminabrowser.sync.zen.ZenWorkspaceRecords
 import com.firebolt9907.luminabrowser.sync.zen.ZenWorkspacesSnapshot
+import com.firebolt9907.luminabrowser.sync.zen.ZenWorkspacesStorage
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -134,7 +135,11 @@ class FirefoxSyncController(
         maxActiveTime = MaxActiveTabAgeMs,
     )
 
-    private val _state = MutableStateFlow(FirefoxSyncUiState())
+    private val _state = MutableStateFlow(
+        // Seed with the last persisted Zen spaces so they render instantly on cold start, before
+        // any network sync has run.
+        FirefoxSyncUiState(zenWorkspaces = ZenWorkspacesStorage.fromJson(globalPrefs.zenWorkspacesJson)),
+    )
     val state: StateFlow<FirefoxSyncUiState> = _state.asStateFlow()
 
     private val _events = MutableSharedFlow<FirefoxSyncEvent>(extraBufferCapacity = 4)
@@ -450,11 +455,17 @@ class FirefoxSyncController(
      */
     private suspend fun refreshZenWorkspaces() {
         val account = accountManager.authenticatedAccount() ?: return
+        // Today Zen's Spaces engine writes only `space` + `container` records to the single `spaces`
+        // collection (Twilight: "sync your Spaces … soon, folders, essentials, split views"). Tab
+        // records aren't on the wire yet, so parsed spaces have no tabs — the parser is forward-compat
+        // and the Spaces UI stays gated (ZEN_SPACES_TABS_UI_ENABLED) until they ship.
         runCatching {
-            val records = sync15StorageClient.fetchCollection(account, ZEN_WORKSPACES_COLLECTION)
-            ZenWorkspaceRecords.parse(records)
+            val spaceRecords = sync15StorageClient.fetchCollection(account, ZEN_WORKSPACES_COLLECTION)
+            ZenWorkspaceRecords.parse(spaceRecords)
         }.onSuccess { snapshot ->
             _state.update { it.copy(zenWorkspaces = snapshot) }
+            // Persist so the spaces render instantly on the next cold start, before any sync runs.
+            runCatching { globalPrefs.zenWorkspacesJson = ZenWorkspacesStorage.toJson(snapshot) }
         }
     }
 
@@ -474,6 +485,10 @@ class FirefoxSyncController(
                     }
                     updateHandoffFromDevices(devices)
                 }
+            // Refresh Zen spaces directly off the `spaces` collection — a light read that doesn't
+            // wait on the full tabs-engine sync — so opening the sheet shows current spaces without
+            // the user forcing a manual sync first.
+            refreshZenWorkspaces()
         }
     }
 

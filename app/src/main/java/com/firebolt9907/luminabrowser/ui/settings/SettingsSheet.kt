@@ -108,6 +108,8 @@ fun SettingsSheet(
     var queryParameterStrippingAllowList by remember { mutableStateOf(globalPrefsStore.queryParameterStrippingAllowList) }
     var crliteChannel by remember { mutableStateOf(globalPrefsStore.crliteChannel) }
     var showBottomToolbar by remember { mutableStateOf(globalPrefsStore.showBottomToolbar) }
+    var matchSiteThemeColor by remember { mutableStateOf(globalPrefsStore.matchSiteThemeColor) }
+    var tintPagesToSystemColor by remember { mutableStateOf(globalPrefsStore.tintPagesToSystemColor) }
     var handoffEnabled by remember { mutableStateOf(globalPrefsStore.handoffEnabled) }
     var wideBarLayout by remember {
         mutableStateOf(WideBarLayout.fromName(globalPrefsStore.wideBarLayoutName))
@@ -346,6 +348,28 @@ fun SettingsSheet(
                 onCheckedChange = {
                     showBottomToolbar = it
                     globalPrefsStore.showBottomToolbar = it
+                    onSettingChanged()
+                },
+            )
+            SheetRowDivider()
+            SettingsToggle(
+                title = "Match website theme color",
+                subtitle = "Tint the address bar and accents to the site's declared theme color",
+                checked = matchSiteThemeColor,
+                onCheckedChange = {
+                    matchSiteThemeColor = it
+                    globalPrefsStore.matchSiteThemeColor = it
+                    onSettingChanged()
+                },
+            )
+            SheetRowDivider()
+            SettingsToggle(
+                title = "Tint pages to my system color",
+                subtitle = "Recolor website content toward your device's accent color, like Arc boosts",
+                checked = tintPagesToSystemColor,
+                onCheckedChange = {
+                    tintPagesToSystemColor = it
+                    globalPrefsStore.tintPagesToSystemColor = it
                     onSettingChanged()
                 },
             )

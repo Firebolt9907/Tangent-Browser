@@ -85,6 +85,12 @@ fun ContentHost(
     onFullScreenChange: (Boolean) -> Unit = {},
     onFirefoxAuthRedirect: (String) -> Boolean = { false },
     topPaddingFixActive: Boolean = false,
+    // When true, inject ThemeColorProbe for every page (not just top-padding sites) so the "Match
+    // website theme color" option can recolor the chrome for any site.
+    themeColorSamplingEnabled: Boolean = false,
+    // When non-null, the "Tint pages to my system color" boost overlays this color on every page
+    // (mix-blend-mode: color). Null disables/removes the boost. See SiteTint.kt.
+    siteTintColor: androidx.compose.ui.graphics.Color? = null,
     pageZoomFactor: Float = 1.0f,
     // Live scroll-collapse progress (0 = pill expanded, 1 = compact), as a lambda so the per-frame
     // spring updates drive the engine's vertical clipping via snapshotFlow without recomposing
@@ -96,7 +102,14 @@ fun ContentHost(
     val context = LocalContext.current
     val density = LocalDensity.current
     // The color GeckoView shows before a session's first paint (see the render DisposableEffect).
-    val firstPaintCoverColor = MaterialTheme.colorScheme.background.toArgb()
+    val backgroundColor = MaterialTheme.colorScheme.background
+    val firstPaintCoverColor = backgroundColor.toArgb()
+    // The compositor "clear color" fills regions GeckoView hasn't painted yet — the bright band you
+    // see flung past the display port on a fast scroll (default: opaque white). Match the app
+    // background instead, tinted to the system boost when it's on so those flashes agree with the
+    // tinted page rather than reading as a much brighter, untinted strip. Force opaque (the
+    // checkerboard fill must not be translucent).
+    val compositorClearColor = (backgroundColor.tintedForSite(siteTintColor).toArgb()) or 0xFF000000.toInt()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var isSafeToSnapshot by remember(tabId, engineSession) { mutableStateOf(!tabIsLoading && engineSession != null) }
     // Recovery net: the callback-driven toggles below can leave this stuck `false` even though the
@@ -285,6 +298,15 @@ fun ContentHost(
         }
     }
 
+    // Keep GeckoView's compositor clear color matched to the (optionally tinted) app background so a
+    // fast fling past the painted display port doesn't flash a bright white band. Re-applied when the
+    // session rebinds or the theme / tint changes; the CompositorController retains the value across
+    // paints, so setting it once per change is enough.
+    LaunchedEffect(engineView, engineSession, compositorClearColor) {
+        if (engineSession == null) return@LaunchedEffect
+        findGeckoView(engineView.asView())?.session?.compositorController?.setClearColor(compositorClearColor)
+    }
+
     LaunchedEffect(engineView, engineSession, tabId) {
         if (engineSession == null || tabId == null || snapshotCache == null) return@LaunchedEffect
         delay(600)
@@ -353,7 +375,7 @@ fun ContentHost(
 
 
 
-    DisposableEffect(engineSession, topChromeInsetCssPx, bottomChromeInsetCssPx, tabId, topPaddingFixActive) {
+    DisposableEffect(engineSession, topChromeInsetCssPx, bottomChromeInsetCssPx, tabId, topPaddingFixActive, themeColorSamplingEnabled, siteTintColor) {
         if (engineSession == null) {
             onDispose { }
         } else {
@@ -406,11 +428,17 @@ fun ContentHost(
                     skipHeaderInsets = topPaddingFixActive,
                 )
                 engineSession.injectPageZoom(pageZoomFactor)
-                // When the page is padded down by the status-bar inset, sample its declared
-                // theme-color (Safari-style) so the exposed strip / status bar can be tinted to
-                // match. Falls back to the system primary color natively when none is declared.
-                if (topPaddingFixActive) {
+                // Sample the page's declared theme-color (Safari-style). Done for top-padding sites
+                // (to tint the exposed strip / status bar) and whenever the "Match website theme
+                // color" option is on (to recolor the chrome for any site). Falls back to the system
+                // primary color natively when none is declared.
+                if (topPaddingFixActive || themeColorSamplingEnabled) {
                     engineSession.loadJavascriptUrl(ThemeColorProbe.buildScript())
+                }
+                // Re-apply the system-color boost on every load: a fresh page has a fresh DOM with no
+                // overlay yet. The LaunchedEffect below covers the already-loaded page and tab swaps.
+                if (siteTintColor != null) {
+                    engineSession.injectSiteTint(siteTintColor)
                 }
             }
             fun injectAmoInstaller(url: String, force: Boolean = false) {
@@ -645,6 +673,15 @@ fun ContentHost(
     LaunchedEffect(engineSession, pageZoomFactor, tabId) {
         if (engineSession == null) return@LaunchedEffect
         engineSession.injectPageZoom(pageZoomFactor)
+    }
+
+    // System-color boost: apply to the current page immediately when toggled on / tab changes, and
+    // remove it when toggled off. Per-load re-application (new DOM after a navigation) is handled in
+    // injectSpacer above. Mirrors injectPageZoom's immediate-apply LaunchedEffect.
+    LaunchedEffect(engineSession, siteTintColor, tabId) {
+        if (engineSession == null) return@LaunchedEffect
+        if (siteTintColor != null) engineSession.injectSiteTint(siteTintColor)
+        else engineSession.removeSiteTint()
     }
 
     // When a web-content keyboard is showing, shrink the EngineView so its bottom edge sits at the

@@ -6,6 +6,7 @@ import com.firebolt9907.luminabrowser.sync.zen.KeyBundle
 import com.firebolt9907.luminabrowser.sync.zen.Sync15Crypto
 import com.firebolt9907.luminabrowser.sync.zen.Sync15Record
 import com.firebolt9907.luminabrowser.sync.zen.ZenWorkspaceRecords
+import com.firebolt9907.luminabrowser.sync.zen.ZenWorkspacesStorage
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -284,5 +285,125 @@ class ZenWorkspacesSyncTest {
             listOf(record("s~u", """{"type":"space","uuid":"u","name":"Plain"}""")),
         )
         assertNull(snapshot.spaces.single().icon)
+    }
+
+    // --- Tab -> space mapping (FORWARD-COMPAT: no `tab` record ships today; the Twilight release
+    // note promises essentials/folders/splits "soon". These pin the parser against the shapes Zen is
+    // expected to write so it lights up without a code change. See ZenWorkspaces.kt header.) ---
+
+    @Test
+    fun `flat pin-shape tab record maps via workspaceUuid alias`() {
+        // The alternative Zen shape: a flat url/title pin row, workspace via `workspaceUuid`,
+        // essential via `isEssential` — the aliases parseTab tolerates.
+        val snapshot = ZenWorkspaceRecords.parse(
+            listOf(
+                record("s~a", """{"type":"space","uuid":"a","name":"A"}"""),
+                record(
+                    "pin~1",
+                    """{"type":"pin","url":"https://flat.example/","title":"Flat",
+                       "workspaceUuid":"a","isEssential":false}""",
+                ),
+            ),
+        )
+        val a = snapshot.spaces.single()
+        assertEquals(listOf("https://flat.example/"), a.tabs.map { it.url })
+        assertEquals("Flat", a.tabs.single().title)
+    }
+
+
+    @Test
+    fun `tab records map to their space via zenWorkspace uuid`() {
+        val snapshot = ZenWorkspaceRecords.parse(
+            listOf(
+                record("s~a", """{"type":"space","uuid":"a","name":"A","position":0}"""),
+                record("s~b", """{"type":"space","uuid":"b","name":"B","position":1}"""),
+                record(
+                    "t~1",
+                    """{"type":"tab","zenSyncId":"1","zenWorkspace":"a","index":1,
+                       "entries":[{"url":"https://one.example/","title":"One"}]}""",
+                ),
+                record(
+                    "t~2",
+                    """{"type":"tab","zenSyncId":"2","zenWorkspace":"b","index":1,
+                       "entries":[{"url":"https://two.example/","title":"Two"}]}""",
+                ),
+            ),
+        )
+        val a = snapshot.spaces.first { it.uuid == "a" }
+        val b = snapshot.spaces.first { it.uuid == "b" }
+        assertEquals(listOf("https://one.example/"), a.tabs.map { it.url })
+        assertEquals(listOf("https://two.example/"), b.tabs.map { it.url })
+        assertEquals("One", a.tabs.single().title)
+    }
+
+    @Test
+    fun `essential tabs appear in every space and sort ahead of regular tabs`() {
+        val snapshot = ZenWorkspaceRecords.parse(
+            listOf(
+                record("s~a", """{"type":"space","uuid":"a","name":"A","position":0}"""),
+                record("s~b", """{"type":"space","uuid":"b","name":"B","position":1}"""),
+                record(
+                    "t~e",
+                    """{"type":"tab","zenSyncId":"e","zenWorkspace":null,"zenEssential":true,
+                       "pinned":true,"position":0,"index":1,
+                       "entries":[{"url":"https://essential.example/","title":"E"}]}""",
+                ),
+                record(
+                    "t~r",
+                    """{"type":"tab","zenSyncId":"r","zenWorkspace":"a","pinned":false,"position":1,
+                       "index":1,"entries":[{"url":"https://regular.example/","title":"R"}]}""",
+                ),
+            ),
+        )
+        val a = snapshot.spaces.first { it.uuid == "a" }
+        val b = snapshot.spaces.first { it.uuid == "b" }
+        // Essential shows in both spaces; in A it precedes the pinned-less regular tab.
+        assertEquals(listOf("https://essential.example/", "https://regular.example/"), a.tabs.map { it.url })
+        assertEquals(listOf("https://essential.example/"), b.tabs.map { it.url })
+    }
+
+    @Test
+    fun `tab uses the current entry per index and skips entryless tabs`() {
+        val snapshot = ZenWorkspaceRecords.parse(
+            listOf(
+                record("s~a", """{"type":"space","uuid":"a","name":"A"}"""),
+                record(
+                    "t~1",
+                    """{"type":"tab","zenSyncId":"1","zenWorkspace":"a","index":2,
+                       "entries":[{"url":"https://old.example/","title":"Old"},
+                                  {"url":"https://current.example/","title":"Now"}]}""",
+                ),
+                record("t~2", """{"type":"tab","zenSyncId":"2","zenWorkspace":"a","entries":[]}"""),
+            ),
+        )
+        val a = snapshot.spaces.single()
+        assertEquals(listOf("https://current.example/"), a.tabs.map { it.url })
+    }
+
+    @Test
+    fun `snapshot survives a json persistence round trip`() {
+        val snapshot = ZenWorkspaceRecords.parse(
+            listOf(
+                record("s~a", """{"type":"space","uuid":"a","name":"A","icon":"💼","position":0}"""),
+                record(
+                    "t~1",
+                    """{"type":"tab","zenSyncId":"1","zenWorkspace":"a","index":1,"pinned":true,
+                       "entries":[{"url":"https://one.example/","title":"One"}]}""",
+                ),
+                record("c~4", """{"type":"container","userContextId":4,"name":"Shopping","color":"pink"}"""),
+            ),
+        )
+        val restored = ZenWorkspacesStorage.fromJson(ZenWorkspacesStorage.toJson(snapshot))
+        assertEquals("A", restored.spaces.single().name)
+        assertEquals("💼", restored.spaces.single().icon)
+        assertEquals("https://one.example/", restored.spaces.single().tabs.single().url)
+        assertTrue(restored.spaces.single().tabs.single().pinned)
+        assertEquals(4, restored.containers.single().userContextId)
+    }
+
+    @Test
+    fun `fromJson tolerates null and garbage input`() {
+        assertTrue(ZenWorkspacesStorage.fromJson(null).spaces.isEmpty())
+        assertTrue(ZenWorkspacesStorage.fromJson("not json").spaces.isEmpty())
     }
 }

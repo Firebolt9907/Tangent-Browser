@@ -98,6 +98,9 @@ fun SafariBar(
     // "ghost" pills never enter editing, so they skip the SharedTransitionLayout + sharedBounds
     // bookkeeping entirely (it was multiplying per-frame cost across every peeking pill).
     enableAddressHero: Boolean = false,
+    // Site theme color for the "Match website theme color" option; tints the expanded/compact pill.
+    // Null (default) leaves the pill on its neutral surface. Ghost neighbor pills leave this null.
+    tintColor: Color? = null,
     modifier: Modifier = Modifier,
 ) {
     // Animate the reserved toolbar space (0 = gone, 1 = shown) rather than toggling it on
@@ -206,6 +209,7 @@ fun SafariBar(
                         readerTheme = readerTheme,
                         onClick = onClick,
                         addressSharedModifier = addressShared,
+                        tintColor = tintColor,
                         haptics = haptics,
                     )
                     BarMode.Compact -> BarExpanded(
@@ -228,6 +232,7 @@ fun SafariBar(
                         readerTheme = readerTheme,
                         onClick = onClick,
                         addressSharedModifier = addressShared,
+                        tintColor = tintColor,
                         haptics = haptics,
                     )
                     BarMode.Editing -> BarEditing(

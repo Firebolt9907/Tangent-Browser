@@ -5,6 +5,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,7 +52,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -84,6 +88,8 @@ internal fun ColumnScope.GridOverviewControls(
     onCloseGrid: () -> Unit,
     onSelectTabViewMode: (TabViewMode) -> Unit,
     onShowSyncedTabs: () -> Unit,
+    /** Arc-style swipe-up on the toolbar to reveal the synced Zen spaces deck; null disables it. */
+    onSwipeUpSpaces: (() -> Unit)?,
     onShowBookmarks: () -> Unit,
     onShowHistory: () -> Unit,
     onShowDownloads: () -> Unit,
@@ -113,12 +119,40 @@ internal fun ColumnScope.GridOverviewControls(
         }
     }
 
+    // Swipe up anywhere on the toolbar surface to reveal the Zen spaces deck (Arc-style). A gentle
+    // upward flick past the threshold fires; taps still reach the buttons (vertical drag doesn't
+    // consume the down event until slop is crossed).
+    val swipeModifier = if (onSwipeUpSpaces != null) {
+        Modifier.pointerInput(Unit) {
+            val thresholdPx = 44.dp.toPx()
+            var accumulated = 0f
+            detectVerticalDragGestures(
+                onDragStart = { accumulated = 0f },
+                onDragEnd = { if (accumulated <= -thresholdPx) onSwipeUpSpaces() },
+                onVerticalDrag = { _, dragAmount -> accumulated += dragAmount },
+            )
+        }
+    } else {
+        Modifier
+    }
     Surface(
+        modifier = swipeModifier,
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 3.dp,
         shadowElevation = 6.dp,
     ) {
+      Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        // Drag-handle affordance hinting the swipe-up-for-spaces gesture; only shown when enabled.
+        if (onSwipeUpSpaces != null) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .size(width = 32.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)),
+            )
+        }
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
@@ -251,5 +285,6 @@ internal fun ColumnScope.GridOverviewControls(
                 }
             }
         }
+      }
     }
 }

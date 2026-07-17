@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -55,6 +56,8 @@ import com.firebolt9907.luminabrowser.state.BarUiState
 import com.firebolt9907.luminabrowser.state.SearchEngine
 import com.firebolt9907.luminabrowser.state.addressBarLabel
 import com.firebolt9907.luminabrowser.ui.chrome.BottomToolbarButton
+import com.firebolt9907.luminabrowser.ui.content.LocalSiteTint
+import com.firebolt9907.luminabrowser.ui.content.siteTintOverlay
 import com.firebolt9907.luminabrowser.ui.chrome.SafariBar
 import com.firebolt9907.luminabrowser.ui.chrome.WideBarLayout
 import mozilla.components.browser.state.state.TabSessionState
@@ -107,6 +110,9 @@ internal fun BottomBarLayer(
     wideBarLayout: WideBarLayout = WideBarLayout.SPLIT,
     searchEngine: SearchEngine = SearchEngine.DEFAULT,
     showSearchTermsInBar: Boolean = true,
+    // Current site's theme color for the "Match website theme color" option, or null when off / the
+    // site declares none. Tints the live pill only; reader mode and the neighbor ghosts stay neutral.
+    barTintColor: androidx.compose.ui.graphics.Color? = null,
 ) {
     val activeReaderActive = selectedTabId != null && activeReaderTabs.contains(selectedTabId)
     val density = LocalDensity.current
@@ -174,11 +180,20 @@ internal fun BottomBarLayer(
             // giving the corner pill a soft backing for contrast.
             val scrimBrush = if (isWideLayout) {
                 val bandWidthPx = with(density) { wideBandWidth.toPx() }
+                // Soft pool, NOT a spotlight. Low peak alpha so there is no bright flat disc, but
+                // the plateau is held out to ~0.8 of the radius so it still backs the OUTER toolbar
+                // buttons (which sit near the band edges), then fades quickly to Transparent by the
+                // edge. Radius stays bandWidthPx/2 so alpha reaches Transparent exactly at every band
+                // edge — do not enlarge it or a vertical seam reappears. The excessive UPWARD reach
+                // is trimmed by the bottom-anchored scaleY squash on the scrim Box below (wide only),
+                // which flattens this circle into a wide, shallow ellipse.
                 Brush.radialGradient(
                     colorStops = arrayOf(
                         0.0f to scrimColor,
-                        0.55f to scrimColor.copy(alpha = 0.85f),
-                        0.8f to scrimColor.copy(alpha = 0.4f),
+                        0.45f to scrimColor,
+                        0.65f to scrimColor.copy(alpha = 0.6f),
+                        0.82f to scrimColor.copy(alpha = 0.28f),
+                        0.93f to scrimColor.copy(alpha = 0.1f),
                         1.0f to Color.Transparent,
                     ),
                     center = Offset(bandWidthPx / 2f, boxHeightPx),
@@ -205,28 +220,46 @@ internal fun BottomBarLayer(
             // NOT off-screen (unlike a phone, where pillStride ≈ full width). Without the clip the
             // previous-tab ghost floats out over the page content mid-screen. With it, ghosts stay
             // hidden at rest and slide cleanly in/out of the band's edge during a horizontal switch.
+            // Scrim lives OUTSIDE the band's clipToBounds. The radial brush fades to Transparent on
+            // its own, so it needs no clip and produces no seam — which lets the wide-mode oval be
+            // stretched horizontally (scaleX) PAST the band edges to fully back the outer toolbar
+            // buttons, and flattened vertically (scaleY) so it stays a shallow oval that doesn't
+            // climb high above the pill. Bottom-centre pivot keeps it anchored at the nav edge and
+            // centred on the pill. On phones (vertical gradient) both scales are a no-op.
+            if (activeState.mode != BarMode.Editing) {
+                val scrimModifier = if (isWideLayout) {
+                    Modifier.align(Alignment.BottomEnd).width(wideBandWidth)
+                } else {
+                    Modifier.fillMaxWidth().align(Alignment.BottomCenter)
+                }
+                Box(
+                    modifier = scrimModifier
+                        .requiredHeight(boxHeight)
+                        .graphicsLayer {
+                            val collapse = barCollapseProgress()
+                            val readerHide = readerHideOffsetPx()
+                            alpha = (1f - collapse).coerceIn(0f, 1f)
+                            translationY = (toolbarHeight.toPx() + bottomPadding.toPx()) * collapse + readerHide
+                            if (isWideLayout) {
+                                transformOrigin = TransformOrigin(0.5f, 1f)
+                                scaleX = 1.85f
+                                scaleY = 0.9f
+                                // Push the oval toward the right bezel so its right half runs off
+                                // the screen edge (looks like the bezel clips it), while its left
+                                // side still spreads behind the pill + toolbar buttons.
+                                translationX += 110.dp.toPx()
+                            }
+                        }
+                        .background(scrimBrush)
+                )
+            }
+
             val bandModifier = if (isWideLayout) {
                 Modifier.align(Alignment.BottomEnd).width(wideBandWidth).clipToBounds()
             } else {
                 Modifier.fillMaxSize()
             }
             Box(modifier = bandModifier) {
-
-            if (activeState.mode != BarMode.Editing) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .requiredHeight(boxHeight)
-                        .align(Alignment.BottomCenter)
-                        .graphicsLayer {
-                            val collapse = barCollapseProgress()
-                            val readerHide = readerHideOffsetPx()
-                            alpha = (1f - collapse).coerceIn(0f, 1f)
-                            translationY = (toolbarHeight.toPx() + bottomPadding.toPx()) * collapse + readerHide
-                        }
-                        .background(scrimBrush)
-                )
-            }
 
             val width = contentSize.width.toFloat()
         val pageStride = width + tabSwitchGapPx
@@ -380,6 +413,8 @@ internal fun BottomBarLayer(
             onTabsTap = onTabsTap,
             // Only the live pill morphs its address text into the editing field; ghosts opt out.
             enableAddressHero = true,
+            // Reader mode owns the pill color, so the site tint only applies outside reader view.
+            tintColor = if (activeReaderActive) null else barTintColor,
         )
         } // end band container
 
@@ -516,7 +551,8 @@ internal fun SnapshotImage(bitmap: android.graphics.Bitmap, modifier: Modifier =
         bitmap = img,
         contentDescription = null,
         contentScale = ContentScale.Crop,
-        modifier = modifier,
+        // Match the live page's system-tint boost, overlaid at draw time (no-op when off).
+        modifier = modifier.siteTintOverlay(LocalSiteTint.current),
     )
 }
 

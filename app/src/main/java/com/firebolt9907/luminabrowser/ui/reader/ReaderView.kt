@@ -7,7 +7,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.text.selection.DisableSelection
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -90,6 +92,13 @@ fun ReaderView(
      */
     onSnapshot: (android.graphics.Bitmap) -> Unit = {},
     onLinkClick: (String) -> Unit = {},
+    /**
+     * Long-press on an in-article link → Safari/Arc-style "peek" glance. Reports the link href plus
+     * the press point in **window** coordinates (so the host's morph can grow the card out of the
+     * touch point). Fires only when the press lands on a link; long-pressing plain prose still starts
+     * text selection as before.
+     */
+    onLinkLongPress: (String, Offset) -> Unit = { _, _ -> },
 ) {
     val backgroundColor = when (theme) {
         ReaderTheme.System -> MaterialTheme.colorScheme.surface
@@ -411,22 +420,58 @@ fun ReaderView(
                                     append(block.text.substring(currentIndex))
                                 }
                             }
-                            ClickableText(
-                                text = annotatedString,
-                                onClick = { offset ->
-                                    annotatedString.getStringAnnotations("url", offset, offset)
-                                        .firstOrNull()?.let { onLinkClick(it.item) }
-                                },
-                                style = proseStyle.copy(
-                                    fontSize = (18.sp * scale),
-                                    lineHeight = (30.sp * scale),
-                                    fontFamily = fontFamily,
-                                    color = textColor
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 22.dp)
-                            )
+                            // Layout + window position of this paragraph, captured so the tap /
+                            // long-press detector can map the press point → text offset → link
+                            // annotation, and hand the host a window-space origin for the peek morph.
+                            val layoutResult = remember(annotatedString) { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+                            var paragraphCoords by remember(annotatedString) {
+                                mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null)
+                            }
+                            // Own both gestures ourselves: a tap on a link navigates, a long-press
+                            // peeks. Text selection is disabled *only* on link-bearing paragraphs
+                            // (DisableSelection) because the SelectionContainer's own long-press
+                            // selection fires on the same timeout and can't be suppressed by
+                            // consumption after the fact — it would highlight the link *and* peek.
+                            // Link-free prose keeps normal selection.
+                            DisableSelection {
+                                Text(
+                                    text = annotatedString,
+                                    onTextLayout = { layoutResult.value = it },
+                                    style = proseStyle.copy(
+                                        fontSize = (18.sp * scale),
+                                        lineHeight = (30.sp * scale),
+                                        fontFamily = fontFamily,
+                                        color = textColor
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 22.dp)
+                                        .onGloballyPositioned { paragraphCoords = it }
+                                        .pointerInput(annotatedString) {
+                                            detectTapGestures(
+                                                onTap = { pos ->
+                                                    val layout = layoutResult.value
+                                                        ?: return@detectTapGestures
+                                                    val offset = layout.getOffsetForPosition(pos)
+                                                    annotatedString
+                                                        .getStringAnnotations("url", offset, offset)
+                                                        .firstOrNull()?.let { onLinkClick(it.item) }
+                                                },
+                                                onLongPress = { pos ->
+                                                    val layout = layoutResult.value
+                                                        ?: return@detectTapGestures
+                                                    val offset = layout.getOffsetForPosition(pos)
+                                                    val link = annotatedString
+                                                        .getStringAnnotations("url", offset, offset)
+                                                        .firstOrNull() ?: return@detectTapGestures
+                                                    val windowPos = paragraphCoords
+                                                        ?.localToWindow(pos) ?: pos
+                                                    onLinkLongPress(link.item, windowPos)
+                                                },
+                                            )
+                                        }
+                                )
+                            }
                         } else {
                             Text(
                                 text = block.text,

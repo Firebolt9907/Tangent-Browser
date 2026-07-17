@@ -2,11 +2,11 @@ package com.firebolt9907.luminabrowser.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
@@ -32,7 +32,10 @@ internal fun RoundedCornerViewportMask(
     cornerMaskDp: Dp,
     gridOpenFractionProvider: () -> Float,
 ) {
-    val maskColor = MaterialTheme.colorScheme.background
+    // Always black, never the theme background: these cut-outs sit under the device's own physical
+    // rounded screen corners, so in light mode a white background bled out past the bezel radius and
+    // looked broken. Black blends into the bezel in both light and dark.
+    val maskColor = Color.Black
     val maskShape = remember(cornerMaskDp) { SquircleShape(cornerMaskDp) }
     Box(
         modifier = Modifier

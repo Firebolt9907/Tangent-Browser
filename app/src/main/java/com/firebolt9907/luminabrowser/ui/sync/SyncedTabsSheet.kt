@@ -1,6 +1,7 @@
 package com.firebolt9907.luminabrowser.ui.sync
 
 import androidx.compose.foundation.clickable
+import com.firebolt9907.luminabrowser.sync.zen.ZEN_SPACES_TABS_UI_ENABLED
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -127,38 +128,25 @@ fun SyncedTabsSheet(
 
             Spacer(Modifier.height(12.dp))
 
-            // Zen browser workspaces synced on this account (read-only; empty unless a Zen
-            // client with workspace sync has written the collection).
-            if (state.zenWorkspaces.spaces.isNotEmpty()) {
+            // Zen browser spaces synced on this account (read-only; empty unless a Zen client with
+            // space sync has written the `spaces` collection). Arc-style swipeable deck. Gated off
+            // until Zen ships tab-in-space sync (spaces carry no tabs today) — see ZenWorkspaces.kt.
+            if (ZEN_SPACES_TABS_UI_ENABLED && state.zenWorkspaces.spaces.isNotEmpty()) {
                 Text(
                     text = "Spaces",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(4.dp))
-                state.zenWorkspaces.spaces.forEach { space ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        // Zen space icons are emoji or internal svg URLs; only emoji render
-                        // meaningfully here.
-                        Text(
-                            text = space.icon?.takeIf { it.length <= 4 && !it.startsWith("chrome") && !it.contains("/") } ?: "▢",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Text(
-                            text = space.name.ifBlank { "Unnamed space" },
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                Spacer(Modifier.height(8.dp))
+                SpacesCarousel(
+                    spaces = state.zenWorkspaces.spaces,
+                    containers = state.zenWorkspaces.containers,
+                    onOpenTab = { url ->
+                        onOpenTab(url)
+                        onDismiss()
                     }
-                }
-                Spacer(Modifier.height(12.dp))
+                )
+                Spacer(Modifier.height(16.dp))
             }
 
             val hasRealUrl = currentPageUrl.isNotBlank() && currentPageUrl != "about:blank"

@@ -14,29 +14,38 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ChromeReaderMode
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -48,16 +57,28 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.firebolt9907.luminabrowser.ui.PromptHandler
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.firebolt9907.luminabrowser.LuminaApplication
 import com.firebolt9907.luminabrowser.state.compactHost
+import com.firebolt9907.luminabrowser.ui.content.LinkPeekCard
+import com.firebolt9907.luminabrowser.ui.content.PeekEngineHolder
+import com.firebolt9907.luminabrowser.ui.content.linkUrlFromHitResult
+import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
 import com.firebolt9907.luminabrowser.ui.reader.hydrateAppearanceFromPrefs
 import com.firebolt9907.luminabrowser.ui.reader.openReaderLink
@@ -68,7 +89,10 @@ import com.firebolt9907.luminabrowser.ui.theme.LuminaBrowserTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import mozilla.components.browser.state.action.ContentAction
 import mozilla.components.browser.state.action.EngineAction
+import mozilla.components.concept.engine.EngineSession
+import mozilla.components.concept.engine.EngineView
 
 /**
  * The slim Custom-Tab surface: a single [com.firebolt9907.luminabrowser.ui.content.ContentHost]
@@ -87,6 +111,10 @@ fun CustomTabRoot(
     customTabId: String?,
     hasCloseAnimation: Boolean,
     onOpenInLumina: (String) -> Unit,
+    // A link the page wants to open in a NEW tab (window.open / target=_blank, or the peek card's
+    // "New tab" action): the current custom tab is migrated into the main browser and the new link
+    // opens there as a fresh tab. Custom Tabs have no tab list of their own to hold a second tab.
+    onOpenNewLink: (String) -> Unit,
     onClose: () -> Unit,
     isInPipMode: Boolean = false,
     onFullScreenChanged: (Boolean) -> Unit = {},
@@ -113,6 +141,55 @@ fun CustomTabRoot(
     val readerActive = customTabId != null && activeReaderTabs.contains(customTabId)
     val article = customTabId?.let { tabArticles[it] }
 
+    // ---- Link glance (peek) ----
+    // Long-pressing a link opens the same Safari/Arc-style floating preview the main browser uses.
+    // Simpler than LuminaRoot's version: no element-pixel morph (we start from a fingertip chip via
+    // [peekOrigin]) so we don't need the snapshot-capture / LinkRectProbe plumbing — just a live
+    // preview on a bounded reused session ([PeekEngineHolder]).
+    val clipboard = LocalClipboardManager.current
+    val hitResult = customTab?.content?.hitResult
+    var peekUrl by remember { mutableStateOf<String?>(null) }
+    var peekOrigin by remember { mutableStateOf(Offset.Zero) }
+    var lastPressPos by remember { mutableStateOf(Offset.Zero) }
+    val peekEngine = remember { PeekEngineHolder(components.engine) }
+    var peekSession by remember { mutableStateOf<EngineSession?>(null) }
+    var peekView by remember { mutableStateOf<EngineView?>(null) }
+
+    fun deviceLowOnMemory(): Boolean {
+        val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE)
+            as android.app.ActivityManager
+        val mi = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(mi)
+        return mi.lowMemory || mi.availMem < mi.threshold * 2
+    }
+
+    LaunchedEffect(hitResult) {
+        val link = linkUrlFromHitResult(hitResult) ?: return@LaunchedEffect
+        peekOrigin = lastPressPos
+        if (deviceLowOnMemory()) {
+            peekSession = null
+            peekView = null
+            peekEngine.release()
+        } else {
+            val (s, v) = peekEngine.ensure(context, customTab?.content?.private == true)
+            peekSession = s
+            peekView = v
+        }
+        peekUrl = link
+        customTabId?.let { components.store.dispatch(ContentAction.ConsumeHitResultAction(it)) }
+    }
+    // Free the reused peek session once the glance is gone (deferred by keying on peekUrl so the
+    // card's AndroidView has already detached the view — same rule as LuminaRoot).
+    LaunchedEffect(peekUrl) {
+        if (peekUrl == null) {
+            peekSession = null
+            peekView = null
+            peekEngine.release()
+        }
+    }
+    DisposableEffect(peekEngine) {
+        onDispose { peekEngine.release() }
+    }
 
     var isVideoFullscreen by remember { mutableStateOf(false) }
 
@@ -193,8 +270,30 @@ fun CustomTabRoot(
     // its navigation-bar padding, so a value of 1 slides it completely out of view.
     val barHidden = remember { Animatable(0f) }
     var barTotalHeightPx by remember { mutableIntStateOf(barHeightPx) }
+    // The top origin ribbon is a transient launch banner: 1 = shown, 0 = gone. It auto-dismisses a
+    // few seconds after launch (see below) and on the first downward scroll, since it overlays the
+    // top of the page content and would otherwise clip it. Once dismissed it stays gone.
+    var ribbonHeightPx by remember { mutableIntStateOf(0) }
+    val ribbonReveal = remember { Animatable(1f) }
+    fun dismissRibbon() {
+        if (ribbonReveal.targetValue != 0f) {
+            scope.launch {
+                ribbonReveal.animateTo(
+                    targetValue = 0f,
+                    animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
+                )
+            }
+        }
+    }
+    // Auto-dismiss the ribbon ~3s after it appears so it never lingers over the content.
+    LaunchedEffect(Unit) {
+        delay(3000)
+        dismissRibbon()
+    }
     val barHideSlopPx = with(density) { 6.dp.toPx() }
     fun onPageScrollDelta(delta: Float) {
+        // Any decisive downward scroll also retires the launch ribbon early.
+        if (delta > barHideSlopPx) dismissRibbon()
         val target = when {
             delta > barHideSlopPx -> 1f
             delta < -barHideSlopPx -> 0f
@@ -297,7 +396,16 @@ fun CustomTabRoot(
                             shape = RoundedCornerShape(28.dp * (closeSlide * 5f).coerceAtMost(1f))
                         }
                     }
-                    .onSizeChanged { contentSize = it },
+                    .onSizeChanged { contentSize = it }
+                    // Record each gesture's finger-down so a following link long-press can grow its
+                    // glance card out of that point. Wakes once per gesture (on the down), then idles
+                    // — it never processes scroll MOVEs, so it stays off the scroll hot path.
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            lastPressPos = down.position
+                        }
+                    },
             ) {
                 if (session != null) {
                     com.firebolt9907.luminabrowser.ui.content.ContentHost(
@@ -308,7 +416,7 @@ fun CustomTabRoot(
                             alpha = 1f - backSlide * 0.2f
                         },
                         topChromeInsetPx = if (isVideoFullscreen) 0 else statusBarTopPx,
-                        bottomChromeInsetPx = if (isVideoFullscreen) 0 else barHeightPx,
+                        bottomChromeInsetPx = if (isVideoFullscreen) 0 else barTotalHeightPx,
                         tabId = customTabId!!,
                         pageUrl = url,
                         snapshotCache = components.tabSnapshotCache,
@@ -320,6 +428,10 @@ fun CustomTabRoot(
                             isVideoFullscreen = enabled
                             onFullScreenChanged(enabled)
                         },
+                        // A page request to open a new tab (window.open / target=_blank) can't live
+                        // in this single-page surface — hand it to the main browser (which also
+                        // migrates the current tab there). Don't prepare()/start() the Gecko popup.
+                        onOpenWindowRequest = { request -> onOpenNewLink(request.url) },
                         // The system PredictiveBackHandler above owns the back gesture here, so the
                         // ContentHost's own edge-drag predictive back stays off.
                         canStartPredictiveBack = false,
@@ -357,7 +469,7 @@ fun CustomTabRoot(
                                 fontName = readerFontName,
                                 modifier = Modifier.fillMaxSize(),
                                 topPadding = with(density) { statusBarTopPx.toDp() },
-                                bottomPadding = barHeightDp,
+                                bottomPadding = with(density) { barTotalHeightPx.toDp() },
                                 // Hide the bottom taskbar on scroll-down (reveal on scroll-up), same as
                                 // the web page — reader scroll deltas drive the same barHidden animation.
                                 onScrollDelta = ::onPageScrollDelta,
@@ -368,10 +480,24 @@ fun CustomTabRoot(
                         }
                     }
 
+                    // Top identity ribbon: marks this as an external-link surface (never shown in the
+                    // main browser). A transient launch banner — it slides up off-screen ~3s after
+                    // appearing (or on first scroll) so it never clips the page content ([ribbonReveal]).
+                    CustomTabOriginRibbon(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .onSizeChanged { if (it.height > 0) ribbonHeightPx = it.height }
+                            .graphicsLayer {
+                                translationY = -(1f - ribbonReveal.value) * ribbonHeightPx
+                                alpha = ribbonReveal.value
+                            },
+                    )
+
                     CustomTabBottomBar(
                         domain = compactHost(url),
-                        barHeight = barHeightDp,
+                        isInsecure = url.startsWith("http://", ignoreCase = true),
                         readerActive = readerActive,
+                        readerEligible = customTabId != null && eligibleReaderTabs.contains(customTabId),
                         onToggleReader = {
                             customTabId?.let { id ->
                                 // A manual turn-on means Back should dismiss the overlay rather
@@ -389,7 +515,45 @@ fun CustomTabRoot(
                             .onSizeChanged { if (it.height > 0) barTotalHeightPx = it.height }
                             .graphicsLayer { translationY = barHidden.value * barTotalHeightPx },
                     )
-                } else if (isVideoFullscreen && !isInPipMode) {
+                }
+
+                // Link glance: long-press preview. Rendered on top of the chrome (and reader), so it
+                // sits outside the shouldShowUi block above. Its "New tab" action hands the link to
+                // the main browser (migrating this tab there); "Open" navigates this tab in place.
+                if (shouldShowUi) {
+                    peekUrl?.let { link ->
+                        LinkPeekCard(
+                            url = link,
+                            peekSession = peekSession,
+                            peekView = peekView,
+                            origin = peekOrigin,
+                            sourceRect = null,
+                            elementBitmap = null,
+                            onOpenHere = { u ->
+                                customTabId?.let {
+                                    components.sessionUseCases.loadUrl.invoke(u, sessionId = it)
+                                }
+                                peekUrl = null
+                            },
+                            onOpenNewTab = { u ->
+                                peekUrl = null
+                                onOpenNewLink(u)
+                            },
+                            onCopy = { u ->
+                                clipboard.setText(AnnotatedString(u))
+                                Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+                                peekUrl = null
+                            },
+                            onShare = { u ->
+                                shareUrl(context, u)
+                                peekUrl = null
+                            },
+                            onDismiss = { peekUrl = null },
+                        )
+                    }
+                }
+
+                if (isVideoFullscreen && !isInPipMode) {
                     com.firebolt9907.luminabrowser.ui.video.VideoFullscreenOverlay(
                         engineSession = session,
                         onExitFullscreen = {
@@ -407,60 +571,170 @@ fun CustomTabRoot(
     }
 }
 
+// Squircle ripple/splash for the pill's icon chips — echoes the pill's own continuous-corner style
+// so touch feedback reads as part of the pill (mirrors BarExpanded's chip splash in the main bar).
+private val ChipSplashShape = SquircleShape(radius = 14.dp, exponent = 3f)
+
+/**
+ * The Custom-Tab bottom chrome, restyled to share the main browser's visual identity: a floating
+ * continuous-corner ("squircle") pill on a tonal-elevated surface rather than the flat edge-to-edge
+ * Chrome-style bar it replaced. The content still scrolls translucently under it. Unlike the main
+ * browser's pill the address is display-only (no editable field) and the chip set is Custom-Tab
+ * specific (close / reader / share / open-in-Lumina) — that, plus the top [CustomTabOriginRibbon],
+ * keeps this recognizably NOT the main window.
+ */
 @Composable
 private fun CustomTabBottomBar(
     domain: String,
-    barHeight: androidx.compose.ui.unit.Dp,
+    isInsecure: Boolean,
     readerActive: Boolean,
+    readerEligible: Boolean,
     onToggleReader: () -> Unit,
     onShare: () -> Unit,
     onOpenInLumina: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 3.dp,
+    // Float above the gesture nav bar, matching the main browser's bottom pill inset.
+    val bottomPadding = WindowInsets.navigationBars.asPaddingValues()
+        .calculateBottomPadding().coerceAtLeast(24.dp)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = bottomPadding),
     ) {
-        Row(
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .navigationBarsPadding()
-                .height(barHeight)
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .height(56.dp),
+            shape = SquircleShape(radius = 28.dp, exponent = 3f),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            tonalElevation = 6.dp,
+            shadowElevation = 6.dp,
         ) {
-            IconButton(onClick = onClose) {
-                Icon(Icons.Default.Close, contentDescription = "Close")
-            }
-            Text(
-                text = domain,
-                style = MaterialTheme.typography.labelLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-            )
-            IconButton(onClick = onToggleReader) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ChromeReaderMode,
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PillChip(
+                    icon = Icons.Default.Close,
+                    contentDescription = "Close",
+                    onClick = onClose,
+                )
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    if (isInsecure) {
+                        Icon(
+                            imageVector = Icons.Default.LockOpen,
+                            contentDescription = "Not secure",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(13.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    Text(
+                        text = domain,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                PillChip(
+                    icon = Icons.AutoMirrored.Filled.ChromeReaderMode,
                     contentDescription = if (readerActive) "Exit reader mode" else "Reader mode",
-                    tint = if (readerActive) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
+                    onClick = onToggleReader,
+                    tint = when {
+                        readerActive -> MaterialTheme.colorScheme.primary
+                        readerEligible -> MaterialTheme.colorScheme.onSurface
+                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
                     },
                 )
-            }
-            IconButton(onClick = onShare) {
-                Icon(Icons.Default.Share, contentDescription = "Share")
-            }
-            IconButton(onClick = onOpenInLumina) {
-                Icon(
-                    Icons.AutoMirrored.Filled.OpenInNew,
+                PillChip(
+                    icon = Icons.Default.Share,
+                    contentDescription = "Share",
+                    onClick = onShare,
+                )
+                PillChip(
+                    icon = Icons.AutoMirrored.Filled.OpenInNew,
                     contentDescription = "Open in Lumina",
-                    modifier = Modifier.size(24.dp),
+                    onClick = onOpenInLumina,
+                )
+            }
+        }
+    }
+}
+
+/** A single squircle-splash icon chip inside the bottom pill (matches BarExpanded's chip feel). */
+@Composable
+private fun PillChip(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    tint: Color? = null,
+) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(ChipSplashShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint ?: MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(21.dp),
+        )
+    }
+}
+
+/**
+ * Slim floating identity ribbon at the top of a Custom Tab. It has no counterpart in the main
+ * browser, so its mere presence (plus its accent tint) tells the user at a glance that they are
+ * viewing an externally-opened link inside Lumina rather than in their main window. Purely
+ * informational — the actionable "Open in Lumina" lives in the bottom pill.
+ */
+@Composable
+private fun CustomTabOriginRibbon(
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(top = 8.dp),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Surface(
+            shape = SquircleShape(radius = 18.dp, exponent = 3f),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            tonalElevation = 3.dp,
+            shadowElevation = 3.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    text = "Opened from a link",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

@@ -65,6 +65,21 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("showBottomToolbar", false)
         set(value) { prefs.edit { putBoolean("showBottomToolbar", value) } }
 
+    // When on, the browser chrome recolors to match the current site's declared theme color
+    // (`<meta name="theme-color">`, the same tag Safari samples): the bottom bar pill takes the
+    // color (with auto-contrasted content) and the Material `primary` accent is derived from it.
+    // Sampled by ThemeColorProbe. Off by default; toggled in Settings → Appearance.
+    var matchSiteThemeColor: Boolean
+        get() = prefs.getBoolean("matchSiteThemeColor", false)
+        set(value) { prefs.edit { putBoolean("matchSiteThemeColor", value) } }
+
+    // When on, web pages are tinted toward the device's system accent color (Material You), an
+    // Arc-boost-style recolor applied via a mix-blend-mode overlay injected by SiteTint.kt. Off by
+    // default; toggled in Settings → Appearance.
+    var tintPagesToSystemColor: Boolean
+        get() = prefs.getBoolean("tintPagesToSystemColor", false)
+        set(value) { prefs.edit { putBoolean("tintPagesToSystemColor", value) } }
+
     // When off, the "Continue from <device>" handoff banner (a tab recently active on another
     // Firefox Sync device) is never surfaced. Read by FirefoxSyncController when picking a handoff
     // candidate. On by default. Does not affect received "Send tab" pushes or synced-tab lists.
@@ -89,6 +104,17 @@ class GlobalPreferencesStore(context: Context) {
     var tabViewModeName: String?
         get() = prefs.getString("tabViewMode", null)
         set(value) { prefs.edit { putString("tabViewMode", value) } }
+
+    // Last parsed Zen workspaces snapshot (spaces + their synced tabs), serialized by
+    // ZenWorkspacesStorage. Cached so synced spaces render instantly on cold start, before any
+    // Firefox Sync round-trip completes. null = nothing synced yet.
+    var zenWorkspacesJson: String?
+        get() = prefs.getString("zenWorkspacesJson", null)
+        set(value) {
+            prefs.edit {
+                if (value == null) remove("zenWorkspacesJson") else putString("zenWorkspacesJson", value)
+            }
+        }
 
     // Reader-view appearance, persisted so the user's choices survive app restarts. Theme is stored
     // by enum name; an unknown/missing value falls back to the caller's default.

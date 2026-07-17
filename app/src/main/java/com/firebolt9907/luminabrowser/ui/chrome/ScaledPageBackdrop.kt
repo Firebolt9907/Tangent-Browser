@@ -20,6 +20,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
+import com.firebolt9907.luminabrowser.ui.content.LocalSiteTint
+import com.firebolt9907.luminabrowser.ui.content.siteTintOverlay
 
 /**
  * iOS-style "card behind a sheet" backdrop: an opaque cover (so the live engine never shows through)
@@ -66,6 +68,8 @@ fun ScaledPageBackdrop(
                     onClick = onTap,
                 )
             }
+            // Match the live page's system-tint boost on this scaled snapshot (no-op when off).
+            imageModifier = imageModifier.siteTintOverlay(LocalSiteTint.current)
             Image(
                 bitmap = image,
                 contentDescription = null,

@@ -19,6 +19,9 @@ data class Sync15Record(
     val cleartext: JSONObject,
 )
 
+/** Sync 1.5 path appended to the FxA token server base to request storage-node Hawk credentials. */
+private const val SYNC_TOKEN_PATH = "/1.0/sync/1.5"
+
 private data class StorageCredentials(
     val hawkId: String,
     val hawkKey: String,
@@ -97,7 +100,11 @@ class Sync15StorageClient(private val httpClient: Client) {
             ?: throw IllegalStateException("No sync access token available")
         val scopedKey = tokenInfo.key
             ?: throw IllegalStateException("Sync access token carries no scoped key")
+        // getTokenServerEndpointURL() returns the token server *base* (e.g.
+        // "https://token.services.mozilla.com/"); GETting that only serves the API docs HTML page.
+        // Hawk credentials for a storage node come from the versioned Sync endpoint underneath it.
         val tokenServerUrl = account.getTokenServerEndpointURL()
+            ?.let { base -> if (SYNC_TOKEN_PATH in base) base else base.trimEnd('/') + SYNC_TOKEN_PATH }
             ?: throw IllegalStateException("No tokenserver endpoint URL")
 
         val request = Request(

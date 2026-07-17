@@ -21,8 +21,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -85,6 +88,10 @@ internal fun BarExpanded(
     // Applied to the address label so it can act as a shared element that morphs into the editing
     // field (supplied by SafariBar's SharedTransitionLayout). Default no-op for previews/ghosts.
     addressSharedModifier: Modifier = Modifier,
+    // Site theme color ("Match website theme color" option). When non-null and the page isn't in
+    // reader mode, the pill takes this as its background and its content (aA / URL text/icons) is
+    // recolored via a nested theme for contrast. Reader mode owns its own colors and ignores this.
+    tintColor: Color? = null,
     haptics: LuminaHaptics? = null,
 ) {
     // controlsProgress = 1f - collapseProgress(), read in draw phase via graphicsLayer.
@@ -98,6 +105,9 @@ internal fun BarExpanded(
         state.pageUrl.startsWith("http://", ignoreCase = true)
     val blankPreview = state.blankNewTabPreview
 
+    // Reader mode owns the pill color; otherwise the site tint (if any) fills it, else the default
+    // surface. `siteTintActive` also drives the nested content-contrast theme below.
+    val siteTintActive = tintColor != null && !isReaderActive
     val containerColor = if (isReaderActive) {
         when (readerTheme) {
             ReaderTheme.System -> MaterialTheme.colorScheme.surfaceContainerHigh
@@ -106,15 +116,16 @@ internal fun BarExpanded(
             ReaderTheme.Dark -> Color(0xFF2C2C2E)
         }
     } else {
-        null
+        tintColor
     }
 
-    val aAColor = if (isReaderActive) {
-        MaterialTheme.colorScheme.primary
-    } else if (isReaderEligible) {
-        MaterialTheme.colorScheme.onSurface
-    } else {
-        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+    // Contrast color for content sitting on the site tint (dark on light tint, light on dark).
+    val onTint = tintColor?.let { if (it.luminance() > 0.5f) Color.Black else Color.White }
+    val aAColor = when {
+        isReaderActive -> MaterialTheme.colorScheme.primary
+        siteTintActive -> if (isReaderEligible) onTint!! else onTint!!.copy(alpha = 0.6f)
+        isReaderEligible -> MaterialTheme.colorScheme.onSurface
+        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
     }
 
     BoxWithConstraints(modifier = modifier) {
@@ -147,6 +158,7 @@ internal fun BarExpanded(
                 compactElevation = 0.dp,
             ),
         ) {
+            PillTintScope(if (siteTintActive) tintColor else null, onTint) {
             Row(
                 modifier = Modifier.padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -286,7 +298,36 @@ internal fun BarExpanded(
                     }
                 }
             }
+            }
         }
+    }
+}
+
+/**
+ * Recolors the pill body's content for legibility on the site theme tint. When [tintColor] is null
+ * (option off, or reader mode owns the color) it is a passthrough. Otherwise it overrides the "on"
+ * roles the pill content reads — including [LocalContentColor] used by the URL label and reload icon
+ * — and the pill's surface role, so nothing hard-codes a color that would vanish on the tint.
+ */
+@Composable
+private fun PillTintScope(
+    tintColor: Color?,
+    onTint: Color?,
+    content: @Composable () -> Unit,
+) {
+    if (tintColor == null || onTint == null) {
+        content()
+        return
+    }
+    val scheme = MaterialTheme.colorScheme.copy(
+        onSurface = onTint,
+        onSurfaceVariant = onTint.copy(alpha = 0.7f),
+        primary = onTint,
+        error = onTint,
+        surfaceContainerHighest = tintColor,
+    )
+    MaterialTheme(colorScheme = scheme) {
+        CompositionLocalProvider(LocalContentColor provides onTint, content = content)
     }
 }
 

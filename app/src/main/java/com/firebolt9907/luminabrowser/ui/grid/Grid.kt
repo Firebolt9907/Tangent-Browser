@@ -73,6 +73,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.firebolt9907.luminabrowser.ui.LuminaHaptics
+import com.firebolt9907.luminabrowser.ui.content.LocalSiteTint
+import com.firebolt9907.luminabrowser.ui.content.siteTintOverlay
 import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import kotlin.math.abs
 import kotlin.math.min
@@ -917,6 +919,9 @@ private fun GridTabCard(
                 }
 
                 if (snapshot != null) {
+                    // Overlay the live page's system-tint boost on the snapshot at draw time so the
+                    // card matches the browse view (no-op when the boost is off).
+                    val siteTint = LocalSiteTint.current
                     val prevImg = remember(prev) { prev?.asImageBitmap() }
                     if (prevImg != null) {
                         Image(
@@ -928,7 +933,8 @@ private fun GridTabCard(
                                 .fillMaxSize()
                                 .graphicsLayer {
                                     alpha = if (!isGesture) 1f - animAlpha else 0f
-                                },
+                                }
+                                .siteTintOverlay(siteTint),
                         )
                     }
                     val currImg = remember(curr) { curr?.asImageBitmap() }
@@ -942,7 +948,8 @@ private fun GridTabCard(
                                 .fillMaxSize()
                                 .graphicsLayer {
                                     alpha = if (!isGesture) animAlpha else 1f
-                                },
+                                }
+                                .siteTintOverlay(siteTint),
                         )
                     }
                 }

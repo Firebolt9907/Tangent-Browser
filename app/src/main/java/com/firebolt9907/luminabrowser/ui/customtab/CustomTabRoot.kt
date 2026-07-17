@@ -16,6 +16,12 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import com.firebolt9907.luminabrowser.ui.groups.swatch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -106,11 +112,39 @@ import mozilla.components.concept.engine.EngineView
  * animation), otherwise with **no** back callback registered so the OS finishes the activity and
  * plays its native predictive-back animation to the calling app.
  */
+/** A single row in the "Open in Expedition" group picker: a colour dot (null = no group) + label. */
+@Composable
+private fun OpenGroupRow(
+    label: String,
+    accent: androidx.compose.ui.graphics.Color?,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(12.dp)
+                .clip(CircleShape)
+                .background(accent ?: androidx.compose.ui.graphics.Color.Transparent),
+        )
+        Spacer(Modifier.size(12.dp))
+        Text(label)
+    }
+}
+
 @Composable
 fun CustomTabRoot(
     customTabId: String?,
     hasCloseAnimation: Boolean,
-    onOpenInLumina: (String) -> Unit,
+    // Migrate this custom tab into the main browser, optionally dropping it into a tab group
+    // (Arc-style "open into a space"). A null groupId opens it ungrouped.
+    onOpenInLumina: (customTabId: String, groupId: String?) -> Unit,
     // A link the page wants to open in a NEW tab (window.open / target=_blank, or the peek card's
     // "New tab" action): the current custom tab is migrated into the main browser and the new link
     // opens there as a fresh tab. Custom Tabs have no tab list of their own to hold a second tab.
@@ -126,6 +160,9 @@ fun CustomTabRoot(
     val scope = rememberCoroutineScope()
 
     val browserState by components.browserState.collectAsStateWithLifecycle()
+    // Groups the "Open in Expedition" button can drop this page into (Arc-style). Empty = open directly.
+    val tabGroups by components.tabGroupsRepository.groups.collectAsStateWithLifecycle()
+    var showOpenPicker by remember { mutableStateOf(false) }
     val customTab = customTabId?.let { id -> browserState.customTabs.firstOrNull { it.id == id } }
     val session = customTab?.engineState?.engineSession
     val url = customTab?.content?.url.orEmpty()
@@ -508,12 +545,50 @@ fun CustomTabRoot(
                             }
                         },
                         onShare = { shareUrl(context, url, customTab?.content?.title) },
-                        onOpenInLumina = { customTabId?.let(onOpenInLumina) },
+                        onOpenInLumina = {
+                            // No groups yet → open straight into the browser (the original behaviour).
+                            // Otherwise ask which group to drop the page into, Arc-style.
+                            if (tabGroups.isEmpty()) {
+                                customTabId?.let { onOpenInLumina(it, null) }
+                            } else {
+                                showOpenPicker = true
+                            }
+                        },
                         onClose = onClose,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .onSizeChanged { if (it.height > 0) barTotalHeightPx = it.height }
                             .graphicsLayer { translationY = barHidden.value * barTotalHeightPx },
+                    )
+                }
+
+                // Arc-style "open into a space": ask which tab group to drop this page into when
+                // migrating it into the main browser. Only shown when groups exist (see the Open button).
+                if (showOpenPicker) {
+                    AlertDialog(
+                        onDismissRequest = { showOpenPicker = false },
+                        title = { Text("Open in Expedition") },
+                        text = {
+                            Column {
+                                OpenGroupRow(label = "No group", accent = null) {
+                                    showOpenPicker = false
+                                    customTabId?.let { onOpenInLumina(it, null) }
+                                }
+                                tabGroups.forEach { group ->
+                                    OpenGroupRow(
+                                        label = group.name.ifBlank { "Group" },
+                                        accent = group.color.swatch(),
+                                    ) {
+                                        showOpenPicker = false
+                                        customTabId?.let { onOpenInLumina(it, group.id) }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {},
+                        dismissButton = {
+                            TextButton(onClick = { showOpenPicker = false }) { Text("Cancel") }
+                        },
                     )
                 }
 

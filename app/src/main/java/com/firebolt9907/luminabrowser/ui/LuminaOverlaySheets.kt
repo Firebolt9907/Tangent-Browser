@@ -78,6 +78,12 @@ internal fun LuminaOverlaySheets(
     // Synced tabs
     showSyncedTabs: Boolean,
     onDismissSyncedTabs: () -> Unit,
+    // Tab groups (organizational)
+    showTabGroups: Boolean,
+    onDismissTabGroups: () -> Unit,
+    // Containers (contextual identities / cookie isolation)
+    showContainers: Boolean,
+    onDismissContainers: () -> Unit,
     // Passwords
     showPasswords: Boolean,
     onDismissPasswords: () -> Unit,
@@ -117,6 +123,8 @@ internal fun LuminaOverlaySheets(
     val appContext = LocalContext.current.applicationContext
     val clipboardManager = LocalClipboardManager.current
     val density = LocalDensity.current
+    // Containers offered by the link-peek "open in a separate profile" action.
+    val peekContainers by components.containerRepository.containers.collectAsStateWithLifecycle()
 
     if (showAddons) {
         AddonsSheet(
@@ -192,6 +200,40 @@ internal fun LuminaOverlaySheets(
             },
             currentPageUrl = selectedContent?.url.orEmpty(),
             currentPageTitle = selectedContent?.title.orEmpty(),
+        )
+    }
+
+    if (showTabGroups) {
+        val containers by components.containerRepository.containers.collectAsStateWithLifecycle()
+        com.firebolt9907.luminabrowser.ui.groups.TabGroupsSheet(
+            repository = components.tabGroupsRepository,
+            tabRepository = components.tabRepository,
+            containers = containers,
+            onOpenTab = { tabId ->
+                components.tabRepository.selectTab(tabId)
+                if (gridEngaged) onCloseGrid(true)
+            },
+            onNewTabInGroup = { groupId ->
+                (components.tabRepository as? com.firebolt9907.luminabrowser.state.GeckoTabRepository)
+                    ?.addTabInGroup(url = "about:blank", groupId = groupId)
+                onDismissTabGroups()
+                if (gridEngaged) onCloseGrid(true)
+            },
+            onDismiss = onDismissTabGroups,
+        )
+    }
+
+    if (showContainers) {
+        com.firebolt9907.luminabrowser.ui.containers.ContainersSheet(
+            repository = components.containerRepository,
+            tabRepository = components.tabRepository,
+            onNewTabInContainer = { contextId ->
+                (components.tabRepository as? com.firebolt9907.luminabrowser.state.GeckoTabRepository)
+                    ?.addTabInContainer(url = "about:blank", contextId = contextId)
+                onDismissContainers()
+                if (gridEngaged) onCloseGrid(true)
+            },
+            onDismiss = onDismissContainers,
         )
     }
 
@@ -352,6 +394,14 @@ internal fun LuminaOverlaySheets(
             },
             onShare = { u ->
                 shareUrl(appContext, u)
+                onDismissPeek()
+            },
+            containers = peekContainers,
+            onOpenInContainer = { u, contextId ->
+                // Open the link in a separate profile (fresh session — a container can't reuse the
+                // default-context peek session), as a new foreground tab.
+                (components.tabRepository as? com.firebolt9907.luminabrowser.state.GeckoTabRepository)
+                    ?.addTabInContainer(url = u, contextId = contextId)
                 onDismissPeek()
             },
             onDismiss = onDismissPeek,

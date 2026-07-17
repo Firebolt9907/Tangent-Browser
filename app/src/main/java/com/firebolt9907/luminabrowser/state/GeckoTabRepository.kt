@@ -45,6 +45,9 @@ class GeckoTabRepository(
     // Resolves the user's current search engine at call time, so a settings change takes effect
     // immediately for the next typed search without rebuilding the repository.
     private val searchEngine: () -> SearchEngine = { SearchEngine.DEFAULT },
+    // Organizational tab groups. Nullable so tests can omit it. Membership is persisted per-tab
+    // (group ids are stable; live tab ids are not) and re-linked on restore via [assignRestored].
+    private val tabGroups: TabGroupsRepository? = null,
 ) : TabRepository {
 
     private val _tabs = MutableStateFlow(store.state.toLuminaTabs())
@@ -127,10 +130,13 @@ class GeckoTabRepository(
             return
         }
         var selectedId: String? = null
+        // Collected while mapping so group membership can be re-linked once the tabs exist in the store.
+        val groupAssignments = mutableListOf<Pair<String, String>>()
         val recoverables = persisted.mapIndexed { index, tab ->
             val id = java.util.UUID.randomUUID().toString()
             if (tab.selected) selectedId = id
             lastAccessById[id] = tab.lastAccess
+            tab.groupId?.let { groupAssignments += id to it }
             RecoverableTab(
                 engineSessionState = tab.engineStateJson?.let(::engineStateFromJson),
                 state = TabState(
@@ -139,6 +145,8 @@ class GeckoTabRepository(
                     title = tab.title,
                     lastAccess = tab.lastAccess,
                     index = index,
+                    // Preserve the tab's container (cookie-store) so isolation survives a restart.
+                    contextId = tab.contextId,
                 ),
             )
         }
@@ -146,6 +154,8 @@ class GeckoTabRepository(
             recoverables,
             selectTabId = selectedId ?: recoverables.firstOrNull()?.state?.id,
         )
+        // Re-link restored tabs to their groups now that they exist in the store.
+        groupAssignments.forEach { (tabId, groupId) -> tabGroups?.assignRestored(tabId, groupId) }
     }
 
     /**
@@ -200,6 +210,8 @@ class GeckoTabRepository(
             val now = System.currentTimeMillis()
             val tabs = state.tabs
             val accessById = HashMap(lastAccessById)
+            // Snapshot group membership on the store thread; groupIdForTab reads the groups StateFlow.
+            val groupIdByTab = tabs.associate { it.id to tabGroups?.groupIdForTab(it.id) }
             withContext(Dispatchers.IO) {
                 val snapshot = tabs
                     .filter { it.content.url.isNotBlank() && it.content.url != "about:blank" }
@@ -210,6 +222,8 @@ class GeckoTabRepository(
                             lastAccess = accessById[tab.id] ?: now,
                             selected = tab.id == selected,
                             engineStateJson = tab.engineState.engineSessionState?.let(::engineStateToJson),
+                            groupId = groupIdByTab[tab.id],
+                            contextId = tab.contextId,
                         )
                     }
                 persistence.save(snapshot)
@@ -250,6 +264,9 @@ class GeckoTabRepository(
         engineSession: EngineSession? = null,
         parentId: String? = store.state.selectedTabId,
         selectTab: Boolean = true,
+        // Container (cookie-store) to open the tab in; null = the default context. GeckoView isolates
+        // the tab's cookies/storage to this contextId for the life of the tab.
+        contextId: String? = null,
     ): String =
         tabsUseCases.addTab.invoke(
             url = normalizeUrl(url, searchEngine()),
@@ -257,8 +274,41 @@ class GeckoTabRepository(
             parentId = parentId,
             title = title,
             engineSession = engineSession,
+            contextId = contextId,
             source = SessionState.Source.Internal.NewTab,
         )
+
+    /**
+     * Open a new tab inside the container identified by [contextId] (a cookie-store id from
+     * [ContainerRepository]), selecting it. Its cookies/storage are isolated to that container.
+     * Returns the new tab id.
+     */
+    fun addTabInContainer(url: String, contextId: String, title: String = "New Tab"): String =
+        tabsUseCases.addTab.invoke(
+            url = normalizeUrl(url, searchEngine()),
+            selectTab = true,
+            title = title,
+            contextId = contextId,
+            source = SessionState.Source.Internal.NewTab,
+        )
+
+    /**
+     * Open a new tab and place it in group [groupId], selecting it. The tab is opened in the group's
+     * configured default container ([TabGroupsRepository.defaultContainerFor]) when one is set, so a
+     * group like "Work" can transparently open its tabs in the Work container. Returns the new tab id.
+     */
+    fun addTabInGroup(url: String, groupId: String, title: String = "New Tab"): String {
+        val contextId = tabGroups?.defaultContainerFor(groupId)
+        val id = tabsUseCases.addTab.invoke(
+            url = normalizeUrl(url, searchEngine()),
+            selectTab = true,
+            title = title,
+            contextId = contextId,
+            source = SessionState.Source.Internal.NewTab,
+        )
+        tabGroups?.addTabToGroup(id, groupId)
+        return id
+    }
 
     override fun removeTab(id: String) {
         recordClosedTab(id)

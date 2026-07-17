@@ -29,6 +29,17 @@ class TabPersistence(context: Context) {
         val selected: Boolean,
         /** Serialized `EngineSessionState` JSON, or null when none was captured for this tab. */
         val engineStateJson: String? = null,
+        /**
+         * Id of the [LuminaTabGroup] this tab belonged to, or null. Live tab ids change on restore,
+         * so group membership is carried here (per-tab) and re-linked by [GeckoTabRepository]; the
+         * group's name/colour live in the separate group registry ([TabGroupsRepository]).
+         */
+        val groupId: String? = null,
+        /**
+         * The tab's container context id (cookie-store id), or null for the default context. Stable
+         * across restarts, so it round-trips directly onto the restored tab to preserve isolation.
+         */
+        val contextId: String? = null,
     )
 
     /** Read persisted tabs, dropping any not accessed within [maxAgeMillis] of [now]. */
@@ -47,6 +58,8 @@ class TabPersistence(context: Context) {
                     lastAccess = lastAccess,
                     selected = obj.optBoolean("selected", false),
                     engineStateJson = obj.optString("engineState").takeIf { it.isNotBlank() },
+                    groupId = obj.optString("groupId").takeIf { it.isNotBlank() },
+                    contextId = obj.optString("contextId").takeIf { it.isNotBlank() },
                 )
             }
         }.getOrElse { emptyList() }
@@ -62,7 +75,9 @@ class TabPersistence(context: Context) {
                         .put("title", tab.title)
                         .put("lastAccess", tab.lastAccess)
                         .put("selected", tab.selected)
-                        .apply { tab.engineStateJson?.let { put("engineState", it) } },
+                        .apply { tab.engineStateJson?.let { put("engineState", it) } }
+                        .apply { tab.groupId?.let { put("groupId", it) } }
+                        .apply { tab.contextId?.let { put("contextId", it) } },
                 )
             }
             // Write to a temp file then atomically rename, so a crash or process kill

@@ -123,7 +123,7 @@ class CustomTabActivity : LuminaBrowserActivity() {
             CustomTabRoot(
                 customTabId = customTabId,
                 hasCloseAnimation = closeAnimation != null,
-                onOpenInLumina = ::openInLumina,
+                onOpenInLumina = { id, groupId -> openInLumina(id, groupId) },
                 onOpenNewLink = ::openNewLinkInLumina,
                 onClose = { finish() },
                 isInPipMode = isInPipMode,
@@ -203,9 +203,15 @@ class CustomTabActivity : LuminaBrowserActivity() {
         ReaderManager.instance.requestReaderActivation(id)
     }
 
-    private fun openInLumina(id: String) {
+    private fun openInLumina(id: String, groupId: String?) {
         // Turn the custom tab into a normal, persisted tab and bring the real browser forward.
+        // migrate() keeps the same session id, and both activities share one process/store, so we can
+        // drop the freshly-migrated tab straight into the chosen group here (Arc-style "open into a
+        // space"). A null groupId leaves it ungrouped.
         app.components.customTabsUseCases.migrate.invoke(id, true)
+        if (groupId != null) {
+            app.components.tabGroupsRepository.addTabToGroup(id, groupId)
+        }
         migratedAway = true
         startActivity(
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),

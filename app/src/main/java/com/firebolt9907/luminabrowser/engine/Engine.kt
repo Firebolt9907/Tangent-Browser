@@ -72,6 +72,15 @@ class LuminaBrowserComponents(application: Application) {
     val customTabsServiceStore = CustomTabsServiceStore()
     val downloadsUseCases = DownloadsUseCases(store, application)
     val tabPersistence = com.firebolt9907.luminabrowser.state.TabPersistence(application)
+    // Organizational tab groups (Chrome/Arc-style labels over open tabs). Constructed before the tab
+    // repository so membership can be re-linked as tabs are restored. Not cookie isolation — that is
+    // containers (below).
+    val tabGroupsRepository =
+        com.firebolt9907.luminabrowser.state.TabGroupsRepository(store, application)
+    // Contextual identities / containers: real per-container cookie-store isolation via GeckoView
+    // context ids. Registry (name/colour/icon) persisted + mirrored into store.state.containers.
+    val containerRepository =
+        com.firebolt9907.luminabrowser.state.ContainerRepository(store, application)
     val tabRepository =
         GeckoTabRepository(
             store,
@@ -81,6 +90,7 @@ class LuminaBrowserComponents(application: Application) {
             tabPersistence,
             scope,
             searchEngine = { globalPreferencesStore.searchEngine },
+            tabGroups = tabGroupsRepository,
         )
     // Persist tab thumbnails in filesDir, not cacheDir: cacheDir is disposable storage that Android
     // evicts under storage pressure (common on space-constrained devices), which wiped restored

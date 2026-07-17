@@ -585,6 +585,8 @@ fun LuminaRoot(
     var pageScrollFrameJob by remember { mutableStateOf<Job?>(null) }
     var showAddons by remember { mutableStateOf(false) }
     var showSyncedTabs by remember { mutableStateOf(false) }
+    var showTabGroups by remember { mutableStateOf(false) }
+    var showContainers by remember { mutableStateOf(false) }
     var showSpaces by remember { mutableStateOf(false) }
     var showPasswords by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
@@ -2819,6 +2821,8 @@ fun LuminaRoot(
                                 luminaHaptics.select()
                             },
                             onShowSyncedTabs = { showSyncedTabs = true },
+                            onShowTabGroups = { showTabGroups = true },
+                            onShowContainers = { showContainers = true },
                             // Arc-style: swipe up on the overview toolbar to summon the spaces deck.
                             // Gated off until Zen ships tab-in-space sync (see ZenWorkspaces.kt);
                             // only meaningful when spaces have actually synced.
@@ -3133,6 +3137,10 @@ fun LuminaRoot(
             onFinishOnboarding = { showOnboarding = false },
             showSyncedTabs = showSyncedTabs,
             onDismissSyncedTabs = { showSyncedTabs = false },
+            showTabGroups = showTabGroups,
+            onDismissTabGroups = { showTabGroups = false },
+            showContainers = showContainers,
+            onDismissContainers = { showContainers = false },
             showPasswords = showPasswords,
             onDismissPasswords = { showPasswords = false },
             showHistory = showHistory,

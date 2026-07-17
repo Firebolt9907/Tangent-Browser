@@ -33,6 +33,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
@@ -88,6 +90,8 @@ internal fun ColumnScope.GridOverviewControls(
     onCloseGrid: () -> Unit,
     onSelectTabViewMode: (TabViewMode) -> Unit,
     onShowSyncedTabs: () -> Unit,
+    onShowTabGroups: () -> Unit,
+    onShowContainers: () -> Unit,
     /** Arc-style swipe-up on the toolbar to reveal the synced Zen spaces deck; null disables it. */
     onSwipeUpSpaces: (() -> Unit)?,
     onShowBookmarks: () -> Unit,
@@ -253,6 +257,18 @@ internal fun ColumnScope.GridOverviewControls(
                             haptics.create()
                             onCloseGrid()
                         },
+                    )
+                    HorizontalDivider()
+                    // Tab organization: label groups (no isolation) + containers (cookie isolation).
+                    DropdownMenuItem(
+                        text = { Text("Tab Groups") },
+                        leadingIcon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
+                        onClick = { overflowOpen = false; onShowTabGroups() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Containers") },
+                        leadingIcon = { Icon(Icons.Outlined.Shield, contentDescription = null) },
+                        onClick = { overflowOpen = false; onShowContainers() },
                     )
                     HorizontalDivider()
                     DropdownMenuItem(

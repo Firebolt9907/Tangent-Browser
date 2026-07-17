@@ -10,6 +10,12 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import com.firebolt9907.luminabrowser.ui.containers.swatch
+import mozilla.components.browser.state.state.ContainerState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -150,6 +156,9 @@ fun LinkPeekCard(
     onOpenNewTab: (String) -> Unit,
     onCopy: (String) -> Unit,
     onShare: (String) -> Unit,
+    // Containers the link can be opened into (a "separate profile"); empty hides the action.
+    containers: List<ContainerState> = emptyList(),
+    onOpenInContainer: (url: String, contextId: String) -> Unit = { _, _ -> },
     onDismiss: () -> Unit,
 ) {
     val host = remember(url) {
@@ -484,12 +493,49 @@ fun LinkPeekCard(
                 ) {
                     PeekAction(Icons.AutoMirrored.Filled.OpenInNew, "Open") { onOpenHere(url) }
                     PeekAction(Icons.Default.Add, "New tab") { onOpenNewTab(url) }
+                    if (containers.isNotEmpty()) {
+                        PeekContainerAction(
+                            containers = containers,
+                            onPick = { contextId -> onOpenInContainer(url, contextId) },
+                        )
+                    }
                     PeekAction(Icons.Default.ContentCopy, "Copy") { onCopy(url) }
                     PeekAction(Icons.Default.Share, "Share") { onShare(url) }
                 }
             }
             }
         }
+        }
+    }
+}
+
+/**
+ * The peek "Container" action: opens a small menu of containers so the link can be opened in a
+ * separate profile (isolated cookies/storage). Anchored to the action tile.
+ */
+@Composable
+private fun PeekContainerAction(
+    containers: List<ContainerState>,
+    onPick: (contextId: String) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        PeekAction(Icons.Outlined.Shield, "Container") { open = true }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            containers.forEach { c ->
+                DropdownMenuItem(
+                    text = { Text(c.name.ifBlank { "Container" }) },
+                    leadingIcon = {
+                        Box(
+                            Modifier
+                                .size(12.dp)
+                                .clip(CircleShape)
+                                .background(c.color.swatch()),
+                        )
+                    },
+                    onClick = { open = false; onPick(c.contextId) },
+                )
+            }
         }
     }
 }

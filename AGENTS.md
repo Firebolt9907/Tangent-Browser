@@ -328,6 +328,26 @@ present. `SelectCreditCard` / `SelectAddress` are the equivalent doorhangers for
 kinds — same rule. `PromptHandler` is mounted in both surfaces (`LuminaOverlaySheets` for the browser,
 `CustomTabRoot` for custom tabs); a new prompt type must be added to the one `when` to work in both.
 
+**`ReaderPromptDelegate` must forward EVERY prompt callback it doesn't itself handle.** Reader mode
+(`ui/reader/ReaderExtractor.registerPromptDelegate`) installs its own `GeckoSession.PromptDelegate`
+that **replaces** the session's delegate so it can intercept `onTextPrompt` for the `lumina-*` bridge
+messages (reader/theme/OTP/link probes). Because it replaces (not chains before) the mozilla-components
+`GeckoPromptDelegate`, any callback it does not override hits the no-op interface default and is
+**silently dropped** — the wrapped delegate that raises the `PromptRequest`s above never runs. This is
+exactly what made password autofill look dead: `onLoginSelect`/`onLoginSave` weren't forwarded, so the
+`SelectLoginPrompt` was never raised even though `onLoginFetch` returned matches. Only `onTextPrompt`
+needs interception; **all** other callbacks (`onLoginSelect/Save`, `onCreditCard*`, `onAddress*`,
+`onAuthPrompt`, `onColorPrompt`, `onDateTimePrompt`, `onFilePrompt`, `onPopupPrompt`, `onSharePrompt`,
+plus the alert/button/choice/beforeunload/repost ones) must pass through to `oldDelegate`.
+
+**Fill flow (biometric + auto-submit):** `SelectLoginPrompt` renders `SelectLoginSheet` (Material 3
+bottom sheet). Selecting a credential runs `BiometricGate.authenticate` (fingerprint/face or device
+credential; a no-op that fills immediately when the device has no secure lock, so autofill is never
+impossible to trigger — this is why `LuminaBrowserActivity` extends `FragmentActivity`, the only host
+`androidx.biometric.BiometricPrompt` supports). On success it calls `onConfirm(login)` **and** injects
+`buildLoginSubmitScript()` to press the form's login button; that script only acts on a form that
+actually contains a filled `input[type=password]`, so it never submits a stray search box.
+
 ### 16. SMS one-time-code (2FA) autofill
 
 Two halves wired through the `OtpAutofill` singleton (in `ui/content`): a JS **detector**

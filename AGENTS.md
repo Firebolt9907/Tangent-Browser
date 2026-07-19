@@ -51,21 +51,17 @@ is a mozilla-components **custom-tab session** (`store.state.customTabs`, via
 
 Exit animation — two paths, do not collapse:
 - **Resolved close animation** (CCT caller supplied `EXTRA_EXIT_ANIMATION_BUNDLE`, or our
-  `R.anim.custom_tab_exit` fallback for Google-app-referrer launches — home-screen Discover sends
-  plain VIEW intents): `CustomTabRoot` registers a lowest-priority `PredictiveBackHandler` that
-  shrinks the UI into an opaque rounded card tracking the gesture (`closeSlide`, M3 predictive-back)
-  and commits through `Activity.finish()`, playing the animation via `overridePendingTransition`
-  with a temporary `getPackageName()` override so client-APK anim resources resolve against the
-  *client's* package (Chrome's technique; keys `android:activity.packageName`/`animEnterRes`/
-  `animExitRes`). Required for home-screen Discover: its close is a cross-task transition to the
-  embedded "-1 screen", and the launcher animates nothing for this icon-less, recents-excluded task.
-  **Do not** try for the *system* predictive preview via
-  `overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE)` + dropping the callback — tested on Android
-  16/Pixel, it plays nothing (no drag preview, and the override suppresses even the canned
-  animation). In-app predictive drag + `finish()` animation is the working combination.
+  `R.anim.custom_tab_exit` fallback for Google-app-referrer / home-screen-Discover launches):
+  `CustomTabRoot` registers a lowest-priority `PredictiveBackHandler` that drags the UI into a
+  shrinking rounded card (`closeSlide`) and commits via `Activity.finish()` + `overridePendingTransition`
+  (temporary `getPackageName()` override so client-APK anim resources resolve — Chrome's technique).
+  **Do not** swap this for the system preview via `overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE)`
+  + dropping the callback — on Android 16/Pixel it then plays nothing at all.
 - **Plain ACTION_VIEW** (no exit bundle, non-Google referrer): with no web history `CustomTabRoot`
   registers **no** back callback, so Back finishes the activity and Android plays its native
   predictive-back animation to the calling app.
+
+Full mechanism: **IMPLEMENTATION.md → Custom Tab exit animation**.
 
 Shared intent-URL parsing: `IntentUrls.kt` (both activities).
 

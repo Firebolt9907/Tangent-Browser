@@ -114,6 +114,13 @@ Why not two live engine views? GeckoView only supports one rendered session at a
 - Cancel cleanup runs in a `finally` path so an interrupted cancel animation cannot leave the screenshot layer above the live engine.
 - The old `ContentHost` custom predictive-back touch callbacks still exist in the API surface but are disabled from `LuminaRoot` (`canStartPredictiveBack = false`). They can be removed later if the system handler remains the only supported path.
 
+## Custom Tab exit animation (`ui/customtab/CustomTabRoot.kt`)
+
+External links open in `CustomTabActivity` (own task); its close has two paths — do not collapse them (see AGENTS.md "Two activities / external links" for the inline guardrail).
+
+- **Resolved close animation** — used when the CCT caller supplied `EXTRA_EXIT_ANIMATION_BUNDLE`, or via our `R.anim.custom_tab_exit` fallback for Google-app-referrer launches (the home-screen Discover panel sends plain VIEW intents). `CustomTabRoot` registers a lowest-priority `PredictiveBackHandler` that shrinks the whole UI into an opaque rounded-corner card tracking the gesture (`closeSlide`, M3 predictive-back style) and routes the commit through `Activity.finish()`, which plays the animation via `overridePendingTransition` with a temporary `getPackageName()` override so client-APK anim resources resolve against the *client's* package (Chrome's technique; keys `android:activity.packageName`/`animEnterRes`/`animExitRes`). This intercept is required for home-screen Discover launches: their close is a cross-task transition down to the embedded "-1 screen", and the launcher animates nothing for this icon-less, recents-excluded task. **Do not** try to get the *system* predictive preview here by pre-registering the animation with `overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE)` and dropping the callback — tried on Android 16/Pixel: the close then plays nothing at all (no drag preview, and the override suppresses even the canned animation). The in-app predictive drag + `finish()` animation is the working combination.
+- **Plain ACTION_VIEW** (no exit bundle, non-Google referrer) — when the page has no web history `CustomTabRoot` registers **no** back callback, so Back finishes the activity and Android plays its native predictive-back animation straight back to the calling app.
+
 ## Edge-to-edge & status-bar area
 
 - `MainActivity` calls `enableEdgeToEdge(SystemBarStyle.auto(TRANSPARENT, TRANSPARENT), …)`. The default no-arg overload applies a translucent scrim — that's why the bar wasn't actually transparent before.

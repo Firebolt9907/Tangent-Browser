@@ -85,26 +85,16 @@ removing one degrades a different scenario:
    **rejected by Mozilla's server**, so it delivers nothing; triggers 1–2 plus command polling keep
    tabs fresh.
 
-### Why FxA push doesn't work here (and must not be "fixed" by retrying it)
+### Why FxA push is inert (do not "fix" by retrying)
 
-- Mozilla's push server (`updates.push.services.mozilla.com`) is an FCM **bridge to Mozilla's own
-  Firebase project**. A subscription for a *third-party* sender id returns
-  `400 {"errno":106,"message":"User has invalid app ID <senderId>"}`. Our `google-services.json` is a
-  personal project, so every autopush `subscribe()` fails and FxA never gets a push endpoint
-  (`currentDevice.subscription == null`). FCM token retrieval succeeds — the wall is Mozilla's
-  bridge, not Google.
-- Desktop Firefox/Zen get instant push via a **direct WebSocket** to autopush (no FCM, no app-id
-  gate). Mobile Firefox (Fenix) uses the FCM bridge but with **Mozilla's** sender id/project, which
-  the bridge accepts. F-Droid forks (Fennec, Mull) ship **no** FCM and rely on polling — as we do.
-- Real push on our project needs either self-hosting an autopush bridge to our Firebase and pointing
-  `PushConfig(serverHost=…)` at it, or piggybacking Mozilla's sender id (works but violates Mozilla's
-  ToS, fragile). **Do not** re-plumb receipt onto push for the personal project.
-- `initPush()` scaffolding is kept (isolated, failure-swallowing) so future self-hosted autopush
-  needs only a `serverHost` change. It stays inert without a real `app/google-services.json`: the
-  Google Services Gradle plugin is applied conditionally (`if (file("google-services.json").exists())`),
-  and `initPush()` looks up `gcm_defaultSenderId` **by name at runtime** (`resources.getIdentifier`)
-  — **do not add a hard `R.string.gcm_defaultSenderId` reference** (breaks the no-Firebase build).
-  `google-services.json` is gitignored.
+Push delivers nothing here: Mozilla's push server is an FCM bridge to *Mozilla's own* Firebase, so our
+personal `google-services.json` gets `400 errno:106 "invalid app ID"` on every `subscribe()` and FxA
+never gets a push endpoint. Triggers 1–2 + command polling keep tabs fresh. **Do not** re-plumb receipt
+onto push for the personal project, and **do not** add a hard `R.string.gcm_defaultSenderId` reference
+(breaks the no-Firebase build — `initPush()` resolves `gcm_defaultSenderId` by name at runtime, and the
+Google Services plugin applies only `if (file("google-services.json").exists())`; `google-services.json`
+is gitignored). Full analysis (desktop WebSocket vs FCM bridge, self-host options): **IMPLEMENTATION.md
+→ Sync triggers & why FxA push is inert**.
 
 ### Receiving "Send tab" — via command polling (the real path)
 

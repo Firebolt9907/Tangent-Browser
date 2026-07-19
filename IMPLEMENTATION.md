@@ -241,7 +241,7 @@ Firefox Sync supports the `tabs` and `passwords` engines. Passwords are stored l
 
 `PlacesLoginsStorage` implements `LoginsStorage` (from `concept-storage`) and `SyncableStore` (from `concept-sync`), wrapping `mozilla.appservices.logins.DatabaseLoginsStorage` from the native Rust logins crate (`org.mozilla.appservices:logins:147.0.1`):
 
-- **Encryption**: Managed natively by the Rust logins crate (SQLite + encryption). A 256-bit AES key is generated once via Android KeyStore and provided to `DatabaseLoginsStorage` through a custom `KeyManager` implementation.
+- **Encryption**: Managed natively by the Rust logins crate (SQLite + encryption). `KeyManager.getKey()` must return the UTF-8 bytes of an appservices **JWK** from `mozilla.appservices.logins.createKey()` (a `{"kty":"oct",…}` string) — **not** 32 raw random bytes, which fail appservices' `from_utf8`→JWK parse with `InvalidKey` and silently break every encrypt/decrypt (see AGENTS.md invariant #14). The JWK is resolved eagerly and sealed under an AndroidKeyStore AES-GCM wrapping key.
 - **Persistence**: The Rust `DatabaseLoginsStorage` writes to `lumina_logins.db` in the app's private database directory. All crypto and serialization happens in native code via the Rust logins crate, backed by the `libmegazord.so` native library.
 - **Sync registration**: `DatabaseLoginsStorage.registerWithSyncManager()` registers the Rust store with the native sync engine. The store is also registered with `GlobalSyncableStoreProvider` in `FirefoxSyncController.init` for the `SyncEngine.Passwords` engine. `FxaAccountManager` is configured with `supportedEngines = setOf(SyncEngine.Tabs, SyncEngine.Passwords)`.
 - **API**: `list()`, `get(id)`, `getByBaseDomain(domain)`, `add(LoginEntry)`, `update(id, LoginEntry)`, `addOrUpdate(LoginEntry)`, `findLoginToUpdate(LoginEntry)`, `touch(id)`, `delete(id)`, `wipeLocal()`.
@@ -274,8 +274,38 @@ Known limitations:
 
 - Passwords sync uses `PlacesLoginsStorage` wrapping the native Rust `DatabaseLoginsStorage` from `org.mozilla.appservices:logins:147.0.1`, which provides full Rust-backed sync engine bindings via the `libmegazord.so` native library. The `DatabaseLoginsStorage.registerWithSyncManager()` call registers the Rust sync engine for bidirectional password sync.
 - Bookmarks, history, credit cards, addresses, and add-ons are not wired.
-- Push/send-tab notifications are not implemented; remote tabs refresh on tab changes and manual "Sync Now".
 - Production distribution should use an app-specific FxA OAuth client instead of the sample client id.
+
+### Sync triggers & why FxA push is inert
+
+`FirefoxSyncController` keeps synced tabs fresh via three layered mechanisms — a background WorkManager
+sync every 4h (`PeriodicSyncConfig(240, 5)`), a 30-min foreground poll driven by `LuminaRoot`'s
+lifecycle observer, and the FxA push fast-path (`initPush()`). AGENTS.md "Firefox Sync — three sync
+triggers" carries the inline guardrails; this is the full analysis of why push delivers nothing on our
+build and must not be "fixed" by retrying it.
+
+- Mozilla's push server (`updates.push.services.mozilla.com`) is an FCM **bridge to Mozilla's own
+  Firebase project**. A subscription for a *third-party* sender id returns
+  `400 {"errno":106,"message":"User has invalid app ID <senderId>"}`. Our `google-services.json` is a
+  personal project, so every autopush `subscribe()` fails and FxA never gets a push endpoint
+  (`currentDevice.subscription == null`). FCM token retrieval itself succeeds — the wall is Mozilla's
+  bridge, not Google.
+- Desktop Firefox/Zen get instant push via a **direct WebSocket** to autopush (no FCM, no app-id
+  gate). Mobile Firefox (Fenix) uses the FCM bridge but with **Mozilla's** sender id/project, which
+  the bridge accepts. F-Droid forks (Fennec, Mull) ship **no** FCM and rely on polling — as we do.
+- Real push on our own project needs either self-hosting an autopush bridge to our Firebase and
+  pointing `PushConfig(serverHost=…)` at it, or piggybacking Mozilla's sender id (works but violates
+  Mozilla's ToS, fragile).
+- `initPush()` scaffolding is kept isolated and failure-swallowing so a future self-hosted autopush
+  needs only a `serverHost` change. It stays inert without a real `app/google-services.json`: the
+  Google Services Gradle plugin is applied conditionally (`if (file("google-services.json").exists())`),
+  and `initPush()` looks up `gcm_defaultSenderId` **by name at runtime** (`resources.getIdentifier`) —
+  do not add a hard `R.string.gcm_defaultSenderId` reference (breaks the no-Firebase build).
+  `google-services.json` is gitignored.
+- **Receipt (the real path):** incoming "Send tab" commands are pulled by `pollIncomingCommands()` →
+  `deviceConstellation().pollForCommands()` after every foreground sync pass, unconditionally
+  (independent of push/Firebase). A received tab raises a `received_tabs` notification
+  (`sync/ReceivedTabNotifications`) rather than auto-opening; tapping it opens the URL as a normal tab.
 
 ## Build configuration (`app/build.gradle.kts`)
 

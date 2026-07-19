@@ -329,19 +329,10 @@ per code. `MainActivity` owns the SMS side (`smsListenStarter` set in onResume, 
 "paste code" fallback banner (`OtpPasteBannerHost`). Do NOT gate receipt on `RECEIVE_SMS`
 (intentionally avoided — Play Store restriction).
 
-## Common mistakes to avoid
-
-| Mistake | Why it breaks |
-|---|---|
-| `render()` from `AndroidView.update` | Races `DisposableEffect.onDispose`; corrupts snapshot cache |
-| `startDragImmediately = true` on `BarPill` | Swallows `ACTION_DOWN`; kills all chrome button taps |
-| `gridProgressState.snapTo()` on drag hot path | Coroutine per frame; drops frames |
-| Clearing sticky cover on URL change | Premature removal; user sees blank Gecko surface |
-| `EngineSession.captureThumbnail` | Compile error — method doesn't exist |
-| JS injection without `suppressJavascriptLoadCallback` guard | Injection loop; corrupts snapshot captures |
-| Gating `BarPill`'s `pointerInput` on `tabSwitchingEnabled` | Tears down gesture listener mid-drag |
-| JS bottom spacer sized to push content up / removing native dynamic-toolbar clipping | Breaks scroll-under-pill + `fixed`/`sticky` bottom UI (see #11) |
-| Overriding `navigator.credentials` via JS or enabling `webauthn_enable_softtoken` | Fake/silent passkeys never reaching GPM; RPs reject signatures |
+The most-violated mistakes are the bolded **do NOT** lines in the invariants above (esp. #1 `render()`
+from `AndroidView.update`, #2 `startDragImmediately = true`, #4 `snapTo` on hot path, #6
+`EngineSession.captureThumbnail`, #11 JS injection without the guard / spacer sizing, #12
+`navigator.credentials` shim or `webauthn_enable_softtoken`).
 
 ## Testing
 

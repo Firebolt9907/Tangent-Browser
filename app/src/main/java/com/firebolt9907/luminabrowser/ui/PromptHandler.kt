@@ -205,6 +205,41 @@ fun PromptHandler(engineSession: EngineSession?) {
                 promptRequest = null
             }
         }
+        is PromptRequest.SelectLoginPrompt -> {
+            // Gecko raises this when a login field is focused and our LoginStorageDelegate
+            // (onLoginFetch) returned stored credentials for the domain. Without rendering it there is
+            // no fill UI at all — this is the doorhanger that actually triggers password autofill.
+            val labels = request.logins.map { login ->
+                val host = com.firebolt9907.luminabrowser.state.compactHost(login.origin)
+                when {
+                    login.username.isNotBlank() -> login.username
+                    host.isNotBlank() -> host
+                    else -> "Saved login"
+                }
+            }
+            IdentityCredentialListDialog(
+                title = "Fill password",
+                items = labels,
+                onConfirm = { index -> request.onConfirm(request.logins[index]); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
+        is PromptRequest.SaveLoginPrompt -> {
+            // Offered after the user submits credentials on a form so a new/changed password gets
+            // persisted (and then synced). Confirming routes the entry through the storage delegate's
+            // onLoginSave → PlacesLoginsStorage.addOrUpdate.
+            val entry = request.logins.firstOrNull()
+            val host = entry?.let { com.firebolt9907.luminabrowser.state.compactHost(it.origin) }.orEmpty()
+            JsConfirmDialog(
+                title = "Save password?",
+                message = if (host.isNotBlank()) "Save this password for $host?" else "Save this password?",
+                positiveLabel = "Save",
+                negativeLabel = "Not now",
+                onPositive = { entry?.let { request.onConfirm(it) }; promptRequest = null },
+                onNegative = { request.onDismiss(); promptRequest = null },
+                onDismiss = { request.onDismiss(); promptRequest = null },
+            )
+        }
         is PromptRequest.Popup -> {
             // A blocked pop-up asked to open. Let the user allow it (e.g. a bank's OTP window) or keep
             // it blocked; dismissing defaults to deny.

@@ -292,6 +292,57 @@ When the bar is in compact mode (`barCollapseCompact = true`), `BarPill.interact
 `false` after the bar crosses halfway-to-compact. Compact mode is tap-to-expand only — horizontal
 tab switching is intentionally disabled there to prevent accidental tab changes on a narrow pill.
 
+### 14. Logins DB key is an appservices **JWK**, not raw bytes
+
+`PlacesLoginsStorage`'s `KeyManager.getKey()` MUST return the UTF-8 bytes of a key string produced by
+appservices' `mozilla.appservices.logins.createKey()` (a `{"kty":"oct",…}` JWK). Appservices does
+`std::str::from_utf8(get_key())` then parses it as a JWK; **32 raw random bytes fail that parse with
+`InvalidKey`**, which silently throws on every encrypt/decrypt — the store then never persists
+anything (local add AND every incoming synced record fail), so the passwords UI stays empty. The JWK
+is resolved eagerly (before the DB is opened) and kept sealed under an AndroidKeyStore AES-GCM
+wrapping key; regenerating it wipes the old, now-undecryptable DB. Do NOT swap it back to a
+self-generated AES key.
+
+### 15. Autofill needs the runtime autocomplete delegate — not just the engine flags
+
+Login/credit-card autofill only works because `LuminaBrowserComponents` sets
+`runtime.autocompleteStorageDelegate = GeckoAutocompleteStorageDelegate(ccDelegate, loginDelegate)`.
+`engine.settings.loginAutofillEnabled` / the `extensions.formautofill.creditCards.*` prefs only tell
+Gecko to *try* — without the delegate it has no store to read from or save to. Logins go through
+`LuminaLoginStorageDelegate` → `PlacesLoginsStorage`; credit cards through mozilla-components'
+`service-sync-autofill` (`AutofillCreditCardsAddressesStorage`, card numbers encrypted at rest, PAN
+never decrypted for the list UI — only last4 is shown). **Credit cards have no CVC field and never
+will**: GeckoView's `Autocomplete.CreditCard` model has no CVC slot (PCI-DSS forbids storing it), so
+autofill covers number/name/expiry only. Passwords + credit cards both sync via the standard
+sync15-E2E Firefox Sync engines (`SyncEngine.Passwords` / `SyncEngine.CreditCards`, the latter
+configured with `AutofillCrypto` as its `KeyProvider`).
+
+**The delegate is only half the wiring — the fill/save doorhangers are Compose prompts.** Attaching
+the storage delegate makes Gecko *fetch* logins (`onLoginFetch`) when a login field is focused, but
+Gecko then surfaces the actual autofill UI as a `PromptRequest.SelectLoginPrompt` (pick a saved login
+to fill) and saving as a `PromptRequest.SaveLoginPrompt` (offer to persist a submitted credential).
+These MUST be handled in `ui/PromptHandler.kt` — its `when (promptRequest)` block. If they fall
+through to the `else` branch (which just logs `"Unhandled prompt: …"`), fetch still succeeds but **no
+fill/save UI ever appears** and autofill looks completely dead even though logins are synced and
+present. `SelectCreditCard` / `SelectAddress` are the equivalent doorhangers for the other autofill
+kinds — same rule. `PromptHandler` is mounted in both surfaces (`LuminaOverlaySheets` for the browser,
+`CustomTabRoot` for custom tabs); a new prompt type must be added to the one `when` to work in both.
+
+### 16. SMS one-time-code (2FA) autofill
+
+Two halves wired through the `OtpAutofill` singleton (in `ui/content`): a JS **detector**
+(`buildDetectScript`, injected per-load in `ContentHost` like the other probes) reports OTP fields
+over the shared `window.prompt` bridge (routed in `ReaderExtractor`'s prompt delegate — the same
+`lumina-*` channel as ThemeColorProbe/LinkRectProbe) using heuristics far broader than GBoard's
+`autocomplete="one-time-code"`-only check; and a **filler** (`buildFillScript`) that types the code
+in (handles split single-char boxes; uses the native value setter for React inputs). The SMS is read
+via Play Services **SMS User Consent** (`OtpSmsController`, `play-services-auth-api-phone`) — **no**
+SMS permission, a one-tap system consent dialog per code. `MainActivity` owns the SMS side
+(`smsListenStarter` set in onResume, cleared in onPause); `LuminaRoot` owns the page side
+(`codeFiller` injects into the selected session) plus the manual "paste code" fallback banner
+(`OtpPasteBannerHost`). Do NOT gate receipt on `RECEIVE_SMS` — it was intentionally avoided (Play
+Store restriction on SMS permissions).
+
 ## Common mistakes to avoid
 
 | Mistake | Why it breaks |

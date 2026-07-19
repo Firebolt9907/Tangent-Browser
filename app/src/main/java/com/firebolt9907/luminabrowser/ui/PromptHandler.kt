@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.firebolt9907.luminabrowser.ui.content.loadJavascriptUrl
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.prompt.PromptRequest
 
@@ -209,18 +210,26 @@ fun PromptHandler(engineSession: EngineSession?) {
             // Gecko raises this when a login field is focused and our LoginStorageDelegate
             // (onLoginFetch) returned stored credentials for the domain. Without rendering it there is
             // no fill UI at all — this is the doorhanger that actually triggers password autofill.
-            val labels = request.logins.map { login ->
-                val host = com.firebolt9907.luminabrowser.state.compactHost(login.origin)
-                when {
-                    login.username.isNotBlank() -> login.username
-                    host.isNotBlank() -> host
-                    else -> "Saved login"
-                }
-            }
-            IdentityCredentialListDialog(
-                title = "Fill password",
-                items = labels,
-                onConfirm = { index -> request.onConfirm(request.logins[index]); promptRequest = null },
+            // Selecting an entry is gated behind BiometricGate; on success we fill (onConfirm) and
+            // then inject the auto-submit script to press the form's login button.
+            SelectLoginSheet(
+                logins = request.logins,
+                onSelect = { login ->
+                    val host = com.firebolt9907.luminabrowser.state.compactHost(login.origin)
+                    BiometricGate.authenticate(
+                        context = context,
+                        title = "Fill password",
+                        subtitle = if (host.isNotBlank()) "for $host" else "for this site",
+                        onSuccess = {
+                            request.onConfirm(login)
+                            promptRequest = null
+                            // Gecko fills the fields asynchronously after onConfirm; the script polls
+                            // briefly for the filled password field before pressing submit.
+                            engineSession?.loadJavascriptUrl(buildLoginSubmitScript())
+                        },
+                        onFailure = { request.onDismiss(); promptRequest = null },
+                    )
+                },
                 onDismiss = { request.onDismiss(); promptRequest = null },
             )
         }

@@ -71,6 +71,12 @@ object ReaderExtractor {
     internal fun buildReaderExtractorScript(rulesJson: String = "[]"): String {
         return """
             javascript:(function() {
+                /* Never offer/auto-activate reader mode on our own branded error page. GeckoView
+                   renders it under the FAILED site's URL (location.href is the real page), so we
+                   can't key off location — but document.documentURI stays the resource:// asset. */
+                try {
+                    if ((document.documentURI || '').indexOf('resource://android/assets/error_page_js.html') === 0) return;
+                } catch (e) {}
                 function luminaExtract() {
                 /* Hand the extracted article back to the app WITHOUT touching the page's own
                    window.prompt. Some sites (e.g. TechCrunch's anti-adblock) override window.prompt
@@ -767,6 +773,12 @@ object ReaderExtractor {
                 }
                 return GeckoResult.fromValue(prompt.confirm("ok"))
             }
+            if (prompt.message == com.firebolt9907.luminabrowser.ui.content.OtpAutofill.BRIDGE_MESSAGE) {
+                prompt.defaultValue?.let {
+                    com.firebolt9907.luminabrowser.ui.content.OtpAutofill.onPayload(tabId, it)
+                }
+                return GeckoResult.fromValue(prompt.confirm("ok"))
+            }
             if (prompt.message == "lumina-reader") {
                 val defaultValue = prompt.defaultValue
                 if (defaultValue != null) {
@@ -818,6 +830,85 @@ object ReaderExtractor {
         ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? {
             return oldDelegate?.onRepostConfirmPrompt(session, prompt) ?: GeckoResult.fromValue(prompt.dismiss())
         }
+
+        // Everything below is pure pass-through to the wrapped mozilla-components delegate. This
+        // wrapper REPLACES the session's promptDelegate, so any GeckoView prompt callback it does not
+        // override hits the no-op interface default and is silently dropped. That is what previously
+        // broke password/credit-card/address autofill (onLoginSelect/onLoginSave never reached the
+        // mozilla delegate that raises PromptRequest.SelectLoginPrompt), plus auth/color/date/file/
+        // popup/share prompts. Do NOT remove these forwards — only onTextPrompt needs interception
+        // (for the lumina-* bridge messages); all other types must reach oldDelegate untouched.
+        override fun onLoginSelect(
+            session: GeckoSession,
+            request: GeckoSession.PromptDelegate.AutocompleteRequest<org.mozilla.geckoview.Autocomplete.LoginSelectOption>
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onLoginSelect(session, request)
+
+        override fun onLoginSave(
+            session: GeckoSession,
+            request: GeckoSession.PromptDelegate.AutocompleteRequest<org.mozilla.geckoview.Autocomplete.LoginSaveOption>
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onLoginSave(session, request)
+
+        override fun onCreditCardSelect(
+            session: GeckoSession,
+            request: GeckoSession.PromptDelegate.AutocompleteRequest<org.mozilla.geckoview.Autocomplete.CreditCardSelectOption>
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onCreditCardSelect(session, request)
+
+        override fun onCreditCardSave(
+            session: GeckoSession,
+            request: GeckoSession.PromptDelegate.AutocompleteRequest<org.mozilla.geckoview.Autocomplete.CreditCardSaveOption>
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onCreditCardSave(session, request)
+
+        override fun onAddressSelect(
+            session: GeckoSession,
+            request: GeckoSession.PromptDelegate.AutocompleteRequest<org.mozilla.geckoview.Autocomplete.AddressSelectOption>
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onAddressSelect(session, request)
+
+        override fun onAddressSave(
+            session: GeckoSession,
+            request: GeckoSession.PromptDelegate.AutocompleteRequest<org.mozilla.geckoview.Autocomplete.AddressSaveOption>
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onAddressSave(session, request)
+
+        override fun onAuthPrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.AuthPrompt
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onAuthPrompt(session, prompt)
+
+        override fun onColorPrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.ColorPrompt
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onColorPrompt(session, prompt)
+
+        override fun onDateTimePrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.DateTimePrompt
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onDateTimePrompt(session, prompt)
+
+        override fun onFilePrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.FilePrompt
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onFilePrompt(session, prompt)
+
+        override fun onPopupPrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.PopupPrompt
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onPopupPrompt(session, prompt)
+
+        override fun onSharePrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.SharePrompt
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? =
+            oldDelegate?.onSharePrompt(session, prompt)
     }
 
     internal fun parseArticleJson(jsonStr: String): ReaderArticle? {

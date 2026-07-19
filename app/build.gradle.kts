@@ -83,6 +83,7 @@ configurations.configureEach {
 dependencies {
 
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.biometric)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.coil.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -111,9 +112,12 @@ dependencies {
     implementation(libs.mozilla.lib.push.firebase)
     implementation(libs.mozilla.support.appservices)
     implementation(libs.mozilla.appservices.logins)
+    implementation(libs.mozilla.service.sync.autofill)
     implementation(libs.mozilla.telemetry.glean)
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services.auth)
+    // SMS User Consent API (one-time-code / 2FA autofill from incoming SMS, no SMS permission).
+    implementation(libs.play.services.auth.api.phone)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

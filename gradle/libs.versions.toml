@@ -13,6 +13,7 @@ composeBom = "2024.09.00"
 kotlinxCoroutines = "1.9.0"
 mozillaComponents = "147.0.4"
 androidxCredentials = "1.5.0"
+androidxBiometric = "1.1.0"
 glean = "66.2.0"
 coil = "2.7.0"
 googleServices = "4.4.2"
@@ -21,6 +22,7 @@ bouncycastle = "1.78.1"
 [libraries]
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 bouncycastle-prov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
+androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "androidxBiometric" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "coreSplashscreen" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -62,9 +64,11 @@ mozilla-feature-accounts-push = { group = "org.mozilla.components", name = "feat
 mozilla-lib-push-firebase = { group = "org.mozilla.components", name = "lib-push-firebase", version.ref = "mozillaComponents" }
 mozilla-support-appservices = { group = "org.mozilla.components", name = "support-appservices", version.ref = "mozillaComponents" }
 mozilla-appservices-logins = { group = "org.mozilla.appservices", name = "logins", version = "147.0.1" }
+mozilla-service-sync-autofill = { group = "org.mozilla.components", name = "service-sync-autofill", version.ref = "mozillaComponents" }
 mozilla-telemetry-glean = { group = "org.mozilla.telemetry", name = "glean", version.ref = "glean" }
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "androidxCredentials" }
 androidx-credentials-play-services-auth = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "androidxCredentials" }
+play-services-auth-api-phone = { group = "com.google.android.gms", name = "play-services-auth-api-phone", version = "18.1.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

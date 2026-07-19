@@ -7,7 +7,6 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
 import android.util.Rational
-import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.IntentSenderRequest
@@ -16,7 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
+import androidx.fragment.app.FragmentActivity
 import mozilla.components.concept.engine.activity.ActivityDelegate
 import mozilla.components.feature.downloads.DownloadsFeature
 import mozilla.components.feature.downloads.manager.AndroidDownloadManager
@@ -33,7 +32,7 @@ import mozilla.components.feature.downloads.manager.AndroidDownloadManager
  *  - edge-to-edge + transparent system bars + splash screen;
  *  - picture-in-picture entry and state, and fullscreen-video volume keys.
  */
-abstract class LuminaBrowserActivity : ComponentActivity(), ActivityDelegate {
+abstract class LuminaBrowserActivity : FragmentActivity(), ActivityDelegate {
 
     protected val app get() = application as LuminaApplication
 
@@ -76,7 +75,6 @@ abstract class LuminaBrowserActivity : ComponentActivity(), ActivityDelegate {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        ReaderManager.instance.setUseGoogleCache(app.components.globalPreferencesStore.useGoogleCache)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),

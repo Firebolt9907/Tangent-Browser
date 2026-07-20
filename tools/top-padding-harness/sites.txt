@@ -111,6 +111,8 @@ https://www.flipkart.com
 https://www.salesforce.com
 https://www.target.com
 https://www.epicgames.com
+# --- iter 28: grid-body layouts (header placed by grid-template-areas) ---
+https://learn.microsoft.com/en-us/dotnet/csharp/
 # --- iter 27: deep content pages (articles, product/spec, Q&A) — real anchor-nav surfaces ---
 https://www.investopedia.com/terms/i/inflation.asp
 https://www.healthline.com/nutrition/10-benefits-of-exercise

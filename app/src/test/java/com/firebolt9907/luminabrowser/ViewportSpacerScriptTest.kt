@@ -54,6 +54,23 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `grid bodies use the host-padding fallback, not the in-flow spacer div (iter 28)`() {
+        // A display:grid body places its header via grid-template-areas / explicit lines, so an
+        // in-flow spacer div (even with grid-column:1/-1 + order) can't push an area-placed header
+        // out of the status-bar band — but padding the grid container shifts every track down.
+        // So grid (like nowrap row-flex) takes the host-padding branch. Repro: learn.microsoft.com.
+        val s = script()
+        assertTrue(
+            "detects grid/inline-grid hosts",
+            s.contains("const isGrid=(hdisp==='grid'||hdisp==='inline-grid')"),
+        )
+        assertTrue(
+            "grid hosts share the flex-row host-padding branch",
+            s.contains("if(flexRow||isGrid){"),
+        )
+    }
+
+    @Test
     fun `cancels flex and grid column gap under the spacer (iter 24)`() {
         assertTrue(script().contains("margin-bottom"))
     }

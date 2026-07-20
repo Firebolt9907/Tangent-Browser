@@ -218,6 +218,17 @@ const cases = {
     document.getElementById('content').replaceChildren(nav,spacer,tgt,after);
     document.body.insertBefore(h,document.body.firstChild);
   },
+  // 25. Body is display:grid with grid-template-areas placing a STATIC header in row 1. An in-flow
+  //      spacer div (grid-column/order) can't push an area-placed grid item, so the header stays in
+  //      the band — the fix pads the grid container instead. Repro of learn.microsoft.com.
+  gridBodyHeader(){
+    document.getElementById('content').remove();
+    document.body.style.cssText='margin:0;display:grid;grid-template-rows:54px 1fr;grid-template-areas:"header" "main"';
+    const h=document.createElement('header');h.className='bar';h.style.cssText='grid-area:header;height:54px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Grid-area header</span>';
+    const main=document.createElement('main');main.style.cssText='grid-area:main';main.className='tall';main.textContent='grid main content';
+    document.body.append(h,main);
+  },
   // 18. Fixed header inside a `container-type:inline-size` ancestor. Query containers establish a
   //     containing block for fixed descendants (distinct trigger from transform/filter) — the bar
   //     is positioned relative to the container box, not the viewport. bandShift's translateY must

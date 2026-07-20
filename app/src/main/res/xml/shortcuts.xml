@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launcher app-shortcuts (long-press the home-screen icon). Each targets MainActivity with a distinct
+  action; MainActivity.handleIncomingIntent maps the action via AppShortcutSignals and LuminaRoot acts
+  on it. Order = top ("New Tab") shown closest to the icon.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_tab"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_new_tab"
+        android:shortcutShortLabel="@string/shortcut_new_tab_short"
+        android:shortcutLongLabel="@string/shortcut_new_tab_long">
+        <intent
+            android:action="com.firebolt9907.luminabrowser.action.NEW_TAB"
+            android:targetPackage="com.firebolt9907.luminabrowser"
+            android:targetClass="com.firebolt9907.luminabrowser.MainActivity" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="bookmarks"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_bookmarks"
+        android:shortcutShortLabel="@string/shortcut_bookmarks_short"
+        android:shortcutLongLabel="@string/shortcut_bookmarks_long">
+        <intent
+            android:action="com.firebolt9907.luminabrowser.action.BOOKMARKS"
+            android:targetPackage="com.firebolt9907.luminabrowser"
+            android:targetClass="com.firebolt9907.luminabrowser.MainActivity" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="history"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_history"
+        android:shortcutShortLabel="@string/shortcut_history_short"
+        android:shortcutLongLabel="@string/shortcut_history_long">
+        <intent
+            android:action="com.firebolt9907.luminabrowser.action.HISTORY"
+            android:targetPackage="com.firebolt9907.luminabrowser"
+            android:targetClass="com.firebolt9907.luminabrowser.MainActivity" />
+    </shortcut>
+</shortcuts>

@@ -89,6 +89,12 @@ class MainActivity : LuminaBrowserActivity() {
     // persisted tab (no reader auto-attempt / Custom-Tab surface).
     private fun handleIncomingIntent(intent: Intent?) {
         intent ?: return
+        // Launcher app-shortcut (long-press the home icon → New Tab / Bookmarks / History). Recorded
+        // for LuminaRoot to act on once composed; works on cold start (set before the UI composes).
+        com.firebolt9907.luminabrowser.state.AppShortcutSignals.fromAction(intent.action)?.let {
+            com.firebolt9907.luminabrowser.state.AppShortcutSignals.request(it)
+            return
+        }
         // Web-search (assistant / "search the web for…") and process-text (a text selection in any app
         // → "Search in Lumina") intents carry a query or selected text, not a URL. Treat them as a
         // search: the engine's searchUrl URL-encodes the text into an https search URL, so external

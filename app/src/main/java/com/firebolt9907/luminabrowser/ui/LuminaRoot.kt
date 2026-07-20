@@ -87,6 +87,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -862,6 +863,23 @@ fun LuminaRoot(
             components.tabRepository.selectTab(tabId)
         }
         afterSelect?.invoke()
+    }
+
+    // Launcher app-shortcuts (long-press home icon). MainActivity records the request; act on it once
+    // and clear. New Tab opens a fresh blank tab in editing mode; the others open a library sheet.
+    val pendingShortcut by com.firebolt9907.luminabrowser.state.AppShortcutSignals.pending.collectAsState()
+    LaunchedEffect(pendingShortcut) {
+        when (pendingShortcut) {
+            com.firebolt9907.luminabrowser.state.AppShortcutSignals.Action.NewTab -> {
+                val newTabId = viewModel.onCreateTabFromEdge(selectTab = false)
+                stagePendingGeckoSelection(tabId = newTabId, createdTab = true, editBlankTab = true)
+                commitPendingGeckoSelection()
+            }
+            com.firebolt9907.luminabrowser.state.AppShortcutSignals.Action.Bookmarks -> showBookmarks = true
+            com.firebolt9907.luminabrowser.state.AppShortcutSignals.Action.History -> showHistory = true
+            null -> Unit
+        }
+        if (pendingShortcut != null) com.firebolt9907.luminabrowser.state.AppShortcutSignals.consume()
     }
 
     fun cancelLeavingSnapshot() {

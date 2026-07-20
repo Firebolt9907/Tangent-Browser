@@ -8,4 +8,12 @@
     <string name="received_tab_channel_description">Tabs sent to this device from Firefox on your other devices.</string>
     <string name="received_tab_from">Tab from %1$s</string>
     <string name="received_tab_generic">Tab sent to this device</string>
+
+    <!-- Launcher app-shortcuts (long-press the home-screen icon). -->
+    <string name="shortcut_new_tab_short">New Tab</string>
+    <string name="shortcut_new_tab_long">Open a new tab</string>
+    <string name="shortcut_bookmarks_short">Bookmarks</string>
+    <string name="shortcut_bookmarks_long">Open bookmarks</string>
+    <string name="shortcut_history_short">History</string>
+    <string name="shortcut_history_long">Open history</string>
 </resources>

@@ -844,17 +844,6 @@ private fun AdvancedSettingsPage(
         )
         SheetRowDivider()
         SettingsToggle(
-            title = "Platform-independent math (fdlibm)",
-            subtitle = "Use standardized floating point calculations to prevent fingerprinting",
-            checked = fdlibmMathEnabled,
-            onCheckedChange = {
-                onFdlibmMathEnabledChange(it)
-                globalPrefsStore.fdlibmMathEnabled = it
-                onSettingChanged()
-            },
-        )
-        SheetRowDivider()
-        SettingsToggle(
             title = "Query Parameter Stripping",
             subtitle = "Remove tracking parameters (like fbclid, utm_*) from URLs",
             checked = queryParameterStripping,
@@ -864,32 +853,6 @@ private fun AdvancedSettingsPage(
                 onSettingChanged()
             },
         )
-        if (queryParameterStripping) {
-            SheetRowDivider()
-            SettingsTextField(
-                title = "Custom parameters to strip",
-                subtitle = "Comma-separated list of tracking parameters to strip from URLs",
-                value = queryParameterStrippingStripList,
-                onValueChange = {
-                    onQueryParameterStrippingStripListChange(it)
-                    globalPrefsStore.queryParameterStrippingStripList = it
-                    onSettingChanged()
-                },
-                haptics = haptics,
-            )
-            SheetRowDivider()
-            SettingsTextField(
-                title = "Custom parameters to keep",
-                subtitle = "Comma-separated list of parameters to exclude from stripping",
-                value = queryParameterStrippingAllowList,
-                onValueChange = {
-                    onQueryParameterStrippingAllowListChange(it)
-                    globalPrefsStore.queryParameterStrippingAllowList = it
-                    onSettingChanged()
-                },
-                haptics = haptics,
-            )
-        }
     }
 
     Spacer(Modifier.height(20.dp))
@@ -930,70 +893,6 @@ private fun AdvancedSettingsPage(
             ),
             haptics = haptics,
         )
-        if (dohSettingsMode > 0) {
-            SheetRowDivider()
-            SettingsTextField(
-                title = "Custom DoH URL",
-                subtitle = "Optional custom DNS over HTTPS provider URL",
-                value = dohProviderUrl,
-                onValueChange = {
-                    onDohProviderUrlChange(it)
-                    globalPrefsStore.dohProviderUrl = it
-                    onSettingChanged()
-                },
-                haptics = haptics,
-            )
-        }
-        SheetRowDivider()
-        SettingsToggle(
-            title = "Trust enterprise roots",
-            subtitle = "Trust system-installed CA certificates (useful for VPNs/proxies)",
-            checked = enterpriseRootsEnabled,
-            onCheckedChange = {
-                onEnterpriseRootsEnabledChange(it)
-                globalPrefsStore.enterpriseRootsEnabled = it
-                onSettingChanged()
-            },
-        )
-    }
-
-    Spacer(Modifier.height(20.dp))
-
-    SheetSectionHeader("Site data & file access")
-    Spacer(Modifier.height(8.dp))
-    SheetCard {
-        SettingsToggle(
-            title = "DOM Storage",
-            subtitle = "Enable LocalStorage and SessionStorage on web pages",
-            checked = domStorageEnabled,
-            onCheckedChange = {
-                onDomStorageEnabledChange(it)
-                globalPrefsStore.domStorageEnabled = it
-                onSettingChanged()
-            },
-        )
-        SheetRowDivider()
-        SettingsToggle(
-            title = "Local file access",
-            subtitle = "Allow websites to request access to local files (file:///)",
-            checked = allowFileAccess,
-            onCheckedChange = {
-                onAllowFileAccessChange(it)
-                globalPrefsStore.allowFileAccess = it
-                onSettingChanged()
-            },
-        )
-        SheetRowDivider()
-        SettingsToggle(
-            title = "Allow file URL cross-access",
-            subtitle = "Allow local file:/// pages to access other local files",
-            checked = allowFileAccessFromFileURLs,
-            onCheckedChange = {
-                onAllowFileAccessFromFileURLsChange(it)
-                globalPrefsStore.allowFileAccessFromFileURLs = it
-                onSettingChanged()
-            },
-        )
     }
 
     Spacer(Modifier.height(20.dp))
@@ -1001,17 +900,6 @@ private fun AdvancedSettingsPage(
     SheetSectionHeader("Additional protections")
     Spacer(Modifier.height(8.dp))
     SheetCard {
-        SettingsToggle(
-            title = "Post-quantum cryptography",
-            subtitle = "Secure HTTPS connections against future quantum attacks",
-            checked = postQuantumKeyExchangeEnabled,
-            onCheckedChange = {
-                onPostQuantumKeyExchangeEnabledChange(it)
-                globalPrefsStore.postQuantumKeyExchangeEnabled = it
-                onSettingChanged()
-            },
-        )
-        SheetRowDivider()
         SettingsToggle(
             title = "Safe Browsing V5",
             subtitle = "Real-time enhanced protection against malware and phishing",
@@ -1033,52 +921,6 @@ private fun AdvancedSettingsPage(
                 onSettingChanged()
             },
         )
-        SheetRowDivider()
-        SettingsToggle(
-            title = "Dismiss subframe cookie banners",
-            subtitle = "Automatically dismiss cookie banners inside sub-frames/iframes",
-            checked = cookieBannerHandlingGlobalRulesSubFrames,
-            onCheckedChange = {
-                onCookieBannerHandlingGlobalRulesSubFramesChange(it)
-                globalPrefsStore.cookieBannerHandlingGlobalRulesSubFrames = it
-                onSettingChanged()
-            },
-        )
-        SheetRowDivider()
-        SettingsToggle(
-            title = "Local Network Access protection",
-            subtitle = "Block public websites from probing/scanning your local network",
-            checked = lnaBlockingEnabled,
-            onCheckedChange = {
-                onLnaBlockingEnabledChange(it)
-                globalPrefsStore.lnaBlockingEnabled = it
-                onSettingChanged()
-            },
-        )
-        SheetRowDivider()
-        SettingsTextField(
-            title = "Banned ports override",
-            subtitle = "Comma-separated list of ports to override/block",
-            value = bannedPorts,
-            onValueChange = {
-                onBannedPortsChange(it)
-                globalPrefsStore.bannedPorts = it
-                onSettingChanged()
-            },
-            haptics = haptics,
-        )
-        SheetRowDivider()
-        SettingsTextField(
-            title = "CRLite Channel",
-            subtitle = "Certificate revocation list update channel",
-            value = crliteChannel,
-            onValueChange = {
-                onCrliteChannelChange(it)
-                globalPrefsStore.crliteChannel = it
-                onSettingChanged()
-            },
-            haptics = haptics,
-        )
     }
 
     Spacer(Modifier.height(20.dp))
@@ -1093,17 +935,6 @@ private fun AdvancedSettingsPage(
             onCheckedChange = {
                 onJavaScriptEnabledChange(it)
                 globalPrefsStore.javaScriptEnabled = it
-                onSettingChanged()
-            },
-        )
-        SheetRowDivider()
-        SettingsToggle(
-            title = "Web Fonts",
-            subtitle = "Allow web pages to load custom fonts",
-            checked = webFontsEnabled,
-            onCheckedChange = {
-                onWebFontsEnabledChange(it)
-                globalPrefsStore.webFontsEnabled = it
                 onSettingChanged()
             },
         )
@@ -1131,17 +962,6 @@ private fun AdvancedSettingsPage(
                 }
             },
             haptics = haptics,
-        )
-        SheetRowDivider()
-        SettingsToggle(
-            title = "Show scrollbars",
-            subtitle = "Render scrollbars when scrolling web content",
-            checked = scrollBarsEnabled,
-            onCheckedChange = {
-                onScrollBarsEnabledChange(it)
-                globalPrefsStore.scrollBarsEnabled = it
-                onSettingChanged()
-            },
         )
     }
 

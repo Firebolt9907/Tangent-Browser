@@ -123,6 +123,8 @@ object PageSpeaker {
                 is ReaderBlock.Divider -> Unit
                 is ReaderBlock.Table -> block.rows.forEach { row -> parts.add(row.joinToString(", ")) }
                 is ReaderBlock.Image -> Unit
+                // Speak a figure's caption (charts/diagrams/equations have no readable text otherwise).
+                is ReaderBlock.Figure -> block.caption?.let { parts.add(it) }
             }
         }
         // TextToSpeech silently drops utterances longer than getMaxSpeechInputLength (~4000 chars),

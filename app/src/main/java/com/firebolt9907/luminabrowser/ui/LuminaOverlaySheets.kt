@@ -476,6 +476,22 @@ internal fun LuminaOverlaySheets(
                     ).show()
                 }
             },
+            onCopyText = { u ->
+                Toast.makeText(appContext, "Scanning image for text…", Toast.LENGTH_SHORT).show()
+                scope.launch {
+                    val result = com.firebolt9907.luminabrowser.ui.content.ImageClipboard
+                        .copyTextFromImage(appContext, u)
+                    val msg = when (result) {
+                        is com.firebolt9907.luminabrowser.ui.content.ImageClipboard.OcrResult.Text ->
+                            "Text copied"
+                        com.firebolt9907.luminabrowser.ui.content.ImageClipboard.OcrResult.Empty ->
+                            "No text found in image"
+                        com.firebolt9907.luminabrowser.ui.content.ImageClipboard.OcrResult.Failed ->
+                            "Couldn't read image"
+                    }
+                    Toast.makeText(appContext, msg, Toast.LENGTH_SHORT).show()
+                }
+            },
             onCopy = { u ->
                 clipboardManager.setText(AnnotatedString(u))
                 Toast.makeText(appContext, "Image address copied", Toast.LENGTH_SHORT).show()

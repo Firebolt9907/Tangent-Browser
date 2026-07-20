@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.ImageSearch
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +43,7 @@ fun ImageContextSheet(
     onSearchImage: (String) -> Unit,
     onSave: (String) -> Unit,
     onCopyImage: (String) -> Unit,
+    onCopyText: (String) -> Unit,
     onCopy: (String) -> Unit,
     onShare: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -73,6 +75,9 @@ fun ImageContextSheet(
             }
             ImageAction(Icons.Rounded.Image, "Copy image") {
                 onCopyImage(imageUrl); onDismiss()
+            }
+            ImageAction(Icons.Rounded.TextFields, "Copy text from image") {
+                onCopyText(imageUrl); onDismiss()
             }
             ImageAction(Icons.Rounded.ContentCopy, "Copy image address") {
                 onCopy(imageUrl); onDismiss()

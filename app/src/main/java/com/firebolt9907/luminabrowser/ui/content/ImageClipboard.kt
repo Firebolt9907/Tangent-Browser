@@ -83,4 +83,60 @@ object ImageClipboard {
         clipboard.setPrimaryClip(ClipData.newUri(context.contentResolver, "Image", uri))
         return true
     }
+
+    /** Fetches [imageUrl]'s raw bytes (http(s) or inline data:), or null. */
+    private fun rawBytes(imageUrl: String): ByteArray? =
+        when {
+            imageUrl.startsWith("data:", ignoreCase = true) -> decodeDataUrl(imageUrl)
+            else -> download(imageUrl)
+        }?.first
+
+    /** Result of an on-device OCR pass over an image. */
+    sealed interface OcrResult {
+        data class Text(val text: String) : OcrResult
+        object Empty : OcrResult
+        object Failed : OcrResult
+    }
+
+    /**
+     * Extracts visible text from [imageUrl] using ML Kit's **on-device** text recognizer (no network,
+     * no permission — the model is bundled/downloaded once by Play Services) and copies it to the
+     * clipboard. Returns the outcome so the caller can toast appropriately.
+     */
+    suspend fun copyTextFromImage(context: Context, imageUrl: String): OcrResult {
+        val bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                rawBytes(imageUrl)?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+            }.getOrNull()
+        } ?: return OcrResult.Failed
+
+        val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
+            com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS,
+        )
+        val text = try {
+            val input = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
+            awaitOcr(recognizer, input)
+        } catch (t: Throwable) {
+            return OcrResult.Failed
+        } finally {
+            recognizer.close()
+        }
+
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return OcrResult.Empty
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            ?: return OcrResult.Failed
+        clipboard.setPrimaryClip(ClipData.newPlainText("Image text", trimmed))
+        return OcrResult.Text(trimmed)
+    }
+
+    /** Bridges ML Kit's Task to a coroutine without pulling in kotlinx-coroutines-play-services. */
+    private suspend fun awaitOcr(
+        recognizer: com.google.mlkit.vision.text.TextRecognizer,
+        input: com.google.mlkit.vision.common.InputImage,
+    ): String = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        recognizer.process(input)
+            .addOnSuccessListener { if (cont.isActive) cont.resumeWith(Result.success(it.text)) }
+            .addOnFailureListener { if (cont.isActive) cont.resumeWith(Result.failure(it)) }
+    }
 }

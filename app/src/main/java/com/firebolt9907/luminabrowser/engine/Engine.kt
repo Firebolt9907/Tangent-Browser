@@ -610,6 +610,16 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           network.dnsCacheEntries: 10000
           network.dnsCacheExpiration: 3600
           network.ssl_tokens_cache_capacity: 10240
+          # Make the payoff of that TLS-token cache explicit: enable TLS 1.3 0-RTT ("early data").
+          # With a cached session token, 0-RTT lets a reconnect send its first request *in the
+          # opening handshake flight* instead of waiting a full round-trip for the handshake to
+          # finish — the fast reconnect Chrome does to sites you revisit. It only applies to TLS
+          # 1.3 sessions we've already spoken to, and browsers restrict early data to replay-safe
+          # (idempotent) requests, so it's not the security downgrade that e.g. disabling OCSP
+          # would be. The token cache above only pays off if this is on, and GeckoView's release
+          # channel doesn't necessarily default it on — set it explicitly (same pattern as the
+          # Early Hints block). Worst case (already on) = no-op.
+          security.tls.enable_0rtt_data: true
           # First-visit DNS parallelism: Gecko resolves at most 5 high-priority hostnames at once
           # (default). A modern page pulls sub-resources from many distinct hosts (the origin plus
           # a fan of CDN/ad/analytics/font domains); on the first visit, before the enlarged DNS

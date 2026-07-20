@@ -2,6 +2,7 @@ package com.firebolt9907.luminabrowser.state
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.os.PowerManager
 
 /**
  * When Lumina may spend data *loading* a page the user hasn't opened yet — i.e. the external-link
@@ -31,9 +32,16 @@ enum class PreloadMode(val label: String) {
  * allowlisted this app, no heavy preload runs even in [PreloadMode.Always] — spending data on a page
  * they haven't opened is exactly what Data Saver asks us not to do. (Cheap `speculativeConnect`
  * warmups in [SpeculativePreconnector] are unaffected — they open a socket, not a download.)
+ *
+ * The OS **Battery Saver** mode is honored the same way: when power-save is active, speculative
+ * full-page loads (CPU + radio + a wasted download for pages that may never open) are exactly the
+ * background work Battery Saver asks apps to shed, so they're skipped regardless of [mode].
  */
 fun isPreloadAllowed(context: Context, mode: PreloadMode): Boolean {
     if (mode == PreloadMode.Off) return false
+    // Battery Saver on → skip speculative downloads regardless of mode/network.
+    val pm = context.getSystemService(PowerManager::class.java)
+    if (pm?.isPowerSaveMode == true) return false
     val cm = context.getSystemService(ConnectivityManager::class.java) ?: return false
     // Data Saver on + app not allowlisted → skip speculative downloads regardless of mode.
     if (cm.restrictBackgroundStatus == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED) {

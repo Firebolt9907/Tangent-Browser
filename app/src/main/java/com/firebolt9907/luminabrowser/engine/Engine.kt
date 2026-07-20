@@ -461,6 +461,22 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           # <link rel=prefetch> hints so likely next-hops are warmed before the tap.
           network.dns.disablePrefetchFromHTTPS: false
           network.prefetch-next: true
+          # --- Chrome-parity load prioritization: Early Hints (HTTP 103) + Priority Hints ---
+          # Two web-platform features Chrome ships that let a page start warming its critical
+          # resources before the main document response is even complete:
+          #  * Early Hints: when a server sends a `103 Early Hints` interim response, honor the
+          #    `Link: <…>; rel=preload/preconnect` headers in it and begin preloading/preconnecting
+          #    those subresources immediately — so the CSS/JS/hero image is already in flight while
+          #    the origin is still generating the real 200. Materially faster first paint on sites
+          #    that emit 103 (Cloudflare, Shopify, many CDNs), no effect on sites that don't.
+          #  * Priority Hints (`fetchpriority` attribute): honor `fetchpriority="high"` / `"low"`
+          #    on <img>/<link>/<script>/fetch() so the LCP image loads ahead of below-the-fold
+          #    assets, matching Chrome's request scheduling. Inert on pages that don't use it.
+          # Both are default-on in recent desktop Firefox; set explicitly so this GeckoView build
+          # picks them up regardless of its channel defaults. Worst case (already on) = no-op.
+          network.early-hints.enabled: true
+          network.early-hints.preconnect.enabled: true
+          network.fetchpriority.enabled: true
           # --- TEMPORARY: passkeys/WebAuthn disabled ---
           # Lumina isn't on Google Password Manager's trusted-browser allowlist yet, so the platform
           # FIDO2 path rejects our cert and passkey flows fail. Disable the WebAuthn API entirely so

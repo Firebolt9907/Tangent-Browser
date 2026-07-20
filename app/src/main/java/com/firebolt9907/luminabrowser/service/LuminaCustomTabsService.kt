@@ -58,12 +58,14 @@ class LuminaCustomTabsService : AbstractCustomTabsService() {
         otherLikelyBundles: List<Bundle>?,
     ): Boolean {
         val handled = super.mayLaunchUrl(sessionToken, url, extras, otherLikelyBundles)
-        val scheme = url?.scheme?.lowercase()
         val allowed = com.firebolt9907.luminabrowser.state.isPreloadAllowed(
             applicationContext,
             app.components.globalPreferencesStore.preloadMode,
         )
-        if (allowed && (scheme == "http" || scheme == "https")) {
+        // This service is exported: ANY app can drive mayLaunchUrl. The preloader does a full cookied
+        // headless load, so only auto-preload plausibly-public hosts — never internal/localhost/private
+        // targets an app could weaponize into an unattended SSRF fetch. See isPublicPreloadHost.
+        if (allowed && com.firebolt9907.luminabrowser.state.isPublicPreloadHost(url?.toString())) {
             app.components.externalLinkPreloader.preload(url.toString())
         }
         return handled

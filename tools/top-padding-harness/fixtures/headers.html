@@ -99,6 +99,24 @@ const cases = {
     const body=document.createElement('div');body.className='tall';body.textContent='inner scroll content';
     sc.append(h,body);document.body.appendChild(sc);
   },
+  // 14. position:sticky header inside a transformed ancestor. transform makes the ancestor the
+  //     containing block, so sticky sticks to the ANCESTOR box, not the viewport — a classic
+  //     real-world break where a "sticky" bar ends up pinned in the band.
+  stickyInTransformed(){
+    const wrap=document.createElement('div');wrap.style.cssText='transform:translateZ(0)';
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:sticky;top:0;height:56px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Sticky-in-transformed</span>';
+    const filler=document.createElement('div');filler.className='tall';filler.textContent='content';
+    wrap.append(h,filler);document.body.insertBefore(wrap,document.body.firstChild);
+  },
+  // 15. Header rendered as a top-layer <dialog open> pinned at top:0. Top-layer elements are
+  //     painted outside normal flow parenting; collect() must still find/inset it.
+  dialogTopBar(){
+    const d=document.createElement('dialog');d.setAttribute('open','');
+    d.className='bar';d.style.cssText='position:fixed;top:0;left:0;right:0;margin:0;width:100%;height:52px;background:#fff;border:0;border-bottom:1px solid #ccc;padding:0 12px;z-index:99';
+    d.innerHTML='<div class="logo"></div><span class="txt">Dialog top bar</span><button>X</button>';
+    document.body.appendChild(d);
+  },
 };
 const c = new URLSearchParams(location.search).get('case');
 if (cases[c]) cases[c]();

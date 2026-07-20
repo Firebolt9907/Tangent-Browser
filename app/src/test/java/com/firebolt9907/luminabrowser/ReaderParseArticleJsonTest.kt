@@ -99,6 +99,56 @@ class ReaderParseArticleJsonTest {
     }
 
     @Test
+    fun `figure_rich equation block carries src and equation flag`() {
+        val fig = parse(
+            """{"title":"T","blocks":[{"type":"figure_rich","src":"https://wikimedia.org/api/rest_v1/media/math/render/svg/abc","equation":true,"w":110,"h":28}]}""",
+        )!!.blocks[0] as ReaderBlock.Figure
+        assertTrue(fig.equation)
+        assertEquals(110, fig.width)
+        assertEquals(28, fig.height)
+        assertTrue(fig.src.endsWith("/abc"))
+    }
+
+    @Test
+    fun `figure_rich chart defaults equation to false and drops empty src`() {
+        val chart = parse(
+            """{"title":"T","blocks":[{"type":"figure_rich","src":"data:image/svg+xml;utf8,%3Csvg%3E","caption":"Fig 1"}]}""",
+        )!!.blocks[0] as ReaderBlock.Figure
+        assertTrue(!chart.equation)
+        assertEquals("Fig 1", chart.caption)
+
+        val dropped = parse(
+            """{"title":"T","blocks":[{"type":"figure_rich","src":""},{"type":"p","text":"x"}]}""",
+        )!!
+        assertEquals(1, dropped.blocks.size)
+        assertTrue(dropped.blocks[0] is ReaderBlock.Paragraph)
+    }
+
+    @Test
+    fun `paragraph inline math parses in order with dimensions`() {
+        val s = "\uE000" // MATH_SENTINEL
+        val p = parse(
+            """{"title":"T","blocks":[{"type":"p","text":"a${s}b${s}","imath":[{"src":"m1","w":10,"h":18},{"src":"m2"}]}]}""",
+        )!!.blocks[0] as ReaderBlock.Paragraph
+        assertEquals(2, p.inlineMath.size)
+        assertEquals("m1", p.inlineMath[0].src)
+        assertEquals(10, p.inlineMath[0].width)
+        assertEquals(18, p.inlineMath[0].height)
+        assertEquals("m2", p.inlineMath[1].src)
+        assertNull(p.inlineMath[1].width)
+        // One sentinel per inline-math entry, preserved verbatim through parsing.
+        assertEquals(2, p.text.count { it == '\uE000' })
+    }
+
+    @Test
+    fun `paragraph without imath has empty inline math list`() {
+        val p = parse(
+            """{"title":"T","blocks":[{"type":"p","text":"plain"}]}""",
+        )!!.blocks[0] as ReaderBlock.Paragraph
+        assertTrue(p.inlineMath.isEmpty())
+    }
+
+    @Test
     fun `list item carries nesting depth defaulting to zero`() {
         val nested = parse(
             """{"title":"T","blocks":[{"type":"li","text":"sub","ordered":false,"depth":2}]}""",

@@ -58,11 +58,30 @@ data class ReaderLinkSpan(
     val href: String,
 )
 
+/**
+ * A rendered inline-math glyph (LaTeX flowing within a line of prose). [src] is a data:image/svg+xml
+ * URI (MathJax inline output) or a remote SVG/PNG render (e.g. Wikipedia's math endpoint). Each
+ * occurrence is marked in the paragraph's [ReaderBlock.Paragraph.text] by the private-use sentinel
+ * [MATH_SENTINEL], matched to this list in order and drawn via Compose inlineContent so the equation
+ * sits on the baseline instead of being dropped (imgs carry no text) or shown as a separate block.
+ */
+data class ReaderInlineMath(
+    val src: String,
+    val width: Int? = null,
+    val height: Int? = null,
+)
+
+/** Private-use codepoint standing in for an inline-math glyph in paragraph text. Kept in sync with
+ *  the extractor's `MATH_SENTINEL`. */
+const val MATH_SENTINEL: Char = '\uE000'
+
 sealed class ReaderBlock {
     data class Heading(val level: Int, val text: String) : ReaderBlock()
     data class Paragraph(
         val text: String,
         val links: List<ReaderLinkSpan> = emptyList(),
+        /** Inline math glyphs, in order, each marked by a [MATH_SENTINEL] in [text]. */
+        val inlineMath: List<ReaderInlineMath> = emptyList(),
     ) : ReaderBlock()
     data class ListItem(val text: String, val ordered: Boolean, val index: Int = 0, val depth: Int = 0) : ReaderBlock()
     data class Blockquote(val text: String, val pullQuote: Boolean = false) : ReaderBlock()
@@ -80,6 +99,24 @@ sealed class ReaderBlock {
     data class Image(
         val src: String,
         val caption: String?,
+        val width: Int? = null,
+        val height: Int? = null,
+    ) : ReaderBlock()
+
+    /**
+     * A rich graphical element the plain text/[Image] model can't represent faithfully — an inline
+     * `<svg>` chart or diagram, or a rendered math equation (sites like Wikipedia serve these as SVG
+     * renders). [src] is either a `data:image/svg+xml` URI (serialized inline SVG) or a remote
+     * SVG/PNG URL (e.g. Wikimedia's `.../math/render/svg/…`). These are dropped by the plain walk
+     * because they carry no `<p>` text; capturing them keeps charts, diagrams and equations in the
+     * reader. Rendered as a crisp vector on a light card so black-stroke vectors stay visible on the
+     * dark reader theme. [equation] display math is centred and sized to content rather than
+     * full-bleed.
+     */
+    data class Figure(
+        val src: String,
+        val caption: String?,
+        val equation: Boolean = false,
         val width: Int? = null,
         val height: Int? = null,
     ) : ReaderBlock()

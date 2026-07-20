@@ -73,9 +73,11 @@ object ReaderExtractor {
             javascript:(function() {
                 /* Never offer/auto-activate reader mode on our own branded error page. GeckoView
                    renders it under the FAILED site's URL (location.href is the real page), so we
-                   can't key off location — but document.documentURI stays the resource:// asset. */
+                   can't key off location — but document.documentURI stays the resource: asset. The
+                   scheme prefix is built without a literal double-slash (the whole script flattens to
+                   one line, where a '/' '/' pair would comment out the remainder). */
                 try {
-                    if ((document.documentURI || '').indexOf('resource://android/assets/error_page_js.html') === 0) return;
+                    if ((document.documentURI || '').indexOf('resource:' + '/' + '/' + 'android/assets/error_page_js.html') === 0) return;
                 } catch (e) {}
                 function luminaExtract() {
                 /* Hand the extracted article back to the app WITHOUT touching the page's own
@@ -316,6 +318,106 @@ object ReaderExtractor {
                     const fc = fig.querySelector('figcaption');
                     if (fc) { const t = textOf(fc); if (t) b.caption = t; }
                     return b;
+                }
+                /* Serialize an inline <svg> (a chart, graph, diagram or timeline drawn directly in
+                   the page) into a self-contained data: URI so the reader can render it as a crisp
+                   vector. Bounded so a pathological SVG can't bloat the payload. */
+                function svgToDataUri(svg) {
+                    try {
+                        /* Build the SVG namespace without a literal double-slash: the whole script
+                           flattens to one line, where a '/' '/' pair would comment out the rest. */
+                        if (!svg.getAttribute('xmlns')) svg.setAttribute('xmlns', 'http:' + '/' + '/' + 'www.w3.org/2000/svg');
+                        const s = new XMLSerializer().serializeToString(svg);
+                        if (!s || s.length > 262144) return null;   /* cap at 256 KB */
+                        return 'data:image/svg+xml;utf8,' + encodeURIComponent(s);
+                    } catch (e) { return null; }
+                }
+                function svgDims(svg) {
+                    let w = parseFloat(svg.getAttribute('width')) || 0;
+                    let h = parseFloat(svg.getAttribute('height')) || 0;
+                    if (!w || !h) {
+                        const vb = (svg.getAttribute('viewBox') || '').split(/[ ,]+/).filter(function(x){return x.length;});
+                        if (vb.length === 4) { w = w || parseFloat(vb[2]); h = h || parseFloat(vb[3]); }
+                    }
+                    if (!w || !h) { const r = svg.getBoundingClientRect(); w = w || r.width; h = h || r.height; }
+                    return { w: Math.round(w) || 0, h: Math.round(h) || 0 };
+                }
+                /* A rich graphic the plain text/image model can't carry faithfully: an inline-SVG
+                   chart/diagram, or a rendered *display* math equation. Returns a 'figure_rich'
+                   block or null. Inline math (mwe-math-fallback-image-inline) is deliberately left
+                   to flow as text so paragraphs aren't fragmented into one-glyph blocks. */
+                function richGraphicBlock(node) {
+                    if (!node || node.nodeType !== 1) return null;
+                    /* Display math: MediaWiki renders <math display="block"> as an SVG image tagged
+                       with a *-display class; capture that as a centred equation figure. */
+                    const mathImg = (node.matches && node.matches('img.mwe-math-fallback-image-display')) ? node
+                        : (node.querySelector ? node.querySelector('img.mwe-math-fallback-image-display') : null);
+                    if (mathImg) {
+                        const src = imgSrc(mathImg);
+                        if (src) {
+                            const b = { type: 'figure_rich', src: src, caption: null, equation: true };
+                            const w = mathImg.naturalWidth || 0, h = mathImg.naturalHeight || 0;
+                            if (w > 0 && h > 0) { b.w = w; b.h = h; }
+                            return b;
+                        }
+                    }
+                    /* Inline SVG chart / diagram. Skip tiny icon SVGs and SVGs that merely wrap a
+                       raster <image> (those are just photos and belong in the image path). */
+                    const svg = (node.nodeName === 'svg') ? node : (node.querySelector ? node.querySelector('svg') : null);
+                    if (svg && !svg.querySelector('image')) {
+                        const d = svgDims(svg);
+                        if (d.w >= 80 && d.h >= 40) {
+                            const uri = svgToDataUri(svg);
+                            if (uri) {
+                                const b = { type: 'figure_rich', src: uri, caption: null, equation: false };
+                                if (d.w > 0 && d.h > 0) { b.w = d.w; b.h = d.h; }
+                                return b;
+                            }
+                        }
+                    }
+                    return null;
+                }
+                /* A single sentinel codepoint (Unicode Private Use Area) marks where an inline math
+                   glyph sits in a paragraph's text; the reader replaces each one, in order, with the
+                   rendered equation via Compose inlineContent. Chosen to never collide with real
+                   article text. */
+                const MATH_SENTINEL = '\uE000';
+                /* If [node] is itself an inline-math element (a rendered LaTeX glyph that flows in a
+                   line of prose), return {src, w, h}; else null. Handles MediaWiki's SVG/PNG fallback
+                   image and MathJax's inline SVG output. Strict: only the known math wrapper/element
+                   matches, never an arbitrary container (which would swallow its surrounding text). */
+                function inlineMathSpan(node) {
+                    if (!node || node.nodeType !== 1) return null;
+                    const nm = node.nodeName;
+                    const cls = node.classList;
+                    if (nm === 'IMG' && cls && cls.contains('mwe-math-fallback-image-inline')) {
+                        const s = imgSrc(node);
+                        if (s) { const o = { src: s }; const w = node.naturalWidth||0, h = node.naturalHeight||0; if (w&&h){o.w=w;o.h=h;} return o; }
+                    }
+                    if (nm === 'SPAN' && cls && cls.contains('mwe-math-element')) {
+                        const mi = node.querySelector('img.mwe-math-fallback-image-inline');
+                        if (mi) { const s = imgSrc(mi); if (s) { const o = { src: s }; const w = mi.naturalWidth||0, h = mi.naturalHeight||0; if (w&&h){o.w=w;o.h=h;} return o; } }
+                    }
+                    if (nm === 'MJX-CONTAINER' && node.getAttribute('display') !== 'true') {
+                        const svg = node.querySelector('svg');
+                        if (svg) { const uri = svgToDataUri(svg); if (uri) { const d = svgDims(svg); const o = { src: uri }; if (d.w&&d.h){o.w=d.w;o.h=d.h;} return o; } }
+                    }
+                    return null;
+                }
+                /* Serialize a paragraph's text, substituting each inline-math element with a sentinel
+                   codepoint and pushing its {src,w,h} to [out] in reading order. Returns '' unchanged
+                   text when the paragraph has no inline math (caller then keeps the normal textOf). */
+                function collectInlineMath(node, out) {
+                    let res = '';
+                    for (const c of node.childNodes) {
+                        if (c.nodeType === 3) { res += (c.textContent || ''); continue; }
+                        if (c.nodeType !== 1) continue;
+                        if (c.nodeName === 'SCRIPT' || c.nodeName === 'STYLE' || c.nodeName === 'NOSCRIPT' || c.nodeName === 'TEMPLATE') continue;
+                        const m = inlineMathSpan(c);
+                        if (m) { out.push(m); res += MATH_SENTINEL; continue; }
+                        res += collectInlineMath(c, out);
+                    }
+                    return res;
                 }
                 /* Elements that are laid out but visually hidden (display/visibility/opacity, aria,
                    or collapsed to a 1px screen-reader box) are page chrome, not article prose. */
@@ -558,7 +660,11 @@ object ReaderExtractor {
                     if (!node) return;
                     const name = node.nodeName;
                     if (node.nodeType === 1 && (name === 'P' || /^H[1-6]${'$'}/.test(name) || name === 'BLOCKQUOTE' || name === 'PRE' || name === 'TABLE' || name === 'UL' || name === 'OL' || name === 'FIGURE' || name === 'IMG')) {
-                        if (!keep(node)) return;
+                        /* Rendered display equations (e.g. MediaWiki math) are marked aria-hidden
+                           (the MathML sibling is the a11y copy), which isVisible() treats as hidden.
+                           Exempt them so the equation still reaches richGraphicBlock. */
+                        const isMathDisplayImg = name === 'IMG' && node.classList && node.classList.contains('mwe-math-fallback-image-display');
+                        if (!isMathDisplayImg && !keep(node)) return;
                     }
                     if (name === 'TABLE') {
                         if (node.querySelector('table')) { for (let child of node.childNodes) walk(child); return; }
@@ -581,10 +687,18 @@ object ReaderExtractor {
                     }
                     if (name === 'P') {
                         if (linkDensity(node) > 0.7) return;
-                        const text = textOf(node);
+                        /* Capture inline math (rendered LaTeX flowing within the line): each glyph
+                           becomes a sentinel in the text and an {src,w,h} entry the reader turns back
+                           into an inline image. When the paragraph has none, keep the plain textOf
+                           path unchanged (no behaviour change for ordinary prose). */
+                        const imath = [];
+                        let text = collectInlineMath(node, imath).replace(/\s+/g, ' ').trim();
+                        if (imath.length === 0) text = textOf(node);
                         if (text.length > 0 && !isTitleDup(text)) {
                             const spans = richTextOf(node);
-                            blocks.push({ type: 'p', text: text, spans: spans });
+                            const blk = { type: 'p', text: text, spans: spans };
+                            if (imath.length > 0) blk.imath = imath;
+                            blocks.push(blk);
                         }
                     } else if (/^H[1-6]${'$'}/.test(name)) {
                         const level = parseInt(name.substring(1));
@@ -598,12 +712,38 @@ object ReaderExtractor {
                             blocks.push({ type: 'bq', text: text });
                         }
                     } else if (name === 'FIGURE') {
-                        const b = figureBlock(node);
+                        /* A <figure> wrapping an inline SVG chart/diagram has no <img>, so the
+                           image path drops it — try the rich-graphic path first and keep the
+                           figcaption. */
+                        const rg = richGraphicBlock(node);
+                        if (rg) {
+                            const fc = node.querySelector('figcaption');
+                            if (fc) { const t = textOf(fc); if (t) rg.caption = t; }
+                            blocks.push(rg);
+                        } else {
+                            const b = figureBlock(node);
+                            if (b) blocks.push(b);
+                        }
+                    } else if (name === 'svg') {
+                        /* A chart/diagram/graph drawn directly in the page (no <img>). */
+                        const b = richGraphicBlock(node);
                         if (b) blocks.push(b);
+                    } else if (name === 'MJX-CONTAINER') {
+                        /* MathJax display equation rendered to inline SVG. */
+                        const b = richGraphicBlock(node);
+                        if (b) { b.equation = true; blocks.push(b); }
+                    } else if (name === 'MATH') {
+                        /* Bare MathML: capture a rendered display fallback if one exists, else skip
+                           (its child <mi>/<mo>/<mn> symbol soup must not leak in as text). */
+                        const b = richGraphicBlock(node);
+                        if (b) { b.equation = true; blocks.push(b); }
                     } else if (name === 'IMG') {
                         if (!node.closest('figure')) {
-                            const b = imgBlock(node);
-                            if (b) blocks.push(b);
+                            /* A standalone rendered *display* equation image (e.g. MediaWiki
+                               math render) gets equation styling, not plain-image styling. */
+                            const rg = richGraphicBlock(node);
+                            if (rg) { blocks.push(rg); }
+                            else { const b = imgBlock(node); if (b) blocks.push(b); }
                         }
                     } else if (name === 'UL' || name === 'OL') {
                         /* A list dominated by link text is a share bar / breadcrumb / nav, not content. */
@@ -969,7 +1109,20 @@ object ReaderExtractor {
                             }
                         }
                     } else emptyList()
-                    blocks.add(ReaderBlock.Paragraph(text, spans))
+                    val imathJson = obj.optJSONArray("imath")
+                    val inlineMath = if (imathJson != null) {
+                        ArrayList<ReaderInlineMath>(imathJson.length()).apply {
+                            for (s in 0 until imathJson.length()) {
+                                val m = imathJson.optJSONObject(s) ?: continue
+                                val src = m.optString("src", "")
+                                if (src.isEmpty()) continue
+                                val w = m.optInt("w", 0).takeIf { it > 0 }
+                                val h = m.optInt("h", 0).takeIf { it > 0 }
+                                add(ReaderInlineMath(src, w, h))
+                            }
+                        }
+                    } else emptyList()
+                    blocks.add(ReaderBlock.Paragraph(text, spans, inlineMath))
                 }
                 "h" -> {
                     val level = obj.optInt("level", 2)
@@ -1015,6 +1168,18 @@ object ReaderExtractor {
                         val width = obj.optInt("w", 0).takeIf { it > 0 }
                         val height = obj.optInt("h", 0).takeIf { it > 0 }
                         blocks.add(ReaderBlock.Image(src, caption, width, height))
+                    }
+                }
+                "figure_rich" -> {
+                    // A rich graphic the plain model can't carry: inline-SVG chart/diagram
+                    // (src is a data:image/svg+xml URI) or a rendered equation (remote SVG/PNG).
+                    val src = obj.optString("src")
+                    if (src.isNotEmpty()) {
+                        val caption = obj.optString("caption").takeIf { it.isNotEmpty() && it != "null" }
+                        val equation = obj.optBoolean("equation", false)
+                        val width = obj.optInt("w", 0).takeIf { it > 0 }
+                        val height = obj.optInt("h", 0).takeIf { it > 0 }
+                        blocks.add(ReaderBlock.Figure(src, caption, equation, width, height))
                     }
                 }
             }

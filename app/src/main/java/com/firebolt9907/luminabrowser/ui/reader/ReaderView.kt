@@ -35,7 +35,17 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.luminance
 import coil.compose.AsyncImage
+import coil.ImageLoader
+import coil.decode.SvgDecoder
+import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.unit.em
 import com.firebolt9907.luminabrowser.ui.components.Favicon
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -155,6 +165,30 @@ fun ReaderView(
 
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
+    // An SVG-capable Coil loader for reader rich content: charts/diagrams serialized to
+    // data:image/svg+xml, and math renders (MediaWiki/MathJax) which are SVG. The app has no global
+    // ImageLoaderFactory, so the singleton loader (used for photos) can't decode SVG — build one here
+    // and pass it only to the rich renders.
+    val svgContext = LocalContext.current
+    val svgImageLoader = remember(svgContext) {
+        ImageLoader.Builder(svgContext)
+            .components { add(SvgDecoder.Factory()) }
+            .build()
+    }
+    // On a dark reader theme, math renders (black glyphs on transparent) would be invisible; invert
+    // them to white. Charts/diagrams keep their real colors (meaningful) and instead sit on a light
+    // card. Derived from the actual background luminance so it's right for System/White/Sepia/Dark.
+    val readerIsDark = backgroundColor.luminance() < 0.5f
+    val equationDarkFilter = remember(readerIsDark) {
+        if (readerIsDark) {
+            ColorFilter.colorMatrix(ColorMatrix(floatArrayOf(
+                -1f, 0f, 0f, 0f, 255f,
+                0f, -1f, 0f, 0f, 255f,
+                0f, 0f, -1f, 0f, 255f,
+                0f, 0f, 0f, 1f, 0f,
+            )))
+        } else null
+    }
     var columnCoordinates by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
     val headingOffsets = remember(article) { mutableMapOf<ReaderBlock.Heading, Float>() }
 
@@ -389,15 +423,60 @@ fun ReaderView(
             groupedBlocks.forEach { block ->
                 when (block) {
                     is ReaderBlock.Paragraph -> {
-                        if (block.links.isNotEmpty()) {
+                        // Inline math: each MATH_SENTINEL in block.text maps, in order, to a rendered
+                        // equation drawn on the baseline via Compose inlineContent. Charts/equations
+                        // decode through the SVG-capable loader; black glyphs invert on dark themes.
+                        val mathContext = LocalContext.current
+                        val mathInline: Map<String, InlineTextContent> =
+                            if (block.inlineMath.isEmpty()) emptyMap()
+                            else block.inlineMath.mapIndexed { i, m ->
+                                val aspect = if (m.width != null && m.height != null && m.width > 0 && m.height > 0)
+                                    m.width.toFloat() / m.height.toFloat() else 2.2f
+                                val heightEm = 1.15f
+                                "m$i" to InlineTextContent(
+                                    Placeholder(
+                                        width = (heightEm * aspect).em,
+                                        height = heightEm.em,
+                                        placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
+                                    )
+                                ) {
+                                    AsyncImage(
+                                        model = readerImageRequest(mathContext, m.src, article.sourceUrl),
+                                        imageLoader = svgImageLoader,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Fit,
+                                        colorFilter = equationDarkFilter,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                            }.toMap()
+                        val mathCounter = intArrayOf(0)
+                        // Append a text chunk, turning each sentinel into an inline-math placeholder
+                        // (advancing through block.inlineMath in order). Runs even inside link text so
+                        // the counter never desyncs from the sentinel order.
+                        val appendMath: androidx.compose.ui.text.AnnotatedString.Builder.(String) -> Unit = { s ->
+                            var i = 0
+                            while (i < s.length) {
+                                val j = s.indexOf(MATH_SENTINEL, i)
+                                if (j == -1) { append(s.substring(i)); i = s.length }
+                                else {
+                                    if (j > i) append(s.substring(i, j))
+                                    appendInlineContent("m${mathCounter[0]}", "□")
+                                    mathCounter[0]++
+                                    i = j + 1
+                                }
+                            }
+                        }
+                        val hasMath = block.inlineMath.isNotEmpty()
+                        if (block.links.isNotEmpty() || hasMath) {
                             val annotatedString = buildAnnotatedString {
                                 var currentIndex = 0
                                 for (link in block.links) {
                                     val index = block.text.indexOf(link.text, currentIndex)
                                     if (index != -1) {
-                                        append(block.text.substring(currentIndex, index))
+                                        this.appendMath(block.text.substring(currentIndex, index))
                                         val start = this.length
-                                        append(link.text)
+                                        this.appendMath(link.text)
                                         val end = this.length
                                         addStringAnnotation(
                                             tag = "url",
@@ -417,9 +496,25 @@ fun ReaderView(
                                     }
                                 }
                                 if (currentIndex < block.text.length) {
-                                    append(block.text.substring(currentIndex))
+                                    this.appendMath(block.text.substring(currentIndex))
                                 }
                             }
+                          if (block.links.isEmpty()) {
+                            // Math but no links: keep normal text selection (inside the outer
+                            // SelectionContainer), just add the inline equations.
+                            Text(
+                                text = annotatedString,
+                                inlineContent = mathInline,
+                                fontSize = (18.sp * scale),
+                                lineHeight = (30.sp * scale),
+                                fontFamily = fontFamily,
+                                color = textColor,
+                                style = proseStyle,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 22.dp)
+                            )
+                          } else {
                             // Layout + window position of this paragraph, captured so the tap /
                             // long-press detector can map the press point → text offset → link
                             // annotation, and hand the host a window-space origin for the peek morph.
@@ -436,6 +531,7 @@ fun ReaderView(
                             DisableSelection {
                                 Text(
                                     text = annotatedString,
+                                    inlineContent = mathInline,
                                     onTextLayout = { layoutResult.value = it },
                                     style = proseStyle.copy(
                                         fontSize = (18.sp * scale),
@@ -472,6 +568,7 @@ fun ReaderView(
                                         }
                                 )
                             }
+                          }
                         } else {
                             Text(
                                 text = block.text,
@@ -706,6 +803,81 @@ fun ReaderView(
                         }
                         } // if (!imageFailed)
                     }
+                    is ReaderBlock.Figure -> {
+                        val context = LocalContext.current
+                        var figFailed by remember(block.src) { mutableStateOf(false) }
+                        if (!figFailed) {
+                            if (block.equation) {
+                                // Display equation (dedicated line): centred, sized to content,
+                                // inverted to white on dark themes so the black glyphs stay visible.
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState())
+                                        .padding(vertical = 16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    val eqH = block.height
+                                    val eqW = block.width
+                                    AsyncImage(
+                                        model = readerImageRequest(context, block.src, article.sourceUrl),
+                                        imageLoader = svgImageLoader,
+                                        contentDescription = block.caption,
+                                        contentScale = ContentScale.Fit,
+                                        colorFilter = equationDarkFilter,
+                                        onError = { figFailed = true },
+                                        // MediaWiki serves math at a small intrinsic px size; scale
+                                        // ~1.7x with the reader font so equations track body text.
+                                        modifier = Modifier
+                                            .let {
+                                                if (eqW != null && eqH != null && eqW > 0 && eqH > 0) {
+                                                    it.height((eqH * 1.7f * scale).dp)
+                                                        .widthIn(max = maxOf(1, (eqW * 6)).dp)
+                                                } else it.heightIn(max = (40 * scale).dp)
+                                            }
+                                    )
+                                }
+                            } else {
+                                // Chart / diagram: keep true colors on a light card so it stays
+                                // legible on any theme; reserve aspect ratio; tap to zoom.
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 12.dp, bottom = 24.dp)
+                                ) {
+                                    val w = block.width
+                                    val h = block.height
+                                    AsyncImage(
+                                        model = readerImageRequest(context, block.src, article.sourceUrl),
+                                        imageLoader = svgImageLoader,
+                                        contentDescription = block.caption,
+                                        contentScale = ContentScale.Fit,
+                                        onError = { figFailed = true },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .let { if (w != null && h != null && w > 0 && h > 0) it.aspectRatio(w.toFloat() / h.toFloat()) else it }
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFFFFFFFF))
+                                            .padding(12.dp)
+                                            .clickable { zoomedImage = block.src }
+                                    )
+                                    block.caption?.let { caption ->
+                                        Text(
+                                            text = caption,
+                                            fontSize = (13.sp * scale),
+                                            lineHeight = (18.sp * scale),
+                                            fontStyle = FontStyle.Italic,
+                                            fontFamily = fontFamily,
+                                            color = mutedTextColor,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 6.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                     is CarouselBlock -> {
                         val images = block.images
                         val pagerState = rememberPagerState(pageCount = { images.size })
@@ -899,7 +1071,10 @@ fun ReaderView(
                     contentAlignment = Alignment.Center,
                 ) {
                     AsyncImage(
+                        // The SVG-capable loader also decodes ordinary bitmaps, so charts (SVG data
+                        // URIs) and photos both zoom correctly through it.
                         model = readerImageRequest(context, src, article.sourceUrl),
+                        imageLoader = svgImageLoader,
                         contentDescription = null,
                         contentScale = ContentScale.Fit,
                         modifier = Modifier

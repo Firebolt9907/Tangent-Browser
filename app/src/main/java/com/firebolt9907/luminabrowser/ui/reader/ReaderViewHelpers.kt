@@ -70,6 +70,7 @@ internal fun estimateReadMinutes(article: ReaderArticle): Int {
             is ReaderBlock.Code -> null
             is ReaderBlock.Divider -> null
             is ReaderBlock.Image -> null
+            is ReaderBlock.Figure -> null
         } ?: continue
         if (text.isNotBlank()) words += text.trim().split(whitespaceRegex).size
     }

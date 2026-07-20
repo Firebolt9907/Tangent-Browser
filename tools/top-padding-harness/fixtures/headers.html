@@ -252,6 +252,26 @@ const cases = {
     const main=document.createElement('div');main.className='tall';main.textContent='main';
     document.body.append(h,main);
   },
+  // 28. Body is display:table (not flex/grid) — the host-padding branch does NOT apply, so the
+  //      in-flow spacer div (rendered as anonymous table content) must still push the table-row
+  //      header out of the band.
+  tableBodyHeader(){
+    document.getElementById('content').remove();
+    document.body.style.cssText='margin:0;display:table;width:100%';
+    const h=document.createElement('header');h.className='bar';h.style.cssText='display:table-row;height:54px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Table-row header</span>';
+    const m=document.createElement('div');m.className='tall';m.textContent='main';
+    document.body.append(h,m);
+  },
+  // 29. A full-width position:absolute (NOT fixed) header pinned at top:0 in normal flow. Padding
+  //      never moves an out-of-flow absolute element, so it must be caught as a top intruder and
+  //      band-shifted (translateY) below the status bar.
+  absoluteTopHeader(){
+    document.body.style.position='relative';
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:absolute;top:0;left:0;width:100%;height:54px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Absolute top header</span>';
+    document.body.appendChild(h);
+  },
   // 18. Fixed header inside a `container-type:inline-size` ancestor. Query containers establish a
   //     containing block for fixed descendants (distinct trigger from transform/filter) — the bar
   //     is positioned relative to the container box, not the viewport. bandShift's translateY must

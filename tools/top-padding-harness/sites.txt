@@ -120,6 +120,10 @@ https://observablehq.com
 https://docs.docker.com/get-started/
 https://kotlinlang.org/docs/basic-syntax.html
 https://vitejs.dev/guide/
+https://www.desmos.com/calculator
+https://www.wolframalpha.com
+https://community.openai.com
+https://www.gov.uk/browse/benefits
 # --- iter 27: deep content pages (articles, product/spec, Q&A) — real anchor-nav surfaces ---
 https://www.investopedia.com/terms/i/inflation.asp
 https://www.healthline.com/nutrition/10-benefits-of-exercise

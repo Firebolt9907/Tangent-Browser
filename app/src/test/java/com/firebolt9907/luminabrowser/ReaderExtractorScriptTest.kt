@@ -73,6 +73,16 @@ class ReaderExtractorScriptTest {
     }
 
     @Test
+    fun `boilerplate selector strips runtime-injected ad-network containers`() {
+        // AdThrive / Mediavine / AdSense inject their ad divs into the article body at runtime
+        // (recipe & news blogs). These specific tokens have no English-word substring collisions,
+        // so they filter ads without touching prose (unlike a bare "ad-").
+        assertTrue("adthrive", script.contains("[class*=\"adthrive\" i]"))
+        assertTrue("adsbygoogle", script.contains("[class*=\"adsbygoogle\" i]"))
+        assertTrue("mediavine", script.contains("[class*=\"mv-ad-box\" i]"))
+    }
+
+    @Test
     fun `two builds are deterministic`() {
         assertTrue(script == ReaderExtractor.buildReaderExtractorScript())
     }

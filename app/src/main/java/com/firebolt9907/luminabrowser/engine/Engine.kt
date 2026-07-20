@@ -469,6 +469,23 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           # navigation feel snappier without changing what eventually gets painted.
           nglayout.initialpaint.delay: 0
           nglayout.initialpaint.delay_in_oopif: 0
+          # --- Chrome-parity: back/forward cache (instant Back/Forward navigation) ---
+          # Chrome's BFCache keeps a few recently-visited pages fully alive (DOM + JS heap +
+          # scroll position) so Back/Forward restores them instantly instead of reloading and
+          # re-running the page. Firefox *has* BFCache too, but Firefox-for-Android historically
+          # pins the viewer budget very low (often 0) to save RAM — so on GeckoView Back typically
+          # triggers a full reload, the single biggest navigation-feel gap vs Chrome. Pin a small
+          # positive budget: 4 in-memory page viewers is enough to make the common Back/Forward
+          # (and swipe-back) restore instant while bounding worst-case memory to a handful of
+          # pages; lowMemoryDetection() still lets Gecko evict them under pressure. Pages that opt
+          # out (unload handlers, Cache-Control: no-store) are never cached, matching Chrome.
+          browser.sessionhistory.max_total_viewers: 4
+          # BFCache must also be allowed to operate when a page has out-of-process (Fission)
+          # subframes — otherwise any page with a cross-origin iframe (ads, embeds, social
+          # widgets) silently falls out of BFCache and reloads on Back. Default varies by channel;
+          # set explicitly so the budget above actually applies to real-world pages. No-op if
+          # already on.
+          fission.bfcacheInParent: true
           # Long-press: shorten the hold before Gecko fires the long-tap (→ HitResult → the link
           # "glance" preview). Gecko's default is 500ms, which feels sluggish for a peek gesture;
           # 280ms triggers noticeably sooner while staying above the ~150ms tap/scroll threshold so

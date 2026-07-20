@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Exposes a "shared" subfolder of the app cache to other apps via a content:// URI so we can put an
+  actual image on the clipboard / into a share sheet. Only this narrow subdir is shared, never the
+  whole cache. Used by ui/content/ImageClipboard.kt.
+-->
+<paths>
+    <cache-path name="shared" path="shared/" />
+</paths>

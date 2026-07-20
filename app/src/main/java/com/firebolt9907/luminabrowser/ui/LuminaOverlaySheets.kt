@@ -458,6 +458,18 @@ internal fun LuminaOverlaySheets(
                     )
                 }
             },
+            onCopyImage = { u ->
+                Toast.makeText(appContext, "Copying image…", Toast.LENGTH_SHORT).show()
+                scope.launch {
+                    val ok = com.firebolt9907.luminabrowser.ui.content.ImageClipboard
+                        .copy(appContext, u)
+                    Toast.makeText(
+                        appContext,
+                        if (ok) "Image copied" else "Couldn't copy image",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
             onCopy = { u ->
                 clipboardManager.setText(AnnotatedString(u))
                 Toast.makeText(appContext, "Image address copied", Toast.LENGTH_SHORT).show()

@@ -294,4 +294,26 @@ class ViewportSpacerScriptTest {
             script().contains("html,body{scroll-padding-top:"),
         )
     }
+
+    @Test
+    fun `scroll-padding-top is also set inline with importance to win over site CSS (iter 22)`() {
+        // A site rule like `:root{scroll-padding-top:0!important}` (specificity 0,1,0) beats our
+        // stylesheet `html,body{...!important}` (0,0,1), zeroing the inset so anchor jumps land
+        // under the status bar. Author inline `!important` outranks any author stylesheet
+        // `!important` regardless of selector specificity, so we ALSO set it inline on the scroll
+        // roots. Keep both — the stylesheet is the fallback, the inline decl is the cascade winner.
+        val s = script()
+        assertTrue(
+            "scroll-padding-top is set inline on documentElement with importance",
+            s.contains("documentElement.style.setProperty('scroll-padding-top'"),
+        )
+        assertTrue(
+            "scroll-padding-top is set inline on body with importance",
+            s.contains("body.style.setProperty('scroll-padding-top'"),
+        )
+        assertTrue(
+            "the inline scroll-padding-top decl carries the important flag",
+            s.contains("scroll-padding-top',top,'important')"),
+        )
+    }
 }

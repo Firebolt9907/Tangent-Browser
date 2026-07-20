@@ -137,6 +137,19 @@ const cases = {
     document.body.appendChild(p);
     try{p.showPopover();}catch(e){}
   },
+  // 19. Site defines its OWN scroll-padding-top:0 !important on :root (specificity 0,1,0, higher
+  //     than our html,body 0,0,1). If our injected rule loses the cascade, in-page #anchor jumps
+  //     land UNDER the status bar. Sets up the conflicting rule + an anchor target; drive with
+  //     anchorTest.js (targetSelector '#target', no clickSelector).
+  siteScrollPad(){
+    const st=document.createElement('style');st.textContent=':root{scroll-padding-top:0px!important}';
+    document.head.appendChild(st);
+    const nav=document.createElement('div');nav.innerHTML='<a id="jump" href="#target">jump</a>';
+    const spacer=document.createElement('div');spacer.style.height='1500px';
+    const tgt=document.createElement('h2');tgt.id='target';tgt.textContent='ANCHOR TARGET';
+    const after=document.createElement('div');after.style.height='1500px';
+    document.getElementById('content').append(nav,spacer,tgt,after);
+  },
   // 18. Fixed header inside a `container-type:inline-size` ancestor. Query containers establish a
   //     containing block for fixed descendants (distinct trigger from transform/filter) — the bar
   //     is positioned relative to the container box, not the viewport. bandShift's translateY must

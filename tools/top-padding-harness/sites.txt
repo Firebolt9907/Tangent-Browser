@@ -95,6 +95,22 @@ https://www.crunchyroll.com
 https://www.wix.com
 https://www.godaddy.com
 https://mailchimp.com
+# --- iter 17: trickier header categories (RTL, GDPR consent-wall, sticky sub-nav, banking, gaming) ---
+https://substack.com
+https://dev.to
+https://www.bankofamerica.com
+https://www.wellsfargo.com
+https://store.steampowered.com
+https://www.roblox.com
+https://www.indeed.com
+https://www.glassdoor.com
+https://www.spiegel.de
+https://www.zeit.de
+https://www.haaretz.co.il
+https://www.flipkart.com
+https://www.salesforce.com
+https://www.target.com
+https://www.epicgames.com
 # maps.google.com is intentionally omitted: it is a full-bleed map app whose raster tiles are
 # meant to run edge-to-edge under a translucent status bar; only its floating search header is a
 # candidate for inset, and the shipping script handles that when present.

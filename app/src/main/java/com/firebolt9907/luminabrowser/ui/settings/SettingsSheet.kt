@@ -807,7 +807,7 @@ private fun AdvancedSettingsPage(
 
     Spacer(Modifier.height(20.dp))
 
-    SheetSectionHeader("Privacy & Security")
+    SheetSectionHeader("Anti-tracking & fingerprinting")
     Spacer(Modifier.height(8.dp))
     SheetCard {
         SettingsToggle(
@@ -890,7 +890,13 @@ private fun AdvancedSettingsPage(
                 haptics = haptics,
             )
         }
-        SheetRowDivider()
+    }
+
+    Spacer(Modifier.height(20.dp))
+
+    SheetSectionHeader("DNS & certificates")
+    Spacer(Modifier.height(8.dp))
+    SheetCard {
         SettingsPicker(
             title = "DNS over HTTPS (DoH)",
             subtitle = "Encrypt DNS queries to prevent tracking by your ISP",
@@ -949,7 +955,13 @@ private fun AdvancedSettingsPage(
                 onSettingChanged()
             },
         )
-        SheetRowDivider()
+    }
+
+    Spacer(Modifier.height(20.dp))
+
+    SheetSectionHeader("Site data & file access")
+    Spacer(Modifier.height(8.dp))
+    SheetCard {
         SettingsToggle(
             title = "DOM Storage",
             subtitle = "Enable LocalStorage and SessionStorage on web pages",
@@ -982,7 +994,13 @@ private fun AdvancedSettingsPage(
                 onSettingChanged()
             },
         )
-        SheetRowDivider()
+    }
+
+    Spacer(Modifier.height(20.dp))
+
+    SheetSectionHeader("Additional protections")
+    Spacer(Modifier.height(8.dp))
+    SheetCard {
         SettingsToggle(
             title = "Post-quantum cryptography",
             subtitle = "Secure HTTPS connections against future quantum attacks",

@@ -617,6 +617,14 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           network.early-hints.enabled: true
           network.early-hints.preconnect.enabled: true
           network.fetchpriority.enabled: true
+          # Chrome-parity companion: disable HTTP/2 Server Push. Push was the old way for a server
+          # to send sub-resources before the client asked, but it routinely re-sends assets the
+          # client already has cached (wasted radio + data + battery on mobile) and is hard for
+          # servers to get right — so Chrome removed support for it entirely in 2022. Early Hints
+          # above is its modern, opt-in replacement (the client decides what to fetch). Firefox
+          # still *accepts* pushed streams by default; turn that off so we match Chrome's posture
+          # (push off, Early Hints on) and never spend battery receiving unsolicited pushed bytes.
+          network.http.http2.allow-push: false
           # --- Credit-card autofill ---
           # Turn on Gecko's form-autofill detection for credit-card fields so it invokes our
           # autocomplete storage delegate (GeckoCreditCardsAddressesStorageDelegate) to offer/save

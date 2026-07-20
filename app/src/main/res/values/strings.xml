@@ -10,6 +10,7 @@
     <string name="received_tab_generic">Tab sent to this device</string>
 
     <!-- Launcher app-shortcuts (long-press the home-screen icon). -->
+    <string name="tile_new_tab_label">New Tab</string>
     <string name="shortcut_new_tab_short">New Tab</string>
     <string name="shortcut_new_tab_long">Open a new tab</string>
     <string name="shortcut_bookmarks_short">Bookmarks</string>

@@ -189,6 +189,19 @@
                 android:value="Keeps the browser process and its open tabs alive while backgrounded so the system low-memory killer does not discard them." />
         </service>
 
+        <!-- Quick Settings tile (notification shade → edit tiles): opens a new tab. Reuses the
+             ACTION_NEW_TAB launch path. BIND_QUICK_SETTINGS_TILE lets the system bind it. -->
+        <service
+            android:name=".service.NewTabTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_shortcut_new_tab"
+            android:label="@string/tile_new_tab_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

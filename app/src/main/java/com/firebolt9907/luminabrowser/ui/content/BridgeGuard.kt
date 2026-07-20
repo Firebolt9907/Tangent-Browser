@@ -6,6 +6,23 @@ import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 
 /**
+ * Full origin (`scheme://host[:port]`) of a web [url], or null for opaque/blank/non-http(s) URLs.
+ * Keying stored per-site data by the *full* origin (not the bare host) keeps `https://bank.com` and a
+ * downgraded/MITM'd `http://bank.com` in separate buckets — a plaintext origin must never read values
+ * captured over TLS. Uses `java.net.URI` (not `android.net.Uri`) so it's a real authority parse and
+ * JVM-testable, mirroring `sitePermissionOriginKey`. Top-level (not a [BridgeGuard] member) so tests
+ * can exercise it without initializing the object's `android.util.Base64`-backed nonce.
+ */
+internal fun bridgeTrustedOrigin(url: String?): String? {
+    if (url.isNullOrBlank()) return null
+    val parsed = runCatching { URI(url) }.getOrNull() ?: return null
+    val scheme = parsed.scheme?.lowercase()?.takeIf { it == "http" || it == "https" } ?: return null
+    val host = parsed.host?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+    val port = parsed.port
+    return if (port >= 0) "$scheme://$host:$port" else "$scheme://$host"
+}
+
+/**
  * Security guard for the shared `window.prompt` bridge — the `lumina-*` channel the autofill / UI
  * probes ([OtpAutofill], [LoginFieldProbe], [FormFieldMemory], [ThemeColorProbe],
  * [com.firebolt9907.luminabrowser.ui.content.LinkRectProbe]) use to smuggle data to the host through
@@ -74,7 +91,7 @@ object BridgeGuard {
     /** Record the real current URL for [tabId]; a non-web/blank URL clears any prior origin. */
     fun setTrustedOrigin(tabId: String?, url: String?) {
         if (tabId.isNullOrBlank()) return
-        val origin = originOf(url)
+        val origin = bridgeTrustedOrigin(url)
         if (origin != null) originByTab[tabId] = origin else originByTab.remove(tabId)
     }
 
@@ -85,19 +102,6 @@ object BridgeGuard {
         if (!tabId.isNullOrBlank()) originByTab.remove(tabId)
     }
 
-    /**
-     * Full origin (`scheme://host[:port]`) of a web [url], or null for opaque/blank/non-http(s) URLs.
-     * Keying stored per-site data by the *full* origin (not the bare host) keeps `https://bank.com`
-     * and a downgraded/MITM'd `http://bank.com` in separate buckets — a plaintext origin must never
-     * read values captured over TLS. Uses `java.net.URI` (not `android.net.Uri`) so it's a real
-     * authority parse and JVM-testable, mirroring `sitePermissionOriginKey`.
-     */
-    fun originOf(url: String?): String? {
-        if (url.isNullOrBlank()) return null
-        val parsed = runCatching { URI(url) }.getOrNull() ?: return null
-        val scheme = parsed.scheme?.lowercase()?.takeIf { it == "http" || it == "https" } ?: return null
-        val host = parsed.host?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
-        val port = parsed.port
-        return if (port >= 0) "$scheme://$host:$port" else "$scheme://$host"
-    }
+    /** Full origin (`scheme://host[:port]`) of a web [url]; see [bridgeTrustedOrigin]. */
+    fun originOf(url: String?): String? = bridgeTrustedOrigin(url)
 }

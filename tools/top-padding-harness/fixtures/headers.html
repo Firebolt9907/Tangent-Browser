@@ -137,6 +137,16 @@ const cases = {
     document.body.appendChild(p);
     try{p.showPopover();}catch(e){}
   },
+  // 18. Fixed header inside a `container-type:inline-size` ancestor. Query containers establish a
+  //     containing block for fixed descendants (distinct trigger from transform/filter) — the bar
+  //     is positioned relative to the container box, not the viewport. bandShift's translateY must
+  //     still lift it out of the band. Container has real height so the header is visible.
+  fixedInContainer(){
+    const wrap=document.createElement('div');wrap.style.cssText='container-type:inline-size;position:relative;min-height:2500px';
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:fixed;top:0;left:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">container-query header</span>';
+    wrap.appendChild(h);document.body.insertBefore(wrap,document.body.firstChild);
+  },
 };
 const c = new URLSearchParams(location.search).get('case');
 if (cases[c]) cases[c]();

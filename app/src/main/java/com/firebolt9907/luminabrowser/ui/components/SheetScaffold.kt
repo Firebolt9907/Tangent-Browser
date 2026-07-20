@@ -2,7 +2,15 @@ package com.firebolt9907.luminabrowser.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.ui.graphics.Color
+import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -139,6 +147,65 @@ fun SheetSearchField(
             autoCorrectEnabled = false,
             capitalization = KeyboardCapitalization.None,
         ),
+    )
+}
+
+/**
+ * Wraps a list row so it can be removed with a horizontal swipe (end-to-start), the iOS/Safari
+ * convention — replacing the persistent trailing trash-can [IconButton] that otherwise sits on
+ * every single row and clutters the list. Reveals a red delete affordance as the row is dragged
+ * and fires [onRemove] (with a haptic) once the swipe crosses the threshold. Swipe-back
+ * (start-to-end) is disabled so a stray drag can't trigger some other action.
+ *
+ * [content] should be the row itself (typically a [ListItem]); give it an opaque background so the
+ * red delete layer only shows while swiping. The caller must drop the item from its data on
+ * [onRemove] — once it leaves composition the settled dismiss state goes with it.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SwipeToRemoveRow(
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val haptics = rememberLuminaHaptics()
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart) {
+                haptics.remove()
+                onRemove()
+                true
+            } else {
+                false
+            }
+        },
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        modifier = modifier,
+        enableDismissFromStartToEnd = false,
+        backgroundContent = {
+            val swiping = dismissState.targetValue == SwipeToDismissBoxValue.EndToStart
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        if (swiping) MaterialTheme.colorScheme.errorContainer
+                        else Color.Transparent,
+                    )
+                    .padding(horizontal = 24.dp),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                if (swiping) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            }
+        },
+        content = { content() },
     )
 }
 

@@ -39,6 +39,7 @@ import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import com.firebolt9907.luminabrowser.ui.components.Favicon
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
+import com.firebolt9907.luminabrowser.ui.components.SwipeToRemoveRow
 import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.HistoryStorage
 import mozilla.components.concept.storage.VisitInfo
@@ -185,35 +186,36 @@ fun HistorySheet(
                             DateSectionHeader(dayLabel(date))
                         }
                         items(dayVisits, key = { it.visitTime }) { visit ->
-                            ListItem(
-                                modifier = Modifier.clickable { onOpenUrl(visit.url) },
-                                leadingContent = { Favicon(visit.url) },
-                                headlineContent = {
-                                    Text(
-                                        text = visit.title?.takeIf { it.isNotBlank() } ?: visit.url,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                supportingContent = {
-                                    Text(
-                                        text = "${visit.url}  ·  ${formatVisitTime(visit.visitTime)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                trailingContent = {
-                                    IconButton(onClick = {
-                                        scope.launch {
-                                            runCatching { historyStorage.deleteVisitsFor(visit.url) }
-                                            reload()
-                                        }
-                                    }) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Remove")
+                            // Swipe end-to-start to remove — keeps rows clean instead of a trash
+                            // icon on every one. See SwipeToRemoveRow.
+                            SwipeToRemoveRow(
+                                onRemove = {
+                                    scope.launch {
+                                        runCatching { historyStorage.deleteVisitsFor(visit.url) }
+                                        reload()
                                     }
                                 },
-                            )
+                            ) {
+                                ListItem(
+                                    modifier = Modifier.clickable { onOpenUrl(visit.url) },
+                                    leadingContent = { Favicon(visit.url) },
+                                    headlineContent = {
+                                        Text(
+                                            text = visit.title?.takeIf { it.isNotBlank() } ?: visit.url,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    supportingContent = {
+                                        Text(
+                                            text = "${visit.url}  ·  ${formatVisitTime(visit.visitTime)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                )
+                            }
                         }
                     }
                 }

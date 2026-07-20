@@ -553,6 +553,15 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           # setting / mediaPlaybackRequiresUserGesture=true); muted autoplay and tap-to-play are
           # unaffected. Pairs with SitePermissionController rejecting ContentAutoPlayAudible.
           media.autoplay.blocking_policy: 2
+          # Battery: also gate the Web Audio API behind the autoplay block. The policy above
+          # covers <audio>/<video>, but by default a page can create and start an AudioContext
+          # (Web Audio) with no user gesture at all — ad frames and idle game canvases routinely
+          # do this, running an audio DSP graph (and sometimes emitting sound) the moment the page
+          # loads. Setting this true makes a fresh AudioContext start "suspended" until a real user
+          # gesture, exactly like Chrome's autoplay policy, so background audio processing doesn't
+          # burn CPU/battery until the user actually interacts. Legitimate audio (a gesture, or the
+          # site calling resume() after one) is unaffected.
+          media.autoplay.block-webaudio: true
           # Media cache: larger in-memory media buffer + more aggressive readahead so audio/
           # video streams buffer further ahead and re-seek without re-fetching.
           media.memory_cache_max_size: 65536

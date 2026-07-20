@@ -22,6 +22,13 @@ class MainActivity : LuminaBrowserActivity() {
         ActivityResultContracts.RequestPermission(),
     ) { /* result ignored: if denied, notifications simply won't show until enabled in settings */ }
 
+    // SMS one-time-code (2FA) autofill via Play Services SMS User Consent. Registered as a field so
+    // its consent ActivityResultLauncher is set up before the activity starts. Armed only while
+    // foreground (onResume/onPause) so a backgrounded browser never starts watching for SMS.
+    private val otpSmsController = OtpSmsController(this) { code ->
+        com.firebolt9907.luminabrowser.ui.content.OtpAutofill.deliverCode(code)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
@@ -55,6 +62,25 @@ class MainActivity : LuminaBrowserActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIncomingIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // The page (OtpAutofill, via the JS detector + prompt bridge) calls this when it sees an OTP
+        // field; arm SMS User Consent then.
+        com.firebolt9907.luminabrowser.ui.content.OtpAutofill.smsListenStarter = {
+            otpSmsController.startListening()
+        }
+    }
+
+    override fun onPause() {
+        com.firebolt9907.luminabrowser.ui.content.OtpAutofill.smsListenStarter = null
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        otpSmsController.dispose()
+        super.onDestroy()
     }
 
     // MainActivity only receives its own explicit intents now: the LAUNCHER entry (no URL) and the

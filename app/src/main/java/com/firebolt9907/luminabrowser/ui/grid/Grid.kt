@@ -55,6 +55,9 @@ import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -76,6 +79,7 @@ import com.firebolt9907.luminabrowser.ui.LuminaHaptics
 import com.firebolt9907.luminabrowser.ui.content.LocalSiteTint
 import com.firebolt9907.luminabrowser.ui.content.siteTintOverlay
 import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
+import com.firebolt9907.luminabrowser.ui.shape.squirclePath
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -253,7 +257,25 @@ fun TabGridOverlay(
     var deckDragging by remember { mutableStateOf(false) }
     var deckScrollDrag by remember { mutableFloatStateOf(0f) }
     val deckScrollAnim = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { deckScrollAnim.snapTo(initialScrollPx) }
+    // Seed once to centre the selected tab. On a LATER stepPx change (container resize / inset settle
+    // after the overlay mounts) the stored scroll is in PIXELS of the OLD step, so RESCALE it into the
+    // new units — otherwise the pixel value keeps meaning the old number of cards while the draw and
+    // the cull (scrollBucket, below) start dividing by the new stepPx. The two then measure scroll in
+    // different units and diverge proportionally to the scroll distance: every on-screen card gets
+    // culled as you scroll away from the seed (the deck "thinks" the focused tab is far off to the
+    // side). Rescaling keeps the SAME card centred and both readers in the same units.
+    var lastStepPx by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(stepPx) {
+        val prev = lastStepPx
+        lastStepPx = stepPx
+        when {
+            prev <= 0f -> deckScrollAnim.snapTo(initialScrollPx)
+            prev != stepPx && !deckDragging -> {
+                val cardPos = deckScrollAnim.value / prev
+                deckScrollAnim.snapTo((cardPos * stepPx).coerceIn(0f, maxScrollPx))
+            }
+        }
+    }
     // Hard-bound the scroll to [0, maxScrollPx]. Without this the release fling re-applies the
     // release velocity on top of an already-projected target, so a decisive fling toward either
     // end SPRING-OVERSHOOTS past the last/first card: the front-card position (p) then lands off the
@@ -394,7 +416,11 @@ fun TabGridOverlay(
             }
         }
     }
-    val scrollBucket by remember { derivedStateOf { stackScrollFwd().roundToInt() } }
+    // Keyed on stepPx so the cull rebuilds against the CURRENT stackScrollFwd (itself remember(stepPx))
+    // whenever the step changes. Without the key this permanently captures the first stackScrollFwd and
+    // keeps dividing the pixel scroll by the OLD stepPx while the draw uses the new one — the cull then
+    // drifts off the drawn centre and blanks the whole deck as you scroll (see the seed rescale above).
+    val scrollBucket by remember(stepPx) { derivedStateOf { stackScrollFwd().roundToInt() } }
 
     Box(modifier = modifier.fillMaxSize()) {
         Box(
@@ -506,6 +532,7 @@ fun TabGridOverlay(
                     if (composeCard) {
                         GridTabCard(
                             tab = tab,
+                            isSelected = tab.id == selectedTabId,
                             containerW = containerW,
                             containerH = containerH,
                             containerHDp = containerHDp,
@@ -625,6 +652,7 @@ fun TabGridOverlay(
 @Composable
 private fun GridTabCard(
     tab: GridTab,
+    isSelected: Boolean,
     containerW: Float,
     containerH: Float,
     containerHDp: Dp,
@@ -666,6 +694,11 @@ private fun GridTabCard(
         if (tab.url.isBlankTabUrl()) "New tab page"
         else tab.title.ifBlank { hostLabel(tab.url).ifEmpty { tab.url } }
     }
+    // Primary-colored outline that marks the currently-selected tab in the deck (the one that
+    // reopens on close / commits under the predictive-back preview). Drawn draw-phase only so it
+    // costs nothing on non-selected cards and never recomposes on the drag hot path.
+    val selectedOutlineColor = MaterialTheme.colorScheme.primary
+    val selectedOutlineWidthPx = with(density) { 3.dp.toPx() }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -757,6 +790,48 @@ private fun GridTabCard(
                 // no halo during the near-fullscreen open/close morph.
                 shadowElevation = DeckCardShadowDp.toPx() * p
             }
+            .then(
+                if (isSelected) {
+                    Modifier.drawWithContent {
+                        drawContent()
+                        // Skip while the finger is dragging the carousel (no selection affordance
+                        // mid-gesture); otherwise ramp with the open progress so the outline grows
+                        // in as cards fan into the deck and fades out as the selected card fills the
+                        // screen on commit — mirroring the card's own shadow ramp.
+                        if (isGesture) return@drawWithContent
+                        val p = progress().coerceIn(0f, 1f)
+                        if (p <= 0.02f) return@drawWithContent
+                        val closeShift = closeShiftProvider(tab.id)
+                        val slot = slotProvider(tab.recencyRank - stackScroll() + closeShift)
+                        // The card is scaled by the layer; divide the stroke by that visual scale so
+                        // the outline keeps a constant on-screen weight regardless of deck depth.
+                        val scale = lerp(1f, slot.scale, p).coerceAtLeast(0.05f)
+                        val cropH = lerp(containerH, croppedPageHeightPx, p)
+                            .coerceIn(1f, size.height)
+                        val radius = lerp(browseCornerPx, deckCornerPx, p)
+                        val sw = selectedOutlineWidthPx / scale
+                        // Inset by half the stroke so the outer edge lands on the layer's clip
+                        // boundary (same CardCropShape) and the full stroke stays visible.
+                        val r = (radius - sw / 2f)
+                            .coerceIn(0f, min(size.width - sw, cropH - sw).coerceAtLeast(0f) / 2f)
+                        val path = squirclePath(
+                            w = (size.width - sw).coerceAtLeast(0f),
+                            h = (cropH - sw).coerceAtLeast(0f),
+                            r = r,
+                        )
+                        translate(sw / 2f, sw / 2f) {
+                            drawPath(
+                                path = path,
+                                color = selectedOutlineColor,
+                                alpha = p,
+                                style = Stroke(width = sw),
+                            )
+                        }
+                    }
+                } else {
+                    Modifier
+                }
+            )
             .background(
                 if (tab.url.isBlankTabUrl()) {
                     MaterialTheme.colorScheme.surface

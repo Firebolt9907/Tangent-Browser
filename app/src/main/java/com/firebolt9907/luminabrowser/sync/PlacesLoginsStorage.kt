@@ -4,7 +4,6 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.KeyStore
-import java.security.SecureRandom
 import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -19,19 +18,14 @@ import mozilla.components.concept.storage.LoginEntry
 import mozilla.components.concept.storage.LoginsStorage
 import mozilla.components.concept.sync.SyncableStore
 
-// Legacy alias: earlier builds generated an AndroidKeyStore AES key here and used its raw `.encoded`
-// bytes as the DB key. Kept only so the migration path can reuse those bytes on any device where
-// they were somehow non-null (see getOrCreateEncryptionKey).
-private const val KEYSTORE_ALIAS = "lumina_logins_encryption_key"
-// AndroidKeyStore AES-GCM key that *wraps* (encrypts) the DB key; the wrapping key itself never
-// leaves the keystore.
+// AndroidKeyStore AES-GCM key that *wraps* (encrypts) the appservices JWK DB key; the wrapping key
+// itself never leaves the keystore.
 private const val WRAP_KEY_ALIAS = "lumina_logins_key_wrap"
 private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
 
 private const val KEY_PREFS = "lumina_logins_key"
 private const val PREF_DB_KEY_IV = "db_key_iv"
 private const val PREF_DB_KEY_CT = "db_key_ct"
-private const val DB_KEY_SIZE_BYTES = 32
 private const val GCM_TAG_BITS = 128
 
 class PlacesLoginsStorage(
@@ -44,57 +38,74 @@ class PlacesLoginsStorage(
         parentFile?.mkdirs()
     }.absolutePath
 
+    // The encryption key appservices uses for the logins DB. Resolved EAGERLY here — and, crucially,
+    // BEFORE [nativeStorage] opens the DB file — so that when a fresh key has to be minted we can
+    // delete any stale, now-undecryptable DB before the store gets a handle on it. getKey() then
+    // just hands back these cached bytes (the appservices encryptor may call it on a sync thread).
+    private val encryptionKey: ByteArray = getOrCreateEncryptionKey()
+
     private val keyManager = object : KeyManager {
-        override fun getKey(): ByteArray = getOrCreateEncryptionKey()
+        override fun getKey(): ByteArray = encryptionKey
     }
 
     private val nativeStorage = DatabaseLoginsStorage(dbPath, keyManager)
 
-    // Provides the 256-bit key that appservices uses to encrypt the logins SQLite DB.
+    // Provides the key appservices uses to encrypt/decrypt the logins SQLite DB.
     //
-    // The previous implementation generated an AES key *inside* AndroidKeyStore and returned its
-    // raw `.encoded` bytes. AndroidKeyStore secret keys are non-exportable, so `.encoded` is `null`
-    // on essentially every device — the DB key was effectively null and the store never actually
-    // protected anything. AndroidKeyStore is meant to *use* keys via a Cipher, not hand out their
-    // bytes, so instead we keep a random DB key of our own and seal it with a keystore AES-GCM key:
-    //   1. Migration: if the old alias ever yielded usable raw bytes on this device, keep using them
-    //      so that device's existing encrypted DB stays readable (no data loss).
-    //   2. Otherwise load — or first-run create + persist — a random 256-bit DB key, stored as
-    //      GCM(IV‖ciphertext) sealed under the keystore wrapping key. Only the encrypted DB key
-    //      lands in SharedPreferences; the wrapping key never leaves the keystore.
+    // IMPORTANT — key FORMAT: appservices' `ManagedEncryptorDecryptor` does
+    // `std::str::from_utf8(get_key())` and parses the result as a **JWK** via
+    // `jwcrypto::EncryptorDecryptor::new(key)`. So `getKey()` must return the UTF-8 bytes of a key
+    // string produced by appservices' own `createKey()` (a `{"kty":"oct",...}` JWK). It must NOT be
+    // 32 raw random bytes — those fail the UTF-8/JWK parse with `InvalidKey`, which made every
+    // encrypt/decrypt (local add AND every incoming synced record) throw, so the store stayed
+    // permanently empty. That was the bug behind "no passwords ever show up".
     //
-    // Synchronized so a concurrent first-run getKey() can't race two threads into generating /
-    // persisting two different DB keys, which would make data encrypted with the first unreadable.
+    // The JWK is kept at rest sealed under an AndroidKeyStore AES-GCM wrapping key (the wrapping key
+    // itself never leaves the keystore); only the encrypted JWK lands in SharedPreferences.
+    //
+    // Synchronized so a concurrent first-run can't race two threads into minting / persisting two
+    // different keys, which would make data encrypted with the first unreadable.
     @Synchronized
     private fun getOrCreateEncryptionKey(): ByteArray {
-        migrateLegacyRawKey()?.let { return it }
-
         val prefs = appContext.getSharedPreferences(KEY_PREFS, Context.MODE_PRIVATE)
         val storedIv = prefs.getString(PREF_DB_KEY_IV, null)
         val storedCt = prefs.getString(PREF_DB_KEY_CT, null)
         if (storedIv != null && storedCt != null) {
-            runCatching {
+            val unwrapped = runCatching {
                 unwrapDbKey(Base64.getDecoder().decode(storedIv), Base64.getDecoder().decode(storedCt))
-            }.getOrNull()?.let { return it }
-            // Stored blob won't unwrap (e.g. the keystore wrapping key was invalidated). Fall through
-            // and regenerate: a store we can no longer unlock is already unusable.
+            }.getOrNull()
+            // Accept the stored key only if it's a well-formed appservices JWK. Earlier builds
+            // persisted 32 raw random bytes here (never a valid key); treat those — and any blob the
+            // keystore can no longer unwrap — as absent and regenerate below.
+            if (unwrapped != null && looksLikeJwkKey(unwrapped)) return unwrapped
         }
 
-        val dbKey = ByteArray(DB_KEY_SIZE_BYTES).also { SecureRandom().nextBytes(it) }
-        val (iv, ct) = wrapDbKey(dbKey)
+        // First run, a legacy raw-byte key, or a blob the keystore wrapping key can no longer
+        // unwrap (e.g. it was invalidated). Any logins DB on disk was written under a key we can no
+        // longer produce — or under the old broken key that never actually encrypted anything — so
+        // it can't be read with the new key. Drop it so the store starts clean and re-syncs from the
+        // account, then mint and persist a fresh appservices JWK.
+        wipeDatabaseFiles()
+        val keyBytes = mozilla.appservices.logins.createKey().toByteArray(Charsets.UTF_8)
+        val (iv, ct) = wrapDbKey(keyBytes)
         prefs.edit()
             .putString(PREF_DB_KEY_IV, Base64.getEncoder().encodeToString(iv))
             .putString(PREF_DB_KEY_CT, Base64.getEncoder().encodeToString(ct))
             .apply()
-        return dbKey
+        return keyBytes
     }
 
-    /** Legacy raw-key bytes from [KEYSTORE_ALIAS], or null if absent/non-exportable (the usual case). */
-    private fun migrateLegacyRawKey(): ByteArray? = runCatching {
-        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
-        (keyStore.getKey(KEYSTORE_ALIAS, null) as? SecretKey)?.encoded
-            ?.takeIf { it.size == DB_KEY_SIZE_BYTES }
-    }.getOrNull()
+    /** A createKey() JWK is JSON — a quick shape check to reject legacy raw-byte keys. */
+    private fun looksLikeJwkKey(bytes: ByteArray): Boolean =
+        runCatching { String(bytes, Charsets.UTF_8) }.getOrNull()
+            ?.trimStart()?.startsWith("{") == true
+
+    /** Delete the logins SQLite DB (and its WAL/SHM sidecars) — used when the key is regenerated. */
+    private fun wipeDatabaseFiles() {
+        runCatching {
+            listOf(dbPath, "$dbPath-wal", "$dbPath-shm").forEach { java.io.File(it).delete() }
+        }
+    }
 
     /** The AndroidKeyStore AES-GCM key that seals the DB key; created on first use. */
     private fun getOrCreateWrapKey(): SecretKey {

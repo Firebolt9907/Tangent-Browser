@@ -69,5 +69,5 @@ fun addressBarLabel(url: String, engine: SearchEngine, showSearchTerms: Boolean)
     if (showSearchTerms) {
         engine.searchTermsFrom(url)?.let { return it }
     }
-    return compactHost(url)
+    return compactHostWithPort(url)
 }

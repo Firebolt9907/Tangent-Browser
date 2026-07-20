@@ -278,7 +278,8 @@ fun CustomTabRoot(
     }
     LaunchedEffect(eligibleReaderTabs) {
         val id = customTabId ?: return@LaunchedEffect
-        if (eligibleReaderTabs.contains(id) && !readerManager.isReaderActive(id)) {
+        val substantial = readerManager.getArticle(id)?.hasSubstantialBody == true
+        if (substantial && eligibleReaderTabs.contains(id) && !readerManager.isReaderActive(id)) {
             readerAutoActivated = true
             readerManager.setReaderActive(id, true)
         }
@@ -489,7 +490,13 @@ fun CustomTabRoot(
                     )
                 }
 
-                PromptHandler(engineSession = session)
+                PromptHandler(
+                    engineSession = session,
+                    loginAutofillEnabled = components.globalPreferencesStore.loginAutofillEnabled,
+                    biometricAutofillRequired = components.globalPreferencesStore.biometricAutofillEnabled,
+                    creditCardAutofillEnabled = components.globalPreferencesStore.creditCardAutofillEnabled,
+                    addressAutofillEnabled = components.globalPreferencesStore.addressAutofillEnabled,
+                )
 
                 if (shouldShowUi) {
                     AnimatedVisibility(

@@ -159,7 +159,6 @@ import com.firebolt9907.luminabrowser.ui.theme.rememberSystemAccentColor
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineView
 import mozilla.components.concept.engine.window.WindowRequest
-import com.firebolt9907.luminabrowser.ui.content.extractCacheHtml
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -208,7 +207,6 @@ fun LuminaRoot(
         launch { readerManager.theme.collect { prefs.readerThemeName = it.name } }
         launch { readerManager.fontSize.collect { prefs.readerFontSize = it } }
         launch { readerManager.fontName.collect { prefs.readerFontName = it } }
-        launch { readerManager.useGoogleCache.collect { prefs.useGoogleCache = it } }
     }
 
     // Find-in-page state. The match counts are pushed by the engine session's onFindResult.
@@ -420,6 +418,16 @@ fun LuminaRoot(
     var bottomChromeInsetPx by remember { mutableIntStateOf(0) }
     // Transient "Send to device" prompt shown above the pill after copying a link; null = hidden.
     var sendLinkPrompt by remember { mutableStateOf<SendLinkPrompt?>(null) }
+    // Manual "paste SMS code" fallback banner: shown only when a page reports an OTP field (see
+    // OtpAutofill) AND the clipboard looks freshly changed (a code was likely just copied). Covers
+    // codes SMS User Consent can't auto-read. `otpFieldPresent` is armed by page detection;
+    // `clipWatcher` supplies the clipboard-changed signal without ever reading the clip contents
+    // (no Android 12+ paste toast) — see ClipboardChangeWatcher.
+    var otpPasteVisible by remember { mutableStateOf(false) }
+    var otpFieldPresent by remember { mutableStateOf(false) }
+    val clipWatcher = remember {
+        com.firebolt9907.luminabrowser.ui.content.ClipboardChangeWatcher(appContext)
+    }
     var contentSize by remember { mutableStateOf(IntSize.Zero) }
     val scope = rememberCoroutineScope()
 
@@ -589,6 +597,8 @@ fun LuminaRoot(
     var showContainers by remember { mutableStateOf(false) }
     var showSpaces by remember { mutableStateOf(false) }
     var showPasswords by remember { mutableStateOf(false) }
+    var showCreditCards by remember { mutableStateOf(false) }
+    var showAddresses by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
     var showDownloads by remember { mutableStateOf(false) }
@@ -690,9 +700,12 @@ fun LuminaRoot(
     LaunchedEffect(eligibleReaderTabs) {
         eligibleReaderTabs.forEach { tabId ->
             if (!readerManager.isReaderActive(tabId)) {
+                // Don't auto-open pages with too little body text (landing pages, galleries, link
+                // hubs) — they stay eligible for a manual toggle but shouldn't hijack the view.
+                val substantial = readerManager.getArticle(tabId)?.hasSubstantialBody == true
                 val url = browserState.tabs.firstOrNull { it.id == tabId }?.content?.url.orEmpty()
                 val host = hostFromUrl(url)
-                if (host.isNotEmpty() && !components.sitePreferencesStore.isReaderAutoDisabled(host)) {
+                if (substantial && host.isNotEmpty() && !components.sitePreferencesStore.isReaderAutoDisabled(host)) {
                     readerManager.setReaderActive(tabId, true)
                 }
             }
@@ -742,6 +755,10 @@ fun LuminaRoot(
                     components.firefoxSyncController.verifyAccount()
                     components.firefoxSyncController.checkForHandoffTab()
                     components.firefoxSyncController.startForegroundPeriodicSync()
+                    // Replay a clipboard change we couldn't observe live while backgrounded (the
+                    // copy-code-from-Messages-then-return flow): if the clip timestamp advanced and
+                    // an OTP field is still present, surface the paste banner. Metadata only.
+                    if (clipWatcher.consumeChanged() && otpFieldPresent) otpPasteVisible = true
                 }
                 Lifecycle.Event.ON_PAUSE ->
                     components.firefoxSyncController.stopForegroundPeriodicSync()
@@ -1042,6 +1059,49 @@ fun LuminaRoot(
         }
         onDispose { ThemeColorProbe.listener = null }
     }
+    // SMS one-time-code autofill: when the Activity extracts a code from an incoming SMS (via SMS
+    // User Consent), inject the fill script into the currently-selected tab. rememberUpdatedState so
+    // the code, delivered on the main thread from the consent-result callback, always targets the
+    // live session and not a stale capture.
+    val otpFillSession by rememberUpdatedState(selectedEngineSession)
+    DisposableEffect(Unit) {
+        com.firebolt9907.luminabrowser.ui.content.OtpAutofill.codeFiller = { code ->
+            otpFillSession?.loadJavascriptUrl(
+                com.firebolt9907.luminabrowser.ui.content.OtpAutofill.buildFillScript(code),
+            )
+        }
+        // Page reported an OTP field: arm the fallback, but only *show* the banner if the clipboard
+        // also looks freshly changed (a code was likely just copied). Fires on Gecko's thread, so
+        // marshal the state write back to main. consumeChanged() reads only clip metadata.
+        com.firebolt9907.luminabrowser.ui.content.OtpAutofill.onFieldDetected = {
+            scope.launch {
+                otpFieldPresent = true
+                if (clipWatcher.consumeChanged()) otpPasteVisible = true
+            }
+        }
+        onDispose {
+            com.firebolt9907.luminabrowser.ui.content.OtpAutofill.codeFiller = null
+            com.firebolt9907.luminabrowser.ui.content.OtpAutofill.onFieldDetected = null
+        }
+    }
+    // Live clipboard-change signal: while foreground, an in-app copy (or a paste from another app
+    // that surfaces here) flips the banner on if an OTP field is present. No contents are read — the
+    // listener carries no data; we only note that *something* changed. Background changes made by
+    // other apps don't fire this (Android restricts it to the focused app); those are recovered by
+    // the ON_RESUME timestamp comparison below.
+    DisposableEffect(clipWatcher) {
+        val listener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
+            if (clipWatcher.consumeChanged() && otpFieldPresent) otpPasteVisible = true
+        }
+        clipWatcher.addListener(listener)
+        onDispose { clipWatcher.removeListener(listener) }
+    }
+    // Retire the paste banner when switching tabs, and clear the armed field flag (the new page may
+    // have no OTP field; it re-arms if the detector fires again).
+    LaunchedEffect(actualSelectedTabId) {
+        otpPasteVisible = false
+        otpFieldPresent = false
+    }
     // Current site's declared theme color when the "Match website theme color" option is on — the
     // seed for the app-wide accent (LuminaBrowserTheme) and the bottom-bar pill tint (BottomBarLayer).
     // Null when the option is off or the site declared no color, in which case the chrome stays on
@@ -1096,17 +1156,23 @@ fun LuminaRoot(
         }
     }
     val currentSession by rememberUpdatedState(selectedEngineSession)
+    // The address sheet's currently highlighted top suggestion (see AddressSheet.onTopSuggestionChange).
+    // Held as a plain MutableState so the memoized callbacks below read its latest value at Go time.
+    val topSuggestion = remember { mutableStateOf<String?>(null) }
+    // The top suggestion's URL when it is a concrete page (History/Bookmark) — fed to the editing
+    // field for inline autocomplete. Search rows are excluded: there is no URL to complete toward.
+    val autocompleteSource = remember { mutableStateOf<String?>(null) }
     val callbacks = remember(viewModel, currentUrl) {
         BarCallbacks(
             onUrlTap = viewModel::onUrlTap,
             onEditingTextChange = viewModel::onEditingTextChange,
             onEditingSubmit = {
-                val text = viewModel.state.value.editingText.trim()
-                if (text.equals("debug:cache", ignoreCase = true) &&
-                    components.globalPreferencesStore.debugCacheHtml
-                ) {
-                    currentSession?.extractCacheHtml()
-                    viewModel.onEditingCancel()
+                // Commit the autoselected top suggestion when one is present (desktop-browser
+                // behavior); fall back to the raw typed text otherwise. onSubmitText and
+                // onEditingSubmit both run the same normalizeUrl path.
+                val top = topSuggestion.value
+                if (!top.isNullOrBlank()) {
+                    viewModel.onSubmitText(top)
                 } else {
                     viewModel.onEditingSubmit()
                 }
@@ -2083,7 +2149,7 @@ fun LuminaRoot(
             selectedTabId?.let { components.sessionUseCases.exitFullscreen.invoke(it) }
         }
 
-        PredictiveBackHandler(enabled = predictiveBackGestureEnabled && !isVideoFullscreen) { progress ->
+        PredictiveBackHandler(enabled = predictiveBackGestureEnabled && !gridOpen && !isVideoFullscreen) { progress ->
             try {
                 gestureCurrentSnapshot = currentPageSnapshot
                 activePredictiveBackSnapshot = predictiveBackSnapshot
@@ -2138,8 +2204,44 @@ fun LuminaRoot(
             }
         }
 
-        BackHandler(enabled = gridOpen && !isVideoFullscreen) {
-            closeGrid(animateBack = true)
+        // Predictive back in the tab switcher: pulling back zooms the deck toward the selected
+        // card so you can see which tab you'll land on before committing, then closes into it on
+        // release — or springs the deck back fully open if you let go early. On 3-button nav the
+        // flow emits nothing and completes straight to the commit branch, so Back still closes the
+        // grid. Both grid springs are driven directly by snapTo inside this single collect
+        // coroutine (not a per-frame scope.launch), so invariant #4's "no snapTo on the drag hot
+        // path" — which forbids per-frame coroutine launches — is respected. gridGestureActive
+        // stays false so the render reads the Animatable progress/xProgress and the cards zoom from
+        // their column layout into the selected card, rather than taking the carousel-morph path.
+        PredictiveBackHandler(enabled = gridOpen && !isVideoFullscreen) { progress ->
+            // How far the preview zoom goes at full drag: not all the way to 0 (a committed close),
+            // so cancel still has somewhere to spring back from and the selected card stays legible.
+            val gridBackPreviewFloor = 0.12f
+            try {
+                gridAnimationJob?.cancel()
+                gridAnimationJob = null
+                progress.collect { backEvent ->
+                    val p = backEvent.progress.coerceIn(0f, 1f)
+                    val target = 1f - (1f - gridBackPreviewFloor) * p
+                    gridProgressState.snapTo(target)
+                    gridXProgressState.snapTo(target)
+                }
+                // Committed: finish the zoom into the selected card (closeGrid springs from the
+                // current preview position down to 0 and re-selects the live tab).
+                luminaHaptics.gridEngage()
+                closeGrid(animateBack = true)
+            } catch (_: CancellationException) {
+                // Cancelled: spring the deck back fully open from wherever the preview left it.
+                gridAnimationJob?.cancel()
+                gridAnimationJob = scope.launch {
+                    val s = LuminaMotion.GridOpen
+                    coroutineScope {
+                        launch { gridProgressState.animateTo(1f, animationSpec = s) }
+                        launch { gridXProgressState.animateTo(1f, animationSpec = s) }
+                    }
+                    gridAnimationJob = null
+                }
+            }
         }
 
         BackHandler(enabled = selectedContent?.canGoBack == true && !predictiveBackGestureEnabled && !gridOpen && !isVideoFullscreen) {
@@ -2836,6 +2938,8 @@ fun LuminaRoot(
                             onShowHistory = { showHistory = true },
                             onShowDownloads = { showDownloads = true },
                             onShowPasswords = { showPasswords = true },
+                            onShowCreditCards = { showCreditCards = true },
+                            onShowAddresses = { showAddresses = true },
                             onShowSettings = { showSettings = true },
                         )
                     }
@@ -2893,14 +2997,13 @@ fun LuminaRoot(
                     historyStorage = components.historyStorage,
                     bookmarksStorage = components.bookmarksStorage,
                     onSubmit = { text ->
-                        if (text.trim().equals("debug:cache", ignoreCase = true) &&
-                            components.globalPreferencesStore.debugCacheHtml
-                        ) {
-                            selectedEngineSession?.extractCacheHtml()
-                            viewModel.onEditingCancel()
-                        } else {
-                            viewModel.onSubmitText(text)
-                        }
+                        viewModel.onSubmitText(text)
+                    },
+                    onTopSuggestionChange = { row ->
+                        topSuggestion.value = row?.url
+                        autocompleteSource.value = row
+                            ?.takeIf { it.kind != com.firebolt9907.luminabrowser.state.AddressSuggestionKind.Search }
+                            ?.url
                     },
                     onPreconnect = { components.speculativePreconnector.preconnect(it) },
                     onPreloadPage = { url ->
@@ -2978,6 +3081,7 @@ fun LuminaRoot(
                         tabCount = tabCount,
                         activeState = pendingActiveBarState ?: state,
                         callbacks = callbacks,
+                        inlineAutocomplete = autocompleteSource.value,
                         onPrimaryUrlTap = onPrimaryUrlTap,
                         onDragStart = onPillDragStart,
                         onDragDelta = onPillDragDelta,
@@ -3056,6 +3160,36 @@ fun LuminaRoot(
                             sendLinkPrompt = null
                         },
                         onDismiss = { sendLinkPrompt = null },
+                    )
+
+                    // Manual SMS-code paste fallback (see OtpAutofill). Auto-retire after a window so
+                    // it doesn't linger once the user has moved on.
+                    LaunchedEffect(otpPasteVisible) {
+                        if (otpPasteVisible) {
+                            kotlinx.coroutines.delay(30000L)
+                            otpPasteVisible = false
+                        }
+                    }
+                    com.firebolt9907.luminabrowser.ui.sync.OtpPasteBannerHost(
+                        visible = otpPasteVisible,
+                        bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        onPaste = {
+                            val clip = clipboardManager.getText()?.text
+                            val code = clip?.let {
+                                com.firebolt9907.luminabrowser.ui.content.OtpAutofill.extractCode(it)
+                            }
+                            if (code != null) {
+                                com.firebolt9907.luminabrowser.ui.content.OtpAutofill.deliverCode(code)
+                            } else {
+                                android.widget.Toast.makeText(
+                                    appContext,
+                                    "No code found in clipboard",
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                            otpPasteVisible = false
+                        },
+                        onDismiss = { otpPasteVisible = false },
                     )
 
                     // In-app banner for a tab another device just pushed here via "Send tab".
@@ -3143,6 +3277,10 @@ fun LuminaRoot(
             onDismissContainers = { showContainers = false },
             showPasswords = showPasswords,
             onDismissPasswords = { showPasswords = false },
+            showCreditCards = showCreditCards,
+            onDismissCreditCards = { showCreditCards = false },
+            showAddresses = showAddresses,
+            onDismissAddresses = { showAddresses = false },
             showHistory = showHistory,
             onDismissHistory = { showHistory = false },
             showBookmarks = showBookmarks,
@@ -3177,5 +3315,9 @@ fun LuminaRoot(
             imageMenuUrl = imageMenuUrl,
             onDismissImageMenu = { imageMenuUrl = null },
         )
+
+        // "This site can't load over HTTPS — open it over HTTP?" prompt, raised when a navigation
+        // fails under HTTPS-Only mode (e.g. a self-hosted immich.lab with no TLS).
+        HttpsOnlyExceptionDialog(components)
     }
 }

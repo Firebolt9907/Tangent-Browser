@@ -313,8 +313,6 @@ private fun PageTabContent(
     var zoomFactor by remember(host) { mutableFloatStateOf(initial.zoomFactor) }
     var topPaddingFix by remember(host) { mutableStateOf(initial.topPaddingFix) }
     var desktopMode by remember(host) { mutableStateOf(initial.desktopMode) }
-    var useGoogleCache by remember { mutableStateOf(globalPrefsStore.useGoogleCache) }
-    var showDebugCacheToggle by remember { mutableStateOf(false) }
     val canEdit = host.isNotEmpty()
 
     // null = not set, "" = Default browser, "com.foo" = specific app
@@ -835,35 +833,6 @@ private fun PageTabContent(
                     haptics.toggle(desktopMode)
                 },
             )
-
-            Spacer(Modifier.height(12.dp))
-
-            AaToggleRow(
-                title = "Bypass via Google Cache",
-                subtitle = "Load reader content from Google's scraper cache",
-                checked = useGoogleCache,
-                enabled = canEdit,
-                onToggle = {
-                    useGoogleCache = !useGoogleCache
-                    globalPrefsStore.useGoogleCache = useGoogleCache
-                    readerManager.setUseGoogleCache(useGoogleCache)
-                    haptics.toggle(useGoogleCache)
-                },
-                onLongClick = { showDebugCacheToggle = !showDebugCacheToggle },
-            )
-
-            if (showDebugCacheToggle) {
-                Spacer(Modifier.height(8.dp))
-                AaToggleRow(
-                    title = "Debug: show parsed HTML",
-                    subtitle = "Type debug:cache in address bar to inspect raw HTML",
-                    checked = globalPrefsStore.debugCacheHtml,
-                    enabled = canEdit,
-                    onToggle = {
-                        globalPrefsStore.debugCacheHtml = !globalPrefsStore.debugCacheHtml
-                    },
-                )
-            }
         }
 
         // ---------- 6. Secondary actions: reading list + open-in ----------

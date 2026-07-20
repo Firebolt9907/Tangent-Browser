@@ -268,6 +268,23 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `first header-inset pass is synchronous so it shares one layout pass with the body spacer`() {
+        // The body spacer div is inserted synchronously; if the fixed/sticky header inset is only
+        // queued via schedule() (rAF), the header visibly jumps down a frame after content already
+        // shifted. The first pass must call applyHeaderInsets() directly; only the follow-up passes
+        // go through the debounced schedule().
+        val s = script()
+        assertTrue(
+            "first pass runs synchronously",
+            s.contains("applyHeaderInsets();setTimeout(schedule,1000);"),
+        )
+        assertFalse(
+            "must not defer the first pass to the next frame",
+            s.contains("if(!skipHeader){schedule();"),
+        )
+    }
+
+    @Test
     fun `scroll-padding-top targets both html and body scroll roots (iter 41)`() {
         // Anchor jumps must land below the inset header whether html OR body is the scroll
         // container; scroll-padding only affects where anchored scrolls land, never layout, so

@@ -9,8 +9,9 @@ import org.json.JSONObject
  * Lightweight on-disk persistence for the open tab set, so tabs survive app restarts.
  *
  * Each tab is stored with the last time it was viewed; [load] drops any tab whose last
- * access is older than [maxAgeMillis] (72h auto-discard). State is written as a small JSON
- * file in the app's private storage.
+ * access is older than [maxAgeMillis] (the user-configurable auto-archive window; 72h by default,
+ * or [Long.MAX_VALUE] to keep tabs forever). State is written as a small JSON file in the app's
+ * private storage.
  *
  * [PersistedTab.engineStateJson] is an opaque serialized GeckoView `EngineSessionState`
  * (back/forward history stack, scroll position, form data). It is produced/consumed by

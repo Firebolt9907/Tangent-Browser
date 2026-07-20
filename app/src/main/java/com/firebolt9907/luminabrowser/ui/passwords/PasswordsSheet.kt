@@ -61,7 +61,6 @@ import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import com.firebolt9907.luminabrowser.ui.components.Favicon
 import com.firebolt9907.luminabrowser.sync.PlacesLoginsStorage
 import kotlinx.coroutines.launch
-import mozilla.components.concept.storage.Login
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,16 +70,29 @@ fun PasswordsSheet(
 ) {
     val scope = rememberCoroutineScope()
     val haptics = rememberLuminaHaptics()
-    var logins by remember { mutableStateOf<List<Login>>(emptyList()) }
+    // Hold only non-secret metadata (origin, username, password length) for the list — never the
+    // decrypted passwords themselves. list() briefly decrypts every record, but we map to metadata
+    // and drop the Login objects immediately, so the plaintext passwords become GC-eligible right
+    // after load instead of sitting in Compose memory the whole time the sheet is open. A single
+    // password is decrypted on demand only when the user reveals or copies that one row (see
+    // PasswordRow), and is never stashed in long-lived state. This bounds plaintext-in-memory to the
+    // one secret the user is actively looking at.
+    var entries by remember { mutableStateOf<List<LoginMeta>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf<String?>(null) }
 
+    // Re-read storage and project to metadata. The `List<Login>` from list() is not retained past
+    // this map, so its decrypted passwords don't linger.
+    suspend fun reload(): List<LoginMeta> =
+        runCatching { loginsStorage.list().map { LoginMeta(it.guid, it.origin, it.username, it.password.length) } }
+            .getOrDefault(emptyList())
+
     LaunchedEffect(Unit) {
         // Guard against storage/decryption errors so a read failure shows an empty list rather
         // than crashing this screen (and never clearing the loading state).
-        logins = runCatching { loginsStorage.list() }.getOrDefault(emptyList())
+        entries = reload()
         loading = false
     }
 
@@ -107,7 +119,7 @@ fun PasswordsSheet(
                     .padding(vertical = 24.dp),
             )
         } else {
-            val filtered = if (searchQuery.isBlank()) logins else logins.filter {
+            val filtered = if (searchQuery.isBlank()) entries else entries.filter {
                 it.origin.contains(searchQuery, ignoreCase = true) ||
                     it.username.contains(searchQuery, ignoreCase = true)
             }
@@ -128,10 +140,13 @@ fun PasswordsSheet(
                 }
             } else {
                 LazyColumn(modifier = Modifier.height(320.dp)) {
-                    items(filtered, key = { it.guid }) { login ->
+                    items(filtered, key = { it.guid }) { meta ->
                         PasswordRow(
-                            login = login,
-                            onDelete = { showDeleteConfirm = login.guid },
+                            meta = meta,
+                            // On-demand, transient decryption: fetch this one record's password only
+                            // when the row needs it (reveal/copy), never for the whole list.
+                            fetchPassword = { runCatching { loginsStorage.get(meta.guid)?.password }.getOrNull() },
+                            onDelete = { showDeleteConfirm = meta.guid },
                         )
                     }
                 }
@@ -160,10 +175,8 @@ fun PasswordsSheet(
                 scope.launch {
                     // Don't let an add failure (e.g. invalid record) crash the screen; refresh
                     // the list afterward so the UI reflects whatever actually persisted.
-                    runCatching {
-                        loginsStorage.add(entry)
-                        loginsStorage.list()
-                    }.onSuccess { logins = it }
+                    runCatching { loginsStorage.add(entry) }
+                    entries = reload()
                 }
                 showAddDialog = false
             },
@@ -171,21 +184,19 @@ fun PasswordsSheet(
     }
 
     showDeleteConfirm?.let { guid ->
-        val login = logins.find { it.guid == guid }
+        val entry = entries.find { it.guid == guid }
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = null },
             title = { Text("Delete password?") },
             text = {
-                Text("Remove saved password for ${login?.origin ?: "this site"}?")
+                Text("Remove saved password for ${entry?.origin ?: "this site"}?")
             },
             confirmButton = {
                 TextButton(onClick = {
                     haptics.remove()
                     scope.launch {
-                        runCatching {
-                            loginsStorage.delete(guid)
-                            loginsStorage.list()
-                        }.onSuccess { logins = it }
+                        runCatching { loginsStorage.delete(guid) }
+                        entries = reload()
                     }
                     showDeleteConfirm = null
                 }) {
@@ -201,20 +212,37 @@ fun PasswordsSheet(
     }
 }
 
+/**
+ * Non-secret projection of a stored login shown in the list. Deliberately does NOT carry the
+ * password — only its length, so the row can render the right number of masking dots without holding
+ * the plaintext. The real password is fetched on demand via [PasswordRow]'s `fetchPassword`.
+ */
+private data class LoginMeta(
+    val guid: String,
+    val origin: String,
+    val username: String,
+    val passwordLength: Int,
+)
+
 @Composable
 private fun PasswordRow(
-    login: Login,
+    meta: LoginMeta,
+    fetchPassword: suspend () -> String?,
     onDelete: () -> Unit,
 ) {
-    var showPassword by remember { mutableStateOf(false) }
+    // The one place a plaintext password can live in this screen: only while the user is actively
+    // revealing THIS row, and cleared the moment they hide it or the row leaves composition. The
+    // list itself never holds decrypted passwords.
+    var revealed by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
     ListItem(
-        leadingContent = { Favicon(login.origin) },
+        leadingContent = { Favicon(meta.origin) },
         headlineContent = {
             Text(
-                text = login.origin.takeLastWhile { it != '/' }
-                    .ifEmpty { login.origin }
+                text = meta.origin.takeLastWhile { it != '/' }
+                    .ifEmpty { meta.origin }
                     .removePrefix("www."),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -223,13 +251,13 @@ private fun PasswordRow(
         supportingContent = {
             Column {
                 Text(
-                    text = login.username.ifEmpty { "(no username)" },
+                    text = meta.username.ifEmpty { "(no username)" },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    text = if (showPassword) login.password else "•".repeat(login.password.length.coerceAtMost(20)),
+                    text = revealed ?: "•".repeat(meta.passwordLength.coerceAtMost(20)),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall,
@@ -239,15 +267,27 @@ private fun PasswordRow(
         },
         trailingContent = {
             Row {
-                IconButton(onClick = { showPassword = !showPassword }) {
+                IconButton(onClick = {
+                    if (revealed != null) {
+                        revealed = null
+                    } else {
+                        scope.launch { revealed = fetchPassword() }
+                    }
+                }) {
                     Icon(
-                        if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = if (showPassword) "Hide" else "Show",
+                        if (revealed != null) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        contentDescription = if (revealed != null) "Hide" else "Show",
                     )
                 }
                 IconButton(onClick = {
-                    copyPasswordToClipboard(context, login.password)
-                    Toast.makeText(context, "Password copied", Toast.LENGTH_SHORT).show()
+                    // Decrypt transiently just for the copy; don't retain it in state.
+                    scope.launch {
+                        val password = fetchPassword()
+                        if (password != null) {
+                            copyPasswordToClipboard(context, password)
+                            Toast.makeText(context, "Password copied", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }) {
                     Icon(Icons.Default.ContentCopy, contentDescription = "Copy password")
                 }

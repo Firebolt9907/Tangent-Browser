@@ -181,24 +181,14 @@ class CustomTabActivity : LuminaBrowserActivity() {
                 "exitBundle=${config.exitAnimations != null} referrer=$referrer " +
                 "closeAnimation=$closeAnimation",
         )
-        val useCache = ReaderManager.instance.useGoogleCache.value &&
-            com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache(url)
-        val targetUrl = if (useCache) {
-            com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl(url)
-        } else {
-            url
-        }
         val id = app.components.customTabsUseCases.add.invoke(
-            targetUrl,
+            url,
             config,
             false,
             null,
             SessionState.Source.External.CustomTab(null),
         )
         customTabId = id
-        if (useCache) {
-            ReaderManager.instance.setOriginalUrl(id, url)
-        }
         // Open straight into reader when the page turns out to be a readable article.
         ReaderManager.instance.requestReaderActivation(id)
     }

@@ -755,27 +755,58 @@ object ReaderExtractor {
             session: GeckoSession,
             prompt: GeckoSession.PromptDelegate.TextPrompt
         ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse>? {
+            // Nonce-protected `lumina-*` bridge channel. Only messages tagged with this process's
+            // BridgeGuard nonce are honoured; a page/ad script forging our namespace (wrong/missing
+            // nonce) is swallowed silently. See BridgeGuard for the rationale.
+            when (val resolved = com.firebolt9907.luminabrowser.ui.content.BridgeGuard.resolve(prompt.message)) {
+                is com.firebolt9907.luminabrowser.ui.content.BridgeGuard.Resolved.Rejected ->
+                    return GeckoResult.fromValue(prompt.dismiss())
+                is com.firebolt9907.luminabrowser.ui.content.BridgeGuard.Resolved.Accepted -> {
+                    when (resolved.name) {
+                        com.firebolt9907.luminabrowser.ui.content.LinkRectProbe.BRIDGE_MESSAGE -> {
+                            prompt.defaultValue?.let {
+                                com.firebolt9907.luminabrowser.ui.content.LinkRectProbe.onPayload(it)
+                            }
+                            return GeckoResult.fromValue(prompt.confirm("ok"))
+                        }
+                        com.firebolt9907.luminabrowser.ui.content.ThemeColorProbe.BRIDGE_MESSAGE -> {
+                            prompt.defaultValue?.let {
+                                com.firebolt9907.luminabrowser.ui.content.ThemeColorProbe.onPayload(tabId, it)
+                            }
+                            return GeckoResult.fromValue(prompt.confirm("ok"))
+                        }
+                        com.firebolt9907.luminabrowser.ui.content.OtpAutofill.BRIDGE_MESSAGE -> {
+                            prompt.defaultValue?.let {
+                                com.firebolt9907.luminabrowser.ui.content.OtpAutofill.onPayload(tabId, it)
+                            }
+                            return GeckoResult.fromValue(prompt.confirm("ok"))
+                        }
+                        com.firebolt9907.luminabrowser.ui.content.FormFieldMemory.SAVE_MESSAGE -> {
+                            prompt.defaultValue?.let {
+                                com.firebolt9907.luminabrowser.ui.content.FormFieldMemory.onSave(tabId, it)
+                            }
+                            return GeckoResult.fromValue(prompt.confirm("ok"))
+                        }
+                        com.firebolt9907.luminabrowser.ui.content.FormFieldMemory.GET_MESSAGE -> {
+                            val res = prompt.defaultValue?.let {
+                                com.firebolt9907.luminabrowser.ui.content.FormFieldMemory.getSuggestions(tabId, it)
+                            } ?: "[]"
+                            return GeckoResult.fromValue(prompt.confirm(res))
+                        }
+                        com.firebolt9907.luminabrowser.ui.content.LoginFieldProbe.BRIDGE_MESSAGE -> {
+                            prompt.defaultValue?.let {
+                                com.firebolt9907.luminabrowser.ui.content.LoginFieldProbe.onPayload(tabId, it)
+                            }
+                            return GeckoResult.fromValue(prompt.confirm("ok"))
+                        }
+                        else -> return GeckoResult.fromValue(prompt.dismiss())
+                    }
+                }
+                is com.firebolt9907.luminabrowser.ui.content.BridgeGuard.Resolved.Foreign -> Unit /* fall through */
+            }
             if (prompt.message == "lumina-video") {
                 prompt.defaultValue?.let {
                     com.firebolt9907.luminabrowser.ui.video.VideoPlayerManager.onStatePayload(it)
-                }
-                return GeckoResult.fromValue(prompt.confirm("ok"))
-            }
-            if (prompt.message == com.firebolt9907.luminabrowser.ui.content.LinkRectProbe.BRIDGE_MESSAGE) {
-                prompt.defaultValue?.let {
-                    com.firebolt9907.luminabrowser.ui.content.LinkRectProbe.onPayload(it)
-                }
-                return GeckoResult.fromValue(prompt.confirm("ok"))
-            }
-            if (prompt.message == com.firebolt9907.luminabrowser.ui.content.ThemeColorProbe.BRIDGE_MESSAGE) {
-                prompt.defaultValue?.let {
-                    com.firebolt9907.luminabrowser.ui.content.ThemeColorProbe.onPayload(tabId, it)
-                }
-                return GeckoResult.fromValue(prompt.confirm("ok"))
-            }
-            if (prompt.message == com.firebolt9907.luminabrowser.ui.content.OtpAutofill.BRIDGE_MESSAGE) {
-                prompt.defaultValue?.let {
-                    com.firebolt9907.luminabrowser.ui.content.OtpAutofill.onPayload(tabId, it)
                 }
                 return GeckoResult.fromValue(prompt.confirm("ok"))
             }

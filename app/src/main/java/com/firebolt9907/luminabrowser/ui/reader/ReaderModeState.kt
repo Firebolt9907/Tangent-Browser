@@ -15,7 +15,43 @@ data class ReaderArticle(
      * CDNs with hotlink protection (which 403 requests that carry no/foreign referer) serve them.
      */
     val sourceUrl: String? = null,
-)
+) {
+    /**
+     * Total length of the extracted *prose* — paragraphs, list items, blockquotes, code, and table
+     * cells. Headings and images are excluded: a page can produce a title + a hero image + a couple
+     * of nav headings and still be extracted as an "article" with essentially no body to read.
+     */
+    val bodyTextLength: Int by lazy {
+        blocks.sumOf { block ->
+            when (block) {
+                is ReaderBlock.Paragraph -> block.text.length
+                is ReaderBlock.ListItem -> block.text.length
+                is ReaderBlock.Blockquote -> block.text.length
+                is ReaderBlock.Code -> block.text.length
+                is ReaderBlock.Table -> block.rows.sumOf { row -> row.sumOf { it.length } }
+                else -> 0
+            }
+        }
+    }
+
+    /**
+     * Whether the article carries enough body text to be worth auto-opening into reader view. Guards
+     * against auto-activating on pages the extractor technically "parsed" but that have little real
+     * prose (landing pages, image galleries, link hubs). Manual reader activation is *not* gated on
+     * this — the user can still force reader mode on a thin page from the aA sheet.
+     */
+    val hasSubstantialBody: Boolean
+        get() = bodyTextLength >= MIN_AUTO_READER_BODY_CHARS
+
+    companion object {
+        /**
+         * Minimum extracted prose length (characters) for reader mode to engage *automatically*.
+         * Mirrors Readability's own `charThreshold` default of 500 — below this a page reads more
+         * like a stub than an article.
+         */
+        const val MIN_AUTO_READER_BODY_CHARS = 500
+    }
+}
 
 data class ReaderLinkSpan(
     val text: String,
@@ -70,15 +106,6 @@ class ReaderManager {
     private val _fontName = MutableStateFlow("System") // System, Georgia, Charter, Athelas
     val fontName: StateFlow<String> = _fontName.asStateFlow()
 
-    private val _useGoogleCache = MutableStateFlow(false)
-    val useGoogleCache: StateFlow<Boolean> = _useGoogleCache.asStateFlow()
-
-    private val _originalUrls = MutableStateFlow<Map<String, String>>(emptyMap())
-    val originalUrls: StateFlow<Map<String, String>> = _originalUrls.asStateFlow()
-
-    private val _restoringTabs = MutableStateFlow<Set<String>>(emptySet())
-    val restoringTabs: StateFlow<Set<String>> = _restoringTabs.asStateFlow()
-
     fun isReaderActive(tabId: String): Boolean = _activeReaderTabs.value.contains(tabId)
     
     fun isReaderEligible(tabId: String): Boolean = _eligibleReaderTabs.value.contains(tabId)
@@ -111,7 +138,10 @@ class ReaderManager {
         _eligibleReaderTabs.update { it + tabId }
         _tabArticles.update { it + (tabId to article) }
 
-        if (_pendingActivationTabs.value.contains(tabId)) {
+        // Only fulfill a pending auto-activation when the page actually has enough prose to read;
+        // a thin page stays eligible (reader can be turned on by hand) but won't pop into reader
+        // view on its own.
+        if (_pendingActivationTabs.value.contains(tabId) && article.hasSubstantialBody) {
             _pendingActivationTabs.update { it - tabId }
             _activeReaderTabs.update { it + tabId }
         }
@@ -121,8 +151,6 @@ class ReaderManager {
         _activeReaderTabs.update { it - tabId }
         _eligibleReaderTabs.update { it - tabId }
         _tabArticles.update { it - tabId }
-        _originalUrls.update { it - tabId }
-        _restoringTabs.update { it - tabId }
         // If this tab was being read aloud, its content is now stale — stop TTS.
         PageSpeaker.stopForTab(tabId)
     }
@@ -139,34 +167,16 @@ class ReaderManager {
         _fontName.value = newFont
     }
 
-    fun setUseGoogleCache(enabled: Boolean) {
-        _useGoogleCache.value = enabled
-    }
-
-    fun setOriginalUrl(tabId: String, url: String?) {
-        _originalUrls.update { current ->
-            if (url == null) current - tabId else current + (tabId to url)
-        }
-    }
-
-    fun getOriginalUrl(tabId: String): String? = _originalUrls.value[tabId]
-
-    fun setRestoring(tabId: String, restoring: Boolean) {
-        _restoringTabs.update { if (restoring) it + tabId else it - tabId }
-    }
-
-    fun isRestoring(tabId: String): Boolean = _restoringTabs.value.contains(tabId)
-
     companion object {
         val instance = ReaderManager()
     }
 }
 
 /**
- * Loads the persisted reader appearance (theme / font size / font / Google-cache toggle) into the
- * Context-less [ReaderManager] singleton. Both browser surfaces call this on launch — the main
- * browser (which also mirrors changes back to the store) and Custom Tabs, which may start in their
- * own task without MainActivity ever having hydrated the manager.
+ * Loads the persisted reader appearance (theme / font size / font) into the Context-less
+ * [ReaderManager] singleton. Both browser surfaces call this on launch — the main browser (which
+ * also mirrors changes back to the store) and Custom Tabs, which may start in their own task without
+ * MainActivity ever having hydrated the manager.
  */
 fun ReaderManager.hydrateAppearanceFromPrefs(prefs: GlobalPreferencesStore) {
     prefs.readerThemeName
@@ -174,19 +184,5 @@ fun ReaderManager.hydrateAppearanceFromPrefs(prefs: GlobalPreferencesStore) {
         ?.let { setTheme(it) }
     setFontSize(prefs.readerFontSize)
     setFontName(prefs.readerFontName)
-    setUseGoogleCache(prefs.useGoogleCache)
-}
-
-fun shouldRedirectToGoogleCache(url: String): Boolean {
-    return (url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)) &&
-            !url.startsWith("https://webcache.googleusercontent.com/", ignoreCase = true)
-}
-
-fun getGoogleCacheUrl(originalUrl: String): String {
-    if (originalUrl.startsWith("https://webcache.googleusercontent.com/")) {
-        return originalUrl
-    }
-    val encoded = runCatching { java.net.URLEncoder.encode(originalUrl, "UTF-8") }.getOrDefault(originalUrl)
-    return "https://webcache.googleusercontent.com/search?q=cache:$encoded"
 }
 

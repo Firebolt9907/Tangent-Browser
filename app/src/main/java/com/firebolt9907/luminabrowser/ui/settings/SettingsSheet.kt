@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.state.GlobalPreferencesStore
 import com.firebolt9907.luminabrowser.state.PreloadMode
 import com.firebolt9907.luminabrowser.state.SearchEngine
+import com.firebolt9907.luminabrowser.ui.BiometricGate
 import com.firebolt9907.luminabrowser.ui.chrome.WideBarLayout
 import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
@@ -76,7 +77,6 @@ fun SettingsSheet(
     var showSearchTermsInBar by remember { mutableStateOf(globalPrefsStore.showSearchTermsInBar) }
     var httpCacheSizeMb by remember { mutableStateOf(globalPrefsStore.httpCacheSizeMb) }
     var preloadMode by remember { mutableStateOf(globalPrefsStore.preloadMode) }
-    var useGoogleCache by remember { mutableStateOf(globalPrefsStore.useGoogleCache) }
     var readerSiteRules by remember { mutableStateOf(globalPrefsStore.readerSiteRules) }
     var cookieBannerHandlingMode by remember { mutableStateOf(globalPrefsStore.cookieBannerHandlingMode) }
     var queryParameterStripping by remember { mutableStateOf(globalPrefsStore.queryParameterStripping) }
@@ -88,9 +88,14 @@ fun SettingsSheet(
     var forceUserScalableContent by remember { mutableStateOf(globalPrefsStore.forceUserScalableContent) }
     var fontSizeFactor by remember { mutableStateOf(globalPrefsStore.fontSizeFactor) }
     var loginAutofillEnabled by remember { mutableStateOf(globalPrefsStore.loginAutofillEnabled) }
+    var biometricAutofillEnabled by remember { mutableStateOf(globalPrefsStore.biometricAutofillEnabled) }
+    var creditCardAutofillEnabled by remember { mutableStateOf(globalPrefsStore.creditCardAutofillEnabled) }
+    var addressAutofillEnabled by remember { mutableStateOf(globalPrefsStore.addressAutofillEnabled) }
+    var formFieldMemoryEnabled by remember { mutableStateOf(globalPrefsStore.formFieldMemoryEnabled) }
     var webFontsEnabled by remember { mutableStateOf(globalPrefsStore.webFontsEnabled) }
     var domStorageEnabled by remember { mutableStateOf(globalPrefsStore.domStorageEnabled) }
     var suspendMediaWhenInactive by remember { mutableStateOf(globalPrefsStore.suspendMediaWhenInactive) }
+    var tabAutoArchiveHours by remember { mutableStateOf(globalPrefsStore.tabAutoArchiveHours) }
     var scrollBarsEnabled by remember { mutableStateOf(globalPrefsStore.scrollBarsEnabled) }
     var allowFileAccess by remember { mutableStateOf(globalPrefsStore.allowFileAccess) }
     var postQuantumKeyExchangeEnabled by remember { mutableStateOf(globalPrefsStore.postQuantumKeyExchangeEnabled) }
@@ -172,6 +177,8 @@ fun SettingsSheet(
                 onWebFontsEnabledChange = { webFontsEnabled = it },
                 suspendMediaWhenInactive = suspendMediaWhenInactive,
                 onSuspendMediaWhenInactiveChange = { suspendMediaWhenInactive = it },
+                tabAutoArchiveHours = tabAutoArchiveHours,
+                onTabAutoArchiveHoursChange = { tabAutoArchiveHours = it },
                 scrollBarsEnabled = scrollBarsEnabled,
                 onScrollBarsEnabledChange = { scrollBarsEnabled = it },
                 forceUserScalableContent = forceUserScalableContent,
@@ -279,11 +286,67 @@ fun SettingsSheet(
             SheetRowDivider()
             SettingsToggle(
                 title = "Login Autofill",
-                subtitle = "Automatically fill saved usernames and passwords",
+                subtitle = "Fill saved usernames and passwords",
                 checked = loginAutofillEnabled,
                 onCheckedChange = {
                     loginAutofillEnabled = it
                     globalPrefsStore.loginAutofillEnabled = it
+                    onSettingChanged()
+                },
+            )
+            if (loginAutofillEnabled) {
+                SheetRowDivider()
+                SettingsToggle(
+                    title = "Require Biometrics",
+                    subtitle = "Confirm with fingerprint, face, or device PIN before filling a password",
+                    checked = biometricAutofillEnabled,
+                    onCheckedChange = { requested ->
+                        // Changing this protection is itself gated behind biometrics so it can't be
+                        // silently flipped on a briefly-unlocked device. The prompt is a no-op (and
+                        // the change applies immediately) on a device with no secure lock.
+                        BiometricGate.authenticate(
+                            context = context,
+                            title = if (requested) "Require biometrics" else "Disable biometrics",
+                            subtitle = "Confirm to change password autofill security",
+                            onSuccess = {
+                                biometricAutofillEnabled = requested
+                                globalPrefsStore.biometricAutofillEnabled = requested
+                                onSettingChanged()
+                            },
+                        )
+                    },
+                )
+            }
+            SheetRowDivider()
+            SettingsToggle(
+                title = "Payment Method Autofill",
+                subtitle = "Fill saved cards into checkout forms",
+                checked = creditCardAutofillEnabled,
+                onCheckedChange = {
+                    creditCardAutofillEnabled = it
+                    globalPrefsStore.creditCardAutofillEnabled = it
+                    onSettingChanged()
+                },
+            )
+            SheetRowDivider()
+            SettingsToggle(
+                title = "Address Autofill",
+                subtitle = "Fill saved addresses and contact info into forms",
+                checked = addressAutofillEnabled,
+                onCheckedChange = {
+                    addressAutofillEnabled = it
+                    globalPrefsStore.addressAutofillEnabled = it
+                    onSettingChanged()
+                },
+            )
+            SheetRowDivider()
+            SettingsToggle(
+                title = "Remember Form Fields",
+                subtitle = "Offer previously entered values for other form fields",
+                checked = formFieldMemoryEnabled,
+                onCheckedChange = {
+                    formFieldMemoryEnabled = it
+                    globalPrefsStore.formFieldMemoryEnabled = it
                     onSettingChanged()
                 },
             )
@@ -466,17 +529,6 @@ fun SettingsSheet(
         Spacer(Modifier.height(8.dp))
         SheetCard {
             SettingsToggle(
-                title = "Bypass via Google Cache",
-                subtitle = "Load articles from Google's search scraper cache for faster speeds and tracker removal",
-                checked = useGoogleCache,
-                onCheckedChange = {
-                    useGoogleCache = it
-                    globalPrefsStore.useGoogleCache = it
-                    com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.setUseGoogleCache(it)
-                    onSettingChanged()
-                },
-            )
-            SettingsToggle(
                 title = "Per-site reader tweaks",
                 subtitle = "Fixes articles that don't parse cleanly, using per-site rules. Updates " +
                     "arrive from GitHub — signature-verified and downloaded in full — so new sites " +
@@ -656,6 +708,15 @@ fun SettingsSheet(
 private fun formatCacheSize(mb: Int): String =
     if (mb >= 1024) "${mb / 1024} GB" else "$mb MB"
 
+private fun formatAutoArchive(hours: Int): String = when {
+    hours <= 0 -> "Never"
+    hours < 24 -> "$hours hours"
+    hours == 24 -> "1 day"
+    hours % 168 == 0 -> "${hours / 168} week${if (hours / 168 == 1) "" else "s"}"
+    hours % 24 == 0 -> "${hours / 24} days"
+    else -> "$hours hours"
+}
+
 /**
  * The "Advanced settings" sub-page. Holds the long tail of power-user toggles that were previously
  * flattened into the main sheet — the ones a typical user should never need to touch. State lives in
@@ -715,6 +776,8 @@ private fun AdvancedSettingsPage(
     onWebFontsEnabledChange: (Boolean) -> Unit,
     suspendMediaWhenInactive: Boolean,
     onSuspendMediaWhenInactiveChange: (Boolean) -> Unit,
+    tabAutoArchiveHours: Int,
+    onTabAutoArchiveHoursChange: (Int) -> Unit,
     scrollBarsEnabled: Boolean,
     onScrollBarsEnabledChange: (Boolean) -> Unit,
     forceUserScalableContent: Boolean,
@@ -1036,6 +1099,20 @@ private fun AdvancedSettingsPage(
                 globalPrefsStore.suspendMediaWhenInactive = it
                 onSettingChanged()
             },
+        )
+        SheetRowDivider()
+        SettingsPicker(
+            title = "Auto-archive tabs",
+            subtitle = "Discard tabs that haven't been viewed for this long. Applies on the next app launch.",
+            selectedLabel = formatAutoArchive(tabAutoArchiveHours),
+            options = listOf(0, 12, 24, 72, 168, 336, 720).map { hours ->
+                formatAutoArchive(hours) to {
+                    onTabAutoArchiveHoursChange(hours)
+                    globalPrefsStore.tabAutoArchiveHours = hours
+                    onSettingChanged()
+                }
+            },
+            haptics = haptics,
         )
         SheetRowDivider()
         SettingsToggle(

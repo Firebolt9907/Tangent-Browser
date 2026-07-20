@@ -1,11 +1,14 @@
 package com.firebolt9907.luminabrowser.ui.sync
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.TabletAndroid
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,12 +33,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
+import kotlinx.coroutines.launch
 import com.firebolt9907.luminabrowser.sync.FirefoxHandoffTab
 import com.firebolt9907.luminabrowser.sync.FirefoxReceivedTab
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
@@ -121,6 +133,80 @@ fun SendToDeviceBannerHost(
     }
 }
 
+/**
+ * Manual "paste code" fallback for SMS one-time-code autofill, floating above the bottom bar (same
+ * placement as [SendToDeviceBannerHost]). Shown when the page reports an OTP field; tapping it reads
+ * a code from the clipboard (Google Messages puts detected codes there) and fills it — covering the
+ * cases SMS User Consent can't (sender in contacts, code already received, its own content filter).
+ */
+@Composable
+fun OtpPasteBannerHost(
+    visible: Boolean,
+    bottomPadding: Dp,
+    onPaste: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 24.dp)
+                .padding(bottom = bottomPadding + 10.dp),
+        ) {
+            Surface(
+                shape = SquircleShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 3.dp,
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .widthIn(max = 480.dp)
+                    .bannerSwipeToDismiss(onDismiss),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onPaste)
+                        .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Sms,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Enter code from SMS",
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = "Tap to paste the code from your clipboard",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Dismiss",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SendToDeviceCard(
     deviceName: String,
@@ -133,7 +219,9 @@ private fun SendToDeviceCard(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 3.dp,
         shadowElevation = 6.dp,
-        modifier = Modifier.widthIn(max = 480.dp),
+        modifier = Modifier
+            .widthIn(max = 480.dp)
+            .bannerSwipeToDismiss(onDismiss),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -186,7 +274,9 @@ fun HandoffCard(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 3.dp,
         shadowElevation = 6.dp,
-        modifier = Modifier.widthIn(max = 480.dp),
+        modifier = Modifier
+            .widthIn(max = 480.dp)
+            .bannerSwipeToDismiss(onDismiss),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -273,7 +363,9 @@ private fun ReceivedTabCard(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 3.dp,
         shadowElevation = 6.dp,
-        modifier = Modifier.widthIn(max = 480.dp),
+        modifier = Modifier
+            .widthIn(max = 480.dp)
+            .bannerSwipeToDismiss(onDismiss),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -313,6 +405,56 @@ private fun ReceivedTabCard(
             }
         }
     }
+}
+
+/**
+ * Follows the finger while the user drags a banner card away (downward, since the cards live at the
+ * bottom, or sideways) and dismisses it when the drag passes a distance/velocity threshold; otherwise
+ * springs the card back to rest. Keeps the tap-to-act / X-to-dismiss affordances intact — a small
+ * touch-slop of travel is required before the drag takes over.
+ */
+private fun Modifier.bannerSwipeToDismiss(onDismiss: () -> Unit): Modifier = composed {
+    val scope = rememberCoroutineScope()
+    val offsetX = remember { Animatable(0f) }
+    val offsetY = remember { Animatable(0f) }
+    val density = LocalDensity.current
+    // Distance past which a release commits the dismissal.
+    val dismissThresholdPx = with(density) { 96.dp.toPx() }
+
+    this
+        .graphicsLayer {
+            translationX = offsetX.value
+            translationY = offsetY.value
+            // Fade as the card is flung away for a softer exit.
+            val travel = maxOf(abs(offsetX.value), abs(offsetY.value))
+            alpha = (1f - (travel / (dismissThresholdPx * 2.5f))).coerceIn(0.15f, 1f)
+        }
+        .pointerInput(Unit) {
+            detectDragGestures(
+                onDrag = { change, delta ->
+                    change.consume()
+                    scope.launch {
+                        offsetX.snapTo(offsetX.value + delta.x)
+                        // Bottom banners resist upward travel — dismiss is a downward gesture.
+                        offsetY.snapTo(offsetY.value + delta.y)
+                    }
+                },
+                onDragEnd = {
+                    val flungDown = offsetY.value > dismissThresholdPx
+                    val flungSide = abs(offsetX.value) > dismissThresholdPx
+                    if (flungDown || flungSide) {
+                        onDismiss()
+                    } else {
+                        scope.launch { offsetX.animateTo(0f, spring()) }
+                        scope.launch { offsetY.animateTo(0f, spring()) }
+                    }
+                },
+                onDragCancel = {
+                    scope.launch { offsetX.animateTo(0f, spring()) }
+                    scope.launch { offsetY.animateTo(0f, spring()) }
+                },
+            )
+        }
 }
 
 // Firefox Sync only reliably distinguishes MOBILE; a laptop often reports DESKTOP or, on some

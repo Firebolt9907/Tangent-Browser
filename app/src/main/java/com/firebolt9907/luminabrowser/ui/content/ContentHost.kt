@@ -34,8 +34,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.firebolt9907.luminabrowser.addons.AddonController
-import com.firebolt9907.luminabrowser.ui.reader.shouldRedirectToGoogleCache
-import com.firebolt9907.luminabrowser.ui.reader.getGoogleCacheUrl
 import com.firebolt9907.luminabrowser.ui.reader.ReaderManager
 import com.firebolt9907.luminabrowser.state.TabSnapshotCache
 import kotlin.math.abs
@@ -384,6 +382,9 @@ fun ContentHost(
             var suppressJavascriptLoadCallback = false
             var cacheTriggeredForCurrentLoad = false
             var readerExtractedForCurrentLoad = false
+            var otpDetectorInjectedForCurrentLoad = false
+            var loginDetectorInjectedForCurrentLoad = false
+            var formFieldMemoryInjectedForCurrentLoad = false
             var currentUrl = pageUrl
             var capturedLeavingUrl: String? = null
             // True while a genuine document load is in flight (real navigation), so the delayed
@@ -453,6 +454,36 @@ fun ContentHost(
                 suppressJavascriptLoadCallback = true
                 engineSession.injectYouTubeCleanPlayer()
             }
+            fun injectOtpDetector() {
+                // Detect SMS one-time-code fields so the host can arm SMS User Consent. Cheap DOM
+                // scan + one focus listener; runs once per load like the other injectors.
+                if (otpDetectorInjectedForCurrentLoad) return
+                otpDetectorInjectedForCurrentLoad = true
+                suppressJavascriptLoadCallback = true
+                engineSession.loadJavascriptUrl(OtpAutofill.buildDetectScript())
+            }
+            fun injectLoginDetector() {
+                // Detect a visible, empty password field so the host can offer saved logins *before*
+                // the field is tapped (keyboard-free autofill). Same cheap once-per-load scan + focus
+                // listener as the OTP detector.
+                if (loginDetectorInjectedForCurrentLoad) return
+                loginDetectorInjectedForCurrentLoad = true
+                suppressJavascriptLoadCallback = true
+                engineSession.loadJavascriptUrl(LoginFieldProbe.buildDetectScript())
+            }
+            fun injectFormFieldMemory() {
+                // Generic (non-login/card/address) form-field memory: capture eligible values on
+                // submit/blur and offer an in-page suggestion dropdown on focus. Behavior is gated at
+                // the host by FormFieldMemory.enabled (the "Remember form fields" pref), so the script
+                // is cheap and self-disarming when off. Once-per-load like the other detectors.
+                if (formFieldMemoryInjectedForCurrentLoad) return
+                formFieldMemoryInjectedForCurrentLoad = true
+                suppressJavascriptLoadCallback = true
+                // Bind the bridge's stored-data lookups to this tab's REAL origin, so a page can only
+                // ever read/write its own form-memory bucket (never a host it claims in the payload).
+                BridgeGuard.setTrustedOrigin(tabId, currentUrl)
+                engineSession.loadJavascriptUrl(FormFieldMemory.buildScript())
+            }
             fun installAddonRequest(url: String): Boolean {
                 val handled = addonController?.installFromPageRequest(url) == true
                 if (handled) engineSession.stopLoading()
@@ -470,20 +501,8 @@ fun ContentHost(
                         android.util.Log.d("ReaderDbg", "triggerInitialReaderCheck: reader is active and already extracted once for this load, skipping")
                         return
                     }
-                    val isCustomTab = context.findActivity() is com.firebolt9907.luminabrowser.CustomTabActivity
-                    val isAutoActivated = isCustomTab || (sitePreferencesStore != null && !sitePreferencesStore.isReaderAutoDisabled(com.firebolt9907.luminabrowser.state.hostFromUrl(currentUrl)))
-                    val useCache = ReaderManager.instance.useGoogleCache.value &&
-                        shouldRedirectToGoogleCache(currentUrl) &&
-                        !ReaderManager.instance.isRestoring(tabId) &&
-                        (isAutoActivated || ReaderManager.instance.isReaderActive(tabId) || ReaderManager.instance.isReaderPending(tabId))
-                    if (useCache) {
-                        ReaderManager.instance.setOriginalUrl(tabId, currentUrl)
-                        val cacheUrl = getGoogleCacheUrl(currentUrl)
-                        engineSession.loadUrl(cacheUrl)
-                    } else {
-                        readerExtractedForCurrentLoad = true
-                        com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
-                    }
+                    readerExtractedForCurrentLoad = true
+                    com.firebolt9907.luminabrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
                 }
             }
 
@@ -501,6 +520,9 @@ fun ContentHost(
                         if (navigatedAway) captureLeavingPage()
                         isSafeToSnapshot = false
                         currentUrl = url
+                        // Keep the form-memory origin binding in step with client-side (pushState)
+                        // navigations: the already-injected script survives them and keeps querying.
+                        BridgeGuard.setTrustedOrigin(tabId, url)
                         capturedLeavingUrl = null
                         injectedForCurrentLoad = false
                         amoInstallerInjectedForCurrentLoad = false
@@ -509,7 +531,7 @@ fun ContentHost(
                         injectAmoInstaller(url)
                         injectCleanPlayer(url)
                         if (navigatedAway) {
-                            if (tabId != null && !url.startsWith("https://webcache.googleusercontent.com/", ignoreCase = true)) {
+                            if (tabId != null) {
                                 com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.clearReaderState(tabId)
                             }
                         }
@@ -522,6 +544,9 @@ fun ContentHost(
                     injectSpacer()
                     injectAmoInstaller(currentUrl)
                     injectCleanPlayer(currentUrl)
+                    injectOtpDetector()
+                    injectLoginDetector()
+                    injectFormFieldMemory()
                     captureSnapshot(capturingUrl = currentUrl, deduped = true)
                     notifyPainted()
                     if (tabId != null) {
@@ -543,16 +568,21 @@ fun ContentHost(
                         injectedForCurrentLoad = false
                         amoInstallerInjectedForCurrentLoad = false
                         readerExtractedForCurrentLoad = false
+                        otpDetectorInjectedForCurrentLoad = false
+                        loginDetectorInjectedForCurrentLoad = false
+                        formFieldMemoryInjectedForCurrentLoad = false
                     } else {
                         realLoadInProgress = false
                         isSafeToSnapshot = true
                         injectSpacer()
                         injectAmoInstaller(currentUrl)
                         injectCleanPlayer(currentUrl)
+                        injectOtpDetector()
+                        injectLoginDetector()
+                        injectFormFieldMemory()
                         captureSnapshot(capturingUrl = currentUrl, deduped = true)
                         notifyPainted()
                         if (tabId != null) {
-                            ReaderManager.instance.setRestoring(tabId, false)
                             suppressJavascriptLoadCallback = true
                             triggerInitialReaderCheck()
                         }
@@ -596,37 +626,6 @@ fun ContentHost(
                         captureLeavingPage()
                     }
                     if (installAddonRequest(url)) return
-
-                    // Block Google Cache page's JavaScript redirect back to the original
-                    // (paywalled) URL while reader mode is active. Without this guard the
-                    // redirect fires before extraction completes and clears reader state.
-                    if (tabId != null &&
-                        triggeredByWebContent &&
-                        currentUrl.startsWith("https://webcache.googleusercontent.com/", ignoreCase = true) &&
-                        !url.startsWith("https://webcache.googleusercontent.com/", ignoreCase = true) &&
-                        ReaderManager.instance.isReaderActive(tabId)
-                    ) {
-                        android.util.Log.d("ReaderDbg", "onLoadRequest: blocking cache→original redirect tab=$tabId url=$url")
-                        engineSession.stopLoading()
-                        return
-                    }
-
-                    if (tabId != null &&
-                        ReaderManager.instance.useGoogleCache.value &&
-                        shouldRedirectToGoogleCache(url) &&
-                        !ReaderManager.instance.isRestoring(tabId)
-                    ) {
-                        val isCustomTab = context.findActivity() is com.firebolt9907.luminabrowser.CustomTabActivity
-                        val isAutoActivated = isCustomTab || (sitePreferencesStore != null && !sitePreferencesStore.isReaderAutoDisabled(com.firebolt9907.luminabrowser.state.hostFromUrl(url)))
-                        val shouldRedirect = isAutoActivated || ReaderManager.instance.isReaderActive(tabId) || ReaderManager.instance.isReaderPending(tabId)
-                        if (shouldRedirect) {
-                            ReaderManager.instance.setOriginalUrl(tabId, url)
-                            val cacheUrl = getGoogleCacheUrl(url)
-                            engineSession.loadUrl(cacheUrl)
-                            engineSession.stopLoading()
-                            return
-                        }
-                    }
                 }
 
                 override fun onExternalResource(
@@ -666,6 +665,7 @@ fun ContentHost(
             onDispose {
                 spaSettleRunnable?.let(hostView::removeCallbacks)
                 engineSession.unregister(observer)
+                BridgeGuard.forget(tabId)
             }
         }
     }

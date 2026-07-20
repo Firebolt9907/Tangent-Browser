@@ -101,6 +101,7 @@ class FirefoxSyncController(
     private val store: BrowserStore,
     private val scope: CoroutineScope,
     private val loginsStorage: PlacesLoginsStorage? = null,
+    private val creditCardsStorage: mozilla.components.service.sync.autofill.AutofillCreditCardsAddressesStorage? = null,
 ) {
     private val crashReporter = object : CrashReporting {
         override fun submitCaughtException(throwable: Throwable): Job = Job()
@@ -117,7 +118,7 @@ class FirefoxSyncController(
             secureStateAtRest = true,
         ),
         syncConfig = SyncConfig(
-            supportedEngines = setOf(SyncEngine.Tabs, SyncEngine.Passwords),
+            supportedEngines = setOf(SyncEngine.Tabs, SyncEngine.Passwords, SyncEngine.CreditCards),
             periodicSyncConfig = PeriodicSyncConfig(periodMinutes = 240, initialDelayMinutes = 5),
         ),
         crashReporter = crashReporter,
@@ -145,9 +146,15 @@ class FirefoxSyncController(
     private val _events = MutableSharedFlow<FirefoxSyncEvent>(extraBufferCapacity = 4)
     val events: SharedFlow<FirefoxSyncEvent> = _events.asSharedFlow()
 
-    /** Engines this account syncs: passwords ride along only when a logins store was provided. */
-    private val syncEngines: List<SyncEngine> =
-        if (loginsStorage != null) listOf(SyncEngine.Tabs, SyncEngine.Passwords) else listOf(SyncEngine.Tabs)
+    /**
+     * Engines this account syncs: tabs always; passwords and credit cards ride along only when their
+     * respective stores were provided.
+     */
+    private val syncEngines: List<SyncEngine> = buildList {
+        add(SyncEngine.Tabs)
+        if (loginsStorage != null) add(SyncEngine.Passwords)
+        if (creditCardsStorage != null) add(SyncEngine.CreditCards)
+    }
 
     @Volatile private var authInFlight = false
     /** True while a *local* [signOut] is running, so [accountObserver.onLoggedOut] can tell an
@@ -221,6 +228,14 @@ class FirefoxSyncController(
         if (loginsStorage != null) {
             GlobalSyncableStoreProvider.configureStore(
                 SyncEngine.Passwords to lazy { loginsStorage },
+            )
+        }
+        if (creditCardsStorage != null) {
+            // The CreditCards engine also needs a KeyProvider (the sync manager decrypts card numbers
+            // for the outgoing payload); AutofillCrypto is one. Without it the sync worker throws.
+            GlobalSyncableStoreProvider.configureStore(
+                SyncEngine.CreditCards to lazy { creditCardsStorage },
+                keyProvider = lazy { creditCardsStorage.crypto },
             )
         }
         syncedTabsStorage.start()
@@ -517,8 +532,8 @@ class FirefoxSyncController(
 
     /**
      * Begin (or reuse) the foreground periodic sync loop. Call from ON_RESUME. Every
-     * [ForegroundSyncIntervalMs] it runs a quiet full sync (tabs + passwords, no busy/message
-     * churn) and refreshes the synced-tab list, handoff candidate, and Zen workspaces — mirroring
+     * [ForegroundSyncIntervalMs] it runs a quiet full sync (tabs + passwords + credit cards, no
+     * busy/message churn) and refreshes the synced-tab list, handoff candidate, and Zen workspaces — mirroring
      * vanilla Firefox's behaviour of re-syncing on a timer while the browser is in active use.
      * Idempotent: an already-running loop is left alone. Cancelled by [stopForegroundPeriodicSync].
      */

@@ -21,7 +21,6 @@ import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineSessionState
 import mozilla.components.feature.session.SessionUseCases
 import mozilla.components.feature.tabs.TabsUseCases
-import com.firebolt9907.luminabrowser.ui.content.extractCacheHtml
 
 /** A closed tab remembered for the "Reopen Closed Tab" action — URL + title, no session history. */
 private data class ClosedTab(val id: String, val url: String, val title: String)
@@ -245,13 +244,6 @@ class GeckoTabRepository(
 
     override fun loadUrl(url: String, tabId: String?) {
         val selectedId = tabId ?: store.state.selectedTabId ?: return
-        if (url.trim().equals("debug:cache", ignoreCase = true)) {
-            val session = store.state.tabs.firstOrNull { it.id == selectedId }?.engineState?.engineSession
-            if (session != null) {
-                session.extractCacheHtml()
-                return
-            }
-        }
         sessionUseCases.loadUrl.invoke(normalizeUrl(url, searchEngine()), sessionId = selectedId)
     }
 
@@ -389,14 +381,18 @@ class GeckoTabRepository(
 
 /**
  * Resolve a user-typed address bar input to a loadable URL.
- * Empty → `about:blank`; explicit scheme → unchanged; host-like → `https://` prepended;
- * everything else → the [engine]'s search URL.
+ * Empty → `about:blank`; explicit scheme → unchanged; host-like → scheme prepended
+ * (`http://` for local/private hosts, `https://` otherwise); everything else → the
+ * [engine]'s search URL.
  */
 internal fun normalizeUrl(input: String, engine: SearchEngine = SearchEngine.DEFAULT): String {
     val trimmed = input.trim()
     if (trimmed.isEmpty()) return "about:blank"
     if (trimmed.hasExplicitScheme()) return trimmed
-    if (trimmed.looksLikeWebsite()) return "https://$trimmed"
+    if (trimmed.looksLikeWebsite()) {
+        val scheme = if (trimmed.looksLikeLocalHost()) "http" else "https"
+        return "$scheme://$trimmed"
+    }
     return engine.searchUrl(trimmed)
 }
 
@@ -417,10 +413,83 @@ private fun String.looksLikeWebsite(): Boolean {
 
 private fun String.containsWhitespace(): Boolean = any(Char::isWhitespace)
 
+/**
+ * The full IANA root zone of publicly-delegated TLDs (lowercased, punycode for IDNs), bundled as a
+ * classpath resource. This is the *finite* set of endings that exist on the public internet; a host
+ * whose final label is not in here lives on a private/LAN network. Loaded once, lazily.
+ *
+ * If the resource somehow fails to load the set is empty, and [looksLikeLocalHost] degrades to the
+ * old always-https behaviour for dotted hosts (the safe default for the public web).
+ */
+private val publicTlds: Set<String> by lazy {
+    val stream = object {}.javaClass.getResourceAsStream(
+        "/com/firebolt9907/luminabrowser/state/public_tlds.txt",
+    ) ?: return@lazy emptySet()
+    stream.bufferedReader().useLines { lines ->
+        lines.map { it.trim().lowercase() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .toSet()
+    }
+}
+
+/**
+ * Heuristic for hosts that live on a private/LAN network and should default to `http` rather than
+ * `https` (they typically serve plain HTTP or an untrusted cert). Rather than allow-listing local
+ * endings — of which there are infinitely many — we blocklist by *exclusion*: a host is treated as
+ * public (→ https) only if its final label is a real IANA TLD. Everything else — `localhost`, a
+ * Pi-hole entry like `immich.lab`, a bare `nas` name, an IP literal — is LAN-only (→ http).
+ */
+private fun String.looksLikeLocalHost(): Boolean {
+    val authority = substringBefore('/').substringBefore('?').substringBefore('#')
+    // Strip a trailing :port, but leave bracketed IPv6 / bare IPv6 intact.
+    val host = when {
+        authority.startsWith('[') -> authority.substringAfter('[').substringBefore(']')
+        authority.count { it == ':' } == 1 -> authority.substringBefore(':')
+        else -> authority
+    }.lowercase().trimEnd('.')
+    if (host.isEmpty()) return false
+    if (host == "localhost") return true
+    val lastLabel = host.substringAfterLast('.', "")
+    // No dot (single-label host) → LAN-only. Otherwise it's public iff the TLD is IANA-delegated.
+    // Guard on a populated set so a failed resource load falls back to always-https for dotted hosts.
+    if (lastLabel.isEmpty()) return true
+    return publicTlds.isNotEmpty() && lastLabel !in publicTlds
+}
+
+/** The host component of [url] (lowercased), or null if it has none. `www.` is preserved. */
+internal fun hostOf(url: String): String? =
+    runCatching { URI(normalizeUrl(url)).host }.getOrNull()?.lowercase()
+
+/**
+ * True if [url]'s host is one we treat as living on a private/LAN network — the same hosts
+ * [normalizeUrl] defaults to `http` (see [looksLikeLocalHost]). Used to decide when HTTPS-Only
+ * mode should offer an "load over HTTP" exception rather than stranding the user.
+ */
+internal fun isLocalHttpHost(url: String): Boolean =
+    hostOf(url)?.looksLikeLocalHost() == true
+
 /** Short host label (e.g. `nytimes.com`) used by the compact pill. Strips `www.`. */
 internal fun compactHost(url: String): String {
     val host = runCatching { URI(normalizeUrl(url)).host }.getOrNull().orEmpty().removePrefix("www.")
     return host.ifEmpty { url }
+}
+
+/**
+ * Like [compactHost] but keeps an explicit, non-default port when the URL carries one (e.g.
+ * `localhost:3000`, `192.168.1.5:8080`). Used only for the *display* label in the address bar —
+ * never as a per-host storage key, since prefs/caches are keyed by the bare [compactHost]. A port
+ * that matches the scheme default (80 for http, 443 for https) is omitted so ordinary web pages
+ * read the same as before.
+ */
+internal fun compactHostWithPort(url: String): String {
+    val base = compactHost(url)
+    val uri = runCatching { URI(normalizeUrl(url)) }.getOrNull() ?: return base
+    val port = uri.port
+    if (port <= 0) return base
+    val isDefault = (uri.scheme == "http" && port == 80) || (uri.scheme == "https" && port == 443)
+    // Only decorate when compactHost actually produced a host (not the raw-url fallback).
+    if (isDefault || base == url) return base
+    return "$base:$port"
 }
 
 private fun BrowserState.toLuminaTabs(): List<LuminaTab> =

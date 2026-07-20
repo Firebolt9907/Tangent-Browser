@@ -50,6 +50,24 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("httpsOnly", false)
         set(value) { prefs.edit { putBoolean("httpsOnly", value) } }
 
+    // Hosts the user has explicitly approved to load over plain HTTP despite HTTPS-Only mode being
+    // on (e.g. a self-hosted `immich.lab` that has no TLS). GeckoView exposes only a *global*
+    // HTTPS-Only switch, so HttpsOnlyExceptionController turns the mode off only while the selected
+    // tab is on one of these hosts; everything else still gets upgraded. Stored lowercased.
+    var httpsOnlyAllowedHosts: Set<String>
+        // Defensive copy: SharedPreferences forbids mutating the returned Set instance.
+        get() = prefs.getStringSet("httpsOnlyAllowedHosts", emptySet())?.toSet().orEmpty()
+        set(value) { prefs.edit { putStringSet("httpsOnlyAllowedHosts", value) } }
+
+    fun allowHttpForHost(host: String) {
+        val h = host.trim().lowercase()
+        if (h.isEmpty()) return
+        httpsOnlyAllowedHosts = httpsOnlyAllowedHosts + h
+    }
+
+    fun isHttpAllowedForHost(host: String): Boolean =
+        host.trim().lowercase() in httpsOnlyAllowedHosts
+
     var globalPrivacyControl: Boolean
         get() = prefs.getBoolean("globalPrivacyControl", false)
         set(value) { prefs.edit { putBoolean("globalPrivacyControl", value) } }
@@ -130,10 +148,6 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getString("readerFontName", "System") ?: "System"
         set(value) { prefs.edit { putString("readerFontName", value) } }
 
-    var useGoogleCache: Boolean
-        get() = prefs.getBoolean("useGoogleCache", false)
-        set(value) { prefs.edit { putBoolean("useGoogleCache", value) } }
-
     // Per-site reader overrides (assets/reader_rules.json): include/strip selectors that force the
     // article container / drop out-of-article regions on specific hosts. Purely local DOM shaping,
     // but exposed as a toggle so a privacy-conscious user can fall back to the pure heuristic — and
@@ -147,13 +161,6 @@ class GlobalPreferencesStore(context: Context) {
     var readerRulesLastCheckMs: Long
         get() = prefs.getLong("readerRulesLastCheckMs", 0L)
         set(value) { prefs.edit { putLong("readerRulesLastCheckMs", value) } }
-
-    // Hidden debug toggle: when on, typing "debug:cache" in the address bar opens the
-    // Google Cache page's parsed HTML in a new tab so the user can inspect what GeckoView
-    // actually received (useful for diagnosing paywall-bypass consistency issues).
-    var debugCacheHtml: Boolean
-        get() = prefs.getBoolean("debugCacheHtml", false)
-        set(value) { prefs.edit { putBoolean("debugCacheHtml", value) } }
 
     // Search engine used both for address-bar searches (via normalizeUrl) and for the live query
     // suggestions in the address sheet. Stored by enum name; unknown/missing falls back to default.
@@ -229,6 +236,27 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("loginAutofillEnabled", true)
         set(value) { prefs.edit { putBoolean("loginAutofillEnabled", value) } }
 
+    // When true, filling a saved login requires biometric/device-credential confirmation. Default
+    // on (secure). Flipping this off in Settings is itself gated behind BiometricGate so an attacker
+    // with an unlocked-but-glanced-at phone can't quietly disable the protection.
+    var biometricAutofillEnabled: Boolean
+        get() = prefs.getBoolean("biometricAutofillEnabled", true)
+        set(value) { prefs.edit { putBoolean("biometricAutofillEnabled", value) } }
+
+    var creditCardAutofillEnabled: Boolean
+        get() = prefs.getBoolean("creditCardAutofillEnabled", true)
+        set(value) { prefs.edit { putBoolean("creditCardAutofillEnabled", value) } }
+
+    var addressAutofillEnabled: Boolean
+        get() = prefs.getBoolean("addressAutofillEnabled", true)
+        set(value) { prefs.edit { putBoolean("addressAutofillEnabled", value) } }
+
+    // When true, arbitrary non-sensitive form fields (name, email, phone, and other freeform text
+    // inputs outside logins/cards/addresses) are remembered on submit and offered back on focus.
+    var formFieldMemoryEnabled: Boolean
+        get() = prefs.getBoolean("formFieldMemoryEnabled", true)
+        set(value) { prefs.edit { putBoolean("formFieldMemoryEnabled", value) } }
+
     var webFontsEnabled: Boolean
         get() = prefs.getBoolean("webFontsEnabled", true)
         set(value) { prefs.edit { putBoolean("webFontsEnabled", value) } }
@@ -240,6 +268,15 @@ class GlobalPreferencesStore(context: Context) {
     var suspendMediaWhenInactive: Boolean
         get() = prefs.getBoolean("suspendMediaWhenInactive", true)
         set(value) { prefs.edit { putBoolean("suspendMediaWhenInactive", value) } }
+
+    /**
+     * How long (in hours) a tab may go unviewed before it is auto-discarded on the next launch.
+     * `0` disables auto-archiving entirely (tabs are kept forever). Default 72h — see
+     * [com.firebolt9907.luminabrowser.engine.LuminaBrowserComponents.TAB_MAX_AGE_MILLIS].
+     */
+    var tabAutoArchiveHours: Int
+        get() = prefs.getInt("tabAutoArchiveHours", 72)
+        set(value) { prefs.edit { putInt("tabAutoArchiveHours", value.coerceAtLeast(0)) } }
 
     var scrollBarsEnabled: Boolean
         get() = prefs.getBoolean("scrollBarsEnabled", true)

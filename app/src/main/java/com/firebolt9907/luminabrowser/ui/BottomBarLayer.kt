@@ -72,6 +72,9 @@ internal fun BottomBarLayer(
     tabCount: Int,
     activeState: BarUiState,
     callbacks: BarCallbacks,
+    // Top URL suggestion to inline-complete into the editing field, or null. Only the live/active
+    // bar consumes it; the neighbor ghost bars never enter editing mode.
+    inlineAutocomplete: String? = null,
     onPrimaryUrlTap: () -> Unit,
     onDragStart: () -> Unit,
     onDragDelta: (androidx.compose.ui.geometry.Offset) -> Unit,
@@ -385,6 +388,7 @@ internal fun BottomBarLayer(
             onEditingTextChange = callbacks.onEditingTextChange,
             onEditingSubmit = callbacks.onEditingSubmit,
             onEditingCancel = callbacks.onEditingCancel,
+            inlineAutocomplete = inlineAutocomplete,
             onDragStart = onDragStart,
             onDragDelta = onDragDelta,
             onDragEnd = onDragEnd,

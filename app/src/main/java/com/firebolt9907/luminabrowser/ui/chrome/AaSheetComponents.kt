@@ -252,8 +252,8 @@ internal fun ActionRowContent(
 /**
  * A tap-anywhere toggle row for the aA sheet's Page Settings: title + explanation on the left, a
  * stateless [Switch] on the right. The whole row is the tap target — the Switch gets
- * `onCheckedChange = null` so it can't become a second, smaller one. [onLongClick] backs the
- * hidden debug toggle on the Google-cache row. Was copy-pasted four times before extraction.
+ * `onCheckedChange = null` so it can't become a second, smaller one. [onLongClick] optionally backs
+ * a hidden long-press action on a row. Was copy-pasted four times before extraction.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

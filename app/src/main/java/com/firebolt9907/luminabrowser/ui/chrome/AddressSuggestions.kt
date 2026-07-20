@@ -39,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -92,6 +93,10 @@ fun AddressSheet(
     bookmarksStorage: BookmarksStorage,
     onSubmit: (String) -> Unit,
     onDismiss: () -> Unit,
+    // Reports the currently highlighted top suggestion (the row pressing Go/Enter will commit), or
+    // null when there is no actionable suggestion. Lets the editing field submit the autoselected
+    // result the way desktop browsers do, and inline-complete a matching URL into the field.
+    onTopSuggestionChange: (AddressSuggestion?) -> Unit = {},
     onPreconnect: (String) -> Unit = {},
     onPreloadPage: (String) -> Unit = {},
     searchSuggestionsEnabled: Boolean = true,
@@ -191,6 +196,12 @@ fun AddressSheet(
     } else {
         emptyList()
     }
+
+    // Publish the autoselected top row so Go/Enter commits it (like most browsers), and so the
+    // editing field can inline-complete a matching URL. `onSubmit`'s normalizeUrl re-decides
+    // URL-vs-search, so a highlighted history URL navigates and a highlighted query searches.
+    val topRow = if (visible) rows.firstOrNull() else null
+    LaunchedEffect(topRow) { onTopSuggestionChange(topRow) }
 
     // Paste & Go (Safari/Arc-style): while the field is empty or still holds the untouched current
     // URL, offer the clipboard as a one-tap destination. We only probe the clip *description* for a
@@ -336,9 +347,12 @@ fun AddressSheet(
                             if (!text.isNullOrEmpty()) onSubmit(text)
                         })
                     }
-                    rows.forEach { suggestion ->
+                    rows.forEachIndexed { index, suggestion ->
                         SuggestionRow(
                             suggestion = suggestion,
+                            // The first row is the autoselected default (what Go/Enter commits), so
+                            // it carries a highlight the way a browser omnibox marks its top result.
+                            highlighted = index == 0,
                             onClick = { onSubmit(suggestion.url) },
                         )
                     }
@@ -350,9 +364,15 @@ fun AddressSheet(
 
 /**
  * Merges local URL matches with remote search-query suggestions into the final ordered row list:
- * history/bookmark hits first (strongest intent), then the search engine's query suggestions, then a
- * guaranteed "search for exactly what I typed" fallback. De-duplicated (URLs by normalized URL,
+ * history/bookmark hits first (strongest intent), then a guaranteed "search for exactly what I typed"
+ * row, then the search engine's *other* query suggestions. De-duplicated (URLs by normalized URL,
  * queries by lowercased text) and capped at [max].
+ *
+ * Why the typed text ranks ABOVE the remote suggestions: the first row is the autoselected default
+ * that Enter/Go commits (see [AddressSheet]'s `onTopSuggestionChange`). If a search *suggestion* like
+ * "leetcode sql" sat first, typing "leetcode" and pressing Enter would silently search "leetcode sql"
+ * instead of "leetcode". So when there's no URL match, the default is always to search exactly what
+ * the user typed; the engine's expansions stay below as one-tap options.
  */
 private fun buildSuggestionRows(
     local: List<AddressSuggestion>,
@@ -365,16 +385,16 @@ private fun buildSuggestionRows(
         val key = "u:" + s.url.trimEnd('/').lowercase()
         if (!rows.containsKey(key)) rows[key] = s
     }
+    // The "search for exactly what I typed" row goes before the remote suggestions so it is the
+    // autoselected default (Enter searches the raw text, never a suggestion). Always present, even
+    // when the network returned nothing.
+    val typedKey = "q:" + typed.lowercase()
+    rows[typedKey] = AddressSuggestion(title = typed, url = typed, kind = AddressSuggestionKind.Search)
     for (term in searchTerms) {
         val key = "q:" + term.lowercase()
         if (!rows.containsKey(key)) {
             rows[key] = AddressSuggestion(title = term, url = term, kind = AddressSuggestionKind.Search)
         }
-    }
-    // Always offer to search the raw text, even when the network returned nothing.
-    val typedKey = "q:" + typed.lowercase()
-    if (!rows.containsKey(typedKey)) {
-        rows[typedKey] = AddressSuggestion(title = typed, url = typed, kind = AddressSuggestionKind.Search)
     }
     return rows.values.take(max).toList()
 }
@@ -415,6 +435,7 @@ private fun PasteRow(onClick: () -> Unit) {
 private fun SuggestionRow(
     suggestion: AddressSuggestion,
     onClick: () -> Unit,
+    highlighted: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -422,8 +443,18 @@ private fun SuggestionRow(
             // Uniform row height keeps the list rhythm even (search rows are one line, URL rows two)
             // and guarantees a comfortable iOS-sized tap target.
             .heightIn(min = 52.dp)
+            .padding(horizontal = 10.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(14.dp))
+            // The autoselected top row gets a tonal pill behind it so it reads as pre-selected.
+            .background(
+                if (highlighted) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                } else {
+                    Color.Transparent
+                },
+            )
             .clickable(onClick = onClick)
-            .padding(horizontal = 22.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // A search row shows the magnifying glass; a concrete URL suggestion shows the site's

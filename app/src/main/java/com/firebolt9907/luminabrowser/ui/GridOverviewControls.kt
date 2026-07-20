@@ -24,9 +24,11 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Settings
@@ -98,6 +100,8 @@ internal fun ColumnScope.GridOverviewControls(
     onShowHistory: () -> Unit,
     onShowDownloads: () -> Unit,
     onShowPasswords: () -> Unit,
+    onShowCreditCards: () -> Unit,
+    onShowAddresses: () -> Unit,
     onShowSettings: () -> Unit,
 ) {
     val handoff = syncState.handoffTab
@@ -292,6 +296,16 @@ internal fun ColumnScope.GridOverviewControls(
                         text = { Text("Passwords") },
                         leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
                         onClick = { overflowOpen = false; onShowPasswords() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Payment methods") },
+                        leadingIcon = { Icon(Icons.Default.CreditCard, contentDescription = null) },
+                        onClick = { overflowOpen = false; onShowCreditCards() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Addresses") },
+                        leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null) },
+                        onClick = { overflowOpen = false; onShowAddresses() },
                     )
                     DropdownMenuItem(
                         text = { Text("Settings") },

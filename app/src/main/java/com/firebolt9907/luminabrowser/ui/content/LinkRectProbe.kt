@@ -122,15 +122,15 @@ object LinkRectProbe {
                         }
                         if (best) { anchor = best; }
                     }
-                    if (!anchor) { luminaBridge('$BRIDGE_MESSAGE', 'none'); return; }
+                    if (!anchor) { luminaBridge('${BridgeGuard.tag(BRIDGE_MESSAGE)}', 'none'); return; }
                     var rect = anchor.getBoundingClientRect();
                     var x = (rect.left - ox) * scale * dpr;
                     var y = (rect.top - oy) * scale * dpr;
                     var wpx = rect.width * scale * dpr;
                     var hpx = rect.height * scale * dpr;
-                    luminaBridge('$BRIDGE_MESSAGE', x + '|' + y + '|' + wpx + '|' + hpx);
+                    luminaBridge('${BridgeGuard.tag(BRIDGE_MESSAGE)}', x + '|' + y + '|' + wpx + '|' + hpx);
                 } catch (e) {
-                    try { luminaBridge('$BRIDGE_MESSAGE', 'none'); } catch (e2) {}
+                    try { luminaBridge('${BridgeGuard.tag(BRIDGE_MESSAGE)}', 'none'); } catch (e2) {}
                 }
             })();
         """.trimIndent().replace("\n", " ")

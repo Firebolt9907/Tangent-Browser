@@ -11,8 +11,11 @@ import com.firebolt9907.luminabrowser.sync.PlacesLoginsStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import mozilla.components.browser.engine.gecko.GeckoEngine
 import mozilla.components.browser.icons.BrowserIcons
@@ -41,12 +44,26 @@ import org.mozilla.geckoview.GeckoRuntimeSettings
 class LuminaBrowserComponents(application: Application) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val globalPreferencesStore = GlobalPreferencesStore(application)
+
+    // Emits the blocked URI whenever a navigation fails under HTTPS-Only mode. Collected by LuminaRoot
+    // to raise the in-app "load over HTTP" prompt. Declared before `engine` because buildDefaultSettings
+    // (called during `engine` init) wires the interceptor's failure callback to it.
+    private val _httpsOnlyFailures = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val httpsOnlyFailures: SharedFlow<String> = _httpsOnlyFailures.asSharedFlow()
     val historyStorage = PlacesHistoryStorage(application)
     val bookmarksStorage = PlacesBookmarksStorage(application)
+    // Held as a field (not inlined into GeckoEngine) so we can attach the autocomplete storage
+    // delegate to it below, once the logins / credit-card stores exist.
+    private val runtime = buildRuntime(application, globalPreferencesStore)
     val engine = GeckoEngine(
         application,
-        buildDefaultSettings(application, globalPreferencesStore, historyStorage),
-        buildRuntime(application, globalPreferencesStore),
+        buildDefaultSettings(
+            application,
+            globalPreferencesStore,
+            historyStorage,
+            onHttpsOnlyError = { _httpsOnlyFailures.tryEmit(it) },
+        ),
+        runtime,
     )
     val store = BrowserStore(
         initialState = BrowserState(),
@@ -92,6 +109,10 @@ class LuminaBrowserComponents(application: Application) {
             searchEngine = { globalPreferencesStore.searchEngine },
             tabGroups = tabGroupsRepository,
         )
+    // Owns the runtime HTTPS-Only setting: keeps it on globally but drops it while the selected tab is
+    // on a user-approved local host (GeckoView has no per-site HTTPS-Only API). See the class doc.
+    val httpsOnlyExceptionController =
+        HttpsOnlyExceptionController(store, engine, globalPreferencesStore, scope).also { it.start() }
     // Persist tab thumbnails in filesDir, not cacheDir: cacheDir is disposable storage that Android
     // evicts under storage pressure (common on space-constrained devices), which wiped restored
     // tabs' thumbnails between sessions. filesDir survives until we prune it ourselves (the cache
@@ -100,6 +121,21 @@ class LuminaBrowserComponents(application: Application) {
     val sitePreferencesStore = SitePreferencesStore(application)
     val addonController = AddonController(engine, scope)
     val loginsStorage = PlacesLoginsStorage(application)
+    // Credit-card (and address) autofill storage. Card numbers are encrypted at rest with a key
+    // AutofillCrypto keeps in the hardware-backed SecureAbove22Preferences (the store refuses to
+    // persist a plaintext card number), and sync to the account rides the same sync15 E2E path as
+    // logins. Backs both the credit-card and address autofill features (each gated at runtime by its
+    // own pref via the storage delegate's enabled lambdas).
+    val creditCardsStorage = mozilla.components.service.sync.autofill.AutofillCreditCardsAddressesStorage(
+        application,
+        lazy {
+            mozilla.components.lib.dataprotect.SecureAbove22Preferences(
+                application,
+                "lumina_autofill_secure",
+                false,
+            )
+        },
+    )
     // A tab pushed here via Firefox "Send tab" raises a notification (ReceivedTabNotifications);
     // tapping it opens the URL as a normal tab in MainActivity (single normalizeUrl entry point).
     val firefoxSyncController = FirefoxSyncController(
@@ -107,6 +143,7 @@ class LuminaBrowserComponents(application: Application) {
         store,
         scope,
         loginsStorage,
+        creditCardsStorage,
     )
     val sitePermissionController =
         com.firebolt9907.luminabrowser.permissions.SitePermissionController(application)
@@ -133,7 +170,9 @@ class LuminaBrowserComponents(application: Application) {
         runCatching { engine.settings.trackingProtectionPolicy = trackingPolicyOf(prefs) }
         runCatching { engine.settings.javaScriptCanOpenWindowsAutomatically = !prefs.blockPopUps }
         runCatching { engine.settings.javascriptEnabled = prefs.javaScriptEnabled }
-        runCatching { engine.settings.httpsOnlyMode = httpsModeOf(prefs) }
+        // HttpsOnlyExceptionController owns the runtime httpsOnlyMode (base setting + per-host
+        // exceptions), so re-derive through it rather than writing the base mode directly here.
+        httpsOnlyExceptionController.recompute()
         runCatching { engine.settings.globalPrivacyControlEnabled = prefs.globalPrivacyControl }
 
         // Cookie banner auto-dismissal
@@ -178,8 +217,20 @@ class LuminaBrowserComponents(application: Application) {
         // Font size factor
         runCatching { engine.settings.fontSizeFactor = prefs.fontSizeFactor }
 
-        // Login Autofill
-        runCatching { engine.settings.loginAutofillEnabled = prefs.loginAutofillEnabled }
+        // Login Autofill — the engine flag maps to Gecko's `signon.autofillForms`, which does
+        // *silent* page-load autofill: when a form has exactly one saved match Gecko fills it on
+        // load with NO prompt and NO biometric. That is the path that made autofill sometimes fill
+        // without asking for biometrics. We keep it OFF unconditionally so a saved login is NEVER
+        // filled silently. The focus-triggered autocomplete popup still fetches logins (it passes
+        // `autofillForm:true, userTriggered:true` to Gecko's _fillForm regardless of this pref) and
+        // surfaces as a PromptRequest.SelectLoginPrompt, which PromptHandler gates behind
+        // BiometricGate. The user's `prefs.loginAutofillEnabled` toggle now gates whether that
+        // biometric picker is offered at all (see PromptHandler), not silent fill.
+        runCatching { engine.settings.loginAutofillEnabled = false }
+
+        // Generic form-field memory (the "Remember form fields" pref). Gated host-side so the injected
+        // capture/suggest script self-disarms when the user turns it off.
+        com.firebolt9907.luminabrowser.ui.content.FormFieldMemory.enabled = prefs.formFieldMemoryEnabled
 
         // Web Fonts
         runCatching { engine.settings.webFontsEnabled = prefs.webFontsEnabled }
@@ -268,11 +319,36 @@ class LuminaBrowserComponents(application: Application) {
         _browserState.value = state
     }
 
+    // Bridges GeckoView's autofill to our stores: when Gecko detects a login or credit-card field it
+    // asks this delegate for matching records and reports saves back. Attaching it to the runtime is
+    // what actually makes autofill work — `loginAutofillEnabled`/the CC prefs alone only tell Gecko
+    // to try; without a storage delegate it has nothing to fill from and nowhere to save to.
+    private val autocompleteStorageDelegate =
+        mozilla.components.browser.engine.gecko.autofill.GeckoAutocompleteStorageDelegate(
+            mozilla.components.service.sync.autofill.GeckoCreditCardsAddressesStorageDelegate(
+                lazy { creditCardsStorage },
+                scope,
+                mozilla.components.service.sync.autofill.DefaultCreditCardValidationDelegate(
+                    lazy { creditCardsStorage },
+                ),
+                { globalPreferencesStore.creditCardAutofillEnabled },
+                { globalPreferencesStore.addressAutofillEnabled },
+            ),
+            com.firebolt9907.luminabrowser.sync.LuminaLoginStorageDelegate(
+                loginsStorage,
+                scope,
+            ),
+        )
+
     init {
+        // Backing store for generic (non-login/card/address) form-field memory. The bridge handlers
+        // in ReaderExtractor are static, so the store is attached once here.
+        com.firebolt9907.luminabrowser.ui.content.FormFieldMemory.attach(application)
         applyEngineSettings()
+        runtime.autocompleteStorageDelegate = autocompleteStorageDelegate
         storeSubscription.resume()
         backgroundTabSuspender.start()
-        tabRepository.restoreOrSeedBlank(TAB_MAX_AGE_MILLIS)
+        tabRepository.restoreOrSeedBlank(tabMaxAgeMillis(globalPreferencesStore))
         // Get a head start on the first navigation of the session: spin up a content process now so
         // the first page load doesn't pay process-spawn latency, and warm the user's top sites while
         // they're still looking at the restored tab / new-tab bar.
@@ -281,8 +357,18 @@ class LuminaBrowserComponents(application: Application) {
     }
 
     companion object {
-        /** Tabs not viewed within this window are auto-discarded on the next launch. */
+        /** Default window: tabs not viewed within it are auto-discarded on the next launch. */
         const val TAB_MAX_AGE_MILLIS = 72L * 60 * 60 * 1000
+
+        /**
+         * Resolve the auto-archive window from the user's setting
+         * ([GlobalPreferencesStore.tabAutoArchiveHours]). `0` hours disables archiving, which we
+         * express as [Long.MAX_VALUE] so [TabPersistence.load]'s age check never drops a tab.
+         */
+        fun tabMaxAgeMillis(prefs: GlobalPreferencesStore): Long {
+            val hours = prefs.tabAutoArchiveHours
+            return if (hours <= 0) Long.MAX_VALUE else hours * 60L * 60 * 1000
+        }
     }
 }
 
@@ -477,6 +563,22 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           network.early-hints.enabled: true
           network.early-hints.preconnect.enabled: true
           network.fetchpriority.enabled: true
+          # --- Credit-card autofill ---
+          # Turn on Gecko's form-autofill detection for credit-card fields so it invokes our
+          # autocomplete storage delegate (GeckoCreditCardsAddressesStorageDelegate) to offer/save
+          # cards. Logins are gated by the loginAutofillEnabled engine setting; credit cards have no
+          # such setting, so the pref lives here. `.supported` lifts the region gate GeckoView
+          # otherwise applies. (No CVC: GeckoView's credit-card model has no CVC field, by design —
+          # PCI-DSS forbids persisting it — so autofill covers number/name/expiry only.)
+          extensions.formautofill.creditCards.enabled: true
+          extensions.formautofill.creditCards.supported: "on"
+          # --- Address autofill ---
+          # Same story for addresses: enable Gecko's address form detection + lift the region gate so
+          # our storage delegate is invoked to offer saved addresses. Gated at runtime by the user's
+          # addressAutofillEnabled pref (via the delegate's isAddressAutofillEnabled lambda).
+          extensions.formautofill.addresses.enabled: true
+          extensions.formautofill.addresses.supported: "on"
+          dom.forms.autocomplete.formautofill: true
           # --- TEMPORARY: passkeys/WebAuthn disabled ---
           # Lumina isn't on Google Password Manager's trusted-browser allowlist yet, so the platform
           # FIDO2 path rejects our cert and passkey flows fail. Disable the WebAuthn API entirely so
@@ -525,6 +627,7 @@ private fun buildDefaultSettings(
     application: Application,
     prefs: GlobalPreferencesStore,
     historyStorage: PlacesHistoryStorage,
+    onHttpsOnlyError: (String) -> Unit,
 ) = DefaultSettings(
     historyTrackingDelegate = HistoryDelegate(lazy { historyStorage }),
     trackingProtectionPolicy = trackingPolicyOf(prefs),
@@ -532,8 +635,13 @@ private fun buildDefaultSettings(
     javascriptEnabled = prefs.javaScriptEnabled,
     httpsOnlyMode = httpsModeOf(prefs),
     globalPrivacyControlEnabled = prefs.globalPrivacyControl,
-    loginAutofillEnabled = prefs.loginAutofillEnabled,
+    // Silent page-load autofill stays off — see the runtime apply-prefs block above. Fills always
+    // go through the biometric-gated SelectLoginPrompt instead.
+    loginAutofillEnabled = false,
     // Branded, localized error pages (assets/error_page_js.html) for failed navigations, replacing
     // GeckoView's raw default page. See LuminaRequestInterceptor.
-    requestInterceptor = com.firebolt9907.luminabrowser.engine.LuminaRequestInterceptor(application),
+    requestInterceptor = com.firebolt9907.luminabrowser.engine.LuminaRequestInterceptor(
+        application,
+        onHttpsOnlyError = onHttpsOnlyError,
+    ),
 )

@@ -69,6 +69,8 @@ fun SafariBar(
     onEditingTextChange: (String) -> Unit,
     onEditingSubmit: () -> Unit,
     onEditingCancel: () -> Unit,
+    // Top URL suggestion to inline-complete into the editing field, or null.
+    inlineAutocomplete: String? = null,
     onDragStart: () -> Unit,
     onDragDelta: (Offset) -> Unit,
     onDragEnd: (totalDelta: Offset, velocity: Offset) -> Unit,
@@ -127,7 +129,11 @@ fun SafariBar(
 
     val toolbarHeight = 48.dp * toolbarFraction
     val navBarHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val bottomPadding = navBarHeight.coerceAtLeast(24.dp)
+    // At rest the bar clears the system nav bar (gesture pill / buttons). While editing, the whole
+    // BottomBarLayer is `imePadding`-lifted above the keyboard and the nav bar is hidden behind it,
+    // so that nav-bar clearance would just be a dead gap between the pill and the keyboard top —
+    // collapse it to a small breathing space so the address bar sits snug above the keyboard.
+    val bottomPadding = if (state.mode == BarMode.Editing) 8.dp else navBarHeight.coerceAtLeast(24.dp)
     val totalHeight = barHeight + bottomPadding + toolbarHeight
 
     Box(
@@ -243,6 +249,7 @@ fun SafariBar(
                         controlsEnabled = controlsEnabled,
                         addressSharedModifier = addressShared,
                         haptics = haptics,
+                        inlineAutocomplete = inlineAutocomplete,
                     )
                 }
               }

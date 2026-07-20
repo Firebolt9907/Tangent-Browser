@@ -115,7 +115,7 @@ object ThemeColorProbe {
                     var meta = pickMeta();
                     var raw = meta ? (meta.getAttribute('content') || '') : '';
                     raw = raw.trim();
-                    if (!raw) { luminaBridge('$BRIDGE_MESSAGE', 'none|' + location.href); return; }
+                    if (!raw) { luminaBridge('${BridgeGuard.tag(BRIDGE_MESSAGE)}', 'none|' + location.href); return; }
                     var probe = document.createElement('span');
                     probe.style.cssText = 'display:none!important;color:transparent;';
                     probe.style.color = raw;
@@ -124,7 +124,7 @@ object ThemeColorProbe {
                     try { computed = window.getComputedStyle(probe).color || ''; } catch (e) {}
                     if (probe.parentNode) { try { probe.parentNode.removeChild(probe); } catch (e2) {} }
                     if (!computed) computed = 'none';
-                    luminaBridge('$BRIDGE_MESSAGE', computed + '|' + location.href);
+                    luminaBridge('${BridgeGuard.tag(BRIDGE_MESSAGE)}', computed + '|' + location.href);
                 }
                 try { resolve(); } catch (e) {}
                 /* Re-sample once when the color scheme flips so a dark/light theme-color swaps in

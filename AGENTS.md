@@ -278,9 +278,44 @@ Gecko *fetch* logins (`onLoginFetch`) on login-field focus, but Gecko surfaces t
 `PromptRequest.SelectLoginPrompt` and saving as `PromptRequest.SaveLoginPrompt`. These MUST be handled
 in `ui/PromptHandler.kt`'s `when (promptRequest)` block. If they fall to `else` (logs
 `"Unhandled prompt: …"`), fetch still succeeds but **no fill/save UI appears** — autofill looks dead
-though logins are present. `SelectCreditCard`/`SelectAddress` are the equivalents — same rule.
-`PromptHandler` is mounted in both surfaces (`LuminaOverlaySheets`, `CustomTabRoot`); a new prompt
-type added to the one `when` works in both.
+though logins are present. `SelectCreditCard`/`SaveCreditCard`/`SelectAddress` are the equivalents —
+same rule, all handled in `PromptHandler` (CC/address pickers live in `ui/AutofillPickerSheets.kt`;
+CC fill is biometric-gated like logins, addresses are not). Each is gated by its own pref
+(`creditCardAutofillEnabled` / `addressAutofillEnabled`), both threaded into `PromptHandler` from the
+two call sites. This MC version surfaces **no** `SaveAddress` doorhanger, so addresses are added
+manually via `ui/passwords/AddressesSheet.kt` (overview menu → "Addresses"); cards via
+`CreditCardsSheet`. Address storage shares the encrypted `creditCardsStorage`
+(`AutofillCreditCardsAddressesStorage`) — its address side is enabled by the delegate's
+`isAddressAutofillEnabled` lambda in `Engine.kt` (was hard-`false`). `PromptHandler` is mounted in
+both surfaces (`LuminaOverlaySheets`, `CustomTabRoot`); a new prompt type added to the one `when`
+works in both.
+
+**Generic form-field memory is separate — a JS bridge, not Gecko autofill.** Logins/cards/addresses
+are all Gecko `formautofill`; freeform fields (a name, an age, an email outside a login) are not, so
+`ui/content/FormFieldMemory.kt` handles them over the `lumina-formfill-save`/`-get` bridge messages
+(routed in `ReaderExtractor.onTextPrompt` — `-get` answers **synchronously** via `prompt.confirm(json)`,
+the one bridge path that reads a return value). Capture-on-submit/blur + an in-page suggestion dropdown
+on focus; sensitive fields (password/cc/otp) are excluded in JS. Gated host-side by
+`FormFieldMemory.enabled` (the `formFieldMemoryEnabled` pref, synced in `applyEngineSettings`), and the
+store is `attach`ed once in the `Engine` init. Injected per-load in `ContentHost` next to the OTP/login
+detectors.
+
+**The `lumina-*` prompt bridge is security-hardened — do not bypass `BridgeGuard`.** The bridge is
+just `window.prompt("lumina-…", payload)`, so *any* script in the page realm (incl. third-party ad
+scripts) could otherwise drive our probes or read stored data. Two guards in
+`ui/content/BridgeGuard.kt`, both load-bearing:
+- **Nonce.** Every message our injected scripts emit is tagged `name~<nonce>` via `BridgeGuard.tag(…)`
+  (per-process `SecureRandom` token, embedded only in the injected closures). `onTextPrompt` runs the
+  message through `BridgeGuard.resolve()`; a `lumina-*~…` with a wrong/missing nonce is **swallowed**
+  (`Rejected`), a message with no separator is `Foreign` (falls through). **Any new probe that posts
+  over the bridge MUST emit `'${'$'}{BridgeGuard.tag(NAME)}'`, and any new handler MUST live inside the
+  `Accepted` branch** — a bare `prompt.message == NAME` check reopens the channel to page JS.
+  (`lumina-reader`/`lumina-video` are intentionally left as legacy exact-match — one-way, low-severity.)
+- **Trusted-origin binding.** `FormFieldMemory.onSave`/`getSuggestions` take the `tabId` and key storage
+  by `BridgeGuard.trustedOrigin(tabId)` (the tab's REAL origin, recorded by `ContentHost` on inject +
+  `onLocationChange`), **never** the host in the page's payload — otherwise `evil.com` could read
+  `bank.com`'s remembered values. Fails closed (empty) when no origin is recorded. Don't re-introduce a
+  page-supplied host.
 
 **`ReaderPromptDelegate` must forward EVERY prompt callback it doesn't handle.** Reader mode
 (`ui/reader/ReaderExtractor.registerPromptDelegate`) installs a `GeckoSession.PromptDelegate` that

@@ -87,6 +87,11 @@ internal fun LuminaOverlaySheets(
     // Passwords
     showPasswords: Boolean,
     onDismissPasswords: () -> Unit,
+    // Credit cards / payment methods
+    showCreditCards: Boolean,
+    onDismissCreditCards: () -> Unit,
+    showAddresses: Boolean,
+    onDismissAddresses: () -> Unit,
     // History
     showHistory: Boolean,
     onDismissHistory: () -> Unit,
@@ -239,12 +244,41 @@ internal fun LuminaOverlaySheets(
 
     SitePermissionDialog(controller = components.sitePermissionController)
 
-    PromptHandler(engineSession = selectedEngineSession)
+    PromptHandler(
+        engineSession = selectedEngineSession,
+        loginAutofillEnabled = components.globalPreferencesStore.loginAutofillEnabled,
+        biometricAutofillRequired = components.globalPreferencesStore.biometricAutofillEnabled,
+        creditCardAutofillEnabled = components.globalPreferencesStore.creditCardAutofillEnabled,
+        addressAutofillEnabled = components.globalPreferencesStore.addressAutofillEnabled,
+    )
+
+    // Proactive login autofill: offer the saved-password picker before the user taps a login field,
+    // so the keyboard never appears when a credential is already saved (see ProactiveLoginAutofill).
+    ProactiveLoginAutofill(
+        engineSession = selectedEngineSession,
+        loginsStorage = components.loginsStorage,
+        enabled = components.globalPreferencesStore.loginAutofillEnabled,
+        biometricRequired = components.globalPreferencesStore.biometricAutofillEnabled,
+    )
 
     if (showPasswords) {
         PasswordsSheet(
             loginsStorage = components.loginsStorage,
             onDismiss = onDismissPasswords,
+        )
+    }
+
+    if (showCreditCards) {
+        com.firebolt9907.luminabrowser.ui.passwords.CreditCardsSheet(
+            creditCardsStorage = components.creditCardsStorage,
+            onDismiss = onDismissCreditCards,
+        )
+    }
+
+    if (showAddresses) {
+        com.firebolt9907.luminabrowser.ui.passwords.AddressesSheet(
+            creditCardsStorage = components.creditCardsStorage,
+            onDismiss = onDismissAddresses,
         )
     }
 

@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -60,6 +61,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -226,29 +228,48 @@ internal fun ColumnScope.GridOverviewControls(
                     expanded = overflowOpen,
                     onDismissRequest = { overflowOpen = false },
                 ) {
-                    // Tab layout is a display preference, not a primary action —
-                    // it lives here as three explicit, checkmarked choices rather
-                    // than a mystery-meat cycle button on the bar.
-                    TabViewMode.values().forEach { mode ->
-                        val (modeLabel, modeIcon) = when (mode) {
-                            TabViewMode.DECK -> "Deck" to Icons.Default.ViewCarousel
-                            TabViewMode.PIXEL -> "Filmstrip" to Icons.Default.ViewColumn
-                            TabViewMode.GRID -> "Grid" to Icons.Default.GridView
+                    // Tab layout is a display preference, not a primary action — so it's a single
+                    // compact segmented control at the top of the menu (one row) rather than three
+                    // stacked full-width items, keeping the action list below it short.
+                    Row(
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                            .padding(2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TabViewMode.values().forEach { mode ->
+                            val (modeLabel, modeIcon) = when (mode) {
+                                TabViewMode.DECK -> "Deck" to Icons.Default.ViewCarousel
+                                TabViewMode.PIXEL -> "Filmstrip" to Icons.Default.ViewColumn
+                                TabViewMode.GRID -> "Grid" to Icons.Default.GridView
+                            }
+                            val selected = mode == tabViewMode
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        if (selected) MaterialTheme.colorScheme.primary
+                                        else Color.Transparent,
+                                    )
+                                    .clickable {
+                                        overflowOpen = false
+                                        if (!selected) onSelectTabViewMode(mode)
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 9.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    modeIcon,
+                                    contentDescription = modeLabel,
+                                    tint = if (selected) MaterialTheme.colorScheme.onPrimary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
-                        DropdownMenuItem(
-                            text = { Text(modeLabel) },
-                            leadingIcon = { Icon(modeIcon, contentDescription = null) },
-                            trailingIcon = if (mode == tabViewMode) {
-                                { Icon(Icons.Default.Check, contentDescription = "Selected") }
-                            } else null,
-                            onClick = {
-                                overflowOpen = false
-                                if (mode != tabViewMode) {
-                                    onSelectTabViewMode(mode)
-                                }
-                            },
-                        )
                     }
+                    HorizontalDivider()
                     // Reopen the last closed tab (Safari/Arc). Disabled — not
                     // hidden — when the stack is empty, so its slot is stable.
                     DropdownMenuItem(

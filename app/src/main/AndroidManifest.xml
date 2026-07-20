@@ -202,6 +202,18 @@
             </intent-filter>
         </service>
 
+        <!-- Home-screen search widget (see widget/SearchWidgetProvider). -->
+        <receiver
+            android:name=".widget.SearchWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/search_widget_info" />
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

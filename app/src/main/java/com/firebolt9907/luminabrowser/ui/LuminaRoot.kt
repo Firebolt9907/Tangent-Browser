@@ -867,6 +867,9 @@ fun LuminaRoot(
 
     // Launcher app-shortcuts (long-press home icon). MainActivity records the request; act on it once
     // and clear. New Tab opens a fresh blank tab in editing mode; the others open a library sheet.
+    // Voice-search shortcut can't run here — `onVoiceInput` is defined further down — so record it
+    // and let a later effect (below its definition) launch the recognizer.
+    var pendingVoiceSearch by remember { mutableStateOf(false) }
     val pendingShortcut by com.firebolt9907.luminabrowser.state.AppShortcutSignals.pending.collectAsState()
     LaunchedEffect(pendingShortcut) {
         when (pendingShortcut) {
@@ -877,6 +880,7 @@ fun LuminaRoot(
             }
             com.firebolt9907.luminabrowser.state.AppShortcutSignals.Action.Bookmarks -> showBookmarks = true
             com.firebolt9907.luminabrowser.state.AppShortcutSignals.Action.History -> showHistory = true
+            com.firebolt9907.luminabrowser.state.AppShortcutSignals.Action.VoiceSearch -> pendingVoiceSearch = true
             null -> Unit
         }
         if (pendingShortcut != null) com.firebolt9907.luminabrowser.state.AppShortcutSignals.consume()
@@ -1184,6 +1188,14 @@ fun LuminaRoot(
     // Permission-less (Google's speech activity owns the mic); null when no recognizer is installed.
     val onVoiceInput = com.firebolt9907.luminabrowser.ui.chrome.rememberVoiceSearchLauncher { spoken ->
         viewModel.onSubmitText(spoken)
+    }
+    // Home-screen search-widget mic tap (recorded above as pendingVoiceSearch): launch the recognizer
+    // once the launcher exists. onVoiceInput is null if no speech recognizer is available.
+    LaunchedEffect(pendingVoiceSearch, onVoiceInput) {
+        if (pendingVoiceSearch && onVoiceInput != null) {
+            pendingVoiceSearch = false
+            onVoiceInput.invoke()
+        }
     }
     val callbacks = remember(viewModel, currentUrl) {
         BarCallbacks(

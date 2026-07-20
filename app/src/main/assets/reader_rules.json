@@ -1,5 +1,5 @@
 {
-  "version": 15,
+  "version": 16,
   "_schema": "Per-site reader overrides interpreted by the fixed extractor (data, not code). Each rule: 'match' = hostname or ['host', ...] (bare domain also matches subdomains; leading '*.' allowed); 'include' = CSS selector(s) for the real article container (first visible match wins, bypasses the heuristic); 'strip' = CSS selector(s) whose subtrees are dropped before extraction. include/strip may be a string or an array. Selectors containing a newline or '//' are rejected at load. include/strip are no-ops when their selectors don't match, so an unverified rule cannot regress other pages — only reshape the named host.",
   "_examples_note": "Rules validated against live article DOM by the reader-mode agent loop. include selectors are the true article-body container; strip selectors drop in-body ads / related-coverage / bio boxes the generic boilerplate filter misses.",
   "rules": [
@@ -165,6 +165,11 @@
       "match": ["salon.com"],
       "include": [".article__content"],
       "strip": [".ad", ".sticky-ad", ".related-articles"]
+    },
+    {
+      "match": ["wikipedia.org"],
+      "include": [".mw-parser-output"],
+      "strip": [".infobox", ".navbox", ".reflist", ".references", ".mw-references-wrap", ".hatnote", ".navigation-not-searchable", ".sistersitebox", ".noprint", ".mw-editsection", ".shortdescription", ".toc", "#toc", ".sidebar", ".metadata", ".ambox", ".gallery", ".catlinks", "table.vertical-navbox", ".portal", ".refbegin", ".mw-empty-elt", ".reference"]
     }
   ]
 }

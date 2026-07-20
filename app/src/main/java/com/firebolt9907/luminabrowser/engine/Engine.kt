@@ -579,6 +579,15 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           media.suspend-background-video.delay-ms: 10000
           # Image cache: decode images in larger chunks so large images appear sooner.
           image.mem.decode_bytes_at_a_time: 32768
+          # Keep decoded image surfaces around longer. Gecko's surface cache can evict a decoded
+          # image as soon as it's been off-screen for min_expiration_ms (default 60s), so scrolling
+          # back up a long article — or returning to a tab after a minute — re-decodes those images
+          # from their compressed source (CPU + battery + a brief blank-then-pop). Raise the floor
+          # to 2 minutes so revisited/scrolled-back images are still decoded and paint instantly,
+          # matching Chrome's more generous decoded-image retention. Still bounded by the surface
+          # cache's overall size cap and discarded first under memory pressure, so worst case is
+          # just a re-decode — never an OOM.
+          image.mem.surfacecache.min_expiration_ms: 120000
           # Network: raise connection ceilings and stop artificially pacing request bursts so
           # asset-heavy pages open all their sockets up front instead of trickling requests.
           network.http.max-connections: 1800

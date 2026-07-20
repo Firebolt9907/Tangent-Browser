@@ -44,6 +44,7 @@ import com.firebolt9907.luminabrowser.ui.addressSummaryLine
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
+import com.firebolt9907.luminabrowser.ui.components.SwipeToRemoveRow
 import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.Address
@@ -98,10 +99,14 @@ fun AddressesSheet(
             } else {
                 LazyColumn(modifier = Modifier.height(320.dp)) {
                     items(addresses, key = { it.guid }) { address ->
-                        AddressRow(
-                            address = address,
-                            onDelete = { showDeleteConfirm = address.guid },
-                        )
+                        // Swipe end-to-start to delete → confirm dialog (row springs back until
+                        // confirmed). See SwipeToRemoveRow.
+                        SwipeToRemoveRow(
+                            onRemove = { showDeleteConfirm = address.guid },
+                            settleOnRemove = false,
+                        ) {
+                            AddressRow(address = address)
+                        }
                     }
                 }
             }
@@ -167,7 +172,6 @@ fun AddressesSheet(
 @Composable
 private fun AddressRow(
     address: Address,
-    onDelete: () -> Unit,
 ) {
     ListItem(
         leadingContent = { Icon(Icons.Default.LocationOn, contentDescription = null) },
@@ -187,15 +191,6 @@ private fun AddressRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                )
-            }
-        },
-        trailingContent = {
-            IconButton(onClick = onDelete) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "Delete",
-                    tint = MaterialTheme.colorScheme.error,
                 )
             }
         },

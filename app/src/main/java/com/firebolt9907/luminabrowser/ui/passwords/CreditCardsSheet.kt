@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
+import com.firebolt9907.luminabrowser.ui.components.SwipeToRemoveRow
 import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.CreditCard
@@ -95,10 +96,14 @@ fun CreditCardsSheet(
             } else {
                 LazyColumn(modifier = Modifier.height(320.dp)) {
                     items(cards, key = { it.guid }) { card ->
-                        CreditCardRow(
-                            card = card,
-                            onDelete = { showDeleteConfirm = card.guid },
-                        )
+                        // Swipe end-to-start to delete → confirm dialog (row springs back until
+                        // confirmed, since payment data is sensitive). See SwipeToRemoveRow.
+                        SwipeToRemoveRow(
+                            onRemove = { showDeleteConfirm = card.guid },
+                            settleOnRemove = false,
+                        ) {
+                            CreditCardRow(card = card)
+                        }
                     }
                 }
             }
@@ -164,7 +169,6 @@ fun CreditCardsSheet(
 @Composable
 private fun CreditCardRow(
     card: CreditCard,
-    onDelete: () -> Unit,
 ) {
     ListItem(
         leadingContent = { Icon(Icons.Default.CreditCard, contentDescription = null) },
@@ -189,15 +193,6 @@ private fun CreditCardRow(
                     text = "Expires ${card.expiryMonth.toString().padStart(2, '0')}/${card.expiryYear}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        trailingContent = {
-            IconButton(onClick = onDelete) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "Delete",
-                    tint = MaterialTheme.colorScheme.error,
                 )
             }
         },

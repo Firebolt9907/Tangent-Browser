@@ -567,6 +567,16 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           media.memory_cache_max_size: 65536
           media.cache_readahead_limit: 7200
           media.cache_resume_threshold: 3600
+          # Battery: suspend the *video* decoder for a tab whose video keeps playing in the
+          # background. BackgroundTabSuspender (state/) suspends idle background sessions, but
+          # audible/media tabs are intentionally exempt so audio keeps playing — which leaves a
+          # background video (a muted autoplay loop, or a music video kept on for its audio) still
+          # running its GPU/CPU video decode off-screen for no visible benefit. Chrome throttles
+          # background video the same way. Turn Gecko's suspender on and give it a 10s grace period
+          # (so a quick tab-flip doesn't stutter playback); audio is untouched and the frames
+          # resume the instant the tab is foregrounded again.
+          media.suspend-background-video.enabled: true
+          media.suspend-background-video.delay-ms: 10000
           # Image cache: decode images in larger chunks so large images appear sooner.
           image.mem.decode_bytes_at_a_time: 32768
           # Network: raise connection ceilings and stop artificially pacing request bursts so

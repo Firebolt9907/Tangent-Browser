@@ -44,6 +44,11 @@
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="http" />
         </intent>
+        <!-- Voice search: make the system speech-recognition service visible on Android 11+ so
+             SpeechRecognizer.isRecognitionAvailable / ACTION_RECOGNIZE_SPEECH resolve. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
     </queries>
 
     <application

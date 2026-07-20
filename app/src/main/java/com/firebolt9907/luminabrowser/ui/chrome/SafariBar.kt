@@ -71,6 +71,8 @@ fun SafariBar(
     onEditingCancel: () -> Unit,
     // Top URL suggestion to inline-complete into the editing field, or null.
     inlineAutocomplete: String? = null,
+    // Mic tap in the editing field → system voice search. Null hides the mic.
+    onVoiceInput: (() -> Unit)? = null,
     onDragStart: () -> Unit,
     onDragDelta: (Offset) -> Unit,
     onDragEnd: (totalDelta: Offset, velocity: Offset) -> Unit,
@@ -249,6 +251,7 @@ fun SafariBar(
                         controlsEnabled = controlsEnabled,
                         addressSharedModifier = addressShared,
                         haptics = haptics,
+                        onVoiceInput = onVoiceInput,
                         inlineAutocomplete = inlineAutocomplete,
                     )
                 }

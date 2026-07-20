@@ -11,6 +11,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +59,8 @@ internal fun BarEditing(
     // element (supplied by SafariBar's SharedTransitionLayout). Default no-op for previews.
     addressSharedModifier: Modifier = Modifier,
     haptics: LuminaHaptics? = null,
+    // Mic tap → system voice search. Null hides the mic (no recognizer installed).
+    onVoiceInput: (() -> Unit)? = null,
     // Top URL suggestion. When its display form starts with what the user has typed, the remainder
     // is inline-completed into the field as a pre-selected suffix (desktop-browser autocomplete):
     // continuing to type overtypes it, Backspace rejects it, Enter accepts it.
@@ -225,6 +228,20 @@ internal fun BarEditing(
                         Icon(
                             Icons.Default.Clear,
                             contentDescription = "Clear address",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                } else if (onVoiceInput != null) {
+                    // Empty field: offer voice search in the slot the Clear (✕) button would occupy.
+                    IconButton(
+                        onClick = { haptics?.softClick(); onVoiceInput() },
+                        enabled = controlsEnabled,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Mic,
+                            contentDescription = "Voice search",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(18.dp),
                         )

@@ -75,6 +75,8 @@ internal fun BottomBarLayer(
     // Top URL suggestion to inline-complete into the editing field, or null. Only the live/active
     // bar consumes it; the neighbor ghost bars never enter editing mode.
     inlineAutocomplete: String? = null,
+    // Mic tap in the editing field → system voice search. Null hides the mic (no recognizer).
+    onVoiceInput: (() -> Unit)? = null,
     onPrimaryUrlTap: () -> Unit,
     onDragStart: () -> Unit,
     onDragDelta: (androidx.compose.ui.geometry.Offset) -> Unit,
@@ -389,6 +391,7 @@ internal fun BottomBarLayer(
             onEditingSubmit = callbacks.onEditingSubmit,
             onEditingCancel = callbacks.onEditingCancel,
             inlineAutocomplete = inlineAutocomplete,
+            onVoiceInput = onVoiceInput,
             onDragStart = onDragStart,
             onDragDelta = onDragDelta,
             onDragEnd = onDragEnd,

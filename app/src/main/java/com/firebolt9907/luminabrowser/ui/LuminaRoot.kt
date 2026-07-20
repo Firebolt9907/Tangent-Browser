@@ -1162,6 +1162,11 @@ fun LuminaRoot(
     // The top suggestion's URL when it is a concrete page (History/Bookmark) — fed to the editing
     // field for inline autocomplete. Search rows are excluded: there is no URL to complete toward.
     val autocompleteSource = remember { mutableStateOf<String?>(null) }
+    // Voice search: mic tap in the editing field → system recognizer → search/navigate the result.
+    // Permission-less (Google's speech activity owns the mic); null when no recognizer is installed.
+    val onVoiceInput = com.firebolt9907.luminabrowser.ui.chrome.rememberVoiceSearchLauncher { spoken ->
+        viewModel.onSubmitText(spoken)
+    }
     val callbacks = remember(viewModel, currentUrl) {
         BarCallbacks(
             onUrlTap = viewModel::onUrlTap,
@@ -3082,6 +3087,7 @@ fun LuminaRoot(
                         activeState = pendingActiveBarState ?: state,
                         callbacks = callbacks,
                         inlineAutocomplete = autocompleteSource.value,
+                        onVoiceInput = onVoiceInput,
                         onPrimaryUrlTap = onPrimaryUrlTap,
                         onDragStart = onPillDragStart,
                         onDragDelta = onPillDragDelta,

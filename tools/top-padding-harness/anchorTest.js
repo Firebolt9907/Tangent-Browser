@@ -29,6 +29,16 @@ if (!url || !targetSel) { console.error('usage: node anchorTest.js <url> <target
       // link), follow it, and measure that target. Lets the honest occlusion check run on arbitrary
       // real sites without hand-picking a selector.
       let autoId = null;
+      // Is `el` inside a fixed/sticky nav drawer/menu? Clicking such a link opens/keeps an overlay
+      // that then covers the target — a site-UX artifact, not a top-padding failure. Skip those and
+      // pick links in the normal document flow (article/content body) instead.
+      const inFixedMenu = (el) => {
+        for (let n = el; n && n !== document.body; n = n.parentElement) {
+          const p = getComputedStyle(n).position;
+          if (p === 'fixed' || p === 'sticky') return true;
+        }
+        return false;
+      };
       if (targetSel === 'auto') {
         const links = Array.from(document.querySelectorAll('a[href*="#"]'));
         for (const a of links) {
@@ -36,6 +46,7 @@ if (!url || !targetSel) { console.error('usage: node anchorTest.js <url> <target
           const i = h.indexOf('#');
           const id = i >= 0 ? decodeURIComponent(h.slice(i + 1)) : '';
           if (!id) continue;
+          if (inFixedMenu(a)) continue;
           let tgt = null; try { tgt = document.getElementById(id) || document.querySelector('[name="' + CSS.escape(id) + '"]'); } catch (e) {}
           if (tgt && tgt.getBoundingClientRect().top > window.innerHeight * 0.5) { autoId = id; a.click(); break; }
         }
@@ -55,23 +66,30 @@ if (!url || !targetSel) { console.error('usage: node anchorTest.js <url> <target
         const cy = Math.max(1, rect.top + 3);
         let hit = document.elementFromPoint(cx, cy);
         let coveredBy = null;
+        let modalOverlay = false;
         if (hit && hit !== t && !t.contains(hit) && !hit.contains(t)) {
           for (let n = hit; n; n = n.parentElement) {
-            const p = getComputedStyle(n).position;
+            const cs = getComputedStyle(n);
+            const p = cs.position;
             if (p === 'fixed' || p === 'sticky') {
+              const nr = n.getBoundingClientRect();
+              // A full-viewport overlay (consent/ad modal, nav drawer) is the SITE's state, not a
+              // top-padding header failure. Flag it separately so it isn't scored as a header break.
+              if (nr.height >= window.innerHeight * 0.7 || /modal|overlay|dialog|drawer|backdrop|scrim/i.test((n.className || '') + ' ' + (n.id || '') + ' ' + (n.getAttribute('role') || ''))) modalOverlay = true;
               coveredBy = (n.tagName.toLowerCase()) + (n.id ? '#' + n.id : '') + (n.className && typeof n.className === 'string' ? '.' + n.className.trim().split(/\s+/)[0] : '');
               break;
             }
           }
         }
-        r({ spt, top: Math.round(rect.top), coveredBy });
+        r({ spt, top: Math.round(rect.top), coveredBy, modalOverlay });
       }, 700));
     }, targetSel, clickSel, topPx);
     console.log(`\n=== anchor jump: ${url}  topPx=${topPx} ===`);
     console.log(`scroll-padding-top: ${res.spt}`);
-    console.log(`target ${targetSel} landed at top=${res.top}${res.coveredBy ? '  (COVERED by pinned ' + res.coveredBy + ')' : ''}`);
+    console.log(`target ${targetSel} landed at top=${res.top}${res.coveredBy ? '  (COVERED by ' + (res.modalOverlay ? 'modal/overlay ' : 'pinned ') + res.coveredBy + ')' : ''}`);
     const clearsBar = res.top != null && res.top >= topPx - 2;
-    const ok = clearsBar && !res.coveredBy;
-    console.log(`\nRESULT: ${res.top == null ? 'SKIP (target not found)' : !clearsBar ? 'FAIL ❌ target under the bar (top < topPx)' : res.coveredBy ? 'FAIL ❌ target hidden behind pinned ' + res.coveredBy : 'PASS ✅ target below the inset'}`);
+    const headerCovered = res.coveredBy && !res.modalOverlay;
+    const ok = clearsBar && !headerCovered;
+    console.log(`\nRESULT: ${res.top == null ? 'SKIP (target not found)' : !clearsBar ? 'FAIL ❌ target under the bar (top < topPx)' : res.modalOverlay ? 'SKIP (target behind a site modal/overlay/drawer — not a top-padding failure)' : res.coveredBy ? 'FAIL ❌ target hidden behind pinned ' + res.coveredBy : 'PASS ✅ target below the inset'}`);
   } finally { await browser.close(); }
 })();

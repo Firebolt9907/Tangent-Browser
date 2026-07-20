@@ -113,6 +113,12 @@ https://www.target.com
 https://www.epicgames.com
 # --- iter 28: grid-body layouts (header placed by grid-template-areas) ---
 https://learn.microsoft.com/en-us/dotnet/csharp/
+# --- iter 31: reference/encyclopedia/spec sites (in-page anchor surfaces) ---
+https://www.britannica.com/science/inflation-economics
+https://wiki.archlinux.org/title/Systemd
+https://man7.org/linux/man-pages/man1/ls.1.html
+https://html.spec.whatwg.org/multipage/dom.html
+https://en.wikibooks.org/wiki/LaTeX/Mathematics
 # --- iter 29: web apps / editors + dev-docs anchor surfaces ---
 https://excalidraw.com
 https://codepen.io

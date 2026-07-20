@@ -43,10 +43,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
+import com.firebolt9907.luminabrowser.ui.components.SwipeToRemoveRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -117,9 +117,8 @@ fun DownloadsSheet(
         } else {
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
                 items(downloads, key = { it.id }) { entry ->
-                    DownloadRow(
-                        entry = entry,
-                        onOpen = { openDownload(context, entry) },
+                    // Swipe end-to-start to remove — no per-row trash icon. See SwipeToRemoveRow.
+                    SwipeToRemoveRow(
                         onRemove = {
                             // remove() hits the DownloadManager content provider and can throw;
                             // guard it so a failure can't crash the sheet. The row is dropped
@@ -127,7 +126,12 @@ fun DownloadsSheet(
                             runCatching { downloadManager(context)?.remove(entry.id) }
                             downloads = downloads.filterNot { it.id == entry.id }
                         },
-                    )
+                    ) {
+                        DownloadRow(
+                            entry = entry,
+                            onOpen = { openDownload(context, entry) },
+                        )
+                    }
                 }
             }
         }
@@ -166,10 +170,8 @@ fun DownloadsSheet(
 private fun DownloadRow(
     entry: DownloadEntry,
     onOpen: () -> Unit,
-    onRemove: () -> Unit,
 ) {
     val completed = entry.status == DownloadManager.STATUS_SUCCESSFUL
-    val haptics = rememberLuminaHaptics()
     ListItem(
         modifier = Modifier.clickable(enabled = completed) { onOpen() },
         leadingContent = {
@@ -209,14 +211,6 @@ private fun DownloadRow(
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
                 }
-            }
-        },
-        trailingContent = {
-            IconButton(onClick = {
-                haptics.remove()
-                onRemove()
-            }) {
-                Icon(Icons.Default.Delete, contentDescription = "Remove")
             }
         },
     )

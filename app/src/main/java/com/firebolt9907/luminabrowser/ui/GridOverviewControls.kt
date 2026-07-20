@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewCarousel
@@ -37,6 +38,7 @@ import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
@@ -48,6 +50,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -209,8 +212,10 @@ internal fun ColumnScope.GridOverviewControls(
             // so the bar stays focused on tab actions (New Tab, layout, sync).
             Box {
                 var overflowOpen by remember { mutableStateOf(false) }
+                var confirmCloseAll by remember { mutableStateOf(false) }
                 val reopenableCount by components.tabRepository.reopenableCount
                     .collectAsStateWithLifecycle()
+                val openTabCount = components.store.state.tabs.size
                 FilledTonalIconButton(
                     onClick = { overflowOpen = true },
                     enabled = toolbarEnabled,
@@ -262,6 +267,19 @@ internal fun ColumnScope.GridOverviewControls(
                             onCloseGrid()
                         },
                     )
+                    // Bulk-close every tab. Recoverable (each real page lands on the Reopen stack), but
+                    // still confirmed since it's a sweeping action. Disabled when there's nothing to clear.
+                    DropdownMenuItem(
+                        text = { Text("Close All Tabs") },
+                        leadingIcon = {
+                            Icon(Icons.Default.DeleteSweep, contentDescription = null)
+                        },
+                        enabled = openTabCount > 0,
+                        onClick = {
+                            overflowOpen = false
+                            confirmCloseAll = true
+                        },
+                    )
                     HorizontalDivider()
                     // Tab organization: label groups (no isolation) + containers (cookie isolation).
                     DropdownMenuItem(
@@ -311,6 +329,32 @@ internal fun ColumnScope.GridOverviewControls(
                         text = { Text("Settings") },
                         leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
                         onClick = { overflowOpen = false; onShowSettings() },
+                    )
+                }
+                if (confirmCloseAll) {
+                    AlertDialog(
+                        onDismissRequest = { confirmCloseAll = false },
+                        icon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) },
+                        title = { Text("Close all tabs?") },
+                        text = {
+                            Text(
+                                if (openTabCount == 1) "This closes the current tab." +
+                                    " You can reopen it from Reopen Closed Tab."
+                                else "This closes all $openTabCount tabs. You can reopen them from" +
+                                    " Reopen Closed Tab.",
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                confirmCloseAll = false
+                                components.tabRepository.closeAllTabs()
+                                haptics.remove()
+                                onCloseGrid()
+                            }) { Text("Close all") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { confirmCloseAll = false }) { Text("Cancel") }
+                        },
                     )
                 }
             }

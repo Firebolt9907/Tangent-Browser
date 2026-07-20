@@ -307,6 +307,16 @@ class GeckoTabRepository(
         tabsUseCases.removeTab.invoke(id)
     }
 
+    override fun closeAllTabs(): String {
+        // Record each real page (recordClosedTab skips blank/about: tabs) so "Reopen Closed Tab" can
+        // restore them, then remove all and seed one fresh blank tab so we never sit at zero tabs.
+        store.state.tabs.forEach { recordClosedTab(it.id) }
+        tabsUseCases.removeAllTabs.invoke()
+        val id = tabsUseCases.addTab.invoke(url = "about:blank", selectTab = true, title = "New Tab")
+        lastAccessById[id] = System.currentTimeMillis()
+        return id
+    }
+
     /** Snapshot a tab's URL+title onto the closed-tab stack before it's removed (real pages only). */
     private fun recordClosedTab(id: String) {
         val tab = store.state.tabs.firstOrNull { it.id == id } ?: return

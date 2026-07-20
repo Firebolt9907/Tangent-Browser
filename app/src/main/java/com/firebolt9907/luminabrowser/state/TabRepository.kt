@@ -28,6 +28,12 @@ interface TabRepository {
 
     fun removeTab(id: String)
 
+    /**
+     * Close every open tab (recording each real page onto the reopen stack) and leave a single fresh
+     * blank tab selected, so the browser is never left with zero tabs. Returns the new blank tab id.
+     */
+    fun closeAllTabs(): String
+
     /** Number of recently-closed tabs available to reopen; drives the "Reopen Closed Tab" UI. */
     val reopenableCount: StateFlow<Int>
 

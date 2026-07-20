@@ -601,6 +601,15 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           network.dnsCacheEntries: 10000
           network.dnsCacheExpiration: 3600
           network.ssl_tokens_cache_capacity: 10240
+          # First-visit DNS parallelism: Gecko resolves at most 5 high-priority hostnames at once
+          # (default). A modern page pulls sub-resources from many distinct hosts (the origin plus
+          # a fan of CDN/ad/analytics/font domains); on the first visit, before the enlarged DNS
+          # cache above is warm, those lookups queue behind that limit of 5 and serialize, delaying
+          # the connects that depend on them. Raise the ceiling to 8 so more of a page's hosts
+          # resolve concurrently — closer to Chrome's larger resolver pool. Race-to-idle keeps it
+          # battery-neutral (the lookups finish sooner) and the cache means repeat visits rarely
+          # hit the resolver at all.
+          network.dns.max_high_priority_threads: 8
           # Battery/data: turn off "Race Cache With Network". When RCWN is on, Gecko may fire a
           # network request in parallel with a disk-cache read and take whichever wins — a hedge
           # that pays off on slow spinning disks but rarely on phone flash, where the cache read

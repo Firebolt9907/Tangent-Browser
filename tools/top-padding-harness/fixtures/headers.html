@@ -117,6 +117,26 @@ const cases = {
     d.innerHTML='<div class="logo"></div><span class="txt">Dialog top bar</span><button>X</button>';
     document.body.appendChild(d);
   },
+  // 16. Sticky header inside an ancestor using the INDIVIDUAL `translate` property (not the
+  //     `transform` shorthand). translate/scale/rotate also reparent the containing block and
+  //     stickiness, but surface as separate computed props — a break if detection only reads
+  //     getComputedStyle().transform.
+  stickyInTranslate(){
+    const wrap=document.createElement('div');wrap.style.cssText='translate:0px 0px';
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:sticky;top:0;height:56px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Sticky-in-translate</span>';
+    const filler=document.createElement('div');filler.className='tall';filler.textContent='content';
+    wrap.append(h,filler);document.body.insertBefore(wrap,document.body.firstChild);
+  },
+  // 17. Header shown via the Popover API ([popover] + showPopover()) pinned at top:0 — top layer,
+  //     like <dialog> but a different mechanism. collect() must find + inset it.
+  popoverHeader(){
+    const p=document.createElement('header');p.setAttribute('popover','manual');
+    p.className='bar';p.style.cssText='position:fixed;top:0;left:0;right:0;margin:0;width:100%;height:52px;background:#fff;border:0;border-bottom:1px solid #ccc;padding:0 12px;z-index:99';
+    p.innerHTML='<div class="logo"></div><span class="txt">Popover header</span><button>Go</button>';
+    document.body.appendChild(p);
+    try{p.showPopover();}catch(e){}
+  },
 };
 const c = new URLSearchParams(location.search).get('case');
 if (cases[c]) cases[c]();

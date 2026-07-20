@@ -529,7 +529,15 @@ internal fun LuminaOverlaySheets(
                 clipboardManager.setText(AnnotatedString(u))
                 Toast.makeText(appContext, "Image address copied", Toast.LENGTH_SHORT).show()
             },
-            onShare = { u -> shareUrl(appContext, u) },
+            onShare = { u ->
+                // Share the actual image bytes (what "Share image" implies); fall back to sharing the
+                // URL text if the picture can't be fetched.
+                scope.launch {
+                    val ok = com.firebolt9907.luminabrowser.ui.content.ImageClipboard
+                        .shareImage(appContext, u)
+                    if (!ok) shareUrl(appContext, u)
+                }
+            },
             onDismiss = onDismissImageMenu,
         )
     }

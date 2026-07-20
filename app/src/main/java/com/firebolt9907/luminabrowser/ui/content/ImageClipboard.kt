@@ -84,6 +84,24 @@ object ImageClipboard {
         return true
     }
 
+    /**
+     * Shares the *actual image* (not its URL) through the system share sheet, so it can be sent as a
+     * picture into a chat/doc. Materializes to a FileProvider URI and fires `ACTION_SEND` with the
+     * image MIME. Returns true if a chooser was launched.
+     */
+    suspend fun shareImage(context: Context, imageUrl: String): Boolean {
+        val (uri, mime) = materialize(context, imageUrl) ?: return false
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = android.content.Intent.createChooser(send, null).apply {
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return runCatching { context.startActivity(chooser) }.isSuccess
+    }
+
     /** Fetches [imageUrl]'s raw bytes (http(s) or inline data:), or null. */
     private fun rawBytes(imageUrl: String): ByteArray? =
         when {

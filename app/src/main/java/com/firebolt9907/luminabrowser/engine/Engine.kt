@@ -456,6 +456,14 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           # disk — smoother navigation and marginally fewer disk reads. lowMemoryDetection() still
           # lets Gecko shed it under pressure, and 50 MB is trivial on this device's RAM budget.
           browser.cache.memory.capacity: 51200
+          # Per-entry cap for the in-memory cache. Gecko's default (~5 MB) means any single
+          # response larger than that is never kept in RAM — it only lives on disk, so a big
+          # framework bundle, web font, or hero image gets re-read (and re-decoded) from disk on
+          # every back/forward or same-session revisit even though we just pinned a 50 MB RAM
+          # cache above. Raise the cap to 20 MB so those larger assets actually stay resident,
+          # matching Chrome's behavior of serving recent large resources straight from memory.
+          # Still bounded by the 50 MB capacity above and shed under memory pressure.
+          browser.cache.memory.max_entry_size: 20480
           network.http.speculative-parallel-limit: 12
           network.predictor.enabled: true
           network.predictor.enable-prefetch: true

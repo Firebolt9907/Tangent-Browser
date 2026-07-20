@@ -495,6 +495,20 @@ internal fun LuminaOverlaySheets(
                     ).show()
                 }
             },
+            onSaveToPhotos = if (com.firebolt9907.luminabrowser.ui.content.ImageClipboard.canSaveToPhotos) {
+                { u ->
+                    Toast.makeText(appContext, "Saving to Photos…", Toast.LENGTH_SHORT).show()
+                    scope.launch {
+                        val ok = com.firebolt9907.luminabrowser.ui.content.ImageClipboard
+                            .saveToPhotos(appContext, u)
+                        Toast.makeText(
+                            appContext,
+                            if (ok) "Saved to Photos" else "Couldn't save image",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            } else null,
             onCopyText = { u ->
                 Toast.makeText(appContext, "Scanning image for text…", Toast.LENGTH_SHORT).show()
                 scope.launch {

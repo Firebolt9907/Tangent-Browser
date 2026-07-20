@@ -139,4 +139,51 @@ object ImageClipboard {
             .addOnSuccessListener { if (cont.isActive) cont.resumeWith(Result.success(it.text)) }
             .addOnFailureListener { if (cont.isActive) cont.resumeWith(Result.failure(it)) }
     }
+
+    /**
+     * True when [saveToPhotos] is usable without a storage permission — i.e. Android 10+ (Q), where
+     * MediaStore inserts with `RELATIVE_PATH` need no `WRITE_EXTERNAL_STORAGE`. Below Q we keep the
+     * action hidden rather than request a legacy permission.
+     */
+    val canSaveToPhotos: Boolean
+        get() = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+
+    /**
+     * Saves the image into the shared **Pictures/Expedition** gallery album via MediaStore, so it
+     * shows up in Photos/Gallery (unlike "Save image", which lands in Downloads). Q+ only — no storage
+     * permission needed. Returns true on success.
+     */
+    suspend fun saveToPhotos(context: Context, imageUrl: String): Boolean =
+        withContext(Dispatchers.IO) {
+            // Direct SDK_INT guard (not the property) so lint recognizes the Q-only MediaStore APIs below.
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return@withContext false
+            runCatching {
+                val (bytes, mime) = when {
+                    imageUrl.startsWith("data:", ignoreCase = true) -> decodeDataUrl(imageUrl)
+                    else -> download(imageUrl)
+                } ?: return@runCatching false
+
+                val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "jpg"
+                val name = "IMG_${System.currentTimeMillis()}.$ext"
+                val resolver = context.contentResolver
+                val collection = android.provider.MediaStore.Images.Media
+                    .getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name)
+                    put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime)
+                    put(
+                        android.provider.MediaStore.Images.Media.RELATIVE_PATH,
+                        android.os.Environment.DIRECTORY_PICTURES + "/Expedition",
+                    )
+                    put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+                }
+                val uri = resolver.insert(collection, values) ?: return@runCatching false
+                resolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    ?: run { resolver.delete(uri, null, null); return@runCatching false }
+                values.clear()
+                values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+                true
+            }.getOrDefault(false)
+        }
 }

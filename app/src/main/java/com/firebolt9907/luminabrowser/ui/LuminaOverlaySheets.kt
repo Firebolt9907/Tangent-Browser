@@ -359,6 +359,11 @@ internal fun LuminaOverlaySheets(
                 // GeckoView opens the Android print dialog (physical printers + Save as PDF).
                 selectedTabId?.let { components.sessionUseCases.printContent.invoke(it) }
             },
+            onDuplicateTab = currentUrl
+                ?.takeIf { it.isNotBlank() && it != "about:blank" }
+                ?.let { url ->
+                    { viewModel.onOpenNewTab(url = url, title = selectedContent?.title.orEmpty(), selectTab = true); Unit }
+                },
             trackingProtectionEnabledGlobally = components.globalPreferencesStore.trackingProtection,
             siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
             onToggleSiteTrackingProtection = { disable ->

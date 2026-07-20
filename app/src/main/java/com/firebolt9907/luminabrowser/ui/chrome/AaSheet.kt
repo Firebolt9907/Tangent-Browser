@@ -139,6 +139,8 @@ fun AaSheet(
     onOpenAddonQuickSettings: (InstalledAddon) -> Unit = {},
     onFindInPage: () -> Unit = {},
     onPrint: () -> Unit = {},
+    // Opens a copy of the current page in a new foreground tab. Null hides the row (non-web pages).
+    onDuplicateTab: (() -> Unit)? = null,
     trackingProtectionEnabledGlobally: Boolean = false,
     siteTrackingProtectionDisabled: Boolean = false,
     onToggleSiteTrackingProtection: (disable: Boolean) -> Unit = {},
@@ -253,6 +255,7 @@ fun AaSheet(
                     onDismiss = onDismiss,
                     onFindInPage = onFindInPage,
                     onPrint = onPrint,
+                    onDuplicateTab = onDuplicateTab,
                     trackingProtectionEnabledGlobally = trackingProtectionEnabledGlobally,
                     siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
                     onToggleSiteTrackingProtection = onToggleSiteTrackingProtection,
@@ -294,6 +297,7 @@ private fun PageTabContent(
     onDismiss: () -> Unit,
     onFindInPage: () -> Unit = {},
     onPrint: () -> Unit = {},
+    onDuplicateTab: (() -> Unit)? = null,
     trackingProtectionEnabledGlobally: Boolean = false,
     siteTrackingProtectionDisabled: Boolean = false,
     onToggleSiteTrackingProtection: (disable: Boolean) -> Unit = {},
@@ -849,6 +853,16 @@ private fun PageTabContent(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     ActionRowContent(icon = Icons.AutoMirrored.Filled.MenuBook, text = "Add to Reading List")
+                }
+            }
+
+            // Duplicate the current page into a new foreground tab (open a copy to branch browsing).
+            if (isWebPage && onDuplicateTab != null) {
+                TextButton(
+                    onClick = { haptics.create(); onDuplicateTab(); onDismiss() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    ActionRowContent(icon = Icons.Default.ContentCopy, text = "Duplicate Tab")
                 }
             }
 

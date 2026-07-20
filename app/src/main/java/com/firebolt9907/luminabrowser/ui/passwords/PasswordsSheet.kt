@@ -49,6 +49,7 @@ import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import com.firebolt9907.luminabrowser.ui.components.SheetSearchField
 import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
+import com.firebolt9907.luminabrowser.ui.components.SwipeToRemoveRow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -141,13 +142,20 @@ fun PasswordsSheet(
             } else {
                 LazyColumn(modifier = Modifier.height(320.dp)) {
                     items(filtered, key = { it.guid }) { meta ->
-                        PasswordRow(
-                            meta = meta,
-                            // On-demand, transient decryption: fetch this one record's password only
-                            // when the row needs it (reveal/copy), never for the whole list.
-                            fetchPassword = { runCatching { loginsStorage.get(meta.guid)?.password }.getOrNull() },
-                            onDelete = { showDeleteConfirm = meta.guid },
-                        )
+                        // Swipe end-to-start to delete — opens the confirm dialog (sensitive data,
+                        // so it's confirmed, not immediate); the row springs back until confirmed.
+                        // Keeps only reveal + copy on the row instead of a third trash icon.
+                        SwipeToRemoveRow(
+                            onRemove = { showDeleteConfirm = meta.guid },
+                            settleOnRemove = false,
+                        ) {
+                            PasswordRow(
+                                meta = meta,
+                                // On-demand, transient decryption: fetch this one record's password
+                                // only when the row needs it (reveal/copy), never for the whole list.
+                                fetchPassword = { runCatching { loginsStorage.get(meta.guid)?.password }.getOrNull() },
+                            )
+                        }
                     }
                 }
             }
@@ -228,7 +236,6 @@ private data class LoginMeta(
 private fun PasswordRow(
     meta: LoginMeta,
     fetchPassword: suspend () -> String?,
-    onDelete: () -> Unit,
 ) {
     // The one place a plaintext password can live in this screen: only while the user is actively
     // revealing THIS row, and cleared the moment they hide it or the row leaves composition. The
@@ -290,13 +297,6 @@ private fun PasswordRow(
                     }
                 }) {
                     Icon(Icons.Default.ContentCopy, contentDescription = "Copy password")
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.error,
-                    )
                 }
             }
         },

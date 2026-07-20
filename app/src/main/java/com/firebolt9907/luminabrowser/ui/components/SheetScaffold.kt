@@ -158,14 +158,18 @@ fun SheetSearchField(
  * (start-to-end) is disabled so a stray drag can't trigger some other action.
  *
  * [content] should be the row itself (typically a [ListItem]); give it an opaque background so the
- * red delete layer only shows while swiping. The caller must drop the item from its data on
- * [onRemove] — once it leaves composition the settled dismiss state goes with it.
+ * red delete layer only shows while swiping. With [settleOnRemove] true (the default) the caller
+ * must drop the item from its data on [onRemove] — once it leaves composition the settled dismiss
+ * state goes with it. Set [settleOnRemove] false when the swipe should only *trigger* removal
+ * (e.g. open a confirmation dialog): [onRemove] still fires, but the row springs back so it isn't
+ * left blank if the user cancels — the dialog is then responsible for the actual delete + reload.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SwipeToRemoveRow(
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
+    settleOnRemove: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val haptics = rememberLuminaHaptics()
@@ -174,7 +178,7 @@ fun SwipeToRemoveRow(
             if (value == SwipeToDismissBoxValue.EndToStart) {
                 haptics.remove()
                 onRemove()
-                true
+                settleOnRemove
             } else {
                 false
             }

@@ -25,11 +25,25 @@ if (!url || !targetSel) { console.error('usage: node anchorTest.js <url> <target
     await new Promise(r => setTimeout(r, 1000));
     const res = await page.evaluate((targetSel, clickSel, topPx) => {
       const spt = getComputedStyle(document.documentElement).scrollPaddingTop;
-      if (clickSel) { const a = document.querySelector(clickSel); if (a) a.click(); }
+      // AUTO mode: pick the first same-page hash link whose target exists (a real in-page TOC/anchor
+      // link), follow it, and measure that target. Lets the honest occlusion check run on arbitrary
+      // real sites without hand-picking a selector.
+      let autoId = null;
+      if (targetSel === 'auto') {
+        const links = Array.from(document.querySelectorAll('a[href*="#"]'));
+        for (const a of links) {
+          const h = (a.getAttribute('href') || '');
+          const i = h.indexOf('#');
+          const id = i >= 0 ? decodeURIComponent(h.slice(i + 1)) : '';
+          if (!id) continue;
+          let tgt = null; try { tgt = document.getElementById(id) || document.querySelector('[name="' + CSS.escape(id) + '"]'); } catch (e) {}
+          if (tgt && tgt.getBoundingClientRect().top > window.innerHeight * 0.5) { autoId = id; a.click(); break; }
+        }
+      } else if (clickSel) { const a = document.querySelector(clickSel); if (a) a.click(); }
       else { const t = document.querySelector(targetSel); if (t && t.id) location.hash = '#' + t.id; }
       return new Promise(r => setTimeout(() => {
-        const t = document.querySelector(targetSel);
-        if (!t) { r({ spt, top: null }); return; }
+        const t = (targetSel === 'auto') ? (autoId ? document.getElementById(autoId) : null) : document.querySelector(targetSel);
+        if (!t) { r({ spt, top: null, autoId }); return; }
         const rect = t.getBoundingClientRect();
         // Occlusion check: the target's top edge must be VISIBLE, not hidden behind a pinned
         // (fixed/sticky) header that we inset below the status bar. Landing at top>=topPx is not

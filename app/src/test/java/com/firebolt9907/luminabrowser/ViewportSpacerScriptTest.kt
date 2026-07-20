@@ -327,8 +327,37 @@ class ViewportSpacerScriptTest {
                 s.contains("base=px(getComputedStyle(de).scrollPaddingTop)"),
         )
         assertTrue(
-            "effective inset is the site's base plus topPx (reduces to topPx when base is 0)",
-            s.contains("var eff=(base>0?base:0)+topPx"),
+            "the floor is the site's base plus topPx (reduces to topPx when base is 0)",
+            s.contains("var floor=(base>0?base:0)+topPx"),
+        )
+    }
+
+    @Test
+    fun `scroll-padding-top rises to the bottom of any wide top-pinned bar we leave or inset (iter 26)`() {
+        // A site whose own fixed nav sits at the top (whether we inset it, or it already sits just
+        // below the status bar like kubernetes.io) covers anchor targets when scroll-padding-top is
+        // only topPx. After the header pass we measure every wide (>=60% vw) fixed/sticky bar pinned
+        // in the top band and raise scroll-padding-top to the lowest such bottom (clamped to
+        // topPx + half the viewport so a tall overlay can't run it away), then re-apply via setSPT.
+        val s = script()
+        assertTrue(
+            "collects wide top-pinned fixed/sticky bars",
+            s.contains("topBars.push(el)"),
+        )
+        assertTrue(
+            "want is seeded from the site+topPx floor and clamped to half the viewport",
+            s.contains("var sptWant=window.__luminaSptFloor||topPx") &&
+                s.contains("var sptCap=topPx+window.innerHeight*0.5"),
+        )
+        assertTrue(
+            "the applied value is a grow-only latch (max of prior, this pass's want, and the floor)",
+            s.contains("var _applied=Math.max(window.__luminaSptApplied||0,Math.round(sptWant),window.__luminaSptFloor||topPx)") &&
+                s.contains("window.__luminaSptApplied=_applied") &&
+                s.contains("setSPT(_applied)"),
+        )
+        assertTrue(
+            "ensureStyle never drops scroll-padding below the latched value (anti-flicker)",
+            s.contains("var eff=Math.max(floor,window.__luminaSptApplied||0)"),
         )
     }
 }

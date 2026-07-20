@@ -203,6 +203,21 @@ const cases = {
     document.getElementById('content').replaceChildren(nav,spacer,tgt,after);
     document.body.insertBefore(h,document.body.firstChild);
   },
+  // 24. Fixed nav (64px) with NO declared scroll-padding-top and NO scroll-margin on targets — the
+  //      site relies on neither, so after we inset the nav (occupying [0, topPx+64]) a plain
+  //      scroll-padding-top of topPx leaves the anchor target hidden behind it. scroll-padding-top
+  //      must rise to the inset nav's bottom (~topPx+64). Repro of kubernetes.io/docs. Drive with
+  //      anchorTest '#target'.
+  fixedNavNoScrollPad(){
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:fixed;top:0;left:0;width:100%;height:64px;background:#fff;border-bottom:1px solid #ccc;z-index:10';
+    h.innerHTML='<div class="logo"></div><span class="txt">Fixed nav, no scroll-pad</span>';
+    const nav=document.createElement('div');nav.innerHTML='<a id="jump" href="#target">jump</a>';
+    const spacer=document.createElement('div');spacer.style.height='1500px';
+    const tgt=document.createElement('h2');tgt.id='target';tgt.style.cssText='background:#ffd';tgt.textContent='ANCHOR TARGET';
+    const after=document.createElement('div');after.style.height='1500px';
+    document.getElementById('content').replaceChildren(nav,spacer,tgt,after);
+    document.body.insertBefore(h,document.body.firstChild);
+  },
   // 18. Fixed header inside a `container-type:inline-size` ancestor. Query containers establish a
   //     containing block for fixed descendants (distinct trigger from transform/filter) — the bar
   //     is positioned relative to the container box, not the viewport. bandShift's translateY must

@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 TOPPX="${1:-48}"
 F="file://$(pwd)/fixtures/headers.html"
 # case=target-selector  (all anchor fixtures expose an #target and are driven with no clickSelector)
-CASES=(anchor siteScrollPad customScrollContainer)
+CASES=(anchor siteScrollPad customScrollContainer siteHeaderScrollPad)
 pass=0; fail=0; failed=()
 for c in "${CASES[@]}"; do
   out="$(node anchorTest.js "$F?case=$c" '#target' "$TOPPX" 2>/dev/null | grep -E 'RESULT' || echo 'RESULT: ERROR')"

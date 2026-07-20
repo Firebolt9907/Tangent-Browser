@@ -185,6 +185,24 @@ const cases = {
     const after=document.createElement('div');after.style.height='1500px';
     sc.append(nav,spacer,tgt,after);document.body.appendChild(sc);
   },
+  // 23. Site has its OWN sticky header (64px) AND sets :root{scroll-padding-top:64px} to clear it
+  //      (a common pattern; no scroll-margin on targets). We inset that header down by topPx (so it
+  //      occupies topPx..topPx+64) — so the CORRECT anchor padding is topPx+64, not topPx. Tests
+  //      whether iter-22's "force scroll-padding-top to topPx" regresses this: target must land
+  //      BELOW the inset header (top >= topPx+64-ish), not merely >= topPx. Drive with anchorTest
+  //      using targetSelector '#target'; a landing at ~48 means the header overlaps the target.
+  siteHeaderScrollPad(){
+    const st=document.createElement('style');st.textContent='html{scroll-padding-top:64px}';
+    document.head.appendChild(st);
+    const h=document.createElement('header');h.className='bar';h.style.cssText='position:sticky;top:0;height:64px;background:#fff;border-bottom:1px solid #ccc;z-index:10';
+    h.innerHTML='<div class="logo"></div><span class="txt">Site sticky header</span>';
+    const nav=document.createElement('div');nav.innerHTML='<a id="jump" href="#target">jump</a>';
+    const spacer=document.createElement('div');spacer.style.height='1500px';
+    const tgt=document.createElement('h2');tgt.id='target';tgt.style.cssText='background:#ffd';tgt.textContent='ANCHOR TARGET';
+    const after=document.createElement('div');after.style.height='1500px';
+    document.getElementById('content').replaceChildren(nav,spacer,tgt,after);
+    document.body.insertBefore(h,document.body.firstChild);
+  },
   // 18. Fixed header inside a `container-type:inline-size` ancestor. Query containers establish a
   //     containing block for fixed descendants (distinct trigger from transform/filter) — the bar
   //     is positioned relative to the container box, not the viewport. bandShift's translateY must

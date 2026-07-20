@@ -305,15 +305,30 @@ class ViewportSpacerScriptTest {
         val s = script()
         assertTrue(
             "scroll-padding-top is set inline on documentElement with importance",
-            s.contains("documentElement.style.setProperty('scroll-padding-top'"),
+            s.contains("de.style.setProperty('scroll-padding-top',effS,'important')"),
         )
         assertTrue(
             "scroll-padding-top is set inline on body with importance",
-            s.contains("body.style.setProperty('scroll-padding-top'"),
+            s.contains("body.style.setProperty('scroll-padding-top',effS,'important')"),
+        )
+    }
+
+    @Test
+    fun `scroll-padding-top ADDS topPx to the site's own value, not replaces it (iter 25)`() {
+        // A site that sets its OWN root scroll-padding-top (e.g. `html{scroll-padding-top:64px}`)
+        // to clear its own sticky header would, if we simply forced the value to topPx, have anchor
+        // jumps land UNDER that header — because we ALSO inset the header down by topPx (to
+        // [topPx, topPx+64]). The correct clearance is (site value)+topPx. ensureStyle captures the
+        // site's own value by reading it with our overrides neutralized, then adds topPx.
+        val s = script()
+        assertTrue(
+            "captures the site's own scroll-padding-top with our overrides removed",
+            s.contains("de.style.removeProperty('scroll-padding-top')") &&
+                s.contains("base=px(getComputedStyle(de).scrollPaddingTop)"),
         )
         assertTrue(
-            "the inline scroll-padding-top decl carries the important flag",
-            s.contains("scroll-padding-top',top,'important')"),
+            "effective inset is the site's base plus topPx (reduces to topPx when base is 0)",
+            s.contains("var eff=(base>0?base:0)+topPx"),
         )
     }
 }

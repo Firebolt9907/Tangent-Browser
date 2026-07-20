@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 TOPPX="${1:-48}"
 F="file://$(pwd)/fixtures/headers.html"
-CASES=(stacked transformed rtl pretransformed stickyAbs negativeTop willChange nestedScrollSticky shadowHeader revealedHeader stickySubnav stickyInTransformed dialogTopBar stickyInTranslate popoverHeader fixedInContainer siteHeaderPadImportant layeredHeader gridBodyHeader)
+CASES=(stacked transformed rtl pretransformed stickyAbs negativeTop willChange nestedScrollSticky shadowHeader revealedHeader stickySubnav stickyInTransformed dialogTopBar stickyInTranslate popoverHeader fixedInContainer siteHeaderPadImportant layeredHeader gridBodyHeader gridColumnsHeader contentsBodyHeader)
 pass=0; fail=0; failed=()
 for c in "${CASES[@]}"; do
   out="$(node run.js "$F?case=$c" "$TOPPX" 2>/dev/null | grep -E 'RESULT' || echo 'RESULT: ERROR')"

@@ -113,6 +113,13 @@ https://www.target.com
 https://www.epicgames.com
 # --- iter 28: grid-body layouts (header placed by grid-template-areas) ---
 https://learn.microsoft.com/en-us/dotnet/csharp/
+# --- iter 29: web apps / editors + dev-docs anchor surfaces ---
+https://excalidraw.com
+https://codepen.io
+https://observablehq.com
+https://docs.docker.com/get-started/
+https://kotlinlang.org/docs/basic-syntax.html
+https://vitejs.dev/guide/
 # --- iter 27: deep content pages (articles, product/spec, Q&A) — real anchor-nav surfaces ---
 https://www.investopedia.com/terms/i/inflation.asp
 https://www.healthline.com/nutrition/10-benefits-of-exercise

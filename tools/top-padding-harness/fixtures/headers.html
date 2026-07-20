@@ -229,6 +229,29 @@ const cases = {
     const main=document.createElement('main');main.style.cssText='grid-area:main';main.className='tall';main.textContent='grid main content';
     document.body.append(h,main);
   },
+  // 26. Body is display:grid with COLUMNS (sidebar + main) and a static header spanning all
+  //      columns via grid-area. Host-padding must push the whole grid (header spans row 1) — a
+  //      spanning grid item is still area-placed, so the in-flow spacer can't move it.
+  gridColumnsHeader(){
+    document.getElementById('content').remove();
+    document.body.style.cssText='margin:0;display:grid;grid-template-columns:1fr 2fr;grid-template-rows:54px 1fr;grid-template-areas:"h h" "side main"';
+    const h=document.createElement('header');h.className='bar';h.style.cssText='grid-area:h;height:54px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Grid columns header</span>';
+    const side=document.createElement('div');side.style.gridArea='side';side.textContent='side';
+    const main=document.createElement('main');main.style.gridArea='main';main.className='tall';main.textContent='main';
+    document.body.append(h,side,main);
+  },
+  // 27. Body is display:contents (no box of its own): its children participate in <html>'s block
+  //      flow, so the in-flow spacer div (NOT host-padding — padding a boxless body is a no-op)
+  //      must still push the header. Guards that the fallback picks the right mechanism.
+  contentsBodyHeader(){
+    document.getElementById('content').remove();
+    document.body.style.cssText='margin:0;display:contents';
+    const h=document.createElement('header');h.className='bar';h.style.cssText='height:54px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Contents-body header</span>';
+    const main=document.createElement('div');main.className='tall';main.textContent='main';
+    document.body.append(h,main);
+  },
   // 18. Fixed header inside a `container-type:inline-size` ancestor. Query containers establish a
   //     containing block for fixed descendants (distinct trigger from transform/filter) — the bar
   //     is positioned relative to the container box, not the viewport. bandShift's translateY must

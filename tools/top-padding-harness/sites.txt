@@ -111,6 +111,20 @@ https://www.flipkart.com
 https://www.salesforce.com
 https://www.target.com
 https://www.epicgames.com
+# --- iter 18: crypto exchanges, Google Workspace editors, PM/design SaaS ---
+https://www.coinbase.com
+https://www.binance.com
+https://www.kraken.com
+https://sheets.google.com
+https://calendar.google.com
+https://teams.microsoft.com
+https://trello.com
+https://asana.com
+https://www.producthunt.com
+https://www.behance.net
+https://dribbble.com
+https://www.udemy.com
+https://www.duolingo.com
 # maps.google.com is intentionally omitted: it is a full-bleed map app whose raster tiles are
 # meant to run edge-to-edge under a translucent status bar; only its floating search header is a
 # candidate for inset, and the shipping script handles that when present.

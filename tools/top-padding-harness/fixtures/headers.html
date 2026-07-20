@@ -170,6 +170,21 @@ const cases = {
     h.innerHTML='<div class="logo"></div><span class="txt">Layered header</span>';
     document.body.appendChild(h);
   },
+  // 22. SPA whose REAL scroll container is a custom overflow:auto div, not html/body (body scroll
+  //      disabled). scroll-padding-top on html/body is irrelevant here — the anchor jump scrolls
+  //      the inner container, so its content lands UNDER the bar unless we pad the container too.
+  //      Drive with anchorTest.js (targetSelector '#target', no clickSelector).
+  customScrollContainer(){
+    document.documentElement.style.cssText='height:100%;overflow:hidden';
+    document.body.style.cssText='height:100%;overflow:hidden;margin:0';
+    document.getElementById('content').style.display='none';
+    const sc=document.createElement('div');sc.id='scroller';sc.style.cssText='height:100vh;overflow-y:auto';
+    const nav=document.createElement('div');nav.innerHTML='<a id="jump" href="#target">jump</a>';
+    const spacer=document.createElement('div');spacer.style.height='1500px';
+    const tgt=document.createElement('h2');tgt.id='target';tgt.textContent='ANCHOR TARGET';
+    const after=document.createElement('div');after.style.height='1500px';
+    sc.append(nav,spacer,tgt,after);document.body.appendChild(sc);
+  },
   // 18. Fixed header inside a `container-type:inline-size` ancestor. Query containers establish a
   //     containing block for fixed descendants (distinct trigger from transform/filter) — the bar
   //     is positioned relative to the container box, not the viewport. bandShift's translateY must

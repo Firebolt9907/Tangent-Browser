@@ -37,6 +37,7 @@ node spaTest.js https://x.com 48                 # invariant #11: spacer self-he
 node scrollTest.js https://medium.com 48         # scroll-activated sticky headers get inset
 node anchorTest.js https://en.wikipedia.org/wiki/CSS '#History'   # scroll-padding-top anchor jump
 ./fixtures.sh                                    # offline adversarial header fixtures (no network)
+./anchors.sh                                     # offline scroll-padding-top anchor-jump fixtures
 ```
 
 ### Offline fixtures

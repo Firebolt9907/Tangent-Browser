@@ -111,6 +111,14 @@ https://www.flipkart.com
 https://www.salesforce.com
 https://www.target.com
 https://www.epicgames.com
+# --- iter 27: deep content pages (articles, product/spec, Q&A) — real anchor-nav surfaces ---
+https://www.investopedia.com/terms/i/inflation.asp
+https://www.healthline.com/nutrition/10-benefits-of-exercise
+https://www.gsmarena.com/samsung_galaxy_s24-12773.php
+https://arstechnica.com/gadgets/
+https://www.theverge.com/tech
+https://www.imdb.com/title/tt0111161/
+https://stackoverflow.com/questions/178325
 # --- iter 18: crypto exchanges, Google Workspace editors, PM/design SaaS ---
 https://www.coinbase.com
 https://www.binance.com

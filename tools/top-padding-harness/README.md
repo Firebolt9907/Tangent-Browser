@@ -63,9 +63,24 @@ cleared it. Fast and stable — good as a first gate before the live sweeps.
   not a full-page `sticky; top:auto` container) has readable content in the band. Normal scrolled
   flow content in the band is expected and ignored.
 - **`anchorTest.js`** — the `scroll-padding-top` half of the injection. Triggers an in-page anchor
-  jump (clicks a link, or sets `location.hash`) and asserts the target lands at `top >= topPx`,
-  i.e. below the inset rather than under the status bar. This is why the injected `<style>` sets
-  `html,body{scroll-padding-top:<topPx>}`.
+  jump (clicks a link, sets `location.hash`, or — in **`auto`** mode — follows the first real
+  below-fold `#`-link on the page) and asserts the target lands below the inset **and is not covered
+  by a pinned fixed/sticky header** (occlusion check via `elementFromPoint` at the target's top
+  edge), not merely `top >= topPx`. The injected script sets `scroll-padding-top` and raises it to
+  the bottom of any wide top-pinned nav bar (see `PageBottomSpacer` invariants).
+
+## Known limitation — scroll-dependent headers with a custom smooth-scroll
+
+Sites whose top header **grows taller when scrolled** (e.g. investopedia.com: a 96px header that
+expands to 108px on scroll) **and** that run their **own** JS smooth-scroll to a self-computed offset
+can defeat the `scroll-padding-top` approach: the anchor jump uses the at-rest header height, the
+site's animation lands the target at its own (too-small) offset, and the header then expands over the
+target's top ~12px. `scroll-padding-top` is raised correctly (to 108) but the site's own scroll wins.
+A corrective re-scroll was prototyped and **rejected** — the trigger (hashchange / history hooks)
+is unreliable because such sites set the hash via a cached `history` reference, and a scroll-settle
+re-scroll fights the site's own animation and risks yanking the user. Impact is a ~12px clip that
+self-corrects on the next interaction (the grow-only `scroll-padding-top` latch converges). Treated
+as an accepted edge, not a shipped fix.
 
 ## What PASS means
 

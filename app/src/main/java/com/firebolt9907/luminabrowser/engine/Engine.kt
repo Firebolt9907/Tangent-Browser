@@ -460,6 +460,19 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           network.predictor.enabled: true
           network.predictor.enable-prefetch: true
           network.http.http3.enable: true
+          # --- Chrome-parity: HTTP/3 discovery via HTTPS DNS records (SVCB/HTTPS RR) ---
+          # HTTP/3 is enabled above, but without HTTPS RR a browser only *learns* an origin
+          # speaks HTTP/3 from the `Alt-Svc` header on a prior HTTP/1.1-or-H2 response — so the
+          # very first visit to a site always pays a slower TCP+H2 connection, and only later
+          # visits get QUIC. Chrome instead reads the DNS `HTTPS`/`SVCB` record (which advertises
+          # `h3` in its ALPN) during name resolution and connects straight over QUIC on the first
+          # hit. Turn on Gecko's equivalent: consult the HTTPS RR and treat its ALPN as an
+          # Alt-Svc source so the first navigation goes directly to HTTP/3 when the origin's DNS
+          # advertises it. Faster first-visit connects to the many H3 origins behind Cloudflare/
+          # Google/Fastly; inert for origins without an HTTPS RR. Safe fallback: if the QUIC race
+          # fails Gecko still falls back to TCP.
+          network.dns.upgrade_with_https_rr: true
+          network.dns.use_https_rr_as_altsvc: true
           network.http.max-persistent-connections-per-server: 10
           network.dns.disablePrefetch: false
           # --- Smoothness: paint the first frame immediately (Betterfox "Fastfox") ---

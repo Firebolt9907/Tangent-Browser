@@ -84,6 +84,11 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.biometric)
+    // On-device search index (history + bookmarks surfaced to system/launcher search).
+    implementation(libs.androidx.appsearch)
+    implementation(libs.androidx.appsearch.local.storage)
+    implementation(libs.androidx.appsearch.platform.storage)
+    implementation(libs.androidx.concurrent.futures.ktx)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.coil.compose)
     implementation(libs.coil.svg)

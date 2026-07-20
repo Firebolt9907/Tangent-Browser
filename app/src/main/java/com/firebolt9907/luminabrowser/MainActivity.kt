@@ -12,7 +12,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.firebolt9907.luminabrowser.ui.LuminaRoot
+import kotlinx.coroutines.launch
 
 class MainActivity : LuminaBrowserActivity() {
 
@@ -56,6 +58,21 @@ class MainActivity : LuminaBrowserActivity() {
         // which would re-open a duplicate tab from the same ACTION_VIEW/SEND. Live intents that
         // arrive while the activity exists are delivered through onNewIntent instead.
         if (savedInstanceState == null) handleIncomingIntent(intent)
+
+        refreshSearchIndex()
+    }
+
+    // Rebuild the AppSearch index (history + bookmarks → system/launcher search) shortly after launch,
+    // off the critical startup path. Best-effort and fully self-guarded (see BrowserSearchIndex).
+    private fun refreshSearchIndex() {
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(4000)
+            com.firebolt9907.luminabrowser.state.BrowserSearchIndex.refresh(
+                context = applicationContext,
+                historyStorage = app.components.historyStorage,
+                bookmarksStorage = app.components.bookmarksStorage,
+            )
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

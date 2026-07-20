@@ -150,6 +150,26 @@ const cases = {
     const after=document.createElement('div');after.style.height='1500px';
     document.getElementById('content').append(nav,spacer,tgt,after);
   },
+  // 20. Site forces the header's padding-top to 0 via a high-specificity stylesheet !important
+  //      rule (#sh, 1,0,0). applyFixed sets padding-top INLINE !important — author inline
+  //      important must beat author stylesheet important regardless of specificity.
+  siteHeaderPadImportant(){
+    const st=document.createElement('style');st.textContent='#sh{padding-top:0!important;top:0!important}';
+    document.head.appendChild(st);
+    const h=document.createElement('header');h.id='sh';h.className='bar';h.style.cssText='position:fixed;left:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Site-padding-reset header</span>';
+    document.body.appendChild(h);
+  },
+  // 21. Fixed header whose site styles live in a CSS @layer. For IMPORTANT declarations the layer
+  //      order is REVERSED, so our UNLAYERED inline !important must still win over a layered
+  //      !important site rule — verify a layered padding/top reset can't pull content into the band.
+  layeredHeader(){
+    const st=document.createElement('style');st.textContent='@layer site{#lh{padding-top:0!important;top:0!important}}';
+    document.head.appendChild(st);
+    const h=document.createElement('header');h.id='lh';h.className='bar';h.style.cssText='position:fixed;left:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc';
+    h.innerHTML='<div class="logo"></div><span class="txt">Layered header</span>';
+    document.body.appendChild(h);
+  },
   // 18. Fixed header inside a `container-type:inline-size` ancestor. Query containers establish a
   //     containing block for fixed descendants (distinct trigger from transform/filter) — the bar
   //     is positioned relative to the container box, not the viewport. bandShift's translateY must

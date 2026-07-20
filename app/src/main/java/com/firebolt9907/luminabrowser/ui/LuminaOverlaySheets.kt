@@ -445,6 +445,12 @@ internal fun LuminaOverlaySheets(
         ImageContextSheet(
             imageUrl = imageUrl,
             onOpenNewTab = { u -> viewModel.onOpenNewTab(url = u, title = "", selectTab = true) },
+            onSearchImage = { u ->
+                // Reverse image search via Google Lens (takes the image URL directly).
+                val lens = "https://lens.google.com/uploadbyurl?url=" +
+                    java.net.URLEncoder.encode(u, "UTF-8")
+                viewModel.onOpenNewTab(url = lens, title = "", selectTab = true)
+            },
             onSave = { u ->
                 // Route the image through DownloadsFeature (started in LuminaBrowserActivity):
                 // it observes ContentState.download and hands the URL to the system

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.ImageSearch
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 fun ImageContextSheet(
     imageUrl: String,
     onOpenNewTab: (String) -> Unit,
+    onSearchImage: (String) -> Unit,
     onSave: (String) -> Unit,
     onCopyImage: (String) -> Unit,
     onCopy: (String) -> Unit,
@@ -62,6 +64,9 @@ fun ImageContextSheet(
             )
             ImageAction(Icons.AutoMirrored.Filled.OpenInNew, "Open image in new tab") {
                 onOpenNewTab(imageUrl); onDismiss()
+            }
+            ImageAction(Icons.Rounded.ImageSearch, "Search image with Google") {
+                onSearchImage(imageUrl); onDismiss()
             }
             ImageAction(Icons.Rounded.Download, "Save image") {
                 onSave(imageUrl); onDismiss()

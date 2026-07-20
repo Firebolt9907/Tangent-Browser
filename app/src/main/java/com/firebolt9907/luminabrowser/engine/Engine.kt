@@ -565,6 +565,13 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           network.http.max-connections: 1800
           network.http.max-urgent-start-excessive-connections-per-host: 5
           network.http.pacing.requests.enabled: false
+          # When a host is already at its per-server connection ceiling, Gecko holds a further
+          # request in the queue for up to this long (default 10s) hoping an in-flight connection
+          # frees up before it opens a brand-new socket. On a busy page that briefly saturates a
+          # host, that wait can stall a needed sub-resource for several seconds. Halving it to 5s
+          # opens the extra connection sooner so the asset starts downloading rather than waiting
+          # — closer to Chrome's more eager socket scheduling. (Betterfox "Fastfox".)
+          network.http.request.max-start-delay: 5
           # Network buffers: larger socket read buffers move each transfer in fewer, bigger
           # chunks — fewer read syscalls per response (a touch less CPU per byte on big pages).
           # (Betterfox "Fastfox".)

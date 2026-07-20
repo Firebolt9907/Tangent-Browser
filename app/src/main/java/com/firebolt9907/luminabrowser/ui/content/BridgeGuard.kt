@@ -1,7 +1,7 @@
 package com.firebolt9907.luminabrowser.ui.content
 
-import android.net.Uri
 import android.util.Base64
+import java.net.URI
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 
@@ -74,28 +74,30 @@ object BridgeGuard {
     /** Record the real current URL for [tabId]; a non-web/blank URL clears any prior origin. */
     fun setTrustedOrigin(tabId: String?, url: String?) {
         if (tabId.isNullOrBlank()) return
-        val host = hostOf(url)
-        if (host != null) originByTab[tabId] = host else originByTab.remove(tabId)
+        val origin = originOf(url)
+        if (origin != null) originByTab[tabId] = origin else originByTab.remove(tabId)
     }
 
-    /** The trusted host for [tabId], or null if none recorded (handlers must fail closed). */
+    /** The trusted origin for [tabId], or null if none recorded (handlers must fail closed). */
     fun trustedOrigin(tabId: String): String? = originByTab[tabId]
 
     fun forget(tabId: String?) {
         if (!tabId.isNullOrBlank()) originByTab.remove(tabId)
     }
 
-    /** Lowercased host of a web [url], or null for opaque/blank/non-http(s) URLs. */
-    fun hostOf(url: String?): String? {
+    /**
+     * Full origin (`scheme://host[:port]`) of a web [url], or null for opaque/blank/non-http(s) URLs.
+     * Keying stored per-site data by the *full* origin (not the bare host) keeps `https://bank.com`
+     * and a downgraded/MITM'd `http://bank.com` in separate buckets — a plaintext origin must never
+     * read values captured over TLS. Uses `java.net.URI` (not `android.net.Uri`) so it's a real
+     * authority parse and JVM-testable, mirroring `sitePermissionOriginKey`.
+     */
+    fun originOf(url: String?): String? {
         if (url.isNullOrBlank()) return null
-        return try {
-            val u = Uri.parse(url)
-            when (u.scheme?.lowercase()) {
-                "http", "https" -> u.host?.lowercase()?.takeIf { it.isNotBlank() }
-                else -> null
-            }
-        } catch (e: Exception) {
-            null
-        }
+        val parsed = runCatching { URI(url) }.getOrNull() ?: return null
+        val scheme = parsed.scheme?.lowercase()?.takeIf { it == "http" || it == "https" } ?: return null
+        val host = parsed.host?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+        val port = parsed.port
+        return if (port >= 0) "$scheme://$host:$port" else "$scheme://$host"
     }
 }

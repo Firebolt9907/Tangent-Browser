@@ -37,6 +37,7 @@ import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import com.firebolt9907.luminabrowser.ui.components.Favicon
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
+import com.firebolt9907.luminabrowser.ui.components.SwipeToRemoveRow
 import kotlinx.coroutines.launch
 import mozilla.appservices.places.BookmarkRoot
 import mozilla.components.concept.storage.BookmarkNode
@@ -156,35 +157,35 @@ fun BookmarksSheet(
                 LazyColumn(modifier = Modifier.fillMaxWidth()) {
                     items(filtered, key = { it.guid }) { node ->
                         val url = node.url.orEmpty()
-                        ListItem(
-                            modifier = Modifier.clickable { onOpenUrl(url) },
-                            leadingContent = { Favicon(url) },
-                            headlineContent = {
-                                Text(
-                                    text = node.title?.takeIf { it.isNotBlank() } ?: url,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            },
-                            supportingContent = {
-                                Text(
-                                    text = url,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            },
-                            trailingContent = {
-                                IconButton(onClick = {
-                                    scope.launch {
-                                        runCatching { bookmarksStorage.deleteNode(node.guid) }
-                                        reload()
-                                    }
-                                }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Remove")
+                        // Swipe end-to-start to remove — no per-row trash icon. See SwipeToRemoveRow.
+                        SwipeToRemoveRow(
+                            onRemove = {
+                                scope.launch {
+                                    runCatching { bookmarksStorage.deleteNode(node.guid) }
+                                    reload()
                                 }
                             },
-                        )
+                        ) {
+                            ListItem(
+                                modifier = Modifier.clickable { onOpenUrl(url) },
+                                leadingContent = { Favicon(url) },
+                                headlineContent = {
+                                    Text(
+                                        text = node.title?.takeIf { it.isNotBlank() } ?: url,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
+                                supportingContent = {
+                                    Text(
+                                        text = url,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
+                            )
+                        }
                     }
                 }
             }

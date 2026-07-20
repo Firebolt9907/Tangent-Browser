@@ -435,6 +435,20 @@ internal fun LuminaOverlaySheets(
                 shareUrl(appContext, u)
                 onDismissPeek()
             },
+            onDownload = { u ->
+                // Save the link target via DownloadsFeature → system DownloadManager (same path as
+                // "Save image"): the OS handles the notification, filename and storage.
+                actualSelectedTabId?.let { id ->
+                    components.store.dispatch(
+                        ContentAction.UpdateDownloadAction(
+                            id,
+                            DownloadState(url = u, private = selectedContent?.private == true),
+                        )
+                    )
+                }
+                Toast.makeText(appContext, "Downloading…", Toast.LENGTH_SHORT).show()
+                onDismissPeek()
+            },
             containers = peekContainers,
             onOpenInContainer = { u, contextId ->
                 // Open the link in a separate profile (fresh session — a container can't reuse the

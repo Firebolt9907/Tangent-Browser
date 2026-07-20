@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -156,6 +157,8 @@ fun LinkPeekCard(
     onOpenNewTab: (String) -> Unit,
     onCopy: (String) -> Unit,
     onShare: (String) -> Unit,
+    // Save the link target via the system download manager. Null hides the Download action.
+    onDownload: ((String) -> Unit)? = null,
     // Containers the link can be opened into (a "separate profile"); empty hides the action.
     containers: List<ContainerState> = emptyList(),
     onOpenInContainer: (url: String, contextId: String) -> Unit = { _, _ -> },
@@ -500,6 +503,7 @@ fun LinkPeekCard(
                         )
                     }
                     PeekAction(Icons.Default.ContentCopy, "Copy") { onCopy(url) }
+                    onDownload?.let { PeekAction(Icons.Default.Download, "Download") { it(url) } }
                     PeekAction(Icons.Default.Share, "Share") { onShare(url) }
                 }
             }

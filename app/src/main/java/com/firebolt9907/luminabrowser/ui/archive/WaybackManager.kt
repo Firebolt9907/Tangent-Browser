@@ -271,8 +271,16 @@ class WaybackManager {
          * a desktop `deviceType` and bake fixed pixel widths (e.g. `width:740px`/`1024px`) straight
          * into elements, and their client JS — which would re-render for the real device — doesn't
          * replay from the archive, so a device-width viewport alone can't help. Capping media and any
-         * inline-width element to `max-width:100%` (plus `overflow-x:hidden`) shrinks that hardcoded
+         * inline-width element to `max-width:100%` (plus `overflow-x:clip`) shrinks that hardcoded
          * desktop layout to fit. It's a heuristic, not a true responsive re-render.
+         *
+         * The x-clamp uses `overflow-x:clip`, NOT `hidden`: per the CSS overflow spec, `overflow-x:
+         * hidden` with a `visible` `overflow-y` promotes the computed `overflow-y` to `auto`, turning
+         * `<body>` into its own scroll container. That clipped taller captures to the viewport height
+         * (content below the fold became unreachable) and — because the ROOT no longer scrolled —
+         * stopped Gecko's dynamic-toolbar/scroll callbacks, so the pill couldn't collapse. `clip`
+         * suppresses horizontal panning the same way without establishing a scroll container, so the
+         * document keeps scrolling normally.
          *
          * `fixImages` recovers the common lazy-loaded images: many sites (lazysizes/lozad/jetpack,
          * etc.) keep the real URL in `data-src`/`data-srcset` and only assign `src` via JS on scroll —
@@ -301,7 +309,7 @@ class WaybackManager {
             var s=document.createElement('style');s.id='lumina-wb-style';s.setAttribute('data-luminaIgnoreSafeTop','1');
             s.textContent=':root{color-scheme:light dark}'
             +'html{-webkit-text-size-adjust:100%;text-size-adjust:100%}'
-            +'html,body{max-width:100%!important;overflow-x:hidden!important}'
+            +'html,body{max-width:100%!important;overflow-x:clip!important}'
             +'img,picture,video,iframe,svg,canvas,embed,object{max-width:100%!important;height:auto!important}'
             +'[style*="width"]{max-width:100%!important}'
             +'#wm-ipp-base,#wm-ipp,#donato,.wb-autocomplete-suggestions,#playback{display:none!important}';

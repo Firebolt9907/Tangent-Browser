@@ -635,7 +635,9 @@ class FirefoxSyncController(
             FirefoxTargetDevice(
                 id = device.id,
                 name = device.displayName,
-                type = deviceTypeLabel(device.deviceType, device.displayName),
+                // Raw constellation type (MOBILE/DESKTOP/TABLET/VR/UNKNOWN) — the send banner shows the
+                // real device icon and a question mark for UNKNOWN, rather than guessing from the name.
+                type = device.deviceType.name,
                 lastAccessTime = device.lastAccessTime,
             )
         }

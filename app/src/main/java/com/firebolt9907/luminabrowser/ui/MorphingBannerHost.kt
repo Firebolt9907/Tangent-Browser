@@ -71,9 +71,9 @@ class BannerStackState {
 fun rememberBannerStackState(): BannerStackState = remember { BannerStackState() }
 
 /** Per-depth geometry of the card stack — how much each banner behind the front shrinks / lifts. */
-private const val StackScalePerDepth = 0.06f
+private const val StackScalePerDepth = 0.07f
 private const val StackMinScale = 0.80f
-private val StackPeekPerDepth = 12.dp
+private val StackPeekPerDepth = 22.dp
 
 /**
  * The shared container for every banner that floats above the address pill (Internet Archive scrubber,

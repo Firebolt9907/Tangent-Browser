@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.QuestionMark
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.TabletAndroid
@@ -447,11 +448,13 @@ private fun Modifier.bannerSwipeToDismiss(onDismiss: () -> Unit): Modifier = com
         }
 }
 
-// Firefox Sync only reliably distinguishes MOBILE; a laptop often reports DESKTOP or, on some
-// setups (e.g. Zen), UNKNOWN. Only show a phone when we're actually told it's mobile — otherwise
-// default to a laptop/computer rather than mislabeling a laptop as a phone.
+// Icon for a synced device. The handoff/received banners pass an inferred label
+// (Mobile/Tablet/Desktop); the send-to-device banner passes the RAW constellation type, so a device
+// that reports DeviceType.UNKNOWN (common for non-Firefox sync clients) shows a question mark rather
+// than a guessed computer.
 private fun deviceIcon(deviceType: String) = when (deviceType.lowercase()) {
     "tablet" -> Icons.Default.TabletAndroid
     "mobile" -> Icons.Default.Smartphone
-    else -> Icons.Default.Computer
+    "desktop" -> Icons.Default.Computer
+    else -> Icons.Default.QuestionMark
 }

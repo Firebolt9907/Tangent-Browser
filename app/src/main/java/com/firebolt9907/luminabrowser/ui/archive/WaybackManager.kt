@@ -288,13 +288,14 @@ class WaybackManager {
          * `loading=eager`. (Fully JS-driven images with no `data-*` — e.g. Google's boq pages — can't
          * be recovered: their URLs live only in scripts the archive can't reproduce.)
          *
-         * `color-scheme: light dark` makes the browser resolve *default* (unstyled) text/background
-         * to the system-preferred system colors. Archived pages never declare a color scheme, so
-         * their default text is always black — which reads as black-on-dark once a dark-mode
-         * extension darkens the background. Declaring the scheme lets that default text follow the OS
-         * theme (light on dark devices), so the archive view works with dark-mode extensions with no
-         * user involvement, and old minimally-styled pages go dark on their own. Elements with their
-         * own explicit colors are untouched; light-mode devices are unaffected.
+         * We deliberately do NOT inject `color-scheme: light dark` (a previous version did). Declaring
+         * a color scheme advertises "this page supports dark natively", which makes dark-mode
+         * extensions (Dark Reader et al.) defer to the page and NOT apply their own darkening. Archived
+         * pages that had native dark (e.g. Google's, gated on a JS-set `[data-theme]` attribute) never
+         * activate it under replay because the JS is dead — so the page stays light AND the extension
+         * skips it. Not advertising a scheme lets the extension treat the snapshot as an ordinary light
+         * page and darken it. (For users with no dark extension, archived pages simply render light,
+         * same as any un-themed page.)
          *
          * `fixScrollLock` rescues **app-shell** captures (e.g. Google boq pages like fi.google.com):
          * the site pins `html,body{height:100%;overflow-y:hidden}` and scrolls an INNER container
@@ -323,16 +324,12 @@ class WaybackManager {
             m.setAttribute('data-luminaIgnoreSafeTop','1');}
             function addStyle(doc){if(doc.getElementById('lumina-wb-style'))return;
             var s=doc.createElement('style');s.id='lumina-wb-style';s.setAttribute('data-luminaIgnoreSafeTop','1');
-            s.textContent=':root{color-scheme:light dark}'
-            +'html{-webkit-text-size-adjust:100%;text-size-adjust:100%}'
+            s.textContent='html{-webkit-text-size-adjust:100%;text-size-adjust:100%}'
             +'html,body{max-width:100%!important;overflow-x:clip!important;overflow-y:visible!important;height:auto!important;min-height:100%!important;max-height:none!important}'
             +'img,picture,video,iframe,svg,canvas,embed,object{max-width:100%!important;height:auto!important}'
             +'[style*="width"]{max-width:100%!important}'
             +'#wm-ipp-base,#wm-ipp,#donato,.wb-autocomplete-suggestions,#playback{display:none!important}';
             (doc.head||doc.documentElement).appendChild(s);}
-            function addColorSchemeMeta(doc){if(doc.querySelector('meta[name=color-scheme]'))return;
-            var m=doc.createElement('meta');m.name='color-scheme';m.content='light dark';
-            m.setAttribute('data-luminaIgnoreSafeTop','1');(doc.head||doc.documentElement).appendChild(m);}
             function fixImages(doc){try{
             var imgs=doc.querySelectorAll('img');
             for(var i=0;i<imgs.length;i++){var im=imgs[i];
@@ -370,7 +367,7 @@ class WaybackManager {
             best.style.setProperty('height','auto','important');
             best.style.setProperty('max-height','none','important');}
             }catch(e){}}
-            function apply(doc){fixViewport(doc);addStyle(doc);addColorSchemeMeta(doc);fixImages(doc);fixGrids(doc);fixScrollLock(doc);}
+            function apply(doc){fixViewport(doc);addStyle(doc);fixImages(doc);fixGrids(doc);fixScrollLock(doc);}
             function fixFrames(){try{var frames=document.querySelectorAll('iframe,frame');if(!frames.length)return;
             var vw=window.innerWidth,vh=window.innerHeight,dom=null;
             for(var i=0;i<frames.length;i++){var f=frames[i];var r=f.getBoundingClientRect();

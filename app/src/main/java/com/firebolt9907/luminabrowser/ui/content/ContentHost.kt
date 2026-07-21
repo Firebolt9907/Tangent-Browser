@@ -60,6 +60,12 @@ fun ContentHost(
     modifier: Modifier = Modifier,
     topChromeInsetPx: Int = 0,
     bottomChromeInsetPx: Int = 0,
+    // Extra bottom reserve for a PERSISTENT floating banner above the pill (the archive scrubber).
+    // Added to the dynamic-toolbar max height so the dynamic viewport (dvh / visualViewport) shrinks
+    // by the banner's footprint while it's showing — fixed/sticky bottom page content then sits above
+    // the banner and the page scrolls under it, just like it does for the pill. Lerps away with the
+    // pill collapse (the banner hides as the pill compacts). 0 = no persistent banner.
+    persistentBannerInsetPx: Int = 0,
     tabId: String? = null,
     pageUrl: String = "",
     snapshotCache: TabSnapshotCache? = null,
@@ -208,6 +214,10 @@ fun ContentHost(
     val barPaddingPx = navBarPx.coerceAtLeast(with(density) { 24.dp.roundToPx() })
     val compactPillPx = with(density) { 44.dp.roundToPx() }
     val expandedClippingPx = (bottomChromeInsetPx - barPaddingPx + navBarPx).coerceAtLeast(0)
+    // The full bottom reserve when the pill is expanded: the pill's own clip plus any persistent
+    // banner floating above it. The banner space is present only at the expanded end of the collapse
+    // lerp, so it vanishes as the pill compacts (and the banner hides with it).
+    val maxReservePx = expandedClippingPx + persistentBannerInsetPx.coerceAtLeast(0)
     // GeckoView's dynamic-toolbar clipping baseline is `setDynamicToolbarMaxHeight` (the *max*
     // reserve). `setVerticalClipping` is the CURRENT offset from that baseline, and must be 0 when
     // the bar is fully shown and negative as it hides — passing the positive obscured height here
@@ -218,9 +228,9 @@ fun ContentHost(
     //
     // The baseline reserve only changes with layout insets, so set it (or clear it in fullscreen)
     // from an effect keyed on those inputs rather than on every recomposition.
-    LaunchedEffect(engineView, bottomChromeInsetPx, expandedClippingPx) {
+    LaunchedEffect(engineView, bottomChromeInsetPx, maxReservePx) {
         if (bottomChromeInsetPx > 0) {
-            engineView.setDynamicToolbarMaxHeight(expandedClippingPx)
+            engineView.setDynamicToolbarMaxHeight(maxReservePx)
         } else {
             // No bottom chrome reserved (video fullscreen passes bottomChromeInsetPx=0). Clear any
             // prior toolbar reservation, otherwise GeckoView keeps clipping space for the now-hidden
@@ -238,15 +248,15 @@ fun ContentHost(
     // WITHOUT recomposing ContentHost — recomposing the engine host per frame was part of the
     // collapse-scroll frame drops. The obscured height shrinks from the full reserve (bar expanded)
     // toward the compact-pill footprint as the pill collapses.
-    LaunchedEffect(engineView, bottomChromeInsetPx, expandedClippingPx, compactPillPx, navBarPx) {
+    LaunchedEffect(engineView, bottomChromeInsetPx, maxReservePx, compactPillPx, navBarPx) {
         if (bottomChromeInsetPx <= 0) return@LaunchedEffect
         snapshotFlow { barCollapseProgress().coerceIn(0f, 1f) }.collect { p ->
             val currentObscuredPx = lerp(
-                expandedClippingPx.toFloat(),
+                maxReservePx.toFloat(),
                 (compactPillPx + navBarPx).toFloat(),
                 p,
             ).roundToInt().coerceAtLeast(0)
-            engineView.setVerticalClipping(currentObscuredPx - expandedClippingPx)
+            engineView.setVerticalClipping(currentObscuredPx - maxReservePx)
         }
     }
 
@@ -344,11 +354,11 @@ fun ContentHost(
             // since it's no longer a composition value — see the clipping effects above).
             val p = barCollapseProgress().coerceIn(0f, 1f)
             val obscured = lerp(
-                expandedClippingPx.toFloat(),
+                maxReservePx.toFloat(),
                 (compactPillPx + navBarPx).toFloat(),
                 p,
             ).roundToInt().coerceAtLeast(0)
-            engineView.setVerticalClipping(obscured - expandedClippingPx)
+            engineView.setVerticalClipping(obscured - maxReservePx)
         }
         // Wait a frame so the overlay is fully gone before we nudge the surface.
         withFrameNanos { }

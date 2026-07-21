@@ -2369,11 +2369,25 @@ fun LuminaRoot(
                 // animating offset inside draw-phase lambdas (graphicsLayer / drawBehind) so the
                 // back-swipe doesn't recompose this subtree on every frame.
                 val predictiveBackEasing = remember { CubicBezierEasing(0.22f, 1f, 0.36f, 1f) }
+                // Reserve extra dynamic-viewport space for the persistent archive scrubber while it's
+                // showing on the selected tab, so page content scrolls under it (like it does the
+                // pill) instead of hiding behind it. Collected here (before ContentHost) so the inset
+                // is known at bind time; the archive bar itself reads its own session lower down.
+                val archiveSessionsForInset by com.firebolt9907.luminabrowser.ui.archive
+                    .WaybackManager.instance.sessions.collectAsStateWithLifecycle()
+                val persistentBannerInsetPx = if (
+                    selectedTabId != null && archiveSessionsForInset[selectedTabId] != null
+                ) with(density) { 72.dp.roundToPx() } else 0
                 ContentHost(
                     engine = components.engine,
                     engineSession = selectedEngineSession,
                     topChromeInsetPx = if (isVideoFullscreen) 0 else topChromeInsetPx,
                     bottomChromeInsetPx = if (isVideoFullscreen || (isKeyboardVisible && state.mode != BarMode.Editing)) 0 else bottomChromeInsetPx,
+                    // Extra dvh reserve for the persistent archive scrubber (0 when not in archive mode
+                    // or when the pill/engine chrome is suppressed for fullscreen/keyboard).
+                    persistentBannerInsetPx = if (
+                        isVideoFullscreen || (isKeyboardVisible && state.mode != BarMode.Editing)
+                    ) 0 else persistentBannerInsetPx,
                     // Shrink the EngineView to sit above a web-content keyboard so Gecko keeps the
                     // focused input on-screen. Not applied while editing the URL bar (that keyboard
                     // belongs to the address sheet, and the engine is covered anyway).

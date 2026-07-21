@@ -267,6 +267,14 @@ class WaybackManager {
          * tiny/zoomed-out; we install (or rewrite) a device-width viewport and re-show the natural
          * text size. Also hides any residual Wayback chrome as belt-and-suspenders on top of `if_`.
          *
+         * Wayback-chrome removal is made robust against **back/forward navigation**: the toolbar is
+         * (re)injected by Wayback's own replay JS — sometimes after our first pass, and again when a
+         * page is restored from bfcache on Back — so a one-shot CSS rule alone lets it flash back. A
+         * persistent, rAF-throttled `MutationObserver` re-hides it (and re-adds our style if dropped)
+         * on any DOM change, a `pageshow` handler re-asserts on bfcache restore, and a re-injection of
+         * this script while its state persists (`window.__luminaWayback`) re-runs the removal instead
+         * of no-oping. All three are idempotent (`hideWb`/`addStyle` guard on existing nodes).
+         *
          * The width-cap rules reflow desktop-only captures to the screen: many sites server-render for
          * a desktop `deviceType` and bake fixed pixel widths (e.g. `width:740px`/`1024px`) straight
          * into elements, and their client JS — which would re-render for the real device — doesn't
@@ -317,7 +325,7 @@ class WaybackManager {
          * skips them (AGENTS.md invariant #11). The call site sets `suppressJavascriptLoadCallback`.
          */
         fun buildMobilifyScript(): String = """
-            javascript:(()=>{if(window.__luminaWayback)return;window.__luminaWayback=true;
+            javascript:(()=>{
             function fixViewport(doc){var m=doc.querySelector('meta[name=viewport]');
             if(!m){m=doc.createElement('meta');m.name='viewport';(doc.head||doc.documentElement).appendChild(m);}
             m.setAttribute('content','width=device-width, initial-scale=1, viewport-fit=cover');
@@ -328,8 +336,11 @@ class WaybackManager {
             +'html,body{max-width:100%!important;overflow-x:clip!important;overflow-y:visible!important;height:auto!important;min-height:100%!important;max-height:none!important}'
             +'img,picture,video,iframe,svg,canvas,embed,object{max-width:100%!important;height:auto!important}'
             +'[style*="width"]{max-width:100%!important}'
-            +'#wm-ipp-base,#wm-ipp,#donato,.wb-autocomplete-suggestions,#playback{display:none!important}';
+            +'#wm-ipp-base,#wm-ipp,#donato,.wb-autocomplete-suggestions,#playback,#wm-ipp-print,#wm-capinfo,#wm-ipp-inside{display:none!important}';
             (doc.head||doc.documentElement).appendChild(s);}
+            var WB_SEL='#wm-ipp-base,#wm-ipp,#donato,.wb-autocomplete-suggestions,#playback,#wm-ipp-print,#wm-capinfo,#wm-ipp-inside';
+            function hideWb(doc){try{var els=doc.querySelectorAll(WB_SEL);
+            for(var i=0;i<els.length;i++){els[i].style.setProperty('display','none','important');}}catch(e){}}
             function fixImages(doc){try{
             var imgs=doc.querySelectorAll('img');
             for(var i=0;i<imgs.length;i++){var im=imgs[i];
@@ -367,7 +378,7 @@ class WaybackManager {
             best.style.setProperty('height','auto','important');
             best.style.setProperty('max-height','none','important');}
             }catch(e){}}
-            function apply(doc){fixViewport(doc);addStyle(doc);fixImages(doc);fixGrids(doc);fixScrollLock(doc);}
+            function apply(doc){fixViewport(doc);addStyle(doc);fixImages(doc);fixGrids(doc);fixScrollLock(doc);hideWb(doc);}
             function fixFrames(){try{var frames=document.querySelectorAll('iframe,frame');if(!frames.length)return;
             var vw=window.innerWidth,vh=window.innerHeight,dom=null;
             for(var i=0;i<frames.length;i++){var f=frames[i];var r=f.getBoundingClientRect();
@@ -375,8 +386,23 @@ class WaybackManager {
             if(!dom&&document.querySelector('frameset'))dom=frames[0];
             if(!dom)return;var d;try{d=dom.contentDocument;}catch(e){return;}
             if(!d||!d.documentElement)return;apply(d);}catch(e){}}
-            apply(document);fixFrames();
-            var n=0,iv=setInterval(function(){fixImages(document);fixFrames();if(n<5){fixGrids(document);fixScrollLock(document);}if(++n>8)clearInterval(iv);},700);
+            function ensure(){apply(document);fixFrames();}
+            /* Re-injection while our state persists (a back/forward navigation re-runs this script on
+               the same restored window): just re-assert removal + de-uglify, don't re-arm observers. */
+            if(window.__luminaWayback){ensure();return;}
+            window.__luminaWayback=true;
+            ensure();
+            /* The Wayback toolbar is (re)injected by its own replay JS, sometimes AFTER our first pass
+               and again when a page is restored from bfcache on Back. A persistent, throttled observer
+               re-hides it (and re-adds our style if it was dropped) whenever the DOM changes — this is
+               what makes the removal robust across in-archive back/forward navigation. */
+            try{var pend=false;var mo=new MutationObserver(function(){if(pend)return;pend=true;
+            (window.requestAnimationFrame||window.setTimeout)(function(){pend=false;
+            if(!document.getElementById('lumina-wb-style'))addStyle(document);hideWb(document);},0);});
+            mo.observe(document.documentElement,{childList:true,subtree:true});}catch(e){}
+            /* bfcache page restore (Back to a cached archived page) — re-assert everything. */
+            window.addEventListener('pageshow',function(e){ensure();});
+            var n=0,iv=setInterval(function(){fixImages(document);fixFrames();hideWb(document);if(n<5){fixGrids(document);fixScrollLock(document);}if(++n>8)clearInterval(iv);},700);
             })()
         """.trimIndent().replace("\n", "")
     }

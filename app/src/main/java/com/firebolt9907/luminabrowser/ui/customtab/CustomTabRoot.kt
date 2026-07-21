@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ChromeReaderMode
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LockOpen
@@ -841,7 +842,9 @@ private fun CustomTabOriginRibbon(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    imageVector = if (archiveDate != null) Icons.Default.History
+                    // Institution glyph on the "Internet Archive" ribbon (matches the scrubber
+                    // banner); the ordinary origin ribbon keeps the open-in-new mark.
+                    imageVector = if (archiveDate != null) Icons.Default.AccountBalance
                     else Icons.AutoMirrored.Filled.OpenInNew,
                     contentDescription = null,
                     modifier = Modifier.size(15.dp),

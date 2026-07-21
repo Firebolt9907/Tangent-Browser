@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ChromeReaderMode
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
@@ -167,6 +168,19 @@ fun CustomTabRoot(
     val session = customTab?.engineState?.engineSession
     val url = customTab?.content?.url.orEmpty()
     val canGoBack = customTab?.content?.canGoBack == true
+
+    // Archive (Wayback) awareness for externally-opened links. The raw url is a web.archive.org
+    // snapshot wrapper; surface the ORIGINAL site's identity in our chrome (domain, share, security
+    // indicator) and mark the surface as an archived snapshot. The page itself is already de-uglified
+    // and stripped of Wayback's own toolbar by ContentHost's shared injectArchiveMobilify. Migrating
+    // into the main browser ("Open in Expedition") then auto-enters full archive mode with the
+    // timeline scrubber (LuminaRoot's auto-enter effect).
+    val wayback = remember { com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance }
+    val isArchiveUrl = wayback.isArchiveUrl(url)
+    val displayUrl = if (isArchiveUrl) wayback.originalFromArchiveUrl(url) ?: url else url
+    val archiveDate = if (isArchiveUrl) {
+        formatArchiveTimestamp(wayback.timestampFromArchiveUrl(url))
+    } else null
 
     val readerManager = remember { ReaderManager.instance }
     val activeReaderTabs by readerManager.activeReaderTabs.collectAsStateWithLifecycle()
@@ -528,6 +542,7 @@ fun CustomTabRoot(
                     // main browser). A transient launch banner — it slides up off-screen ~3s after
                     // appearing (or on first scroll) so it never clips the page content ([ribbonReveal]).
                     CustomTabOriginRibbon(
+                        archiveDate = archiveDate,
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .onSizeChanged { if (it.height > 0) ribbonHeightPx = it.height }
@@ -538,8 +553,9 @@ fun CustomTabRoot(
                     )
 
                     CustomTabBottomBar(
-                        domain = compactHost(url),
-                        isInsecure = url.startsWith("http://", ignoreCase = true),
+                        domain = compactHost(displayUrl),
+                        isInsecure = displayUrl.startsWith("http://", ignoreCase = true),
+                        isArchive = isArchiveUrl,
                         readerActive = readerActive,
                         readerEligible = customTabId != null && eligibleReaderTabs.contains(customTabId),
                         onToggleReader = {
@@ -551,7 +567,7 @@ fun CustomTabRoot(
                                 }
                             }
                         },
-                        onShare = { shareUrl(context, url, customTab?.content?.title) },
+                        onShare = { shareUrl(context, displayUrl, customTab?.content?.title) },
                         onOpenInLumina = {
                             // No groups yet → open straight into the browser (the original behaviour).
                             // Otherwise ask which group to drop the page into, Arc-style.
@@ -669,6 +685,7 @@ private val ChipSplashShape = SquircleShape(radius = 14.dp, exponent = 3f)
 private fun CustomTabBottomBar(
     domain: String,
     isInsecure: Boolean,
+    isArchive: Boolean = false,
     readerActive: Boolean,
     readerEligible: Boolean,
     onToggleReader: () -> Unit,
@@ -712,7 +729,18 @@ private fun CustomTabBottomBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
                 ) {
-                    if (isInsecure) {
+                    // Archive badge takes precedence over the (non-)secure indicator: this is a
+                    // Wayback snapshot, so a History mark + primary tint signals "archived" while the
+                    // domain reads as the real site.
+                    if (isArchive) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = "Archived snapshot",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(15.dp),
+                        )
+                        Spacer(Modifier.width(5.dp))
+                    } else if (isInsecure) {
                         Icon(
                             imageVector = Icons.Default.LockOpen,
                             contentDescription = "Not secure",
@@ -724,6 +752,8 @@ private fun CustomTabBottomBar(
                     Text(
                         text = domain,
                         style = MaterialTheme.typography.bodyMedium,
+                        color = if (isArchive) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -785,6 +815,7 @@ private fun PillChip(
  */
 @Composable
 private fun CustomTabOriginRibbon(
+    archiveDate: String? = null,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -794,10 +825,14 @@ private fun CustomTabOriginRibbon(
             .padding(top = 8.dp),
         contentAlignment = Alignment.TopCenter,
     ) {
+        // In archive mode the ribbon becomes the "archived snapshot" badge (History icon + capture
+        // date, primary-tinted); otherwise it's the ordinary "opened from a link" origin marker.
         Surface(
             shape = SquircleShape(radius = 18.dp, exponent = 3f),
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            color = if (archiveDate != null) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = if (archiveDate != null) MaterialTheme.colorScheme.onPrimaryContainer
+            else MaterialTheme.colorScheme.onSecondaryContainer,
             tonalElevation = 3.dp,
             shadowElevation = 3.dp,
         ) {
@@ -806,13 +841,15 @@ private fun CustomTabOriginRibbon(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                    imageVector = if (archiveDate != null) Icons.Default.History
+                    else Icons.AutoMirrored.Filled.OpenInNew,
                     contentDescription = null,
                     modifier = Modifier.size(15.dp),
                 )
                 Spacer(Modifier.width(7.dp))
                 Text(
-                    text = "Opened from a link",
+                    text = if (archiveDate != null) "Internet Archive · $archiveDate"
+                    else "Opened from a link",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
@@ -821,5 +858,19 @@ private fun CustomTabOriginRibbon(
             }
         }
     }
+}
+
+private val ARCHIVE_MONTHS = arrayOf(
+    "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+)
+
+/** "20200305…" → "Mar 5, 2020" for the archive badge; null when the stamp is unusable. */
+private fun formatArchiveTimestamp(ts: String?): String? {
+    if (ts == null || ts.length < 8) return null
+    val year = ts.substring(0, 4)
+    val month = ts.substring(4, 6).toIntOrNull() ?: return null
+    val day = ts.substring(6, 8).toIntOrNull() ?: return null
+    if (month !in 1..12) return null
+    return "${ARCHIVE_MONTHS[month]} $day, $year"
 }
 

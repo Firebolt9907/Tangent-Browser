@@ -729,7 +729,11 @@ private fun buildDefaultSettings(
     historyStorage: PlacesHistoryStorage,
     onHttpsOnlyError: (String) -> Unit,
 ) = DefaultSettings(
-    historyTrackingDelegate = HistoryDelegate(lazy { historyStorage }),
+    // Record archived (web.archive.org) visits under the original page URL, so history stays clean
+    // and consistent with the de-archived URL shown everywhere else. No-op for non-snapshot URLs.
+    historyTrackingDelegate = com.firebolt9907.luminabrowser.ui.archive.DeArchivingHistoryDelegate(
+        HistoryDelegate(lazy { historyStorage }),
+    ),
     trackingProtectionPolicy = trackingPolicyOf(prefs),
     javaScriptCanOpenWindowsAutomatically = !prefs.blockPopUps,
     javascriptEnabled = prefs.javaScriptEnabled,

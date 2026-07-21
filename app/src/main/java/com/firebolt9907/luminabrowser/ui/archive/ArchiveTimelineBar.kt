@@ -115,6 +115,8 @@ fun ArchiveTimelineBarHost(
     // the address pill morphs on. Read per-frame in the draw phase so the bar tracks the scroll
     // "intent" 1:1 with the pill: scrolling down dives it toward the pill, scrolling up pops it back.
     collapseProgress: () -> Float = { 0f },
+    // Shared Now-Bar stack so this bar piles up with the sync/OTP banners instead of overlapping.
+    stack: com.firebolt9907.luminabrowser.ui.BannerStackState? = null,
     onSelectYear: (Int) -> Unit,
     onSelect: (String) -> Unit,
     onExit: () -> Unit,
@@ -131,6 +133,11 @@ fun ArchiveTimelineBarHost(
         // Replay the spring-out whenever we land on a different tab that's in archive mode, so the
         // bar animates in on a tab switch rather than appearing already-settled.
         enterKey = session?.tabId,
+        // Bottom of the stack (nearest the pill) — it's the persistent context bar; transient
+        // notifications pile above it.
+        stack = stack,
+        stackId = "archive",
+        stackPriority = 0,
         collapseProgress = collapseProgress,
         gridProgress = gridProgress,
         horizontalOffsetX = horizontalOffsetX,

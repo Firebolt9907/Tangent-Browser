@@ -3237,6 +3237,10 @@ fun LuminaRoot(
                             sendLinkPrompt = null
                         }
                     }
+                    // Shared Now-Bar stack: every banner above the pill (archive scrubber, OTP paste,
+                    // send-to-device, received tab) registers here so simultaneous banners pile up
+                    // instead of overlapping. Lower stackPriority sits nearer the pill.
+                    val bannerStack = com.firebolt9907.luminabrowser.ui.rememberBannerStackState()
                     com.firebolt9907.luminabrowser.ui.sync.SendToDeviceBannerHost(
                         deviceName = if (sendLinkPrompt != null) recentTargetDevice?.name else null,
                         deviceType = recentTargetDevice?.type,
@@ -3244,6 +3248,7 @@ fun LuminaRoot(
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                         // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
                         collapseProgress = barCollapseProgressProvider,
+                        stack = bannerStack,
                         onSend = {
                             val prompt = sendLinkPrompt
                             val device = recentTargetDevice
@@ -3268,6 +3273,7 @@ fun LuminaRoot(
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                         // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
                         collapseProgress = barCollapseProgressProvider,
+                        stack = bannerStack,
                         onPaste = {
                             val clip = clipboardManager.getText()?.text
                             val code = clip?.let {
@@ -3335,6 +3341,7 @@ fun LuminaRoot(
                             // switch settles so its removal goes unnoticed.
                             horizontalOffsetX = archivePillOffsetX,
                             switchFade = archiveSwitchFade,
+                            stack = bannerStack,
                             onSelectYear = { year ->
                                 val s = archiveSession ?: return@ArchiveTimelineBarHost
                                 scope.launch {
@@ -3377,6 +3384,7 @@ fun LuminaRoot(
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                         // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
                         collapseProgress = barCollapseProgressProvider,
+                        stack = bannerStack,
                         onOpen = { tab ->
                             components.firefoxSyncController.dismissReceivedTab()
                             viewModel.onOpenNewTab(url = tab.url, title = tab.title, selectTab = true)

@@ -42,6 +42,7 @@ import kotlin.math.abs
 import kotlinx.coroutines.launch
 import com.firebolt9907.luminabrowser.sync.FirefoxHandoffTab
 import com.firebolt9907.luminabrowser.sync.FirefoxReceivedTab
+import com.firebolt9907.luminabrowser.ui.BannerStackState
 import com.firebolt9907.luminabrowser.ui.MorphingBannerHost
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 
@@ -59,6 +60,7 @@ fun HandoffBannerHost(
     visible: Boolean,
     bottomPadding: Dp,
     collapseProgress: () -> Float = { 0f },
+    stack: BannerStackState? = null,
     onOpen: (FirefoxHandoffTab) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -66,6 +68,9 @@ fun HandoffBannerHost(
         visible = visible && handoff != null,
         bottomPadding = bottomPadding,
         collapseProgress = collapseProgress,
+        stack = stack,
+        stackId = "handoff",
+        stackPriority = 4,
     ) {
         // The banner stays mounted through the exit morph, after the candidate has been cleared from
         // state — hold the last one so the card doesn't blank out mid-morph.
@@ -90,6 +95,7 @@ fun SendToDeviceBannerHost(
     visible: Boolean,
     bottomPadding: Dp,
     collapseProgress: () -> Float = { 0f },
+    stack: BannerStackState? = null,
     onSend: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -97,6 +103,9 @@ fun SendToDeviceBannerHost(
         visible = visible && deviceName != null,
         bottomPadding = bottomPadding,
         collapseProgress = collapseProgress,
+        stack = stack,
+        stackId = "sendToDevice",
+        stackPriority = 2,
     ) {
         // Hold the last name/type so the card doesn't blank out mid-exit-morph after state clears.
         var lastName by remember { mutableStateOf(deviceName) }
@@ -127,6 +136,7 @@ fun OtpPasteBannerHost(
     visible: Boolean,
     bottomPadding: Dp,
     collapseProgress: () -> Float = { 0f },
+    stack: BannerStackState? = null,
     onPaste: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -134,6 +144,9 @@ fun OtpPasteBannerHost(
         visible = visible,
         bottomPadding = bottomPadding,
         collapseProgress = collapseProgress,
+        stack = stack,
+        stackId = "otpPaste",
+        stackPriority = 1,
     ) {
         Surface(
             shape = SquircleShape(28.dp),
@@ -308,6 +321,7 @@ fun ReceivedTabBannerHost(
     visible: Boolean,
     bottomPadding: Dp,
     collapseProgress: () -> Float = { 0f },
+    stack: BannerStackState? = null,
     onOpen: (FirefoxReceivedTab) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -315,6 +329,9 @@ fun ReceivedTabBannerHost(
         visible = visible && received != null,
         bottomPadding = bottomPadding,
         collapseProgress = collapseProgress,
+        stack = stack,
+        stackId = "receivedTab",
+        stackPriority = 3,
     ) {
         // Hold the last value so the card doesn't blank out mid-exit-morph after state clears.
         var last by remember { mutableStateOf(received) }

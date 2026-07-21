@@ -180,7 +180,7 @@ private fun SlimArchiveBar(
         Phase.Loading -> "Finding snapshots…"
         Phase.Empty -> "No snapshots for this page"
         Phase.Error -> "Couldn't reach the Internet Archive"
-        Phase.Ready -> "Wayback Machine · archive.org"
+        Phase.Ready -> "Powered by archive.org"
     }
     Surface(
         // surfaceContainerHighest = the pill's own fill color, so the banner matches the pill below.

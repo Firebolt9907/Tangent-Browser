@@ -347,14 +347,22 @@ private fun PageTabContent(
     val isWebPage = pageUrl.startsWith("http://", ignoreCase = true) ||
         pageUrl.startsWith("https://", ignoreCase = true)
 
+    // In archive (Wayback) mode pageUrl is a web.archive.org snapshot wrapper. User-facing actions
+    // that leave the app or persist a link — share, copy, bookmark, reading list, home-screen
+    // shortcut, "open in other app" — should carry the ORIGINAL page URL, not the archive wrapper,
+    // so a shared/bookmarked link points at the real site. Engine-facing ops (reader, desktop mode,
+    // tracking protection, "View on Internet Archive") deliberately keep pageUrl.
+    val shareableUrl = com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance
+        .originalFromArchiveUrl(pageUrl) ?: pageUrl
+
     // ---- Shared action handlers (reused by the quick-action tiles and secondary rows) ----
     fun doShare() {
-        shareUrl(context, pageUrl, pageTitle)
+        shareUrl(context, shareableUrl, pageTitle)
         onDismiss()
     }
 
     fun doCopy() {
-        clipboard.setText(AnnotatedString(pageUrl))
+        clipboard.setText(AnnotatedString(shareableUrl))
         Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
         onDismiss()
     }
@@ -372,7 +380,7 @@ private fun PageTabContent(
         saveOp: suspend (storage: BookmarksStorage, url: String, title: String) -> Unit,
     ) {
         val storage = bookmarksStorage ?: return
-        val url = pageUrl
+        val url = shareableUrl
         val title = pageTitle.ifBlank { url }
         bookmarkScope.launch {
             val ok = runCatching { saveOp(storage, url, title) }.isSuccess
@@ -414,16 +422,16 @@ private fun PageTabContent(
 
     fun doAddToHomeScreen() {
         if (ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
-            val label = pageTitle.ifBlank { host.ifBlank { pageUrl } }
+            val label = pageTitle.ifBlank { host.ifBlank { shareableUrl } }
             val shortcutIntent = Intent(context, MainActivity::class.java).apply {
                 action = Intent.ACTION_VIEW
-                data = pageUrl.toUri()
+                data = shareableUrl.toUri()
                 putExtra(MainActivity.EXTRA_HOME_SHORTCUT, true)
             }
             // Use the page favicon when available (Safari does), else the app icon.
             val shortcutIcon = pageIcon?.let { IconCompat.createWithBitmap(it) }
                 ?: IconCompat.createWithResource(context, R.mipmap.ic_launcher)
-            val info = ShortcutInfoCompat.Builder(context, "lumina-${pageUrl.hashCode()}")
+            val info = ShortcutInfoCompat.Builder(context, "lumina-${shareableUrl.hashCode()}")
                 .setShortLabel(label.take(24))
                 .setLongLabel(label.take(48))
                 .setIcon(shortcutIcon)
@@ -899,15 +907,15 @@ private fun PageTabContent(
             // Open in associated native app (e.g. Instagram for an instagram.com link),
             // shown only when a non-browser app claims this specific URL. Resolved off the main
             // thread (two PackageManager queries) so it never blocks the sheet; null until ready.
-            val nativeApp by produceState<NativeApp?>(initialValue = null, pageUrl, context) {
-                value = withContext(Dispatchers.IO) { nativeAppFor(context.packageManager, pageUrl) }
+            val nativeApp by produceState<NativeApp?>(initialValue = null, shareableUrl, context) {
+                value = withContext(Dispatchers.IO) { nativeAppFor(context.packageManager, shareableUrl) }
             }
             val resolvedNativeApp = nativeApp
             if (resolvedNativeApp != null) {
                 TextButton(
                     onClick = {
                         haptics.softClick()
-                        val intent = Intent(Intent.ACTION_VIEW, pageUrl.toUri()).apply {
+                        val intent = Intent(Intent.ACTION_VIEW, shareableUrl.toUri()).apply {
                             setPackage(resolvedNativeApp.packageName)
                             addCategory(Intent.CATEGORY_BROWSABLE)
                         }
@@ -916,7 +924,7 @@ private fun PageTabContent(
                         } catch (_: ActivityNotFoundException) {
                             // Preferred native app gone; fall back to a plain VIEW, still guarded
                             // in case nothing at all handles the URL.
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, pageUrl.toUri())) }
+                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, shareableUrl.toUri())) }
                         }
                         onDismiss()
                     },
@@ -951,7 +959,7 @@ private fun PageTabContent(
                 TextButton(
                     onClick = {
                         haptics.softClick()
-                        val uri = pageUrl.toUri()
+                        val uri = shareableUrl.toUri()
                         val pkg = preferredBrowserPkg
                         val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                             if (!pkg.isNullOrEmpty()) setPackage(pkg)

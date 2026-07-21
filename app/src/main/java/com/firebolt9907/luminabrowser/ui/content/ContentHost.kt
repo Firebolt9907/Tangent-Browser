@@ -385,6 +385,7 @@ fun ContentHost(
             var otpDetectorInjectedForCurrentLoad = false
             var loginDetectorInjectedForCurrentLoad = false
             var formFieldMemoryInjectedForCurrentLoad = false
+            var archiveMobilifyInjectedForCurrentLoad = false
             var currentUrl = pageUrl
             var capturedLeavingUrl: String? = null
             // True while a genuine document load is in flight (real navigation), so the delayed
@@ -453,6 +454,16 @@ fun ContentHost(
                 if (!url.isYouTubePageUrl()) return
                 suppressJavascriptLoadCallback = true
                 engineSession.injectYouTubeCleanPlayer()
+            }
+            fun injectArchiveMobilify(url: String) {
+                // For any archived (web.archive.org) page: force device-width layout so pre-responsive
+                // captures don't render zoomed-out, and hide the Wayback toolbar. Not gated on archive
+                // *mode* so a restored archive tab is de-uglified even before archive mode re-activates.
+                if (archiveMobilifyInjectedForCurrentLoad) return
+                if (!com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance.isArchiveUrl(url)) return
+                archiveMobilifyInjectedForCurrentLoad = true
+                suppressJavascriptLoadCallback = true
+                engineSession.injectArchiveMobilify()
             }
             fun injectOtpDetector() {
                 // Detect SMS one-time-code fields so the host can arm SMS User Consent. Cheap DOM
@@ -527,9 +538,11 @@ fun ContentHost(
                         injectedForCurrentLoad = false
                         amoInstallerInjectedForCurrentLoad = false
                         readerExtractedForCurrentLoad = false
+                        archiveMobilifyInjectedForCurrentLoad = false
                         suppressJavascriptLoadCallback = false
                         injectAmoInstaller(url)
                         injectCleanPlayer(url)
+                        injectArchiveMobilify(url)
                         if (navigatedAway) {
                             if (tabId != null) {
                                 com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.clearReaderState(tabId)
@@ -544,6 +557,7 @@ fun ContentHost(
                     injectSpacer()
                     injectAmoInstaller(currentUrl)
                     injectCleanPlayer(currentUrl)
+                    injectArchiveMobilify(currentUrl)
                     injectOtpDetector()
                     injectLoginDetector()
                     injectFormFieldMemory()
@@ -571,12 +585,14 @@ fun ContentHost(
                         otpDetectorInjectedForCurrentLoad = false
                         loginDetectorInjectedForCurrentLoad = false
                         formFieldMemoryInjectedForCurrentLoad = false
+                        archiveMobilifyInjectedForCurrentLoad = false
                     } else {
                         realLoadInProgress = false
                         isSafeToSnapshot = true
                         injectSpacer()
                         injectAmoInstaller(currentUrl)
                         injectCleanPlayer(currentUrl)
+                        injectArchiveMobilify(currentUrl)
                         injectOtpDetector()
                         injectLoginDetector()
                         injectFormFieldMemory()

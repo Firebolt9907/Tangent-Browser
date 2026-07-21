@@ -929,6 +929,14 @@ private fun GridTabCard(
                         .background(topStripColor),
                 )
             }
+            // Archive-mode badge (shared with the deck/pixel overview) — marks a Wayback snapshot.
+            if (tab.isArchive) {
+                ArchiveThumbnailBadge(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(10.dp),
+                )
+            }
         }
     }
 }

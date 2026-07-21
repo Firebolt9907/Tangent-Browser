@@ -107,6 +107,8 @@ internal fun LuminaOverlaySheets(
     onDismissAa: () -> Unit,
     onAaEngineRefresh: () -> Unit,
     onFindInPage: () -> Unit,
+    // Enters Internet Archive (Wayback) mode for the current tab.
+    onOpenArchive: () -> Unit,
     siteTrackingProtectionDisabled: Boolean,
     onSiteTrackingProtectionDisabledChange: (Boolean) -> Unit,
     // Standalone add-on/sign-in web card
@@ -364,6 +366,9 @@ internal fun LuminaOverlaySheets(
                 ?.let { url ->
                     { viewModel.onOpenNewTab(url = url, title = selectedContent?.title.orEmpty(), selectTab = true); Unit }
                 },
+            onOpenArchive = currentUrl
+                ?.takeIf { it.startsWith("http", ignoreCase = true) }
+                ?.let { { onOpenArchive() } },
             trackingProtectionEnabledGlobally = components.globalPreferencesStore.trackingProtection,
             siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
             onToggleSiteTrackingProtection = { disable ->

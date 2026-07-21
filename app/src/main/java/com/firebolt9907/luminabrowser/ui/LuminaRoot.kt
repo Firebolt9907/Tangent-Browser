@@ -1016,14 +1016,23 @@ fun LuminaRoot(
     // while the overview is engaged. Keyed by URL so a navigation refreshes it; null is cached too
     // to avoid refetch storms, and the UI falls back to a letter tile. Feeds the iconProvider below.
     val faviconCache = remember { mutableStateMapOf<String, android.graphics.Bitmap?>() }
+    // Favicons are keyed by the site's REAL URL: for an archived tab the address is a
+    // web.archive.org snapshot, so load (and cache) the icon under the original page's URL instead —
+    // the card then shows the live site's favicon, not the archive's.
+    val faviconKeyFor: (String) -> String = remember {
+        { url ->
+            val wb = com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance
+            if (wb.isArchiveUrl(url)) wb.originalFromArchiveUrl(url) ?: url else url
+        }
+    }
     LaunchedEffect(gridEngaged, browserState.tabs.size) {
         if (!gridEngaged) return@LaunchedEffect
         // Bound the cache to currently-open tabs so it can't grow without limit across a long
         // session of navigations/closes (BrowserIcons keeps its own bounded disk cache underneath).
-        val currentUrls = browserState.tabs.mapTo(HashSet()) { it.content.url }
+        val currentUrls = browserState.tabs.mapTo(HashSet()) { faviconKeyFor(it.content.url) }
         faviconCache.keys.retainAll(currentUrls)
         browserState.tabs.forEach { tab ->
-            val url = tab.content.url
+            val url = faviconKeyFor(tab.content.url)
             if (url.isNotBlank() && !url.isBlankPageUrl() && !faviconCache.containsKey(url)) {
                 launch {
                     val bmp = runCatching {
@@ -2783,10 +2792,21 @@ fun LuminaRoot(
                                 gridHandoffSelectedTabId != null && i == newSelIdx -> gridHandoffSelectedTopPadPx
                                 else -> tabPadPxMap[tab.id] ?: 0
                             }
+                            // For an archived tab, present the ORIGINAL page's URL/title (and, via
+                            // the same key, its real favicon) so the card reads like the live site;
+                            // an archive badge marks it as time-travelled.
+                            val wb = com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance
+                            val isArchiveTab = wb.isArchiveUrl(tab.content.url)
+                            val gridUrl = if (isArchiveTab) {
+                                wb.originalFromArchiveUrl(tab.content.url) ?: tab.content.url
+                            } else {
+                                tab.content.url
+                            }
                             GridTab(
                                 id = tab.id,
-                                url = tab.content.url,
-                                title = tab.content.title.ifBlank { hostFromUrl(tab.content.url) },
+                                url = gridUrl,
+                                title = tab.content.title.ifBlank { hostFromUrl(gridUrl) },
+                                isArchive = isArchiveTab,
                                 browseBaseX = if (isHandoffLeaving) {
                                     gridHandoffLeavingOffsetX
                                 } else {
@@ -2914,7 +2934,8 @@ fun LuminaRoot(
                             themeColorProvider = gridThemeColorProvider,
                             iconProvider = { tabId ->
                                 val tab = tabsList.firstOrNull { it.id == tabId }
-                                tab?.content?.url?.let { faviconCache[it] } ?: tab?.content?.icon
+                                tab?.content?.url?.let { faviconCache[faviconKeyFor(it)] }
+                                    ?: tab?.content?.icon
                             },
                             tabViewMode = tabViewMode,
                             // Reserve the top cutout band (status bar / hole punch) plus the caption
@@ -3081,6 +3102,25 @@ fun LuminaRoot(
                     val pillGridProgress = remember {
                         { if (gridGestureActive) gridDragProgress else gridProgressState.value }
                     }
+                    // Horizontal offset the archive bar follows so it stays glued to the current
+                    // tab's pill during a tab-switch swipe: the active pill while dragging (offsetX),
+                    // then the leaving-tab ghost as the commit spring carries it off-screen.
+                    val archivePillOffsetX = remember {
+                        { if (leavingSnapshotJob != null) leavingSnapshotOffsetX else offsetX }
+                    }
+                    // 0 while dragging (bar just tracks, no fade); ramps to 1 only during the commit
+                    // settle as the pill flies off, so the bar is already invisible by the time the
+                    // switch finishes and its session clears — the removal goes unnoticed.
+                    val archiveSwitchFade = remember {
+                        {
+                            val stride = contentSize.width.toFloat()
+                            if (leavingSnapshotJob != null && stride > 0f) {
+                                (kotlin.math.abs(leavingSnapshotOffsetX) / stride).coerceIn(0f, 1f)
+                            } else {
+                                0f
+                            }
+                        }
+                    }
                     val pillReaderHideOffsetPx = remember(density) {
                         // Translate the pill fully off the bottom edge as the reader hides it.
                         // Distance is the bar's measured bottom region plus a margin so it
@@ -3108,13 +3148,28 @@ fun LuminaRoot(
                             }
                         }
                     }
+                    // While viewing a Wayback snapshot, show the ORIGINAL page's address in the pill
+                    // (not the web.archive.org URL). Display only — reload/edit still use the real URL.
+                    val effectiveBarState = run {
+                        val base = pendingActiveBarState ?: state
+                        val wb = com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance
+                        val original = if (wb.isArchiveUrl(base.pageUrl)) {
+                            wb.originalFromArchiveUrl(base.pageUrl)
+                        } else null
+                        if (original != null) {
+                            val label = addressBarLabel(original, barSearchEngine, showSearchTermsInBar)
+                            base.copy(displayUrl = label, compactDisplayUrl = label)
+                        } else {
+                            base
+                        }
+                    }
                     BottomBarLayer(
                         contentSize = contentSize,
                         tabSwitchGapPx = tabSwitchGapPx,
                         previousTab = previousTab,
                         nextTab = nextTab,
                         tabCount = tabCount,
-                        activeState = pendingActiveBarState ?: state,
+                        activeState = effectiveBarState,
                         callbacks = callbacks,
                         inlineAutocomplete = autocompleteSource.value,
                         onVoiceInput = onVoiceInput,
@@ -3187,6 +3242,8 @@ fun LuminaRoot(
                         deviceType = recentTargetDevice?.type,
                         visible = sendLinkPrompt != null && recentTargetDevice != null,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
+                        collapseProgress = barCollapseProgressProvider,
                         onSend = {
                             val prompt = sendLinkPrompt
                             val device = recentTargetDevice
@@ -3209,6 +3266,8 @@ fun LuminaRoot(
                     com.firebolt9907.luminabrowser.ui.sync.OtpPasteBannerHost(
                         visible = otpPasteVisible,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
+                        collapseProgress = barCollapseProgressProvider,
                         onPaste = {
                             val clip = clipboardManager.getText()?.text
                             val code = clip?.let {
@@ -3228,6 +3287,81 @@ fun LuminaRoot(
                         onDismiss = { otpPasteVisible = false },
                     )
 
+                    // Internet Archive (Wayback) date scrubber — bottom-anchored above the pill while
+                    // this tab is in archive mode. Picking a day loads that snapshot in place; Close
+                    // returns to the live page.
+                    run {
+                        val archiveSessions by com.firebolt9907.luminabrowser.ui.archive.WaybackManager
+                            .instance.sessions.collectAsStateWithLifecycle()
+                        val archiveSession = selectedTabId?.let { archiveSessions[it] }
+                        // Auto-enter archive mode when the selected tab is showing a web.archive.org
+                        // snapshot but has no session — e.g. an app restart restored an archived tab,
+                        // or a Wayback link was opened directly. Restores the pill rewrite + selector
+                        // (with the viewed date highlighted); the mobilify inject already de-uglified
+                        // the page independently of mode.
+                        LaunchedEffect(selectedTabId, selectedContent?.url) {
+                            val tabId = selectedTabId ?: return@LaunchedEffect
+                            val url = selectedContent?.url ?: return@LaunchedEffect
+                            val wb = com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance
+                            if (wb.isArchiveUrl(url) && !wb.isActive(tabId)) {
+                                val original = wb.originalFromArchiveUrl(url) ?: return@LaunchedEffect
+                                wb.enter(tabId, original, initialSelected = wb.timestampFromArchiveUrl(url))
+                            }
+                        }
+                        // Drop the session if the user navigates off both the live page and the
+                        // archive (e.g. taps a link inside the snapshot to a fresh site).
+                        LaunchedEffect(selectedTabId, selectedContent?.url, archiveSession != null) {
+                            val s = archiveSession ?: return@LaunchedEffect
+                            val url = selectedContent?.url
+                            val wb = com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance
+                            if (url != null && url != s.originalUrl && !wb.isArchiveUrl(url) &&
+                                url != "about:blank"
+                            ) {
+                                wb.exit(s.tabId)
+                            }
+                        }
+                        com.firebolt9907.luminabrowser.ui.archive.ArchiveTimelineBarHost(
+                            session = archiveSession,
+                            // Hide the bar once the pill collapses to compact (matches other banners).
+                            visible = !barCollapseCompact,
+                            bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                            // Track the SAME scroll-collapse progress the pill morphs on, so scrolling
+                            // down dives the bar toward the pill (intent) and scrolling up pops it
+                            // back — 1:1 with the pill, read per-frame in the bar's draw phase.
+                            collapseProgress = barCollapseProgressProvider,
+                            // Fade with the pill as the tab switcher opens (anchored to the pill).
+                            gridProgress = pillGridProgress,
+                            // Track the pill horizontally on a tab-switch swipe; fade only as the
+                            // switch settles so its removal goes unnoticed.
+                            horizontalOffsetX = archivePillOffsetX,
+                            switchFade = archiveSwitchFade,
+                            onSelectYear = { year ->
+                                val s = archiveSession ?: return@ArchiveTimelineBarHost
+                                scope.launch {
+                                    com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance
+                                        .selectYear(s.tabId, year)
+                                }
+                            },
+                            onSelect = { ts ->
+                                val s = archiveSession ?: return@ArchiveTimelineBarHost
+                                val wb = com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance
+                                wb.selectDate(s.tabId, ts)
+                                components.tabRepository.loadUrl(
+                                    wb.archiveUrl(s.originalUrl, ts), s.tabId,
+                                )
+                            },
+                            onExit = {
+                                val s = archiveSession ?: return@ArchiveTimelineBarHost
+                                val wb = com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance
+                                wb.exit(s.tabId)
+                                // If a snapshot was being viewed, return to the live page.
+                                if (wb.isArchiveUrl(selectedContent?.url)) {
+                                    components.tabRepository.loadUrl(s.originalUrl, s.tabId)
+                                }
+                            },
+                        )
+                    }
+
                     // In-app banner for a tab another device just pushed here via "Send tab".
                     // Auto-retire after a short window (the system notification persists longer).
                     val receivedTab = firefoxSyncState.receivedTab
@@ -3241,6 +3375,8 @@ fun LuminaRoot(
                         received = receivedTab,
                         visible = receivedTab != null,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
+                        collapseProgress = barCollapseProgressProvider,
                         onOpen = { tab ->
                             components.firefoxSyncController.dismissReceivedTab()
                             viewModel.onOpenNewTab(url = tab.url, title = tab.title, selectTab = true)
@@ -3332,6 +3468,21 @@ fun LuminaRoot(
                 findActiveMatch = 0
                 findTotalMatches = 0
                 findInPageActive = true
+            },
+            onOpenArchive = {
+                val tabId = selectedTabId
+                val url = selectedContent?.url
+                if (tabId != null && !url.isNullOrBlank()) {
+                    // Enter archive mode on the live URL — or, if already viewing a snapshot, on the
+                    // original page behind it — so the scrubber and Close both target the real page.
+                    val original =
+                        com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance
+                            .originalFromArchiveUrl(url) ?: url
+                    scope.launch {
+                        com.firebolt9907.luminabrowser.ui.archive.WaybackManager.instance
+                            .enter(tabId, original)
+                    }
+                }
             },
             siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
             onSiteTrackingProtectionDisabledChange = { siteTrackingProtectionDisabled = it },

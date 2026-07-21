@@ -1,19 +1,12 @@
 package com.firebolt9907.luminabrowser.ui.sync
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,6 +42,7 @@ import kotlin.math.abs
 import kotlinx.coroutines.launch
 import com.firebolt9907.luminabrowser.sync.FirefoxHandoffTab
 import com.firebolt9907.luminabrowser.sync.FirefoxReceivedTab
+import com.firebolt9907.luminabrowser.ui.MorphingBannerHost
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 
 /**
@@ -64,27 +58,21 @@ fun HandoffBannerHost(
     handoff: FirefoxHandoffTab?,
     visible: Boolean,
     bottomPadding: Dp,
+    collapseProgress: () -> Float = { 0f },
     onOpen: (FirefoxHandoffTab) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = visible && handoff != null,
-            enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 24.dp)
-                .padding(bottom = bottomPadding + 10.dp),
-        ) {
-            // AnimatedVisibility keeps content composed through the exit animation, after the
-            // candidate has been cleared from state — hold the last one so the card doesn't
-            // blank out mid-slide.
-            var lastHandoff by remember { mutableStateOf(handoff) }
-            if (handoff != null) lastHandoff = handoff
-            lastHandoff?.let { tab ->
-                HandoffCard(tab = tab, onOpen = { onOpen(tab) }, onDismiss = onDismiss)
-            }
+    MorphingBannerHost(
+        visible = visible && handoff != null,
+        bottomPadding = bottomPadding,
+        collapseProgress = collapseProgress,
+    ) {
+        // The banner stays mounted through the exit morph, after the candidate has been cleared from
+        // state — hold the last one so the card doesn't blank out mid-morph.
+        var lastHandoff by remember { mutableStateOf(handoff) }
+        if (handoff != null) lastHandoff = handoff
+        lastHandoff?.let { tab ->
+            HandoffCard(tab = tab, onOpen = { onOpen(tab) }, onDismiss = onDismiss)
         }
     }
 }
@@ -101,34 +89,29 @@ fun SendToDeviceBannerHost(
     deviceType: String?,
     visible: Boolean,
     bottomPadding: Dp,
+    collapseProgress: () -> Float = { 0f },
     onSend: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = visible && deviceName != null,
-            enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 24.dp)
-                .padding(bottom = bottomPadding + 10.dp),
-        ) {
-            // Hold the last name/type so the card doesn't blank out mid-exit-slide after state clears.
-            var lastName by remember { mutableStateOf(deviceName) }
-            var lastType by remember { mutableStateOf(deviceType) }
-            if (deviceName != null) {
-                lastName = deviceName
-                lastType = deviceType
-            }
-            lastName?.let { name ->
-                SendToDeviceCard(
-                    deviceName = name,
-                    deviceType = lastType.orEmpty(),
-                    onSend = onSend,
-                    onDismiss = onDismiss,
-                )
-            }
+    MorphingBannerHost(
+        visible = visible && deviceName != null,
+        bottomPadding = bottomPadding,
+        collapseProgress = collapseProgress,
+    ) {
+        // Hold the last name/type so the card doesn't blank out mid-exit-morph after state clears.
+        var lastName by remember { mutableStateOf(deviceName) }
+        var lastType by remember { mutableStateOf(deviceType) }
+        if (deviceName != null) {
+            lastName = deviceName
+            lastType = deviceType
+        }
+        lastName?.let { name ->
+            SendToDeviceCard(
+                deviceName = name,
+                deviceType = lastType.orEmpty(),
+                onSend = onSend,
+                onDismiss = onDismiss,
+            )
         }
     }
 }
@@ -143,64 +126,59 @@ fun SendToDeviceBannerHost(
 fun OtpPasteBannerHost(
     visible: Boolean,
     bottomPadding: Dp,
+    collapseProgress: () -> Float = { 0f },
     onPaste: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = visible,
-            enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(),
+    MorphingBannerHost(
+        visible = visible,
+        bottomPadding = bottomPadding,
+        collapseProgress = collapseProgress,
+    ) {
+        Surface(
+            shape = SquircleShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            tonalElevation = 3.dp,
+            shadowElevation = 6.dp,
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 24.dp)
-                .padding(bottom = bottomPadding + 10.dp),
+                .widthIn(max = 480.dp)
+                .bannerSwipeToDismiss(onDismiss),
         ) {
-            Surface(
-                shape = SquircleShape(24.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                tonalElevation = 3.dp,
-                shadowElevation = 6.dp,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier
-                    .widthIn(max = 480.dp)
-                    .bannerSwipeToDismiss(onDismiss),
+                    .fillMaxWidth()
+                    .clickable(onClick = onPaste)
+                    .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onPaste)
-                        .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Sms,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp),
+                Icon(
+                    imageVector = Icons.Default.Sms,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Enter code from SMS",
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Enter code from SMS",
-                            style = MaterialTheme.typography.labelLarge,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = "Tap to paste the code from your clipboard",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Dismiss",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Text(
+                        text = "Tap to paste the code from your clipboard",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -215,8 +193,8 @@ private fun SendToDeviceCard(
     onDismiss: () -> Unit,
 ) {
     Surface(
-        shape = SquircleShape(24.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = SquircleShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
         tonalElevation = 3.dp,
         shadowElevation = 6.dp,
         modifier = Modifier
@@ -270,8 +248,8 @@ fun HandoffCard(
     onDismiss: () -> Unit,
 ) {
     Surface(
-        shape = SquircleShape(24.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = SquircleShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
         tonalElevation = 3.dp,
         shadowElevation = 6.dp,
         modifier = Modifier
@@ -329,25 +307,20 @@ fun ReceivedTabBannerHost(
     received: FirefoxReceivedTab?,
     visible: Boolean,
     bottomPadding: Dp,
+    collapseProgress: () -> Float = { 0f },
     onOpen: (FirefoxReceivedTab) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = visible && received != null,
-            enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 24.dp)
-                .padding(bottom = bottomPadding + 10.dp),
-        ) {
-            // Hold the last value so the card doesn't blank out mid-exit-slide after state clears.
-            var last by remember { mutableStateOf(received) }
-            if (received != null) last = received
-            last?.let { tab ->
-                ReceivedTabCard(tab = tab, onOpen = { onOpen(tab) }, onDismiss = onDismiss)
-            }
+    MorphingBannerHost(
+        visible = visible && received != null,
+        bottomPadding = bottomPadding,
+        collapseProgress = collapseProgress,
+    ) {
+        // Hold the last value so the card doesn't blank out mid-exit-morph after state clears.
+        var last by remember { mutableStateOf(received) }
+        if (received != null) last = received
+        last?.let { tab ->
+            ReceivedTabCard(tab = tab, onOpen = { onOpen(tab) }, onDismiss = onDismiss)
         }
     }
 }
@@ -359,8 +332,8 @@ private fun ReceivedTabCard(
     onDismiss: () -> Unit,
 ) {
     Surface(
-        shape = SquircleShape(24.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = SquircleShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
         tonalElevation = 3.dp,
         shadowElevation = 6.dp,
         modifier = Modifier

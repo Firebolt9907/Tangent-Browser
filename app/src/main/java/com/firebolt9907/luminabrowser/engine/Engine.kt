@@ -397,7 +397,7 @@ private fun httpsModeOf(prefs: GlobalPreferencesStore) =
 private fun buildRuntime(application: Application, prefs: GlobalPreferencesStore): GeckoRuntime {
     val settings = GeckoRuntimeSettings.Builder()
         .lowMemoryDetection(true)
-        .consoleOutput(false)
+        .consoleOutput(true) // TEMP: archive-reflow diagnostics (revert to false)
         .debugLogging(false)
         .remoteDebuggingEnabled(false)
         .aboutConfigEnabled(false)

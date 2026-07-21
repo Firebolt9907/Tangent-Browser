@@ -20,6 +20,7 @@ import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import com.firebolt9907.luminabrowser.MainActivity
 import com.firebolt9907.luminabrowser.R
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -141,6 +142,8 @@ fun AaSheet(
     onPrint: () -> Unit = {},
     // Opens a copy of the current page in a new foreground tab. Null hides the row (non-web pages).
     onDuplicateTab: (() -> Unit)? = null,
+    // Enters Internet Archive (Wayback) time-travel mode for this tab. Null hides the row.
+    onOpenArchive: (() -> Unit)? = null,
     trackingProtectionEnabledGlobally: Boolean = false,
     siteTrackingProtectionDisabled: Boolean = false,
     onToggleSiteTrackingProtection: (disable: Boolean) -> Unit = {},
@@ -256,6 +259,7 @@ fun AaSheet(
                     onFindInPage = onFindInPage,
                     onPrint = onPrint,
                     onDuplicateTab = onDuplicateTab,
+                    onOpenArchive = onOpenArchive,
                     trackingProtectionEnabledGlobally = trackingProtectionEnabledGlobally,
                     siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
                     onToggleSiteTrackingProtection = onToggleSiteTrackingProtection,
@@ -298,6 +302,7 @@ private fun PageTabContent(
     onFindInPage: () -> Unit = {},
     onPrint: () -> Unit = {},
     onDuplicateTab: (() -> Unit)? = null,
+    onOpenArchive: (() -> Unit)? = null,
     trackingProtectionEnabledGlobally: Boolean = false,
     siteTrackingProtectionDisabled: Boolean = false,
     onToggleSiteTrackingProtection: (disable: Boolean) -> Unit = {},
@@ -863,6 +868,20 @@ private fun PageTabContent(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     ActionRowContent(icon = Icons.Default.ContentCopy, text = "Duplicate Tab")
+                }
+            }
+
+            // View this page on the Internet Archive (Wayback Machine) — enters an in-app time-travel
+            // mode with a bottom date scrubber. Web pages only.
+            if (isWebPage && onOpenArchive != null) {
+                TextButton(
+                    onClick = { haptics.softClick(); onOpenArchive(); onDismiss() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    ActionRowContent(
+                        icon = Icons.Default.History,
+                        text = "View on Internet Archive",
+                    )
                 }
             }
 

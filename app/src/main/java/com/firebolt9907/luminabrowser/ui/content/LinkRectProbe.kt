@@ -101,18 +101,23 @@ object LinkRectProbe {
                     /* Finger-down point (device px) back into CSS client coords for hit-testing. */
                     var clientX = ox + ($touchX / dpr) / scale;
                     var clientY = oy + ($touchY / dpr) / scale;
-                    var target = $urlLiteral;
+                    /* Strip a Wayback (web.archive.org) wrapper so an archived page's links match the
+                       pressed target regardless of whether replay JS (wombat) rewrote the anchor's
+                       href back to the original or left it in archive form — the two disagree, which
+                       broke exact-href matching and left the source-element probe finding nothing. */
+                    function deArc(u) { try { var m = String(u).match(/^https?:\/\/web\.archive\.org\/web\/\d{14}(?:\w\w_)?\/(.*)$/); return m ? m[1] : u; } catch (e) { return u; } }
+                    var target = deArc($urlLiteral);
                     var anchor = null;
                     var atPoint = document.elementFromPoint(clientX, clientY);
                     if (atPoint && atPoint.closest) { anchor = atPoint.closest('a[href], area[href]'); }
                     /* Fall back to the anchor whose resolved href matches the pressed link; if there
                        are several (repeated nav links), pick the one nearest the finger. */
-                    if (!anchor || anchor.href !== target) {
+                    if (!anchor || deArc(anchor.href) !== target) {
                         var links = document.querySelectorAll('a[href], area[href]');
                         var best = null;
                         var bestDist = Infinity;
                         for (var i = 0; i < links.length; i++) {
-                            if (links[i].href !== target) continue;
+                            if (deArc(links[i].href) !== target) continue;
                             var r = links[i].getBoundingClientRect();
                             if (r.width <= 0 || r.height <= 0) continue;
                             var cx = r.left + r.width / 2;

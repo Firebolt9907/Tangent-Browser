@@ -194,6 +194,12 @@ data class GridTab(
     val slotDelta: Int = 0,
     /** Recency rank: 0 = newest (front of the deck), larger = older (further back-left). */
     val recencyRank: Int = 0,
+    /**
+     * True when this tab is viewing a Wayback (web.archive.org) snapshot. [url]/[title] are then the
+     * ORIGINAL page's (so the caption/favicon read normally); the overview draws an archive badge on
+     * the thumbnail to signal the tab is time-travelled.
+     */
+    val isArchive: Boolean = false,
 )
 
 /** Draw-phase result of placing a card at continuous deck position [DeckSlot]. */

@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
@@ -1040,7 +1041,46 @@ private fun GridTabCard(
                         .background(topStripColor),
                 )
             }
+            // Archive-mode badge: marks the thumbnail as a Wayback (time-travelled) snapshot while
+            // the caption/favicon still read as the live site (AGENTS.md — archive integration).
+            if (tab.isArchive) {
+                ArchiveThumbnailBadge(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(12.dp),
+                )
+            }
         }
+    }
+}
+
+/**
+ * The small "Archived" pill drawn in the bottom-right of a tab thumbnail when the tab is viewing a
+ * Wayback snapshot. Shared by both overview layouts (deck/pixel [GridTabCard] and the classic grid).
+ */
+@Composable
+internal fun ArchiveThumbnailBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.primary)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Default.History,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            text = "Archived",
+            color = MaterialTheme.colorScheme.onPrimary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
     }
 }
 

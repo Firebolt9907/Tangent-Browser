@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
@@ -194,7 +195,9 @@ private fun SlimArchiveBar(
             modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
         ) {
             Icon(
-                imageVector = Icons.Default.History,
+                // Classical-institution glyph (columns + pediment) — a thematic nod to the Internet
+                // Archive's building identity. A generic Material icon, NOT their logo/trademark.
+                imageVector = Icons.Default.AccountBalance,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(22.dp),

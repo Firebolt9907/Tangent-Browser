@@ -1,78 +1,79 @@
 package com.firebolt9907.luminabrowser.ui
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
+import androidx.compose.ui.zIndex
 
 /**
- * Coordinates the vertical STACK shared by every [MorphingBannerHost] anchored above the pill, so
- * that when more than one banner is showing they pile up like the Samsung Now Bar (each banner
- * riding above the ones below it) instead of overlapping at the same spot. The bottom-most banner
- * (lowest [priority]) sits at the pill; each banner above is lifted by the summed height (+ a gap)
- * of every visible banner below it. When a lower banner leaves, the reported heights change and the
- * banners above spring down to close the gap.
+ * Coordinates the **Z-axis card stack** shared by every [MorphingBannerHost] anchored above the pill,
+ * exactly like the Samsung Now Bar: when more than one banner shows at once they don't sit side by
+ * side — they pile front-to-back. The front-most banner (highest [priority]) is full size at the
+ * pill; each banner behind it scales down a touch and slides up a few dp so its top edge peeks out
+ * above the front card, signalling "there's another one under here." When the front banner leaves,
+ * the one behind animates forward to full size.
  *
- * Created once per surface via [rememberBannerStackState] and passed to every banner host. Only the
+ * Created once per surface via [rememberBannerStackState] and passed to every banner host; only
  * banners registered against the SAME instance stack together.
  */
 class BannerStackState {
-    // id → last measured natural height (px) while the banner is visible; 0 when hidden/leaving.
-    private val heights = mutableStateMapOf<String, Int>()
-    // id → stacking priority (lower = nearer the pill / bottom of the stack).
-    private val priorities = mutableStateMapOf<String, Int>()
+    // Priority of each currently-visible banner, keyed by id. Absent = not visible.
+    private val visible = mutableStateMapOf<String, Int>()
 
-    /** Publish a banner's current contribution to the stack. Height 0 = takes no space. */
-    fun report(id: String, priority: Int, heightPx: Int) {
-        priorities[id] = priority
-        if (heights[id] != heightPx) heights[id] = heightPx
+    /** Publish whether [id] is currently occupying the stack (and at what [priority]). */
+    fun report(id: String, priority: Int, isVisible: Boolean) {
+        if (isVisible) {
+            if (visible[id] != priority) visible[id] = priority
+        } else if (visible.containsKey(id)) {
+            visible.remove(id)
+        }
     }
 
-    /** Drop a banner from the stack entirely (call on dispose). */
+    /** Drop [id] from the stack entirely (call on dispose). */
     fun remove(id: String) {
-        heights.remove(id)
-        priorities.remove(id)
+        visible.remove(id)
     }
 
     /**
-     * The upward offset (px) [id] must apply so it clears every currently-visible banner BELOW it —
-     * the sum of their heights plus [gapPx] of breathing room per banner. Reads snapshot state, so
-     * it recomposes the caller only when a banner appears, disappears, or is remeasured.
+     * How many visible banners stack in FRONT of [id] — its depth into the pile (0 = front-most).
+     * "In front" = higher [priority]; ties broken by id so the ordering is total and stable. Reads
+     * snapshot state, so callers recompose only when a banner appears or disappears.
      */
-    fun offsetBelowPx(id: String, gapPx: Int): Int {
-        val myPriority = priorities[id] ?: return 0
-        var sum = 0
-        for ((otherId, h) in heights) {
-            if (otherId == id || h <= 0) continue
-            val otherPriority = priorities[otherId] ?: continue
-            // Tie-break on id so two banners can never claim to be below each other.
-            val below = otherPriority < myPriority ||
-                (otherPriority == myPriority && otherId < id)
-            if (below) sum += h + gapPx
+    fun depthOf(id: String, priority: Int): Int {
+        var count = 0
+        for ((otherId, otherPriority) in visible) {
+            if (otherId == id) continue
+            if (otherPriority > priority || (otherPriority == priority && otherId > id)) count++
         }
-        return sum
+        return count
     }
 }
 
 @Composable
 fun rememberBannerStackState(): BannerStackState = remember { BannerStackState() }
+
+/** Per-depth geometry of the card stack — how much each banner behind the front shrinks / lifts. */
+private const val StackScalePerDepth = 0.06f
+private const val StackMinScale = 0.80f
+private val StackPeekPerDepth = 12.dp
 
 /**
  * The shared container for every banner that floats above the address pill (Internet Archive scrubber,
@@ -84,9 +85,10 @@ fun rememberBannerStackState(): BannerStackState = remember { BannerStackState()
  *    narrowing to a pill-like footprint, fully fading out **before** it reaches the pill line — so it
  *    reads as tucking in behind the collapsed pill (it's invisible by the time it would overlap, so no
  *    z-reorder of the overlay stack is needed).
- *  - **Now-Bar stacking.** When several banners show at once they pile up rather than overlap: pass a
- *    shared [stack] (+ a stable [stackId] and [stackPriority]) and each banner lifts above the ones
- *    below it, springing down to close the gap when a lower one leaves. Omit [stack] to opt out.
+ *  - **Now-Bar Z-stack.** When several banners show at once they pile front-to-back rather than
+ *    overlapping flat: pass a shared [stack] (+ a stable [stackId] and [stackPriority]) and each
+ *    banner draws at a z set by its priority, with the ones behind scaled down and lifted so they
+ *    peek out the top. Everything animates as the pile grows/shrinks. Omit [stack] to opt out.
  *  - **Scroll-collapse intent.** [collapseProgress] is the SAME 0 (pill-expanded) → 1 (pill-compact)
  *    signal the pill morphs on. Read per-frame in the draw phase, it dives the banner toward the pill
  *    as the page scrolls down and pops it back on scroll up — 1:1 with the pill, no recomposition.
@@ -111,8 +113,8 @@ fun MorphingBannerHost(
     // — the enter morph replays so the spring-out is felt again, instead of the banner sitting static.
     // Null (the default) disables the replay, so banners that don't wire it keep their old behavior.
     enterKey: Any? = null,
-    // Shared Now-Bar stack. When non-null the banner joins the vertical pile keyed by [stackId] /
-    // [stackPriority] (lower priority = nearer the pill). Null = solo banner, no stacking.
+    // Shared Now-Bar Z-stack. When non-null the banner joins the front-to-back pile keyed by
+    // [stackId] / [stackPriority] (higher priority = front-most). Null = solo banner, no stacking.
     stack: BannerStackState? = null,
     stackId: String = "",
     stackPriority: Int = 0,
@@ -147,43 +149,51 @@ fun MorphingBannerHost(
         }
     }
 
-    // Stack bookkeeping: publish this banner's natural card height while it's intended-visible so the
-    // banners above it lift clear, and drop it from the stack when it leaves composition.
-    var cardHeightPx by remember { mutableIntStateOf(0) }
+    // Register this banner's presence in the shared Z-stack so the cards fan out front-to-back. Keyed
+    // on `visible` (intent) so a banner relinquishes the front the instant it starts leaving, letting
+    // the one behind animate forward without waiting for the exit morph to finish.
     if (stack != null) {
-        LaunchedEffect(cardHeightPx, visible) {
-            stack.report(stackId, stackPriority, if (visible) cardHeightPx else 0)
-        }
+        LaunchedEffect(visible) { stack.report(stackId, stackPriority, visible) }
         DisposableEffect(stack, stackId) { onDispose { stack.remove(stackId) } }
     }
 
     if (!mounted && morph.value <= 0.001f) return
 
-    // The upward lift that keeps this banner above the ones below it, animated so the pile settles
-    // smoothly when a lower banner appears or leaves. Read in the draw phase (below) — no per-frame
-    // recomposition; the target only changes on a stack membership/size change.
-    val stackGapPx = with(androidx.compose.ui.platform.LocalDensity.current) { 10.dp.roundToPx() }
-    val stackTargetPx = (stack?.offsetBelowPx(stackId, stackGapPx) ?: 0).toFloat()
-    val stackOffsetPx = remember { Animatable(stackTargetPx) }
-    LaunchedEffect(stackTargetPx) { stackOffsetPx.animateTo(stackTargetPx, LuminaMotion.BarCollapse) }
+    // Card-stack geometry: depth 0 = front (full size), deeper = smaller + lifted so it peeks above
+    // the front card's top edge. Animated so growing/shrinking the pile springs smoothly. Read in the
+    // draw phase below — the target only changes when a banner appears or disappears.
+    val depth = stack?.depthOf(stackId, stackPriority) ?: 0
+    val targetScale = (1f - StackScalePerDepth * depth).coerceAtLeast(StackMinScale)
+    val targetPeekPx = with(LocalDensity.current) { (StackPeekPerDepth * depth).toPx() }
+    val stackScale = animateFloatAsState(targetScale, LuminaMotion.BarCollapse, label = "bannerStackScale")
+    val stackPeek = animateFloatAsState(targetPeekPx, LuminaMotion.BarCollapse, label = "bannerStackPeek")
 
     // Folds the springy enter/exit with the live scroll intent into one progress. Multiplying means
     // either one reaching "collapsed" tucks the banner away. Read in the draw phase only.
     val reveal = { morph.value * (1f - collapseProgress().coerceIn(0f, 1f)) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            // Draw order within the banner group: front-most (highest priority) on top. Only affects
+            // sibling banners in this same overlay Box — peek card / dialogs live in later subtrees.
+            .then(if (stack != null) Modifier.zIndex(stackPriority.toFloat()) else Modifier),
+    ) {
         Box(
             modifier = modifier
                 .align(Alignment.BottomCenter)
                 // 20.dp = the pill's own edge margin (BarExpanded uses maxWidth - 40.dp).
                 .padding(horizontal = 20.dp)
                 .padding(bottom = bottomPadding + 10.dp)
-                // Pill-geometry tracking + Now-Bar stack lift, read in the draw phase (matches
-                // BottomBarLayer) so per-frame drag/stack settle never recomposes the banner.
+                // Pill-geometry tracking + the Now-Bar card-stack transform (scale down + lift the
+                // cards behind the front one), read in the draw phase so per-frame drag / stack
+                // settle never recomposes the banner. Scales about the centre so a banner behind
+                // shrinks symmetrically and its lifted top edge peeks above the front card.
                 .graphicsLayer {
                     translationX = horizontalOffsetX()
-                    // Lift above the banners below this one (0 for the bottom-most / solo banner).
-                    translationY = -stackOffsetPx.value
+                    translationY = -stackPeek.value
+                    scaleX = stackScale.value
+                    scaleY = stackScale.value
                     val gridAlpha = 1f - (gridProgress() * 1.5f).coerceIn(0f, 1f)
                     alpha = gridAlpha * (1f - switchFade())
                 }
@@ -202,16 +212,13 @@ fun MorphingBannerHost(
                 },
         ) {
             // Staggered content reveal: the inner content fades and settles up starting at 30% of the
-            // morph, so it "arrives" just after the capsule pops open. Its measured size (unaffected
-            // by the draw-only graphicsLayers above) is the banner's natural height for stacking.
+            // morph, so it "arrives" just after the capsule pops open.
             Box(
-                modifier = Modifier
-                    .onSizeChanged { if (it.height > 0) cardHeightPx = it.height }
-                    .graphicsLayer {
-                        val r = reveal().coerceIn(0f, 1f)
-                        alpha = ((r - 0.3f) / 0.7f).coerceIn(0f, 1f)
-                        translationY = (1f - r) * 8.dp.toPx()
-                    },
+                modifier = Modifier.graphicsLayer {
+                    val r = reveal().coerceIn(0f, 1f)
+                    alpha = ((r - 0.3f) / 0.7f).coerceIn(0f, 1f)
+                    translationY = (1f - r) * 8.dp.toPx()
+                },
             ) {
                 content(reveal)
             }

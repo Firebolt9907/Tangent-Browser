@@ -117,6 +117,7 @@ fun SettingsSheet(
     var matchSiteThemeColor by remember { mutableStateOf(globalPrefsStore.matchSiteThemeColor) }
     var tintPagesToSystemColor by remember { mutableStateOf(globalPrefsStore.tintPagesToSystemColor) }
     var webDarkModeEnabled by remember { mutableStateOf(globalPrefsStore.webDarkModeEnabled) }
+    var webDarkModeAggressive by remember { mutableStateOf(globalPrefsStore.webDarkModeAggressive) }
     var handoffEnabled by remember { mutableStateOf(globalPrefsStore.handoffEnabled) }
     var wideBarLayout by remember {
         mutableStateOf(WideBarLayout.fromName(globalPrefsStore.wideBarLayoutName))
@@ -460,6 +461,19 @@ fun SettingsSheet(
                     onSettingChanged()
                 },
             )
+            if (webDarkModeEnabled) {
+                SheetRowDivider()
+                SettingsToggle(
+                    title = "Fix dark-mode background images",
+                    subtitle = "Correct photos and banners that would otherwise look inverted. Slightly heavier on complex pages",
+                    checked = webDarkModeAggressive,
+                    onCheckedChange = {
+                        webDarkModeAggressive = it
+                        globalPrefsStore.webDarkModeAggressive = it
+                        onSettingChanged()
+                    },
+                )
+            }
         }
 
         Spacer(Modifier.height(20.dp))

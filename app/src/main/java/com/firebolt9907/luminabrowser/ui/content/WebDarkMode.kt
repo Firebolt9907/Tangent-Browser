@@ -37,8 +37,15 @@ import mozilla.components.concept.engine.EngineSession
  * **inline**-style background images. Background images set from a CSS *class* (a `.hero { background:
  * url(…) }`) are inverted along with the page and can look off. This is the same limitation as
  * DarkReader's non-dynamic "Filter" mode; catching class backgrounds is exactly the expensive
- * per-element analysis this design deliberately avoids. Modern sites that have this problem almost
- * always also ship a real dark theme, so Tier 1 covers them and the fallback never engages.
+ * per-element analysis this design deliberately avoids by default. Modern sites that have this problem
+ * almost always also ship a real dark theme, so Tier 1 covers them and the fallback never engages.
+ *
+ * For the sites where it matters, the opt-in **aggressive** sub-mode ([injectWebDarkMode]`(aggressive
+ * = true)`, the `webDarkModeAggressive` pref) closes this gap far more cheaply than DarkReader
+ * dynamic: instead of recomputing every color on every mutation, it runs one bounded `getComputedStyle`
+ * walk that *tags* elements with a `url(...)` background (`[data-lumina-dark-bg]`, added to the
+ * re-invert selector), plus a debounced/rAF-batched MutationObserver that tags only newly-added
+ * subtrees. It's off by default so the standard path stays the pure high-performance filter.
  *
  * Injected exactly like the viewport spacers / [SiteTint] (via [loadJavascriptUrl]); AGENTS.md
  * invariant #11 applies at the call site (set `suppressJavascriptLoadCallback` when injecting from a
@@ -50,9 +57,12 @@ object WebDarkMode {
     private const val STYLE_ID = "lumina-dark-style"
     private const val FALLBACK_CLASS = "lumina-dark-fallback"
 
-    /** Applies (or refreshes) the fallback tier on the current page. */
-    fun EngineSession.injectWebDarkMode() {
-        loadJavascriptUrl(buildApplyScript())
+    /**
+     * Applies (or refreshes) the fallback tier on the current page. When [aggressive] is true the
+     * script also detects and re-inverts class-based CSS background images (the opt-in quality mode).
+     */
+    fun EngineSession.injectWebDarkMode(aggressive: Boolean = false) {
+        loadJavascriptUrl(buildApplyScript(aggressive))
     }
 
     /** Removes the fallback tier's style + class (used when dark mode is toggled off). */
@@ -60,22 +70,65 @@ object WebDarkMode {
         loadJavascriptUrl(buildRemoveScript())
     }
 
+    /** Cap on elements the aggressive background-image scan touches per pass — bounds worst-case cost. */
+    private const val AGGRESSIVE_SCAN_CAP = 4000
+
     /**
      * The apply script as a flattened one-line `javascript:` URL (pure; JVM-testable). Use only block
      * comments — the source is flattened to one line so a `//` would eat the rest. Idempotent: safe to
      * run repeatedly (per load, on the re-check timers).
+     *
+     * When [aggressive] is true the script additionally runs a **bounded** background-image scanner: a
+     * one-shot (capped) `getComputedStyle` walk that tags elements whose computed `background-image` is
+     * a `url(...)` with `[data-lumina-dark-bg]` (added to the re-invert selector), plus a debounced,
+     * capped MutationObserver that tags only newly-added subtrees. This closes the class-based
+     * background-image gap (hero photos rendering as negatives) at a fraction of DarkReader dynamic's
+     * cost — it tags once instead of recomputing every color on every mutation. Off by default.
      */
-    internal fun buildApplyScript(): String {
+    internal fun buildApplyScript(aggressive: Boolean = false): String {
         return """
             javascript:(function(){
               var STYLE_ID='${STYLE_ID}';
               var CLS='${FALLBACK_CLASS}';
+              var AGG=${aggressive};
+              var SCAN_CAP=${AGGRESSIVE_SCAN_CAP};
               function ensureStyle(){
+                var media='html.'+CLS+' img,html.'+CLS+' video,html.'+CLS+' picture,html.'+CLS+' canvas,html.'+CLS+' iframe,html.'+CLS+' embed,html.'+CLS+' object,html.'+CLS+' [style*="background-image"],html.'+CLS+' [style*="background-image" i],html.'+CLS+' [data-lumina-dark-bg]';
                 var css='html.'+CLS+'{filter:invert(1) hue-rotate(180deg)!important;background-color:#fafafa!important;color-scheme:dark;}'
-                  +'html.'+CLS+' img,html.'+CLS+' video,html.'+CLS+' picture,html.'+CLS+' canvas,html.'+CLS+' iframe,html.'+CLS+' embed,html.'+CLS+' object,html.'+CLS+' [style*="background-image"],html.'+CLS+' [style*="background-image" i]{filter:invert(1) hue-rotate(180deg)!important;}';
+                  +media+'{filter:invert(1) hue-rotate(180deg)!important;}';
                 var s=document.getElementById(STYLE_ID);
                 if(!s){s=document.createElement('style');s.id=STYLE_ID;(document.head||document.documentElement).appendChild(s);}
                 if(s.textContent!==css){s.textContent=css;}
+              }
+              function tagBg(el){
+                if(!el||el.nodeType!==1||el.__lumBg)return;
+                el.__lumBg=1;
+                var bi;
+                try{bi=getComputedStyle(el).backgroundImage;}catch(e){return;}
+                /* Only real raster/vector backgrounds (url()) invert wrong; gradients are decorative
+                   and reading them inverted is fine/desired, so leave them to the page filter. */
+                if(bi&&bi.indexOf('url(')>=0){el.setAttribute('data-lumina-dark-bg','1');}
+              }
+              function scanBg(rootEl){
+                if(!AGG)return;
+                var root=rootEl||document.body;if(!root)return;
+                var all=root.getElementsByTagName('*');
+                var n=Math.min(all.length,SCAN_CAP);
+                for(var i=0;i<n;i++){tagBg(all[i]);}
+                if(rootEl&&rootEl.nodeType===1)tagBg(rootEl);
+              }
+              function ensureBgObserver(){
+                if(!AGG||window.__luminaDarkObserver)return;
+                var pending=false;var queue=[];
+                function flush(){pending=false;var q=queue;queue=[];for(var i=0;i<q.length;i++){scanBg(q[i]);}}
+                window.__luminaDarkObserver=new MutationObserver(function(records){
+                  for(var i=0;i<records.length;i++){
+                    var added=records[i].addedNodes;
+                    for(var j=0;j<added.length;j++){if(added[j].nodeType===1)queue.push(added[j]);}
+                  }
+                  if(queue.length&&!pending){pending=true;requestAnimationFrame(flush);}
+                });
+                try{window.__luminaDarkObserver.observe(document.documentElement,{childList:true,subtree:true});}catch(e){}
               }
               function bgLum(el){
                 if(!el)return -1;
@@ -103,7 +156,11 @@ object WebDarkMode {
                 var root=document.documentElement;
                 if(!root)return;
                 if(pageIsDark()){root.classList.remove(CLS);}
-                else{root.classList.add(CLS);}
+                else{
+                  root.classList.add(CLS);
+                  /* Only pay the background-image scan on pages actually getting the filter. */
+                  if(AGG){scanBg(document.body);ensureBgObserver();}
+                }
               }
               apply();
               /* A couple of re-checks catch sites that swap in a (dark) theme a beat after load, so we
@@ -120,6 +177,7 @@ object WebDarkMode {
             javascript:(function(){
               try{document.documentElement.classList.remove('${FALLBACK_CLASS}');}catch(e){}
               try{var s=document.getElementById('${STYLE_ID}');if(s&&s.parentNode)s.parentNode.removeChild(s);}catch(e){}
+              try{if(window.__luminaDarkObserver){window.__luminaDarkObserver.disconnect();window.__luminaDarkObserver=null;}}catch(e){}
             })();
         """.trimIndent().replace("\n", " ")
     }

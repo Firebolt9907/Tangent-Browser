@@ -99,6 +99,9 @@ fun ContentHost(
     // pages that stay light under the native prefers-color-scheme override. Tier 1 (the native
     // override itself) is an engine setting applied in Engine.applyEngineSettings. See WebDarkMode.kt.
     webDarkModeEnabled: Boolean = false,
+    // When true (and webDarkModeEnabled), the Tier-2 fallback also runs the opt-in aggressive
+    // background-image re-inverter (bounded scan + observer). See WebDarkMode.kt.
+    webDarkModeAggressive: Boolean = false,
     pageZoomFactor: Float = 1.0f,
     // Live scroll-collapse progress (0 = pill expanded, 1 = compact), as a lambda so the per-frame
     // spring updates drive the engine's vertical clipping via snapshotFlow without recomposing
@@ -459,7 +462,7 @@ fun ContentHost(
                 // Re-apply the web-dark-mode Tier-2 fallback on every load (fresh DOM). The
                 // LaunchedEffect below covers the already-loaded page and tab swaps.
                 if (webDarkModeEnabled) {
-                    with(WebDarkMode) { engineSession.injectWebDarkMode() }
+                    with(WebDarkMode) { engineSession.injectWebDarkMode(webDarkModeAggressive) }
                 }
             }
             fun injectAmoInstaller(url: String, force: Boolean = false) {
@@ -751,10 +754,10 @@ fun ContentHost(
     // changes, and remove it when toggled off. Per-load re-application (new DOM) is handled in
     // injectSpacer above. Mirrors the system-color boost effect. Tier 1 (the native
     // prefers-color-scheme override) is an engine-wide setting and needs no per-tab injection.
-    LaunchedEffect(engineSession, webDarkModeEnabled, tabId) {
+    LaunchedEffect(engineSession, webDarkModeEnabled, webDarkModeAggressive, tabId) {
         if (engineSession == null) return@LaunchedEffect
         with(WebDarkMode) {
-            if (webDarkModeEnabled) engineSession.injectWebDarkMode()
+            if (webDarkModeEnabled) engineSession.injectWebDarkMode(webDarkModeAggressive)
             else engineSession.removeWebDarkMode()
         }
     }

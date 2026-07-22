@@ -44,11 +44,29 @@ class WebDarkModeScriptTest {
     }
 
     @Test
+    fun `default apply does not run the aggressive background scan`() {
+        val s = WebDarkMode.buildApplyScript(aggressive = false)
+        assertTrue("aggressive flag is off", s.contains("var AGG=false;"))
+        // The scan is gated on AGG at runtime, so the default path pays no getComputedStyle walk.
+    }
+
+    @Test
+    fun `aggressive apply tags class-based background images and observes new nodes`() {
+        val s = WebDarkMode.buildApplyScript(aggressive = true)
+        assertTrue("aggressive flag is on", s.contains("var AGG=true;"))
+        assertTrue("tags url() backgrounds", s.contains("data-lumina-dark-bg"))
+        assertTrue("only tags real image backgrounds, not gradients", s.contains("indexOf('url(')"))
+        assertTrue("incremental observer for new nodes", s.contains("__luminaDarkObserver"))
+        assertTrue("bounded scan", s.contains("SCAN_CAP"))
+    }
+
+    @Test
     fun `remove drops both the class and the injected style`() {
         val s = WebDarkMode.buildRemoveScript()
         assertTrue(s.startsWith("javascript:"))
         assertFalse(s.contains("\n"))
         assertTrue(s.contains("lumina-dark-fallback"))
         assertTrue(s.contains("lumina-dark-style"))
+        assertTrue("disconnects the aggressive observer", s.contains("__luminaDarkObserver"))
     }
 }

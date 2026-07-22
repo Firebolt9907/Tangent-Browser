@@ -227,6 +227,8 @@ fun LuminaRoot(
     // prefers-color-scheme override + filter-invert fallback). Persisted; toggled in the aA sheet /
     // Settings → Appearance. See WebDarkMode.kt.
     var webDarkModeEnabled by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeEnabled) }
+    // Opt-in aggressive sub-mode (re-invert class-based background images). Persisted.
+    var webDarkModeAggressive by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeAggressive) }
     // When on, a search-results page shows the typed query in the bar instead of the engine's host.
     // Persisted; toggled in Settings. Paired with the current search engine for label resolution.
     var showSearchTermsInBar by remember { mutableStateOf(components.globalPreferencesStore.showSearchTermsInBar) }
@@ -2627,6 +2629,7 @@ fun LuminaRoot(
                     themeColorSamplingEnabled = matchSiteThemeColor,
                     siteTintColor = siteTintColor,
                     webDarkModeEnabled = webDarkModeEnabled,
+                    webDarkModeAggressive = webDarkModeAggressive,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
                     barCollapseProgress = barCollapseProgressProvider,
                     tabIsLoading = actualSelectedContent?.loading == true,
@@ -3596,6 +3599,7 @@ fun LuminaRoot(
                 matchSiteThemeColor = components.globalPreferencesStore.matchSiteThemeColor
                 tintPagesToSystemColor = components.globalPreferencesStore.tintPagesToSystemColor
                 webDarkModeEnabled = components.globalPreferencesStore.webDarkModeEnabled
+                webDarkModeAggressive = components.globalPreferencesStore.webDarkModeAggressive
                 viewModel.refreshDisplayPrefs()
             },
             onReplayOnboarding = {

@@ -108,6 +108,16 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("webDarkModeEnabled", false)
         set(value) { prefs.edit { putBoolean("webDarkModeEnabled", value) } }
 
+    // Opt-in "aggressive" sub-mode for web dark mode (only meaningful when webDarkModeEnabled). When
+    // on, the Tier-2 fallback also detects class-based (non-inline) CSS background images at runtime
+    // and re-inverts them, closing the one quality gap the cheap filter tier leaves (hero/banner
+    // photos rendering as negatives). Costs a bounded getComputedStyle scan + incremental observer,
+    // so it's OFF by default — the default path stays the pure high-performance filter. See
+    // ui/content/WebDarkMode.kt.
+    var webDarkModeAggressive: Boolean
+        get() = prefs.getBoolean("webDarkModeAggressive", false)
+        set(value) { prefs.edit { putBoolean("webDarkModeAggressive", value) } }
+
     // When off, the "Continue from <device>" handoff banner (a tab recently active on another
     // Firefox Sync device) is never surfaced. Read by FirefoxSyncController when picking a handoff
     // candidate. On by default. Does not affect received "Send tab" pushes or synced-tab lists.

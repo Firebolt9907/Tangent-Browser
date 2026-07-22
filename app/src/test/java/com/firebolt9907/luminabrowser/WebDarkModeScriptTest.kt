@@ -27,6 +27,15 @@ class WebDarkModeScriptTest {
     }
 
     @Test
+    fun `apply softens contrast for comfort but keeps media faithful`() {
+        val s = WebDarkMode.buildApplyScript()
+        // Page gets a mild contrast<1 so pure black/white become comfortable grays (DarkReader-like).
+        assertTrue("page softened", s.contains("contrast(0.9)"))
+        // Media carries the inverse contrast so photos net ~contrast(1.0) and stay crisp.
+        assertTrue("media kept faithful", s.contains("contrast(1.1111)"))
+    }
+
+    @Test
     fun `apply re-inverts media so images and video render normally`() {
         val s = WebDarkMode.buildApplyScript()
         // Media must be double-inverted (→ identity) or photos come out as negatives.

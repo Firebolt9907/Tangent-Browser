@@ -74,6 +74,21 @@ object WebDarkMode {
     private const val AGGRESSIVE_SCAN_CAP = 4000
 
     /**
+     * Comfort softening for the filter tier. A plain `invert` turns a white page into *pure* black
+     * background + *pure* white text — a harsh, halation-inducing contrast that reads as "cheap
+     * inversion". DarkReader deliberately lands on a softer palette (~#181a1b bg, ~#e8e6e3 text). We
+     * match that for free by folding a mild `contrast(<1)` into the root filter, which pulls both
+     * extremes toward mid-gray (pure black → dark gray, pure white → light gray).
+     *
+     * To keep photos faithful (DarkReader dynamic preserves image contrast), media carries the
+     * *inverse* contrast: the element's own filter and the root filter compose multiplicatively, so
+     * `contrast(1/ROOT)` under the page's `contrast(ROOT)` nets ≈ `contrast(1.0)` on the original
+     * image — only text/backgrounds get the softening, images stay crisp.
+     */
+    private const val ROOT_CONTRAST = "0.9"
+    private const val MEDIA_CONTRAST = "1.1111"
+
+    /**
      * The apply script as a flattened one-line `javascript:` URL (pure; JVM-testable). Use only block
      * comments — the source is flattened to one line so a `//` would eat the rest. Idempotent: safe to
      * run repeatedly (per load, on the re-check timers).
@@ -94,8 +109,8 @@ object WebDarkMode {
               var SCAN_CAP=${AGGRESSIVE_SCAN_CAP};
               function ensureStyle(){
                 var media='html.'+CLS+' img,html.'+CLS+' video,html.'+CLS+' picture,html.'+CLS+' canvas,html.'+CLS+' iframe,html.'+CLS+' embed,html.'+CLS+' object,html.'+CLS+' [style*="background-image"],html.'+CLS+' [style*="background-image" i],html.'+CLS+' [data-lumina-dark-bg]';
-                var css='html.'+CLS+'{filter:invert(1) hue-rotate(180deg)!important;background-color:#fafafa!important;color-scheme:dark;}'
-                  +media+'{filter:invert(1) hue-rotate(180deg)!important;}';
+                var css='html.'+CLS+'{filter:invert(1) hue-rotate(180deg) contrast(${ROOT_CONTRAST})!important;background-color:#fafafa!important;color-scheme:dark;}'
+                  +media+'{filter:invert(1) hue-rotate(180deg) contrast(${MEDIA_CONTRAST})!important;}';
                 var s=document.getElementById(STYLE_ID);
                 if(!s){s=document.createElement('style');s.id=STYLE_ID;(document.head||document.documentElement).appendChild(s);}
                 if(s.textContent!==css){s.textContent=css;}

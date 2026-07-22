@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -58,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -425,7 +427,16 @@ private fun ToggleRow(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
-        modifier = Modifier.fillMaxWidth(),
+        // Whole-row toggle (the M3/iOS settings convention) instead of only the small Switch being a
+        // tap target. Role.Switch + presentational Switch (onCheckedChange = null) merges semantics so
+        // a screen reader announces one switch, not a row plus a separate control.
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            ),
     ) {
         Row(
             modifier = Modifier
@@ -452,7 +463,7 @@ private fun ToggleRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Switch(checked = checked, onCheckedChange = onCheckedChange)
+            Switch(checked = checked, onCheckedChange = null)
         }
     }
 }

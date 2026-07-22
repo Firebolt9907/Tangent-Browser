@@ -476,6 +476,10 @@ fun CustomTabRoot(
                         sitePermissionController = components.sitePermissionController,
                         sitePreferencesStore = components.sitePreferencesStore,
                         onFirefoxAuthRedirect = components.firefoxSyncController::handleOAuthRedirect,
+                        // Web dark mode: Tier 1 (native prefers-color-scheme) already applies
+                        // engine-wide, so Custom Tabs get real site dark themes for free; thread the
+                        // flag so the Tier-2 filter-invert fallback also engages on light pages here.
+                        webDarkModeEnabled = components.globalPreferencesStore.webDarkModeEnabled,
                         onPageScrollDelta = ::onPageScrollDelta,
                         onFullScreenChange = { enabled ->
                             isVideoFullscreen = enabled

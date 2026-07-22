@@ -1,5 +1,6 @@
 package com.firebolt9907.luminabrowser.ui.chrome
 
+import androidx.activity.compose.BackHandler
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Typeface
@@ -14,14 +15,7 @@ import com.firebolt9907.luminabrowser.ui.reader.PageSpeaker
 import kotlinx.coroutines.launch
 import mozilla.appservices.places.BookmarkRoot
 import mozilla.components.concept.storage.BookmarksStorage
-import mozilla.components.concept.storage.BookmarkNodeType
-import androidx.core.content.pm.ShortcutInfoCompat
-import androidx.core.content.pm.ShortcutManagerCompat
-import androidx.core.graphics.drawable.IconCompat
-import com.firebolt9907.luminabrowser.MainActivity
-import com.firebolt9907.luminabrowser.R
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -54,10 +48,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.unit.Dp
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Print
@@ -83,14 +79,11 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.PrimaryTabRow
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -119,11 +112,10 @@ import com.firebolt9907.luminabrowser.state.compactHost
 import com.firebolt9907.luminabrowser.state.hostFromUrl
 import com.firebolt9907.luminabrowser.state.SitePreferences
 import com.firebolt9907.luminabrowser.state.SitePreferencesStore
+import com.firebolt9907.luminabrowser.ui.archive.siteHostFromUrl
 import com.firebolt9907.luminabrowser.ui.addons.AddonsManagerSheetContent
+import com.firebolt9907.luminabrowser.ui.components.SheetHeader
 import kotlin.math.roundToInt
-
-/** Folder (under the Mobile bookmarks root) that backs the Safari-style Reading List. */
-private const val READING_LIST_FOLDER = "Reading List"
 
 // Browser/app resolution helpers (BrowserInfo, NativeApp, nativeAppFor, installedBrowsers)
 // live in AaSheetAppResolver.kt.
@@ -140,16 +132,17 @@ fun AaSheet(
     onOpenAddonQuickSettings: (InstalledAddon) -> Unit = {},
     onFindInPage: () -> Unit = {},
     onPrint: () -> Unit = {},
-    // Opens a copy of the current page in a new foreground tab. Null hides the row (non-web pages).
-    onDuplicateTab: (() -> Unit)? = null,
     // Enters Internet Archive (Wayback) time-travel mode for this tab. Null hides the row.
     onOpenArchive: (() -> Unit)? = null,
     trackingProtectionEnabledGlobally: Boolean = false,
     siteTrackingProtectionDisabled: Boolean = false,
     onToggleSiteTrackingProtection: (disable: Boolean) -> Unit = {},
+    // Flips the global high-performance web dark mode (see WebDarkMode.kt). Routed through the host so
+    // Tier 1 (engine.preferredColorScheme via applyEngineSettings) and the live-page Tier-2 injection
+    // both update. Reflected locally for instant switch feedback.
+    onToggleWebDarkMode: (Boolean) -> Unit = {},
     pageUrl: String = "",
     pageTitle: String = "",
-    initialTab: Int = 0,
     tabId: String? = null,
     engineSession: mozilla.components.concept.engine.EngineSession? = null,
     backgroundSnapshot: android.graphics.Bitmap? = null,
@@ -158,7 +151,6 @@ fun AaSheet(
     pageIcon: android.graphics.Bitmap? = null,
     showBottomToolbar: Boolean = false,
 ) {
-    var selectedTab by rememberSaveable { mutableIntStateOf(initialTab) }
     // Always open fully expanded (no partially-expanded detent). Otherwise the sheet's own drag
     // gesture competes with the inner list's scroll: the first up-drag gets consumed to expand the
     // sheet (reading as an overscroll bounce) instead of scrolling the content, so scrolling from
@@ -219,58 +211,32 @@ fun AaSheet(
         scrimColor = Color.Transparent,
         contentWindowInsets = { WindowInsets(0.dp) },
     ) {
-        PrimaryTabRow(selectedTabIndex = selectedTab) {
-            Tab(
-                selected = selectedTab == 0,
-                onClick = { selectedTab = 0 },
-                text = { Text("Page") },
-            )
-            Tab(
-                selected = selectedTab == 1,
-                onClick = { selectedTab = 1 },
-                text = { Text("Add-ons") },
-            )
-        }
+        // Add-ons and Page Settings are reached through buttons in the Page view (not top-level
+        // tabs); each slides in over the Page with a Back affordance. The system Back button returns
+        // to the Page view too rather than dismissing the sheet — this BackHandler outranks the
+        // sheet's own dismiss handler because it's registered later, and only while a sub-pane is up.
+        var pane by rememberSaveable { mutableStateOf(AaPane.Page) }
+        BackHandler(enabled = pane != AaPane.Page) { pane = AaPane.Page }
 
-        // Hoisted above AnimatedContent so the add-on state and a half-typed install URL survive
-        // switching to the Page tab and back (AnimatedContent disposes the outgoing tab's content).
+        // Hoisted above AnimatedContent so add-on state and a half-typed install URL survive the
+        // pane transition (AnimatedContent disposes the outgoing content).
         val addonState by addonController.state.collectAsStateWithLifecycle()
         var installText by rememberSaveable { mutableStateOf("") }
         AnimatedContent(
-            targetState = selectedTab,
+            targetState = pane,
             transitionSpec = {
-                // Slide toward the tab that was tapped (matching the PrimaryTabRow indicator); the
-                // sheet-height difference between tabs is smoothed by the default SizeTransform.
-                val forward = targetState > initialState
-                val enter = if (forward) slideInHorizontally(tween(220)) { it / 5 }
+                // Sub-panes slide in from the right (deeper); returning to Page slides back left.
+                val toSub = targetState != AaPane.Page
+                val enter = if (toSub) slideInHorizontally(tween(220)) { it / 5 }
                     else slideInHorizontally(tween(220)) { -it / 5 }
-                val exit = if (forward) slideOutHorizontally(tween(180)) { -it / 5 }
+                val exit = if (toSub) slideOutHorizontally(tween(180)) { -it / 5 }
                     else slideOutHorizontally(tween(180)) { it / 5 }
                 (enter + fadeIn(tween(220))) togetherWith (exit + fadeOut(tween(180)))
             },
-            label = "aaTabContent",
-        ) { tab ->
-            when (tab) {
-                0 -> PageTabContent(
-                    host = host,
-                    store = store,
-                    globalPrefsStore = globalPrefsStore,
-                    onDismiss = onDismiss,
-                    onFindInPage = onFindInPage,
-                    onPrint = onPrint,
-                    onDuplicateTab = onDuplicateTab,
-                    onOpenArchive = onOpenArchive,
-                    trackingProtectionEnabledGlobally = trackingProtectionEnabledGlobally,
-                    siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
-                    onToggleSiteTrackingProtection = onToggleSiteTrackingProtection,
-                    pageUrl = pageUrl,
-                    pageTitle = pageTitle,
-                    tabId = tabId,
-                    engineSession = engineSession,
-                    bookmarksStorage = bookmarksStorage,
-                    pageIcon = pageIcon,
-                )
-                else -> AddonsManagerSheetContent(
+            label = "aaContent",
+        ) { current ->
+            when (current) {
+                AaPane.Addons -> AddonsManagerSheetContent(
                     state = addonState,
                     installText = installText,
                     onInstallTextChange = { installText = it },
@@ -279,11 +245,44 @@ fun AaSheet(
                     onOpenSettings = onOpenAddonSettings,
                     onOpenQuickSettings = onOpenAddonQuickSettings,
                     onUninstall = addonController::uninstall,
+                    onBack = { pane = AaPane.Page },
+                )
+                AaPane.Settings -> PageSettingsPaneContent(
+                    host = host,
+                    store = store,
+                    pageUrl = pageUrl,
+                    engineSession = engineSession,
+                    trackingProtectionEnabledGlobally = trackingProtectionEnabledGlobally,
+                    siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
+                    onToggleSiteTrackingProtection = onToggleSiteTrackingProtection,
+                    onBack = { pane = AaPane.Page },
+                )
+                AaPane.Page -> PageTabContent(
+                    host = host,
+                    store = store,
+                    globalPrefsStore = globalPrefsStore,
+                    onToggleWebDarkMode = onToggleWebDarkMode,
+                    onDismiss = onDismiss,
+                    onFindInPage = onFindInPage,
+                    onPrint = onPrint,
+                    onOpenArchive = onOpenArchive,
+                    pageUrl = pageUrl,
+                    pageTitle = pageTitle,
+                    tabId = tabId,
+                    engineSession = engineSession,
+                    bookmarksStorage = bookmarksStorage,
+                    pageIcon = pageIcon,
+                    addonCount = addonState.addons.size,
+                    onOpenAddons = { pane = AaPane.Addons },
+                    onOpenPageSettings = { pane = AaPane.Settings },
                 )
             }
         }
     }
 }
+
+/** The three panes the aA sheet swaps between; sub-panes slide in over the Page view. */
+private enum class AaPane { Page, Addons, Settings }
 
 /** One tile in the quick-action row: an icon chip over a short label. */
 internal data class QuickAction(
@@ -298,20 +297,20 @@ private fun PageTabContent(
     host: String,
     store: SitePreferencesStore,
     globalPrefsStore: GlobalPreferencesStore,
+    onToggleWebDarkMode: (Boolean) -> Unit = {},
     onDismiss: () -> Unit,
     onFindInPage: () -> Unit = {},
     onPrint: () -> Unit = {},
-    onDuplicateTab: (() -> Unit)? = null,
     onOpenArchive: (() -> Unit)? = null,
-    trackingProtectionEnabledGlobally: Boolean = false,
-    siteTrackingProtectionDisabled: Boolean = false,
-    onToggleSiteTrackingProtection: (disable: Boolean) -> Unit = {},
     pageUrl: String,
     pageTitle: String = "",
     tabId: String? = null,
     engineSession: mozilla.components.concept.engine.EngineSession? = null,
     bookmarksStorage: BookmarksStorage? = null,
     pageIcon: android.graphics.Bitmap? = null,
+    addonCount: Int = 0,
+    onOpenAddons: () -> Unit = {},
+    onOpenPageSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val haptics = rememberLuminaHaptics()
@@ -320,8 +319,6 @@ private fun PageTabContent(
     val bookmarkScope = rememberCoroutineScope()
     val initial = remember(host) { store.get(host) }
     var zoomFactor by remember(host) { mutableFloatStateOf(initial.zoomFactor) }
-    var topPaddingFix by remember(host) { mutableStateOf(initial.topPaddingFix) }
-    var desktopMode by remember(host) { mutableStateOf(initial.desktopMode) }
     val canEdit = host.isNotEmpty()
 
     // null = not set, "" = Default browser, "com.foo" = specific app
@@ -329,16 +326,12 @@ private fun PageTabContent(
         mutableStateOf(globalPrefsStore.preferredBrowserPackage)
     }
     var showBrowserPicker by remember { mutableStateOf(false) }
-    // Advanced per-site toggles are collapsed by default — most users never touch them.
-    var pageSettingsExpanded by rememberSaveable { mutableStateOf(false) }
 
-    fun persist(
-        zoom: Float = zoomFactor,
-        top: Boolean = topPaddingFix,
-        desktop: Boolean = desktopMode,
-    ) {
+    // Zoom is the only site pref the Page view writes; read-modify-write so it never clobbers the
+    // top-padding / desktop-mode fields the Page Settings pane owns.
+    fun persistZoom(zoom: Float) {
         if (!canEdit) return
-        store.set(host, SitePreferences(topPaddingFix = top, zoomFactor = zoom, desktopMode = desktop))
+        store.set(host, store.get(host).copy(zoomFactor = zoom))
     }
 
     val hasRealUrl = pageUrl.isNotBlank() && pageUrl != "about:blank"
@@ -401,47 +394,6 @@ private fun PageTabContent(
             title = title,
             position = null,
         ).getOrThrow()
-    }
-
-    fun doReadingList() = saveToBookmarks(
-        "Added to Reading List",
-        "Couldn't add to Reading List",
-    ) { storage, url, title ->
-        val root = storage.getTree(BookmarkRoot.Mobile.id, recursive = false).getOrNull()
-        val folderGuid = root?.children
-            ?.firstOrNull { it.type == BookmarkNodeType.FOLDER && it.title == READING_LIST_FOLDER }
-            ?.guid
-            ?: storage.addFolder(BookmarkRoot.Mobile.id, READING_LIST_FOLDER, null).getOrThrow()
-        storage.addItem(
-            parentGuid = folderGuid,
-            url = url,
-            title = title,
-            position = null,
-        ).getOrThrow()
-    }
-
-    fun doAddToHomeScreen() {
-        if (ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
-            val label = pageTitle.ifBlank { host.ifBlank { shareableUrl } }
-            val shortcutIntent = Intent(context, MainActivity::class.java).apply {
-                action = Intent.ACTION_VIEW
-                data = shareableUrl.toUri()
-                putExtra(MainActivity.EXTRA_HOME_SHORTCUT, true)
-            }
-            // Use the page favicon when available (Safari does), else the app icon.
-            val shortcutIcon = pageIcon?.let { IconCompat.createWithBitmap(it) }
-                ?: IconCompat.createWithResource(context, R.mipmap.ic_launcher)
-            val info = ShortcutInfoCompat.Builder(context, "lumina-${shareableUrl.hashCode()}")
-                .setShortLabel(label.take(24))
-                .setLongLabel(label.take(48))
-                .setIcon(shortcutIcon)
-                .setIntent(shortcutIntent)
-                .build()
-            ShortcutManagerCompat.requestPinShortcut(context, info, null)
-        } else {
-            Toast.makeText(context, "Not supported on this launcher", Toast.LENGTH_SHORT).show()
-        }
-        onDismiss()
     }
 
     if (showBrowserPicker) {
@@ -540,7 +492,7 @@ private fun PageTabContent(
         // Whether reader is remembered for this domain (drives the "stays on" hint below). Held in
         // state so the hint updates immediately when the user toggles reader from this sheet.
         var readerPreferred by remember(pageUrl) {
-            mutableStateOf(store.isReaderPreferred(hostFromUrl(pageUrl)))
+            mutableStateOf(store.isReaderPreferred(siteHostFromUrl(pageUrl)))
         }
 
         // ---------- 1. Page header: favicon + title + host ----------
@@ -559,9 +511,6 @@ private fun PageTabContent(
                 }
                 add(QuickAction(Icons.Default.ContentCopy, "Copy") { haptics.softClick(); doCopy() })
                 add(QuickAction(Icons.Default.Search, "Find") { haptics.softClick(); doFind() })
-                if (isWebPage) {
-                    add(QuickAction(Icons.Default.Home, "Home") { haptics.softClick(); doAddToHomeScreen() })
-                }
             }
             Spacer(Modifier.height(18.dp))
             Row(
@@ -574,13 +523,30 @@ private fun PageTabContent(
             }
         }
 
+        // ---------- 2b. Dark mode for every website (global, high-performance) ----------
+        if (hasRealUrl) {
+            var webDark by remember { mutableStateOf(globalPrefsStore.webDarkModeEnabled) }
+            Spacer(Modifier.height(14.dp))
+            AaToggleRow(
+                title = "Dark mode",
+                subtitle = "Darken every website — uses each site's own dark theme when it has one",
+                checked = webDark,
+                enabled = true,
+                onToggle = {
+                    webDark = !webDark
+                    onToggleWebDarkMode(webDark)
+                    haptics.toggle(webDark)
+                },
+            )
+        }
+
         // ---------- 3. Reader ----------
         if (hasRealUrl) {
             Spacer(Modifier.height(18.dp))
             TextButton(
                 onClick = {
                     haptics.toggle(isActive)
-                    val readerHost = hostFromUrl(pageUrl)
+                    val readerHost = siteHostFromUrl(pageUrl)
                     if (isActive || isEligible) {
                         tabId?.let { readerManager.toggleReader(it, pageUrl, engineSession) }
                         // Written even when tabId is null so the per-site preference still follows
@@ -613,9 +579,10 @@ private fun PageTabContent(
                 )
             }
 
-            // Listen to Page (TTS over the reader-extracted article). Shown once the article has
-            // been extracted; kept in the sheet (no onDismiss) so the toggle stays reachable.
-            if (listenArticle != null) {
+            // Listen to Page (TTS over the reader-extracted article). Only offered while Reader is
+            // active, or when the user has opted into read-aloud globally ("Read aloud" in Settings →
+            // Accessibility) — otherwise it's noise for people who never use TTS.
+            if (listenArticle != null && (isActive || globalPrefsStore.listenToPageEnabled)) {
                 Spacer(Modifier.height(4.dp))
                 TextButton(
                     onClick = { haptics.toggle(isSpeaking); PageSpeaker.toggle(context, listenArticle, tabId) },
@@ -739,28 +706,33 @@ private fun PageTabContent(
             }
         }
 
-        // ---------- 4. Page zoom ----------
+        // ---------- 4. Page zoom (compact single row: label · − · % · +) ----------
         Spacer(Modifier.height(18.dp))
         SectionCard {
-            SectionLabel("Page Zoom")
-            Spacer(Modifier.height(4.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
+                SectionLabel("Page Zoom")
+                Spacer(Modifier.weight(1f))
+                // Reset only surfaces when there's something to reset, so the row stays quiet at 100%.
+                if (canEdit && zoomFactor != 1.0f) {
+                    TextButton(onClick = { zoomFactor = 1.0f; persistZoom(1.0f); haptics.step() }) {
+                        Text("Reset", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 IconButton(
                     onClick = {
                         val next = ((zoomFactor - 0.1f) * 100f).roundToInt() / 100f
                         zoomFactor = next.coerceIn(0.5f, 2.0f)
-                        persist(zoom = zoomFactor)
+                        persistZoom(zoomFactor)
                         haptics.step()
                     },
                     enabled = canEdit && zoomFactor > 0.5f,
                 ) {
                     Icon(Icons.Default.Remove, contentDescription = "Zoom out")
                 }
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.width(52.dp), contentAlignment = Alignment.Center) {
                     Text(
                         text = "${(zoomFactor * 100f).roundToInt()}%",
                         style = MaterialTheme.typography.titleMedium,
@@ -770,7 +742,7 @@ private fun PageTabContent(
                     onClick = {
                         val next = ((zoomFactor + 0.1f) * 100f).roundToInt() / 100f
                         zoomFactor = next.coerceIn(0.5f, 2.0f)
-                        persist(zoom = zoomFactor)
+                        persistZoom(zoomFactor)
                         haptics.step()
                     },
                     enabled = canEdit && zoomFactor < 2.0f,
@@ -778,106 +750,13 @@ private fun PageTabContent(
                     Icon(Icons.Default.Add, contentDescription = "Zoom in")
                 }
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                TextButton(
-                    onClick = {
-                        zoomFactor = 1.0f
-                        persist(zoom = 1.0f)
-                    },
-                    // Nothing to reset when already at 100%.
-                    enabled = canEdit && zoomFactor != 1.0f,
-                ) {
-                    Text("Reset")
-                }
-            }
         }
 
-        // ---------- 5. Page Settings (advanced, collapsed by default) ----------
-        Spacer(Modifier.height(8.dp))
-        CollapsibleSection(
-            title = "Page Settings",
-            expanded = pageSettingsExpanded || isActive,
-            onToggle = { pageSettingsExpanded = !pageSettingsExpanded },
-            haptics = haptics,
-        ) {
-            // Per-site tracking protection (only meaningful when ETP is on globally). "Checked" =
-            // protected; unchecking adds this site to the exception list so its trackers load — the
-            // standard "shield off for this site" escape hatch when ETP breaks a page.
-            if (trackingProtectionEnabledGlobally && canEdit) {
-                var siteProtected by remember(pageUrl) {
-                    mutableStateOf(!siteTrackingProtectionDisabled)
-                }
-                AaToggleRow(
-                    title = "Block trackers on this site",
-                    subtitle = "Turn off if tracking protection breaks this site",
-                    checked = siteProtected,
-                    enabled = true,
-                    onToggle = {
-                        siteProtected = !siteProtected
-                        onToggleSiteTrackingProtection(!siteProtected)
-                        haptics.toggle(siteProtected)
-                    },
-                )
-                Spacer(Modifier.height(12.dp))
-            }
-
-            AaToggleRow(
-                title = "Add top padding for this site",
-                subtitle = "Use when site headers don't move into the safe area",
-                checked = topPaddingFix,
-                enabled = canEdit,
-                onToggle = {
-                    topPaddingFix = !topPaddingFix
-                    persist(top = topPaddingFix)
-                    haptics.toggle(topPaddingFix)
-                },
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            AaToggleRow(
-                title = "Request desktop site",
-                subtitle = "Load the desktop layout for this site",
-                checked = desktopMode,
-                enabled = canEdit,
-                onToggle = {
-                    desktopMode = !desktopMode
-                    persist(desktop = desktopMode)
-                    engineSession?.toggleDesktopMode(desktopMode, reload = true)
-                    haptics.toggle(desktopMode)
-                },
-            )
-        }
-
-        // ---------- 6. Secondary actions: reading list + open-in ----------
+        // ---------- 5. Secondary actions: open-in ----------
         if (hasRealUrl) {
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
             Spacer(Modifier.height(4.dp))
-
-            // Add to Reading List (Safari keeps this separate from bookmarks). Backed by a
-            // dedicated "Reading List" folder under the Mobile root, created on first use.
-            if (bookmarksStorage != null && isWebPage) {
-                TextButton(
-                    onClick = { haptics.create(); doReadingList() },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    ActionRowContent(icon = Icons.AutoMirrored.Filled.MenuBook, text = "Add to Reading List")
-                }
-            }
-
-            // Duplicate the current page into a new foreground tab (open a copy to branch browsing).
-            if (isWebPage && onDuplicateTab != null) {
-                TextButton(
-                    onClick = { haptics.create(); onDuplicateTab(); onDismiss() },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    ActionRowContent(icon = Icons.Default.ContentCopy, text = "Duplicate Tab")
-                }
-            }
 
             // View this page on the Internet Archive (Wayback Machine) — enters an in-app time-travel
             // mode with a bottom date scrubber. Web pages only.
@@ -904,39 +783,9 @@ private fun PageTabContent(
                 }
             }
 
-            // Open in associated native app (e.g. Instagram for an instagram.com link),
-            // shown only when a non-browser app claims this specific URL. Resolved off the main
-            // thread (two PackageManager queries) so it never blocks the sheet; null until ready.
-            val nativeApp by produceState<NativeApp?>(initialValue = null, shareableUrl, context) {
-                value = withContext(Dispatchers.IO) { nativeAppFor(context.packageManager, shareableUrl) }
-            }
-            val resolvedNativeApp = nativeApp
-            if (resolvedNativeApp != null) {
-                TextButton(
-                    onClick = {
-                        haptics.softClick()
-                        val intent = Intent(Intent.ACTION_VIEW, shareableUrl.toUri()).apply {
-                            setPackage(resolvedNativeApp.packageName)
-                            addCategory(Intent.CATEGORY_BROWSABLE)
-                        }
-                        try {
-                            context.startActivity(intent)
-                        } catch (_: ActivityNotFoundException) {
-                            // Preferred native app gone; fall back to a plain VIEW, still guarded
-                            // in case nothing at all handles the URL.
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, shareableUrl.toUri())) }
-                        }
-                        onDismiss()
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    ActionRowContent(
-                        icon = Icons.AutoMirrored.Filled.OpenInNew,
-                        text = "Open in ${resolvedNativeApp.label}",
-                        bold = true,
-                    )
-                }
-            }
+            // "Open in <app>" for a site's associated native app now surfaces automatically as a
+            // banner above the pill (see OpenInAppBannerHost / nativeAppFor), so it's no longer a
+            // buried row here.
 
             // Open in browser row — label + Change button
             val pm = context.packageManager
@@ -986,6 +835,155 @@ private fun PageTabContent(
                 }
             }
         }
+
+        // ---------- 6. Sub-views: Page Settings + Add-ons (each slides in over the Page) ----------
+        Spacer(Modifier.height(8.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(4.dp))
+        AaNavRow(
+            icon = Icons.Default.Tune,
+            label = "Page Settings",
+            onClick = onOpenPageSettings,
+        )
+        AaNavRow(
+            icon = Icons.Default.Extension,
+            label = "Add-ons",
+            badge = addonCount.takeIf { it > 0 }?.toString(),
+            onClick = onOpenAddons,
+        )
+    }
+}
+
+/** A tappable "opens a sub-view" row: leading icon, label, optional count badge, trailing chevron. */
+@Composable
+private fun AaNavRow(
+    icon: ImageVector,
+    label: String,
+    badge: String? = null,
+    onClick: () -> Unit,
+) {
+    val haptics = rememberLuminaHaptics()
+    TextButton(
+        onClick = { haptics.select(); onClick() },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(16.dp))
+            Text(text = label, modifier = Modifier.weight(1f))
+            if (badge != null) {
+                Text(
+                    text = badge,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The Page Settings sub-view — advanced per-site toggles (tracking exception, top padding, desktop
+ * mode). Slides in over the Page view with a Back affordance. Reads/writes [store] directly with
+ * `copy()` so it never clobbers the zoom factor the Page view owns.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PageSettingsPaneContent(
+    host: String,
+    store: SitePreferencesStore,
+    pageUrl: String,
+    engineSession: mozilla.components.concept.engine.EngineSession?,
+    trackingProtectionEnabledGlobally: Boolean,
+    siteTrackingProtectionDisabled: Boolean,
+    onToggleSiteTrackingProtection: (disable: Boolean) -> Unit,
+    onBack: () -> Unit,
+) {
+    val haptics = rememberLuminaHaptics()
+    val canEdit = host.isNotEmpty()
+    val initial = remember(host) { store.get(host) }
+    var topPaddingFix by remember(host) { mutableStateOf(initial.topPaddingFix) }
+    var desktopMode by remember(host) { mutableStateOf(initial.desktopMode) }
+
+    fun persist(top: Boolean = topPaddingFix, desktop: Boolean = desktopMode) {
+        if (!canEdit) return
+        store.set(host, store.get(host).copy(topPaddingFix = top, desktopMode = desktop))
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp)
+            .padding(top = 4.dp, bottom = 28.dp),
+    ) {
+        SheetHeader(
+            title = "Page Settings",
+            leadingIcon = {
+                IconButton(onClick = { haptics.softClick(); onBack() }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            },
+        )
+        Spacer(Modifier.height(16.dp))
+
+        // Per-site tracking protection (only meaningful when ETP is on globally). "Checked" =
+        // protected; unchecking adds this site to the exception list so its trackers load — the
+        // standard "shield off for this site" escape hatch when ETP breaks a page.
+        if (trackingProtectionEnabledGlobally && canEdit) {
+            var siteProtected by remember(pageUrl) {
+                mutableStateOf(!siteTrackingProtectionDisabled)
+            }
+            AaToggleRow(
+                title = "Block trackers on this site",
+                subtitle = "Turn off if tracking protection breaks this site",
+                checked = siteProtected,
+                enabled = true,
+                onToggle = {
+                    siteProtected = !siteProtected
+                    onToggleSiteTrackingProtection(!siteProtected)
+                    haptics.toggle(siteProtected)
+                },
+            )
+            Spacer(Modifier.height(16.dp))
+        }
+
+        AaToggleRow(
+            title = "Add top padding for this site",
+            subtitle = "Use when site headers don't move into the safe area",
+            checked = topPaddingFix,
+            enabled = canEdit,
+            onToggle = {
+                topPaddingFix = !topPaddingFix
+                persist(top = topPaddingFix)
+                haptics.toggle(topPaddingFix)
+            },
+        )
+
+        Spacer(Modifier.height(16.dp))
+
+        AaToggleRow(
+            title = "Request desktop site",
+            subtitle = "Load the desktop layout for this site",
+            checked = desktopMode,
+            enabled = canEdit,
+            onToggle = {
+                desktopMode = !desktopMode
+                persist(desktop = desktopMode)
+                engineSession?.toggleDesktopMode(desktopMode, reload = true)
+                haptics.toggle(desktopMode)
+            },
+        )
     }
 }
 

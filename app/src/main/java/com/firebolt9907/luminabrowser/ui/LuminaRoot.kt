@@ -3648,6 +3648,14 @@ fun LuminaRoot(
             },
             siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
             onSiteTrackingProtectionDisabledChange = { siteTrackingProtectionDisabled = it },
+            onToggleWebDarkMode = { enabled ->
+                webDarkModeEnabled = enabled
+                components.globalPreferencesStore.webDarkModeEnabled = enabled
+                // Tier 1 (native prefers-color-scheme override) is an engine setting; re-apply it now
+                // so it flips without a restart. Tier 2 live-injection follows the state var above via
+                // ContentHost's LaunchedEffect.
+                components.applyEngineSettings()
+            },
             utilityWeb = utilityWeb,
             onDismissUtilityWeb = { utilityWeb = null },
             peekUrl = peekUrl,

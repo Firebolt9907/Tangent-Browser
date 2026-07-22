@@ -103,7 +103,6 @@ internal fun LuminaOverlaySheets(
     onDismissDownloads: () -> Unit,
     // aA appearance / page-tools sheet
     showAa: Boolean,
-    aaInitialTab: Int,
     onDismissAa: () -> Unit,
     onAaEngineRefresh: () -> Unit,
     onFindInPage: () -> Unit,
@@ -111,6 +110,9 @@ internal fun LuminaOverlaySheets(
     onOpenArchive: () -> Unit,
     siteTrackingProtectionDisabled: Boolean,
     onSiteTrackingProtectionDisabledChange: (Boolean) -> Unit,
+    // Flips the global high-performance web dark mode from the aA sheet. The host persists the pref,
+    // re-applies engine settings (Tier 1), and updates its live-injection state var (Tier 2).
+    onToggleWebDarkMode: (Boolean) -> Unit,
     // Standalone add-on/sign-in web card
     utilityWeb: UtilityWebRequest?,
     onDismissUtilityWeb: () -> Unit,
@@ -361,15 +363,11 @@ internal fun LuminaOverlaySheets(
                 // GeckoView opens the Android print dialog (physical printers + Save as PDF).
                 selectedTabId?.let { components.sessionUseCases.printContent.invoke(it) }
             },
-            onDuplicateTab = currentUrl
-                ?.takeIf { it.isNotBlank() && it != "about:blank" }
-                ?.let { url ->
-                    { viewModel.onOpenNewTab(url = url, title = selectedContent?.title.orEmpty(), selectTab = true); Unit }
-                },
             onOpenArchive = currentUrl
                 ?.takeIf { it.startsWith("http", ignoreCase = true) }
                 ?.let { { onOpenArchive() } },
             trackingProtectionEnabledGlobally = components.globalPreferencesStore.trackingProtection,
+            onToggleWebDarkMode = onToggleWebDarkMode,
             siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
             onToggleSiteTrackingProtection = { disable ->
                 selectedTabId?.let { id ->
@@ -385,7 +383,6 @@ internal fun LuminaOverlaySheets(
             },
             pageUrl = currentUrl.orEmpty(),
             pageTitle = selectedContent?.title.orEmpty(),
-            initialTab = aaInitialTab,
             tabId = selectedTabId,
             engineSession = selectedEngineSession,
             backgroundSnapshot = currentPageSnapshot,

@@ -307,6 +307,21 @@ class GeckoTabRepository(
         tabsUseCases.removeTab.invoke(id)
     }
 
+    override fun closeTabs(ids: List<String>) {
+        if (ids.isEmpty()) return
+        // Only act on ids that are actually open, so a stale membership list can't seed a needless
+        // blank tab. Record each real page for "Reopen Closed Tab", then remove them.
+        val live = ids.filter { id -> store.state.tabs.any { it.id == id } }
+        if (live.isEmpty()) return
+        live.forEach { recordClosedTab(it) }
+        live.forEach { tabsUseCases.removeTab.invoke(it) }
+        // Never sit at zero tabs (mirrors closeAllTabs): seed a fresh blank if we closed the last ones.
+        if (store.state.tabs.isEmpty()) {
+            val id = tabsUseCases.addTab.invoke(url = "about:blank", selectTab = true, title = "New Tab")
+            lastAccessById[id] = System.currentTimeMillis()
+        }
+    }
+
     override fun closeAllTabs(): String {
         // Record each real page (recordClosedTab skips blank/about: tabs) so "Reopen Closed Tab" can
         // restore them, then remove all and seed one fresh blank tab so we never sit at zero tabs.
@@ -413,6 +428,18 @@ private val explicitSchemeRegex = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
 private fun String.hasExplicitScheme(): Boolean =
     !containsWhitespace() && explicitSchemeRegex.containsMatchIn(this)
 
+/**
+ * True if [input] would navigate (a scheme'd URL or a bare host like `apple.com`) rather than run a
+ * web search. Reuses [normalizeUrl]'s own detectors so there is a single source of truth for
+ * URL-vs-search (invariant: no second normalization path). Used by the address-bar suggestion ranker
+ * to know when the typed text is itself a destination worth offering directly.
+ */
+internal fun looksLikeUrlInput(input: String): Boolean {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return false
+    return trimmed.hasExplicitScheme() || trimmed.looksLikeWebsite()
+}
+
 private fun String.looksLikeWebsite(): Boolean {
     if (containsWhitespace()) return false
     val host = substringBefore('/').substringBefore('?').substringBefore('#')
@@ -508,5 +535,6 @@ private fun BrowserState.toLuminaTabs(): List<LuminaTab> =
             id = tab.id,
             url = tab.content.url,
             title = tab.content.title.ifBlank { compactHost(tab.content.url) },
+            contextId = tab.contextId,
         )
     }

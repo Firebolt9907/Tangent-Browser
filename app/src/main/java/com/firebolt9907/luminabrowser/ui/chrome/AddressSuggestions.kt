@@ -54,6 +54,10 @@ import com.firebolt9907.luminabrowser.ui.components.Favicon
 import com.firebolt9907.luminabrowser.state.AddressSuggestionKind
 import com.firebolt9907.luminabrowser.state.SearchEngine
 import com.firebolt9907.luminabrowser.state.addressSuggestions
+import com.firebolt9907.luminabrowser.state.compactHost
+import com.firebolt9907.luminabrowser.state.hostOf
+import com.firebolt9907.luminabrowser.state.looksLikeUrlInput
+import com.firebolt9907.luminabrowser.state.normalizeUrl
 import com.firebolt9907.luminabrowser.state.searchSuggestions
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -374,6 +378,10 @@ fun AddressSheet(
  * instead of "leetcode". So when there's no URL match, the default is always to search exactly what
  * the user typed; the engine's expansions stay below as one-tap options.
  */
+/** Path component of [url] ("" if it has none / can't be parsed) — used to detect a domain-root match. */
+private fun URIPath(url: String): String =
+    runCatching { java.net.URI(url).path }.getOrNull().orEmpty()
+
 private fun buildSuggestionRows(
     local: List<AddressSuggestion>,
     searchTerms: List<String>,
@@ -381,6 +389,30 @@ private fun buildSuggestionRows(
     max: Int = 8,
 ): List<AddressSuggestion> {
     val rows = LinkedHashMap<String, AddressSuggestion>()
+
+    // When the typed text is itself a navigable domain (e.g. "apple.com"), guarantee a direct
+    // "go to that site" row as the autoselected default — before any history rows. This fixes the
+    // case where history only holds deep links under the domain (a one-off `apps.apple.com/us/app/…`):
+    // without it, that stale deep link would be the highlighted default instead of the site the user
+    // clearly meant. We skip synthesising when a local match already IS that domain root (it will have
+    // ranked first via `rankScore`), so the site is never listed twice. `normalizeUrl` is the single
+    // URL-vs-search authority (invariant #9); we only reuse it here, never re-implement it.
+    if (looksLikeUrlInput(typed)) {
+        val direct = normalizeUrl(typed)
+        val directHost = hostOf(direct)?.removePrefix("www.")
+        val alreadyRooted = local.any { s ->
+            hostOf(s.url)?.removePrefix("www.") == directHost &&
+                URIPath(s.url).let { it.isEmpty() || it == "/" }
+        }
+        if (directHost != null && !alreadyRooted) {
+            rows["u:" + direct.trimEnd('/').lowercase()] = AddressSuggestion(
+                title = compactHost(direct),
+                url = direct,
+                kind = AddressSuggestionKind.History,
+            )
+        }
+    }
+
     for (s in local) {
         val key = "u:" + s.url.trimEnd('/').lowercase()
         if (!rows.containsKey(key)) rows[key] = s

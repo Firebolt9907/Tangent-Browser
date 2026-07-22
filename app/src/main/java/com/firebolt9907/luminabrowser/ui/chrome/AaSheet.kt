@@ -110,6 +110,7 @@ import com.firebolt9907.luminabrowser.state.BarUiState
 import com.firebolt9907.luminabrowser.state.GlobalPreferencesStore
 import com.firebolt9907.luminabrowser.state.compactHost
 import com.firebolt9907.luminabrowser.state.hostFromUrl
+import com.firebolt9907.luminabrowser.state.SiteDarkMode
 import com.firebolt9907.luminabrowser.state.SitePreferences
 import com.firebolt9907.luminabrowser.state.SitePreferencesStore
 import com.firebolt9907.luminabrowser.ui.archive.siteHostFromUrl
@@ -252,6 +253,7 @@ fun AaSheet(
                     store = store,
                     pageUrl = pageUrl,
                     engineSession = engineSession,
+                    globalWebDarkEnabled = globalPrefsStore.webDarkModeEnabled,
                     trackingProtectionEnabledGlobally = trackingProtectionEnabledGlobally,
                     siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
                     onToggleSiteTrackingProtection = onToggleSiteTrackingProtection,
@@ -904,6 +906,7 @@ private fun PageSettingsPaneContent(
     store: SitePreferencesStore,
     pageUrl: String,
     engineSession: mozilla.components.concept.engine.EngineSession?,
+    globalWebDarkEnabled: Boolean,
     trackingProtectionEnabledGlobally: Boolean,
     siteTrackingProtectionDisabled: Boolean,
     onToggleSiteTrackingProtection: (disable: Boolean) -> Unit,
@@ -914,10 +917,15 @@ private fun PageSettingsPaneContent(
     val initial = remember(host) { store.get(host) }
     var topPaddingFix by remember(host) { mutableStateOf(initial.topPaddingFix) }
     var desktopMode by remember(host) { mutableStateOf(initial.desktopMode) }
+    var darkMode by remember(host) { mutableStateOf(initial.darkMode) }
 
-    fun persist(top: Boolean = topPaddingFix, desktop: Boolean = desktopMode) {
+    fun persist(
+        top: Boolean = topPaddingFix,
+        desktop: Boolean = desktopMode,
+        dark: SiteDarkMode = darkMode,
+    ) {
         if (!canEdit) return
-        store.set(host, store.get(host).copy(topPaddingFix = top, desktopMode = desktop))
+        store.set(host, store.get(host).copy(topPaddingFix = top, desktopMode = desktop, darkMode = dark))
     }
 
     Column(
@@ -982,6 +990,30 @@ private fun PageSettingsPaneContent(
                 persist(desktop = desktopMode)
                 engineSession?.toggleDesktopMode(desktopMode, reload = true)
                 haptics.toggle(desktopMode)
+            },
+        )
+
+        Spacer(Modifier.height(16.dp))
+
+        // Per-site dark-mode override. "Checked" = this site is darkened; the effective state folds
+        // in the global "Dark mode for every website" toggle (SiteDarkMode.Default follows it). The
+        // toggle pins an explicit On/Off for this host — the escape hatch for a site that looks bad
+        // inverted, or one to darken even with the global switch off. Applies live (no reload): the
+        // host re-derives currentSitePrefs on the store update and re-injects / removes the filter.
+        val darkChecked = darkMode.resolve(globalWebDarkEnabled)
+        AaToggleRow(
+            title = "Dark mode on this site",
+            subtitle = if (globalWebDarkEnabled) {
+                "Turn off for sites that look wrong when darkened"
+            } else {
+                "Darken just this site (global dark mode is off)"
+            },
+            checked = darkChecked,
+            enabled = canEdit,
+            onToggle = {
+                darkMode = if (darkChecked) SiteDarkMode.Off else SiteDarkMode.On
+                persist(dark = darkMode)
+                haptics.toggle(darkMode == SiteDarkMode.On)
             },
         )
     }

@@ -83,6 +83,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.firebolt9907.luminabrowser.LuminaApplication
 import com.firebolt9907.luminabrowser.state.compactHost
+import com.firebolt9907.luminabrowser.state.hostFromUrl
 import com.firebolt9907.luminabrowser.ui.content.LinkPeekCard
 import com.firebolt9907.luminabrowser.ui.content.PeekEngineHolder
 import com.firebolt9907.luminabrowser.ui.content.linkUrlFromHitResult
@@ -479,7 +480,8 @@ fun CustomTabRoot(
                         // Web dark mode: Tier 1 (native prefers-color-scheme) already applies
                         // engine-wide, so Custom Tabs get real site dark themes for free; thread the
                         // flag so the Tier-2 filter-invert fallback also engages on light pages here.
-                        webDarkModeEnabled = components.globalPreferencesStore.webDarkModeEnabled,
+                        webDarkModeEnabled = components.sitePreferencesStore.get(hostFromUrl(url))
+                            .darkMode.resolve(components.globalPreferencesStore.webDarkModeEnabled),
                         webDarkModeAggressive = components.globalPreferencesStore.webDarkModeAggressive,
                         onPageScrollDelta = ::onPageScrollDelta,
                         onFullScreenChange = { enabled ->

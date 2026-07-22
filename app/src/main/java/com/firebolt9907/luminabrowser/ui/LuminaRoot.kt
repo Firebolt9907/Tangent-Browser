@@ -2628,7 +2628,8 @@ fun LuminaRoot(
                     topPaddingFixActive = currentSitePrefs.topPaddingFix,
                     themeColorSamplingEnabled = matchSiteThemeColor,
                     siteTintColor = siteTintColor,
-                    webDarkModeEnabled = webDarkModeEnabled,
+                    // Per-site override (aA → Page Settings) wins over the global toggle.
+                    webDarkModeEnabled = currentSitePrefs.darkMode.resolve(webDarkModeEnabled),
                     webDarkModeAggressive = webDarkModeAggressive,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
                     barCollapseProgress = barCollapseProgressProvider,

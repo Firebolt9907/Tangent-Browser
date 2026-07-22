@@ -1286,8 +1286,12 @@ fun LuminaRoot(
     // Held as a plain MutableState so the memoized callbacks below read its latest value at Go time.
     val topSuggestion = remember { mutableStateOf<String?>(null) }
     // The top suggestion's URL when it is a concrete page (History/Bookmark) — fed to the editing
-    // field for inline autocomplete. Search rows are excluded: there is no URL to complete toward.
+    // field for inline autocomplete. Search and switch-to-tab rows are excluded: there is no URL to
+    // complete toward (a tab row switches rather than navigates).
     val autocompleteSource = remember { mutableStateOf<String?>(null) }
+    // Set when the autoselected top row is an already-open tab: pressing Go/Enter then switches to it
+    // instead of re-navigating (which would open a duplicate).
+    val topSuggestionTabId = remember { mutableStateOf<String?>(null) }
     // Voice search: mic tap in the editing field → system recognizer → search/navigate the result.
     // Permission-less (Google's speech activity owns the mic); null when no recognizer is installed.
     val onVoiceInput = com.firebolt9907.luminabrowser.ui.chrome.rememberVoiceSearchLauncher { spoken ->
@@ -1309,8 +1313,14 @@ fun LuminaRoot(
                 // Commit the autoselected top suggestion when one is present (desktop-browser
                 // behavior); fall back to the raw typed text otherwise. onSubmitText and
                 // onEditingSubmit both run the same normalizeUrl path.
+                val switchTab = topSuggestionTabId.value
                 val top = topSuggestion.value
-                if (!top.isNullOrBlank()) {
+                if (switchTab != null) {
+                    // Top row is an already-open tab — switch to it instead of navigating.
+                    viewModel.onEditingCancel()
+                    if (currentUrl == "about:blank") viewModel.dismissBlankTabAndReturn()
+                    components.tabRepository.selectTab(switchTab)
+                } else if (!top.isNullOrBlank()) {
                     viewModel.onSubmitText(top)
                 } else {
                     viewModel.onEditingSubmit()
@@ -3175,8 +3185,14 @@ fun LuminaRoot(
                     },
                     onTopSuggestionChange = { row ->
                         topSuggestion.value = row?.url
+                        topSuggestionTabId.value = row
+                            ?.takeIf { it.kind == com.firebolt9907.luminabrowser.state.AddressSuggestionKind.Tab }
+                            ?.tabId
                         autocompleteSource.value = row
-                            ?.takeIf { it.kind != com.firebolt9907.luminabrowser.state.AddressSuggestionKind.Search }
+                            ?.takeIf {
+                                it.kind != com.firebolt9907.luminabrowser.state.AddressSuggestionKind.Search &&
+                                    it.kind != com.firebolt9907.luminabrowser.state.AddressSuggestionKind.Tab
+                            }
                             ?.url
                     },
                     onPreconnect = { components.speculativePreconnector.preconnect(it) },
@@ -3191,6 +3207,21 @@ fun LuminaRoot(
                     },
                     searchSuggestionsEnabled = components.globalPreferencesStore.searchSuggestionsEnabled,
                     searchEngine = components.globalPreferencesStore.searchEngine,
+                    openTabs = remember(browserState.tabs) {
+                        browserState.tabs.map {
+                            com.firebolt9907.luminabrowser.state.OpenTabRef(
+                                id = it.id,
+                                url = it.content.url,
+                                title = it.content.title,
+                            )
+                        }
+                    },
+                    currentTabId = selectedTabId,
+                    onSwitchToTab = { tabId ->
+                        viewModel.onEditingCancel()
+                        if (currentUrl == "about:blank") viewModel.dismissBlankTabAndReturn()
+                        components.tabRepository.selectTab(tabId)
+                    },
                     onDismiss = {
                         // Mirror the Cancel button: dismissing the sheet on an untouched blank new
                         // tab must also discard that tab, otherwise it lingers in the tab list.

@@ -97,10 +97,16 @@ import mozilla.components.concept.engine.EngineSession
  * live heading over them — lifted to near-white by `mapFgL` — turns light-on-light invisible. So in
  * dynamic mode we additionally run a per-image **cutout**: a tiny Rust→WASM kernel
  * (`tools/dark-cutout-wasm`, `no_std`, ~2 KB) does an edge-aware flood fill from each image's borders,
- * keying out its light, edge-connected background to transparent so the dark page shows through, while
- * the subject — and any light detail *not* connected to the border — is preserved. It runs off the
- * main thread in a Web Worker (`ImageBitmap` transferred in, PNG blob back), so there's no jank, and
- * is fail-safe: a full-bleed photo (no light border) keys ~nothing and is left in true color, and any
+ * keying out its light, edge-connected background while the subject — and any light detail *not*
+ * connected to the border — is preserved. It runs off the main thread in a Web Worker (`ImageBitmap`
+ * transferred in), so there's no jank.
+ *
+ * The keyed alpha is emitted as a small **alpha mask** (RGB=0, keyed alpha) which the driver applies
+ * to the *original* `<img>` via CSS `mask-image` (`mask-mode: alpha`, sized to the displayed content
+ * rect so `object-fit` still lines up). The mask makes the light background transparent so the dark
+ * page shows through, while the image itself is **never replaced** — so it stays full-resolution (no
+ * downscale/re-encode blur) and a mis-key is non-destructive (correctable, and reversible on reload).
+ * Fail-safe: a full-bleed photo (no light border) keys ~nothing and is left in true color, and any
  * CSP/worker/WASM/CORS failure just leaves the image alone. Assets are generated into
  * [DarkCutoutAssets] by `tools/dark-cutout-wasm/build.sh`.
  */
@@ -533,6 +539,10 @@ object WebDarkMode {
     private const val CUT_MIN_ALPHA = 128
     /** Apply the result only if the keyed fraction lands in this band (else it's a photo / near-blank). */
     private const val CUT_MIN_FRAC = "0.02"
+    /** Upper reject bound: only a *near-total* key (essentially the whole image read as light) is
+     *  dropped. Large full-bleed product heroes legitimately key 90%+ of their pixels, so this stays
+     *  high — and because the cutout is now a non-destructive CSS mask over the original image, an
+     *  over-key is low-harm (crisp original, wrong transparency) rather than a baked-in mistake. */
     private const val CUT_MAX_FRAC = "0.985"
 
     /**
@@ -567,11 +577,13 @@ object WebDarkMode {
               try{document.documentElement.classList.remove('${DYN_CLASS}');}catch(e){}
               try{var ds=document.getElementById('${DYN_STYLE_ID}');if(ds&&ds.parentNode)ds.parentNode.removeChild(ds);}catch(e){}
               try{if(window.__luminaDynObserver){window.__luminaDynObserver.disconnect();window.__luminaDynObserver=null;}}catch(e){}
-              /* Tear down the image-cutout worker and observer; already-keyed images stay keyed until a reload. */
+              /* Tear down the image-cutout worker and observer. */
               try{if(window.__lumCut&&window.__lumCut.worker)window.__lumCut.worker.terminate();window.__lumCut=null;}catch(e){}
               try{if(window.__lumCutObserver){window.__lumCutObserver.disconnect();window.__lumCutObserver=null;}}catch(e){}
               window.__lumDynActive=0;
-              try{var el=document.getElementsByTagName('*');for(var i=0;i<el.length;i++){var st=el[i].style;if(st){st.removeProperty('background-color');st.removeProperty('color');st.removeProperty('border-top-color');st.removeProperty('border-right-color');st.removeProperty('border-bottom-color');st.removeProperty('border-left-color');st.removeProperty('background-image');}el[i].__lumDynDone=0;}}catch(e){}
+              /* Strip the per-element recolor AND the cutout's CSS mask (the mask is inline on <img>), so
+                 toggling dark mode off restores the original page without a reload. */
+              try{var el=document.getElementsByTagName('*');for(var i=0;i<el.length;i++){var st=el[i].style;if(st){st.removeProperty('background-color');st.removeProperty('color');st.removeProperty('border-top-color');st.removeProperty('border-right-color');st.removeProperty('border-bottom-color');st.removeProperty('border-left-color');st.removeProperty('background-image');st.removeProperty('mask-image');st.removeProperty('-webkit-mask-image');st.removeProperty('mask-size');st.removeProperty('-webkit-mask-size');st.removeProperty('mask-position');st.removeProperty('-webkit-mask-position');st.removeProperty('mask-repeat');st.removeProperty('-webkit-mask-repeat');st.removeProperty('mask-mode');}el[i].__lumDynDone=0;el[i].__lumCut=0;}}catch(e){}
             })();
         """.trimIndent().replace("\n", " ")
     }

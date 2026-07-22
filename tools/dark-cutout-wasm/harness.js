@@ -53,18 +53,42 @@ function driverSrc(b64, params) {
       var id;try{id=ctx.getImageData(0,0,w,h);}catch(e){window.__cutStats.tainted++;return;}
       var view=new Uint8Array(mem.buffer,pptr,w*h*4);
       view.set(id.data);
+      ex.smooth_rgb(w,h,2);
       var filled=ex.cutout(w,h,P.lSeed,P.lFloor,P.stepMax,P.minAlpha);
+      if(filled>0)ex.blur_alpha(w,h,6);
       var frac=filled/(w*h);
       window.__cutStats.done++;
       if(frac<P.minFrac||frac>P.maxFrac){window.__cutStats.skipped++;return;}
+      // Collapse to an alpha mask (RGB=0, keyed alpha) in the kernel, then apply it to the ORIGINAL
+      // image via CSS mask-image — no src swap, so the image stays full-resolution (see driver.js).
+      ex.to_alpha_mask(w,h);
       id.data.set(view);
       ctx.putImageData(id,0,0);
       var url=cv.toDataURL('image/png');
-      // neutralize <picture> sources + srcset so our src holds
-      try{var par=img.parentNode;if(par&&par.tagName==='PICTURE'){var ss=par.getElementsByTagName('source');for(var k=ss.length-1;k>=0;k--)ss[k].parentNode.removeChild(ss[k]);}}catch(e){}
-      img.removeAttribute('srcset');img.removeAttribute('sizes');
-      img.src=url; img.style.setProperty('background','transparent','important');
+      applyMask(img,url,probe.naturalWidth,probe.naturalHeight);
       window.__cutStats.keyed++;
+    }
+    function applyMask(img,url,natW,natH){
+      var boxW=img.clientWidth,boxH=img.clientHeight; if(!boxW||!boxH)return;
+      var fit='fill'; try{fit=getComputedStyle(img).objectFit||'fill';}catch(e){}
+      var size='100% 100%',pos='0 0';
+      if(fit!=='fill'&&natW>0&&natH>0){
+        var na=natW/natH,ba=boxW/boxH,cw,ch;
+        if(fit==='none'||(fit==='scale-down'&&natW<=boxW&&natH<=boxH)){cw=natW;ch=natH;}
+        else if(fit==='cover'){if(na>ba){ch=boxH;cw=boxH*na;}else{cw=boxW;ch=boxW/na;}}
+        else{if(na>ba){cw=boxW;ch=boxW/na;}else{ch=boxH;cw=boxH*na;}}
+        size=Math.round(cw)+'px '+Math.round(ch)+'px';pos='center';
+      }
+      var s=img.style;
+      s.setProperty('-webkit-mask-image','url('+url+')','important');
+      s.setProperty('mask-image','url('+url+')','important');
+      s.setProperty('-webkit-mask-size',size,'important');
+      s.setProperty('mask-size',size,'important');
+      s.setProperty('-webkit-mask-position',pos,'important');
+      s.setProperty('mask-position',pos,'important');
+      s.setProperty('-webkit-mask-repeat','no-repeat','important');
+      s.setProperty('mask-repeat','no-repeat','important');
+      s.setProperty('mask-mode','alpha','important');
     }
     function sweep(){var imgs=document.getElementsByTagName('img');for(var i=0;i<imgs.length;i++){if(imgs[i].complete)processImg(imgs[i]);else imgs[i].addEventListener('load',function(e){processImg(e.target);},{once:true});}}
     sweep(); window.__cutSweep=sweep;

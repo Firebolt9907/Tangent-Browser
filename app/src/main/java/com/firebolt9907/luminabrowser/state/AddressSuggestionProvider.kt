@@ -11,18 +11,56 @@ import mozilla.components.concept.storage.HistoryStorage
 import mozilla.components.concept.storage.SearchResult
 
 /** What a single address-bar suggestion was sourced from — drives the row's leading icon. */
-enum class AddressSuggestionKind { Search, History, Bookmark }
+enum class AddressSuggestionKind { Search, History, Bookmark, Tab }
 
 /**
  * One row in the address-bar suggestion list. For [AddressSuggestionKind.Search] the [url] is the
  * raw query text (it is run through `normalizeUrl` → search on submit); for the other kinds it is a
- * concrete page URL.
+ * concrete page URL. [tabId] is set only for [AddressSuggestionKind.Tab] rows (an already-open tab):
+ * committing that row switches to the existing tab instead of navigating.
  */
 data class AddressSuggestion(
     val title: String,
     val url: String,
     val kind: AddressSuggestionKind,
+    val tabId: String? = null,
 )
+
+/** Minimal open-tab descriptor fed to [openTabSuggestions] — decouples ranking from GeckoView types. */
+data class OpenTabRef(val id: String, val url: String, val title: String)
+
+/**
+ * Open tabs matching [query], as switch-to-tab suggestions ranked ahead of history (an open tab is a
+ * stronger destination than a stale visit). Matches on host/title/URL substring, excludes the current
+ * tab and blank/internal pages, de-duplicates by [canonicalUrlKey], and ranks with the same host-aware
+ * [rankScore]. Pure/synchronous so it is unit-testable without GeckoView.
+ */
+fun openTabSuggestions(
+    query: String,
+    tabs: List<OpenTabRef>,
+    currentTabId: String?,
+    max: Int = 3,
+): List<AddressSuggestion> {
+    val q = query.trim().lowercase()
+    if (q.isEmpty()) return emptyList()
+    val seen = HashSet<String>()
+    return tabs.asSequence()
+        .filter { it.id != currentTabId }
+        .filter { it.url.isNotBlank() && !it.url.startsWith("about:") }
+        .filter { it.url.lowercase().contains(q) || it.title.lowercase().contains(q) }
+        .map {
+            AddressSuggestion(
+                title = it.title.ifBlank { it.url },
+                url = it.url,
+                kind = AddressSuggestionKind.Tab,
+                tabId = it.id,
+            )
+        }
+        .filter { seen.add(canonicalUrlKey(it.url)) }
+        .sortedByDescending { rankScore(q, it) }
+        .take(max)
+        .toList()
+}
 
 /**
  * Builds the local-history + bookmarks suggestions for [query]. Bookmarks rank ahead of history

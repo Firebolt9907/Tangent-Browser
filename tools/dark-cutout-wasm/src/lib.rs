@@ -210,6 +210,28 @@ pub extern "C" fn blur_alpha(w: usize, h: usize, passes: u32) {
     }
 }
 
+/// Collapse the RGBA buffer in place into an **alpha mask**: zero the RGB channels, keep the
+/// (keyed + feathered) alpha. The host PNG-encodes the result and the driver applies it as a CSS
+/// `mask-image` (`mask-mode: alpha`) on the *original* image, so the displayed image stays
+/// full-resolution — only the soft alpha is upscaled. Call after `cutout` + `blur_alpha`.
+#[no_mangle]
+pub extern "C" fn to_alpha_mask(w: usize, h: usize) {
+    let n = w * h;
+    if n == 0 || n > CAP {
+        return;
+    }
+    let pix = unsafe { core::slice::from_raw_parts_mut(addr_of_mut!(PIX) as *mut u8, n * 4) };
+    let mut i = 0;
+    while i < n {
+        let o = i * 4;
+        pix[o] = 0;
+        pix[o + 1] = 0;
+        pix[o + 2] = 0;
+        // pix[o + 3] (alpha) preserved.
+        i += 1;
+    }
+}
+
 /// Key out the light, edge-connected background in the RGBA buffer at `pixels_ptr()` (`w`x`h`).
 ///
 /// Seeds every opaque border pixel brighter than `l_seed`, then edge-aware-grows: crossing into a

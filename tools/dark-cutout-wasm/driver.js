@@ -4,7 +4,8 @@
      - spins up the cutout worker (Blob from base64 worker source),
      - hands it the WASM + tuning params,
      - createImageBitmap()s each large <img> and transfers it to the worker,
-     - on a keyed result swaps the <img> to the returned blob (neutralizing <picture>/srcset),
+     - on a keyed result applies the returned alpha mask to the ORIGINAL <img> via CSS mask-image
+       (aligned to the displayed content rect under object-fit), leaving the image pixels crisp,
    all fail-safe: any CSP/worker/wasm failure just leaves images untouched (element recolor stands).
    window.__lumCut guards one setup per page; __lumCutSweep re-scans for lazy/late images. */
 function lumCutSetup(WASM_B64, WORKER_B64, PARAMS) {
@@ -27,18 +28,48 @@ function lumCutSetup(WASM_B64, WORKER_B64, PARAMS) {
     if (d.type === 'done') {
       var img = st.cbs[d.id]; delete st.cbs[d.id];
       if (!img || !d.keyed || !d.blob) return;
-      try {
-        var par = img.parentNode;
-        if (par && par.tagName === 'PICTURE') { var ss = par.getElementsByTagName('source'); for (var k = ss.length - 1; k >= 0; k--) ss[k].parentNode.removeChild(ss[k]); }
-        img.removeAttribute('srcset'); img.removeAttribute('sizes');
-        var bu = URL.createObjectURL(d.blob);
-        img.addEventListener('load', function () { try { URL.revokeObjectURL(bu); } catch (e) {} }, { once: true });
-        img.src = bu;
-        img.style.setProperty('background', 'transparent', 'important');
-      } catch (e) {}
+      try { applyMask(img, d.blob, d.natW || 0, d.natH || 0); } catch (e) {}
     }
   };
   st.worker.postMessage({ type: 'init', wasm: WASM_B64, params: PARAMS });
+
+  /* Apply the alpha mask to the ORIGINAL image (no src swap, so it stays full-resolution). CSS masks
+     don't follow object-fit, so size/position the mask to the displayed content rect ourselves.
+     natW/natH are the source's natural pixels; box is the element's laid-out size. */
+  function applyMask(img, blob, natW, natH) {
+    var boxW = img.clientWidth, boxH = img.clientHeight;
+    if (!boxW || !boxH) return;
+    var fit = '';
+    try { fit = getComputedStyle(img).objectFit || 'fill'; } catch (e) { fit = 'fill'; }
+    var size = '100% 100%', pos = '0 0';
+    if (fit !== 'fill' && natW > 0 && natH > 0) {
+      var natAspect = natW / natH, boxAspect = boxW / boxH, cw, ch;
+      if (fit === 'none' || (fit === 'scale-down' && natW <= boxW && natH <= boxH)) {
+        cw = natW; ch = natH;                                   /* natural size, centered */
+      } else if (fit === 'cover') {
+        if (natAspect > boxAspect) { ch = boxH; cw = boxH * natAspect; }
+        else { cw = boxW; ch = boxW / natAspect; }              /* fills box, cropped */
+      } else {                                                  /* contain / scale-down(large) */
+        if (natAspect > boxAspect) { cw = boxW; ch = boxW / natAspect; }
+        else { ch = boxH; cw = boxH * natAspect; }              /* fits inside box */
+      }
+      size = Math.round(cw) + 'px ' + Math.round(ch) + 'px';
+      pos = 'center';                                           /* default object-position */
+    }
+    var bu = URL.createObjectURL(blob);
+    /* mask-mode:alpha reads the PNG alpha (keyed background -> transparent -> dark page shows). */
+    var s = img.style;
+    s.setProperty('-webkit-mask-image', 'url(' + bu + ')', 'important');
+    s.setProperty('mask-image', 'url(' + bu + ')', 'important');
+    s.setProperty('-webkit-mask-size', size, 'important');
+    s.setProperty('mask-size', size, 'important');
+    s.setProperty('-webkit-mask-position', pos, 'important');
+    s.setProperty('mask-position', pos, 'important');
+    s.setProperty('-webkit-mask-repeat', 'no-repeat', 'important');
+    s.setProperty('mask-repeat', 'no-repeat', 'important');
+    s.setProperty('mask-mode', 'alpha', 'important');
+    img.__lumMaskUrl = bu;
+  }
 
   function send(job) { st.cbs[job.id] = job.img; st.worker.postMessage({ type: 'img', id: job.id, bitmap: job.bitmap }, [job.bitmap]); }
 

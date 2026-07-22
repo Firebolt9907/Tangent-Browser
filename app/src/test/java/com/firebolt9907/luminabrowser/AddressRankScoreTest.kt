@@ -2,7 +2,9 @@ package com.firebolt9907.luminabrowser
 
 import com.firebolt9907.luminabrowser.state.AddressSuggestion
 import com.firebolt9907.luminabrowser.state.AddressSuggestionKind
+import com.firebolt9907.luminabrowser.state.OpenTabRef
 import com.firebolt9907.luminabrowser.state.canonicalUrlKey
+import com.firebolt9907.luminabrowser.state.openTabSuggestions
 import com.firebolt9907.luminabrowser.state.rankScore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -65,5 +67,33 @@ class AddressRankScoreTest {
     @Test
     fun `canonical key keeps distinct paths separate`() {
         assertNotEquals(canonicalUrlKey("https://apple.com/mac"), canonicalUrlKey("https://apple.com/"))
+    }
+
+    @Test
+    fun `open tab match excludes the current tab and blank pages`() {
+        val tabs = listOf(
+            OpenTabRef("1", "https://apple.com/", "Apple"),
+            OpenTabRef("2", "https://github.com/", "GitHub"),
+            OpenTabRef("3", "about:blank", "New Tab"),
+        )
+        val matches = openTabSuggestions("apple", tabs, currentTabId = "2")
+        assertEquals(1, matches.size)
+        assertEquals("1", matches.first().tabId)
+        assertEquals(AddressSuggestionKind.Tab, matches.first().kind)
+    }
+
+    @Test
+    fun `open tab match is empty when the only hit is the current tab`() {
+        val tabs = listOf(OpenTabRef("1", "https://apple.com/", "Apple"))
+        assertTrue(openTabSuggestions("apple", tabs, currentTabId = "1").isEmpty())
+    }
+
+    @Test
+    fun `open tab match dedups the same page opened twice`() {
+        val tabs = listOf(
+            OpenTabRef("1", "https://apple.com/", "Apple"),
+            OpenTabRef("2", "http://www.apple.com", "Apple"),
+        )
+        assertEquals(1, openTabSuggestions("apple", tabs, currentTabId = null).size)
     }
 }

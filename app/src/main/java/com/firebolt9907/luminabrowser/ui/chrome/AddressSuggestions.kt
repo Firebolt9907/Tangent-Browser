@@ -59,6 +59,8 @@ import com.firebolt9907.luminabrowser.state.compactHost
 import com.firebolt9907.luminabrowser.state.hostOf
 import com.firebolt9907.luminabrowser.state.looksLikeUrlInput
 import com.firebolt9907.luminabrowser.state.normalizeUrl
+import com.firebolt9907.luminabrowser.state.OpenTabRef
+import com.firebolt9907.luminabrowser.state.openTabSuggestions
 import com.firebolt9907.luminabrowser.state.searchSuggestions
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -106,6 +108,11 @@ fun AddressSheet(
     onPreloadPage: (String) -> Unit = {},
     searchSuggestionsEnabled: Boolean = true,
     searchEngine: SearchEngine = SearchEngine.DEFAULT,
+    // Open tabs (excluding the current one) offered as switch-to-tab suggestions, plus the callback
+    // that switches to one. Empty list disables the feature.
+    openTabs: List<OpenTabRef> = emptyList(),
+    currentTabId: String? = null,
+    onSwitchToTab: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -196,8 +203,15 @@ fun AddressSheet(
         // URL suggestions are preloadable — a raw search query isn't a page.
         localMatches.firstOrNull()?.let { onPreloadPage(it.url) }
     }
+    // Switch-to-tab matches are computed synchronously from the in-memory open-tab list (no IO), so
+    // they can be derived inline rather than in the debounced fetch effect above.
+    val tabMatches = if (rowsActive) {
+        openTabSuggestions(trimmed, openTabs, currentTabId)
+    } else {
+        emptyList()
+    }
     val rows = if (rowsActive) {
-        buildSuggestionRows(localMatches, searchTerms, trimmed)
+        buildSuggestionRows(localMatches, searchTerms, trimmed, tabMatches)
     } else {
         emptyList()
     }
@@ -358,7 +372,14 @@ fun AddressSheet(
                             // The first row is the autoselected default (what Go/Enter commits), so
                             // it carries a highlight the way a browser omnibox marks its top result.
                             highlighted = index == 0,
-                            onClick = { onSubmit(suggestion.url) },
+                            onClick = {
+                                val tabId = suggestion.tabId
+                                if (suggestion.kind == AddressSuggestionKind.Tab && tabId != null) {
+                                    onSwitchToTab(tabId)
+                                } else {
+                                    onSubmit(suggestion.url)
+                                }
+                            },
                         )
                     }
                 }
@@ -387,9 +408,18 @@ private fun buildSuggestionRows(
     local: List<AddressSuggestion>,
     searchTerms: List<String>,
     typed: String,
+    tabMatches: List<AddressSuggestion> = emptyList(),
     max: Int = 8,
 ): List<AddressSuggestion> {
     val rows = LinkedHashMap<String, AddressSuggestion>()
+
+    // Switch-to-tab rows come first: an already-open tab is a stronger destination than a stale
+    // history visit or a fresh navigation, so it becomes the autoselected default. Keyed by the same
+    // canonical URL key as the URL rows below, so a history/synthesised row for the same page is
+    // suppressed (we'd rather switch than open a duplicate).
+    for (t in tabMatches) {
+        rows["u:" + canonicalUrlKey(t.url)] = t
+    }
 
     // When the typed text is itself a navigable domain (e.g. "apple.com"), guarantee a direct
     // "go to that site" row as the autoselected default — before any history rows. This fixes the
@@ -405,8 +435,9 @@ private fun buildSuggestionRows(
             hostOf(s.url)?.removePrefix("www.") == directHost &&
                 URIPath(s.url).let { it.isEmpty() || it == "/" }
         }
-        if (directHost != null && !alreadyRooted) {
-            rows["u:" + canonicalUrlKey(direct)] = AddressSuggestion(
+        val directKey = "u:" + canonicalUrlKey(direct)
+        if (directHost != null && !alreadyRooted && !rows.containsKey(directKey)) {
+            rows[directKey] = AddressSuggestion(
                 title = compactHost(direct),
                 url = direct,
                 kind = AddressSuggestionKind.History,
@@ -519,9 +550,19 @@ private fun SuggestionRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = suggestion.url,
+                    // A switch-to-tab row labels itself so the arrow reads as "go to that tab", not
+                    // "open this URL" — otherwise it's indistinguishable from a history hit.
+                    text = if (suggestion.kind == AddressSuggestionKind.Tab) {
+                        "Switch to open tab"
+                    } else {
+                        suggestion.url
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (suggestion.kind == AddressSuggestionKind.Tab) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

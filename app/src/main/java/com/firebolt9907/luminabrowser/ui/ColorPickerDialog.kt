@@ -21,13 +21,17 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
@@ -45,9 +49,9 @@ fun ColorPickerDialog(
     onDismiss: () -> Unit,
 ) {
     val start = remember(initialColor) { parseHexColor(initialColor) }
-    var red by remember { mutableStateOf(start.first.toFloat()) }
-    var green by remember { mutableStateOf(start.second.toFloat()) }
-    var blue by remember { mutableStateOf(start.third.toFloat()) }
+    var red by remember { mutableFloatStateOf(start.first.toFloat()) }
+    var green by remember { mutableFloatStateOf(start.second.toFloat()) }
+    var blue by remember { mutableFloatStateOf(start.third.toFloat()) }
 
     val current = Color(red.roundToInt(), green.roundToInt(), blue.roundToInt())
     val hex = "#%02x%02x%02x".format(red.roundToInt(), green.roundToInt(), blue.roundToInt())
@@ -78,15 +82,21 @@ fun ColorPickerDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Swatches.forEach { (r, g, b) ->
+                    Swatches.forEach { swatch ->
                         Box(
                             Modifier
                                 .size(28.dp)
                                 .clip(CircleShape)
-                                .background(Color(r, g, b))
+                                .background(Color(swatch.r, swatch.g, swatch.b))
                                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                                .semantics {
+                                    contentDescription = swatch.name
+                                    role = Role.Button
+                                }
                                 .clickable {
-                                    red = r.toFloat(); green = g.toFloat(); blue = b.toFloat()
+                                    red = swatch.r.toFloat()
+                                    green = swatch.g.toFloat()
+                                    blue = swatch.b.toFloat()
                                 },
                         )
                     }
@@ -119,9 +129,16 @@ private fun ColorSlider(label: String, value: Float, tint: Color, onChange: (Flo
     }
 }
 
+/** A named preset colour for the quick-swatch row (the name is the swatch's accessibility label). */
+private data class Swatch(val name: String, val r: Int, val g: Int, val b: Int)
+
 private val Swatches = listOf(
-    Triple(0, 0, 0), Triple(255, 255, 255), Triple(229, 57, 53),
-    Triple(67, 160, 71), Triple(30, 136, 229), Triple(253, 216, 53),
+    Swatch("Black", 0, 0, 0),
+    Swatch("White", 255, 255, 255),
+    Swatch("Red", 229, 57, 53),
+    Swatch("Green", 67, 160, 71),
+    Swatch("Blue", 30, 136, 229),
+    Swatch("Yellow", 253, 216, 53),
 )
 
 /** Parse a `#rrggbb` (or `#rgb`) string into an (r, g, b) triple, defaulting to black on garbage. */

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -394,7 +395,11 @@ private fun TimeLabel(millis: Long) {
         color = Color.White,
         fontSize = 12.sp,
         textAlign = TextAlign.Center,
-        modifier = Modifier.width(44.dp),
+        maxLines = 1,
+        softWrap = false,
+        // Min-width keeps M:SS labels a stable width (no jitter as the clock ticks) while letting
+        // hour-long H:MM:SS timestamps ("1:23:45") grow instead of clipping/wrapping.
+        modifier = Modifier.widthIn(min = 44.dp),
     )
 }
 

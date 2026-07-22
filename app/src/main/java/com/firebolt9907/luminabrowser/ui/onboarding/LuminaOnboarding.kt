@@ -2,6 +2,7 @@ package com.firebolt9907.luminabrowser.ui.onboarding
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
@@ -231,8 +232,11 @@ private fun OnboardingHero(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        // Seed the transition state false→true so the enter animation actually plays on first
+        // appearance (a constant `visible = true` never animates the initial composition).
+        val heroVisible = remember { MutableTransitionState(false).apply { targetState = true } }
         AnimatedVisibility(
-            visible = true,
+            visibleState = heroVisible,
             enter = fadeIn() + scaleIn(initialScale = 0.8f),
         ) {
             Surface(

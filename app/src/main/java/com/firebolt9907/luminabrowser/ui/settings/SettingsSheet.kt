@@ -639,17 +639,13 @@ fun SettingsSheet(
         SheetSectionHeader("Site permissions")
         Spacer(Modifier.height(8.dp))
         SheetCard {
+            var showClearPermsConfirm by remember { mutableStateOf(false) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
-                        haptics.remove()
-                        onClearSitePermissions()
-                        Toast.makeText(
-                            context,
-                            "Cleared remembered site permissions",
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                        haptics.select()
+                        showClearPermsConfirm = true
                     }
                     .padding(vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -664,6 +660,38 @@ fun SettingsSheet(
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(14.dp),
+                )
+            }
+            // Destructive + not undoable — confirm first, like the Clear-browsing-data row above.
+            if (showClearPermsConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showClearPermsConfirm = false },
+                    title = { Text("Clear site permissions?") },
+                    text = {
+                        Text(
+                            "Forget every site's remembered choices for camera, microphone, location, " +
+                                "notifications and the like? Sites will ask again next time.",
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showClearPermsConfirm = false
+                            haptics.remove()
+                            onClearSitePermissions()
+                            Toast.makeText(
+                                context,
+                                "Cleared remembered site permissions",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }) {
+                            Text("Clear", color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showClearPermsConfirm = false }) {
+                            Text("Cancel")
+                        }
+                    },
                 )
             }
         }

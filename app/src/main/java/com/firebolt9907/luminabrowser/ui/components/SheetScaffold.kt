@@ -12,6 +12,7 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.ui.graphics.Color
 import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -23,6 +24,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -118,7 +121,9 @@ fun SheetHeader(
 
 /**
  * The in-sheet search box (Bookmarks, History, Passwords). Autocorrect and auto-capitalization are
- * off — these are filter queries, not prose — and a clear button appears once there's input.
+ * off — these are filter queries, not prose — and a clear button appears once there's input. The
+ * keyboard shows a "Search" action that just dismisses the keyboard (filtering is live as you type),
+ * so the user can reveal the results the keyboard was covering.
  */
 @Composable
 fun SheetSearchField(
@@ -127,6 +132,7 @@ fun SheetSearchField(
     placeholder: String,
     modifier: Modifier = Modifier,
 ) {
+    val focusManager = LocalFocusManager.current
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
@@ -146,7 +152,9 @@ fun SheetSearchField(
         keyboardOptions = KeyboardOptions(
             autoCorrectEnabled = false,
             capitalization = KeyboardCapitalization.None,
+            imeAction = ImeAction.Search,
         ),
+        keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
     )
 }
 

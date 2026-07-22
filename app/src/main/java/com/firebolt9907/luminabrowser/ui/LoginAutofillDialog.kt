@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -144,6 +145,7 @@ private fun LetterTile(label: String) {
     val letter = label.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?"
     val hue = (abs(label.hashCode()) % 360).toFloat()
     val tile = Color.hsl(hue, 0.45f, 0.55f)
+    val onTile = if (tile.luminance() > 0.5f) Color.Black else Color.White
     Box(
         modifier = Modifier
             .size(40.dp)
@@ -153,7 +155,7 @@ private fun LetterTile(label: String) {
     ) {
         Text(
             text = letter,
-            color = Color.White,
+            color = onTile,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
         )

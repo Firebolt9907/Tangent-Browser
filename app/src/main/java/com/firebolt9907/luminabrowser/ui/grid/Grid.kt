@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -1207,7 +1208,7 @@ private fun FaviconTile(icon: ImageBitmap?, host: String, size: Dp) {
         ) {
             Text(
                 text = initial,
-                color = Color.White,
+                color = if (tileColor.luminance() > 0.5f) Color.Black else Color.White,
                 fontSize = (size.value * 0.52f).sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,

@@ -166,11 +166,28 @@ object WebDarkMode {
                 if(l<0)return false;
                 return l<128;
               }
+              function isMediaDoc(){
+                /* A directly-viewed image/video/audio/PDF is a browser-generated document wrapping a
+                   single media element. Inverting it turns a photo into a negative (and a PDF into a
+                   wrongly-lit scan), so the filter must never touch these — the page IS the content,
+                   not chrome around it. Detected by the document's own content type, with a structural
+                   fallback for the lone-media-child wrapper Gecko builds. */
+                try{
+                  var ct=document.contentType||'';
+                  if(/^(image|video|audio)\//.test(ct)||ct==='application/pdf')return true;
+                  var b=document.body;
+                  if(b&&b.children&&b.children.length===1){
+                    var t=b.children[0].tagName;
+                    if(t==='IMG'||t==='VIDEO'||t==='AUDIO')return true;
+                  }
+                }catch(e){}
+                return false;
+              }
               function apply(){
                 ensureStyle();
                 var root=document.documentElement;
                 if(!root)return;
-                if(pageIsDark()){root.classList.remove(CLS);}
+                if(pageIsDark()||isMediaDoc()){root.classList.remove(CLS);}
                 else{
                   root.classList.add(CLS);
                   /* Only pay the background-image scan on pages actually getting the filter. */

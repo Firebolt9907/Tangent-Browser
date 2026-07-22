@@ -45,6 +45,14 @@ class WebDarkModeScriptTest {
     }
 
     @Test
+    fun `apply never inverts a directly-viewed image, video, or pdf document`() {
+        val s = WebDarkMode.buildApplyScript()
+        assertTrue("media-document guard present", s.contains("isMediaDoc"))
+        assertTrue("checks the document content type", s.contains("document.contentType"))
+        assertTrue("excludes pdf", s.contains("application/pdf"))
+    }
+
+    @Test
     fun `apply only darkens pages that stay light under the native override`() {
         val s = WebDarkMode.buildApplyScript()
         // The luminance gate is what lets Tier 1 (native dark themes) win with zero filter cost.

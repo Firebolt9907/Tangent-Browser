@@ -92,6 +92,7 @@ fun SettingsSheet(
     var creditCardAutofillEnabled by remember { mutableStateOf(globalPrefsStore.creditCardAutofillEnabled) }
     var addressAutofillEnabled by remember { mutableStateOf(globalPrefsStore.addressAutofillEnabled) }
     var formFieldMemoryEnabled by remember { mutableStateOf(globalPrefsStore.formFieldMemoryEnabled) }
+    var autoOpenAppLinks by remember { mutableStateOf(globalPrefsStore.autoOpenAppLinks) }
     var webFontsEnabled by remember { mutableStateOf(globalPrefsStore.webFontsEnabled) }
     var domStorageEnabled by remember { mutableStateOf(globalPrefsStore.domStorageEnabled) }
     var suspendMediaWhenInactive by remember { mutableStateOf(globalPrefsStore.suspendMediaWhenInactive) }
@@ -115,6 +116,7 @@ fun SettingsSheet(
     var showBottomToolbar by remember { mutableStateOf(globalPrefsStore.showBottomToolbar) }
     var matchSiteThemeColor by remember { mutableStateOf(globalPrefsStore.matchSiteThemeColor) }
     var tintPagesToSystemColor by remember { mutableStateOf(globalPrefsStore.tintPagesToSystemColor) }
+    var webDarkModeEnabled by remember { mutableStateOf(globalPrefsStore.webDarkModeEnabled) }
     var handoffEnabled by remember { mutableStateOf(globalPrefsStore.handoffEnabled) }
     var wideBarLayout by remember {
         mutableStateOf(WideBarLayout.fromName(globalPrefsStore.wideBarLayoutName))
@@ -350,6 +352,17 @@ fun SettingsSheet(
                     onSettingChanged()
                 },
             )
+            SheetRowDivider()
+            SettingsToggle(
+                title = "Open links in apps automatically",
+                subtitle = "When a site opens an installed app, launch it instead of showing a banner",
+                checked = autoOpenAppLinks,
+                onCheckedChange = {
+                    autoOpenAppLinks = it
+                    globalPrefsStore.autoOpenAppLinks = it
+                    onSettingChanged()
+                },
+            )
         }
 
         Spacer(Modifier.height(20.dp))
@@ -433,6 +446,17 @@ fun SettingsSheet(
                 onCheckedChange = {
                     tintPagesToSystemColor = it
                     globalPrefsStore.tintPagesToSystemColor = it
+                    onSettingChanged()
+                },
+            )
+            SheetRowDivider()
+            SettingsToggle(
+                title = "Dark mode for every website",
+                subtitle = "Use each site's dark theme when it has one, and darken the rest — fast, unlike heavy page recolorers",
+                checked = webDarkModeEnabled,
+                onCheckedChange = {
+                    webDarkModeEnabled = it
+                    globalPrefsStore.webDarkModeEnabled = it
                     onSettingChanged()
                 },
             )
@@ -791,6 +815,9 @@ private fun AdvancedSettingsPage(
     httpCacheSizeMb: Int,
     onHttpCacheSizeMbChange: (Int) -> Unit,
 ) {
+    // Read/written directly against the store (not hoisted through SettingsSheet) — this toggle
+    // has no engine-side effect, it only gates whether "Listen to Page" appears in the aA sheet.
+    var listenToPageEnabled by remember { mutableStateOf(globalPrefsStore.listenToPageEnabled) }
     SheetHeader(
         title = "Advanced",
         leadingIcon = {
@@ -999,6 +1026,17 @@ private fun AdvancedSettingsPage(
             onCheckedChange = {
                 onAutomaticLanguageAdjustmentChange(it)
                 globalPrefsStore.automaticLanguageAdjustment = it
+                onSettingChanged()
+            },
+        )
+        SheetRowDivider()
+        SettingsToggle(
+            title = "Read aloud",
+            subtitle = "Always show \"Listen to Page\" in the page menu. Otherwise it appears only while Reader is on.",
+            checked = listenToPageEnabled,
+            onCheckedChange = {
+                listenToPageEnabled = it
+                globalPrefsStore.listenToPageEnabled = it
                 onSettingChanged()
             },
         )

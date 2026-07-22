@@ -98,12 +98,31 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("tintPagesToSystemColor", false)
         set(value) { prefs.edit { putBoolean("tintPagesToSystemColor", value) } }
 
+    // "Dark mode for every website" — a high-performance two-tier dark mode (see
+    // ui/content/WebDarkMode.kt). Tier 1 flips the native `prefers-color-scheme: dark` media query
+    // for all content (engine.settings.preferredColorScheme, applied in Engine.applyEngineSettings)
+    // so sites with a real dark theme render it for free; Tier 2 injects a GPU-composited
+    // filter-invert only on pages that stay light. Off by default; toggled in the aA sheet /
+    // Settings → Appearance. Far cheaper than a DarkReader-style per-element dynamic recolor.
+    var webDarkModeEnabled: Boolean
+        get() = prefs.getBoolean("webDarkModeEnabled", false)
+        set(value) { prefs.edit { putBoolean("webDarkModeEnabled", value) } }
+
     // When off, the "Continue from <device>" handoff banner (a tab recently active on another
     // Firefox Sync device) is never surfaced. Read by FirefoxSyncController when picking a handoff
     // candidate. On by default. Does not affect received "Send tab" pushes or synced-tab lists.
     var handoffEnabled: Boolean
         get() = prefs.getBoolean("handoffEnabled", true)
         set(value) { prefs.edit { putBoolean("handoffEnabled", value) } }
+
+    // When on, a website's request to open a native app (an `intent://` or custom-scheme deep link,
+    // surfaced by LuminaRequestInterceptor.onLoadRequest → onLaunchIntentRequest) launches the app
+    // immediately instead of surfacing the "Open in <app>" banner. Off by default so app hand-offs
+    // stay user-initiated. Only affects site-*requested* intents — never the passive "this site has
+    // an app" suggestion banner, which is always a tap, never automatic.
+    var autoOpenAppLinks: Boolean
+        get() = prefs.getBoolean("autoOpenAppLinks", false)
+        set(value) { prefs.edit { putBoolean("autoOpenAppLinks", value) } }
 
     var onboardingComplete: Boolean
         get() = prefs.getBoolean("onboardingComplete", false)
@@ -256,6 +275,13 @@ class GlobalPreferencesStore(context: Context) {
     var formFieldMemoryEnabled: Boolean
         get() = prefs.getBoolean("formFieldMemoryEnabled", true)
         set(value) { prefs.edit { putBoolean("formFieldMemoryEnabled", value) } }
+
+    // When true, "Listen to Page" (read-aloud TTS) is always offered in the aA sheet for any
+    // readable page. When false (default) it only appears while Reader mode is active — so the
+    // control isn't surfaced to users who never asked for read-aloud. See AaSheet.
+    var listenToPageEnabled: Boolean
+        get() = prefs.getBoolean("listenToPageEnabled", false)
+        set(value) { prefs.edit { putBoolean("listenToPageEnabled", value) } }
 
     var webFontsEnabled: Boolean
         get() = prefs.getBoolean("webFontsEnabled", true)

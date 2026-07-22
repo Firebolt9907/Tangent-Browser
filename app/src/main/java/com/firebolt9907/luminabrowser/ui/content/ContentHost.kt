@@ -95,6 +95,10 @@ fun ContentHost(
     // When non-null, the "Tint pages to my system color" boost overlays this color on every page
     // (mix-blend-mode: color). Null disables/removes the boost. See SiteTint.kt.
     siteTintColor: androidx.compose.ui.graphics.Color? = null,
+    // When true, the high-performance web dark mode's Tier-2 filter-invert fallback is injected on
+    // pages that stay light under the native prefers-color-scheme override. Tier 1 (the native
+    // override itself) is an engine setting applied in Engine.applyEngineSettings. See WebDarkMode.kt.
+    webDarkModeEnabled: Boolean = false,
     pageZoomFactor: Float = 1.0f,
     // Live scroll-collapse progress (0 = pill expanded, 1 = compact), as a lambda so the per-frame
     // spring updates drive the engine's vertical clipping via snapshotFlow without recomposing
@@ -452,6 +456,11 @@ fun ContentHost(
                 if (siteTintColor != null) {
                     engineSession.injectSiteTint(siteTintColor)
                 }
+                // Re-apply the web-dark-mode Tier-2 fallback on every load (fresh DOM). The
+                // LaunchedEffect below covers the already-loaded page and tab swaps.
+                if (webDarkModeEnabled) {
+                    with(WebDarkMode) { engineSession.injectWebDarkMode() }
+                }
             }
             fun injectAmoInstaller(url: String, force: Boolean = false) {
                 if (addonController == null || !url.isAmoPageUrl()) return
@@ -669,6 +678,34 @@ fun ContentHost(
                     installAddonRequest(url)
                 }
 
+                override fun onLaunchIntentRequest(
+                    url: String,
+                    appIntent: android.content.Intent?,
+                    appName: String?,
+                    fallbackUrl: String?,
+                ) {
+                    // The page tried to open a native app (intent:// or custom scheme). Gecko already
+                    // denied the load (we returned AppIntent from the interceptor); relay it so
+                    // LuminaRoot can auto-open or offer the "Open in <app>" banner. Foreground-scoped:
+                    // this observer is only registered on the visible tab's session.
+                    if (appIntent != null) {
+                        // Resolve the target package so the banner can show the real app icon (the
+                        // intent's component was intentionally stripped by the interceptor for safety).
+                        val pkg = runCatching {
+                            context.packageManager.resolveActivity(appIntent, 0)
+                                ?.activityInfo?.packageName
+                        }.getOrNull()
+                        AppLaunchRequests.offer(
+                            tabId = tabId,
+                            url = url,
+                            intent = appIntent,
+                            appName = appName,
+                            packageName = pkg,
+                            fallbackUrl = fallbackUrl,
+                        )
+                    }
+                }
+
                 override fun onWindowRequest(windowRequest: WindowRequest) {
                     when (windowRequest.type) {
                         WindowRequest.Type.OPEN -> onOpenWindowRequest(windowRequest)
@@ -708,6 +745,18 @@ fun ContentHost(
         if (engineSession == null) return@LaunchedEffect
         if (siteTintColor != null) engineSession.injectSiteTint(siteTintColor)
         else engineSession.removeSiteTint()
+    }
+
+    // Web dark mode Tier-2 fallback: apply to the current page immediately when toggled on / tab
+    // changes, and remove it when toggled off. Per-load re-application (new DOM) is handled in
+    // injectSpacer above. Mirrors the system-color boost effect. Tier 1 (the native
+    // prefers-color-scheme override) is an engine-wide setting and needs no per-tab injection.
+    LaunchedEffect(engineSession, webDarkModeEnabled, tabId) {
+        if (engineSession == null) return@LaunchedEffect
+        with(WebDarkMode) {
+            if (webDarkModeEnabled) engineSession.injectWebDarkMode()
+            else engineSession.removeWebDarkMode()
+        }
     }
 
     // When a web-content keyboard is showing, shrink the EngineView so its bottom edge sits at the

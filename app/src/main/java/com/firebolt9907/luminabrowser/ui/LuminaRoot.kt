@@ -93,6 +93,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateSetOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -125,6 +127,7 @@ import com.firebolt9907.luminabrowser.state.LuminaViewModel
 import com.firebolt9907.luminabrowser.state.SitePreferences
 import com.firebolt9907.luminabrowser.state.addressBarLabel
 import com.firebolt9907.luminabrowser.state.hostFromUrl
+import com.firebolt9907.luminabrowser.ui.archive.siteHostFromUrl
 import com.firebolt9907.luminabrowser.ui.chrome.AddressSheet
 import com.firebolt9907.luminabrowser.ui.chrome.FindInPageBar
 import com.firebolt9907.luminabrowser.ui.chrome.SafariBar
@@ -161,10 +164,12 @@ import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineView
 import mozilla.components.concept.engine.window.WindowRequest
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sign
@@ -218,6 +223,10 @@ fun LuminaRoot(
     var matchSiteThemeColor by remember { mutableStateOf(components.globalPreferencesStore.matchSiteThemeColor) }
     // When on, web page content is tinted toward the system accent color (Arc-boost style). Persisted.
     var tintPagesToSystemColor by remember { mutableStateOf(components.globalPreferencesStore.tintPagesToSystemColor) }
+    // When on, the high-performance "dark mode for every website" is active (native
+    // prefers-color-scheme override + filter-invert fallback). Persisted; toggled in the aA sheet /
+    // Settings → Appearance. See WebDarkMode.kt.
+    var webDarkModeEnabled by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeEnabled) }
     // When on, a search-results page shows the typed query in the bar instead of the engine's host.
     // Persisted; toggled in Settings. Paired with the current search engine for label resolution.
     var showSearchTermsInBar by remember { mutableStateOf(components.globalPreferencesStore.showSearchTermsInBar) }
@@ -257,6 +266,85 @@ fun LuminaRoot(
     val actualSelectedTab = browserState.tabs.firstOrNull { it.id == actualSelectedTabId }
     val selectedEngineSession = actualSelectedTab?.engineState?.engineSession
     val selectedContent = selectedTab?.content
+
+    // ---- "Open in app" persistent banner ---------------------------------------------------------
+    // A persistent banner like the Internet Archive scrubber: it sits at the BASE of the Now-Bar
+    // stack (temporary banners pile in front of it) and reserves viewport space so the page scrolls
+    // under it. Its state is hoisted here — before ContentHost — so the dvh inset is known at bind
+    // time (mirrors the archive bar). Two triggers, one card:
+    //  - requested: a page tried to open a native app (intent:// / custom scheme), caught by
+    //    LuminaRequestInterceptor and relayed via AppLaunchRequests.
+    //  - passive: the current site simply HAS an associated app (nativeAppFor).
+    // A requested launch takes priority and, when the `autoOpenAppLinks` pref is on, auto-opens.
+    val requestedLaunch by com.firebolt9907.luminabrowser.ui.content.AppLaunchRequests.pending
+        .collectAsStateWithLifecycle()
+    val associatedApp by produceState<com.firebolt9907.luminabrowser.ui.chrome.NativeApp?>(
+        initialValue = null,
+        selectedContent?.url,
+    ) {
+        val url = selectedContent?.url
+        value = if (url.isNullOrBlank()) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                com.firebolt9907.luminabrowser.ui.chrome.nativeAppFor(appContext.packageManager, url)
+            }
+        }
+    }
+    // Hosts the user explicitly dismissed (X / swipe) the passive suggestion for — don't nag again
+    // this session. Tapping "Open" does NOT land here (see openInAppActedKey).
+    val dismissedAppHosts = remember { mutableStateSetOf<String>() }
+    // Persistent per-host engagement stats + blacklist. After enough dismissals at a high rejection
+    // rate for one host, we pop the "add to blacklist?" dialog (openInAppBlacklistPrompt). Blacklisted
+    // hosts never show the passive suggestion again. Mirror the persisted set into snapshot state so
+    // the gate below recomposes when a host is added.
+    val appLinkStats = remember { com.firebolt9907.luminabrowser.state.AppLinkBannerStats(appContext) }
+    val blacklistedAppHosts = remember {
+        mutableStateSetOf<String>().apply { addAll(appLinkStats.blacklist()) }
+    }
+    // host → appName for the pending "add to blacklist?" dialog; null when not shown.
+    var openInAppBlacklistPrompt by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // Transient hide after tapping "Open": suppresses the banner for the exact page acted on, but a
+    // new tab or a fresh navigation to the site brings it back (unlike dismissedAppHosts).
+    var openInAppActedKey by remember { mutableStateOf<String?>(null) }
+    // A pending offer targets the previously-visible tab; drop it when the tab changes.
+    LaunchedEffect(selectedTabId) {
+        com.firebolt9907.luminabrowser.ui.content.AppLaunchRequests.clear()
+    }
+    // Auto-open (pref): launch the requested app immediately, skipping the banner.
+    LaunchedEffect(requestedLaunch) {
+        val req = requestedLaunch ?: return@LaunchedEffect
+        if (components.globalPreferencesStore.autoOpenAppLinks) {
+            launchExternalApp(appContext, req.intent, req.fallbackUrl) { fb ->
+                req.tabId?.let { components.tabRepository.loadUrl(fb, it) }
+            }
+            com.firebolt9907.luminabrowser.ui.content.AppLaunchRequests.clear()
+        }
+    }
+    // Normalized the same way the stats/blacklist store keys hosts, so the gate below and the
+    // persisted blacklist compare apples to apples.
+    val openInAppPassiveHost = associatedApp?.let {
+        appLinkStats.normalizeHost(siteHostFromUrl(selectedContent?.url.orEmpty()))
+    }
+    // Identity of the exact page a passive suggestion is about, so tapping "Open" hides only this
+    // page's banner (not the whole host).
+    val openInAppPassiveKey = "${selectedTabId}|${selectedContent?.url}"
+    val openInAppShowPassive = requestedLaunch == null && associatedApp != null &&
+        openInAppPassiveHost != null && openInAppPassiveHost !in dismissedAppHosts &&
+        openInAppPassiveHost !in blacklistedAppHosts &&
+        openInAppPassiveKey != openInAppActedKey
+    val openInAppRequested = requestedLaunch != null
+    val openInAppActive = openInAppRequested || openInAppShowPassive
+    val openInAppName = when {
+        openInAppRequested -> requestedLaunch?.appName?.takeIf { it.isNotBlank() } ?: "app"
+        openInAppShowPassive -> associatedApp?.label
+        else -> null
+    }
+    val openInAppPackage = if (openInAppRequested) {
+        requestedLaunch?.packageName
+    } else {
+        associatedApp?.packageName
+    }
 
     // Link "glance" (Safari/Arc-style): a long-press on a link populates the tab's hitResult; we
     // capture the target URL, consume the hitResult (so the same link can be pressed again), and
@@ -606,7 +694,6 @@ fun LuminaRoot(
     var showSettings by remember { mutableStateOf(false) }
     var showOnboarding by remember { mutableStateOf(false) }
     var showAa by remember { mutableStateOf(false) }
-    var aaInitialTab by remember { mutableIntStateOf(0) }
     // Whether the selected tab is on the tracking-protection exception list (drives the aA sheet's
     // per-site "Block trackers" toggle). Queried asynchronously each time the sheet opens.
     var siteTrackingProtectionDisabled by remember { mutableStateOf(false) }
@@ -705,7 +792,7 @@ fun LuminaRoot(
                 // hubs) — they stay eligible for a manual toggle but shouldn't hijack the view.
                 val substantial = readerManager.getArticle(tabId)?.hasSubstantialBody == true
                 val url = browserState.tabs.firstOrNull { it.id == tabId }?.content?.url.orEmpty()
-                val host = hostFromUrl(url)
+                val host = siteHostFromUrl(url)
                 if (substantial && host.isNotEmpty() && !components.sitePreferencesStore.isReaderAutoDisabled(host)) {
                     readerManager.setReaderActive(tabId, true)
                 }
@@ -1049,7 +1136,7 @@ fun LuminaRoot(
         !gridEngaged
 
     val currentUrl = selectedContent?.url
-    val currentHost = remember(currentUrl) { hostFromUrl(currentUrl.orEmpty()) }
+    val currentHost = remember(currentUrl) { siteHostFromUrl(currentUrl.orEmpty()) }
     val sitePrefsStore = components.sitePreferencesStore
     val currentSitePrefs: SitePreferences = remember(currentHost, sitePrefsVersion) {
         sitePrefsStore.get(currentHost)
@@ -1068,7 +1155,7 @@ fun LuminaRoot(
     val topChromeInsetDp = with(density) { topChromeInsetPx.toDp() }
     fun topPadDpFor(url: String?): androidx.compose.ui.unit.Dp {
         @Suppress("UNUSED_EXPRESSION") sitePrefsVersion
-        val host = hostFromUrl(url.orEmpty())
+        val host = siteHostFromUrl(url.orEmpty())
         if (host.isEmpty()) return 0.dp
         return if (sitePrefsStore.get(host).topPaddingFix) topChromeInsetDp else 0.dp
     }
@@ -1079,7 +1166,7 @@ fun LuminaRoot(
     val themeColorsByHost = remember { mutableStateMapOf<String, Color>() }
     DisposableEffect(Unit) {
         ThemeColorProbe.listener = { _, url, colorInt ->
-            val host = hostFromUrl(url)
+            val host = siteHostFromUrl(url)
             if (host.isNotEmpty()) {
                 // The probe fires on Gecko's thread; marshal the state write back to main.
                 scope.launch {
@@ -1182,7 +1269,7 @@ fun LuminaRoot(
     val gridThemeColorProvider: (String) -> Color? = remember {
         { tabId ->
             val url = components.store.state.tabs.firstOrNull { it.id == tabId }?.content?.url
-            val host = hostFromUrl(url.orEmpty())
+            val host = siteHostFromUrl(url.orEmpty())
             if (host.isEmpty()) null else themeColorsByHost[host]
         }
     }
@@ -2375,9 +2462,14 @@ fun LuminaRoot(
                 // is known at bind time; the archive bar itself reads its own session lower down.
                 val archiveSessionsForInset by com.firebolt9907.luminabrowser.ui.archive
                     .WaybackManager.instance.sessions.collectAsStateWithLifecycle()
-                val persistentBannerInsetPx = if (
+                val archiveInsetPx = if (
                     selectedTabId != null && archiveSessionsForInset[selectedTabId] != null
                 ) with(density) { 72.dp.roundToPx() } else 0
+                // The "Open in app" banner is persistent too: reserve the same footprint while it's
+                // active so page content scrolls under it (summed with the archive scrubber's on the
+                // rare chance both show at once).
+                val openInAppInsetPx = if (openInAppActive) with(density) { 72.dp.roundToPx() } else 0
+                val persistentBannerInsetPx = archiveInsetPx + openInAppInsetPx
                 ContentHost(
                     engine = components.engine,
                     engineSession = selectedEngineSession,
@@ -2534,6 +2626,7 @@ fun LuminaRoot(
                     topPaddingFixActive = currentSitePrefs.topPaddingFix,
                     themeColorSamplingEnabled = matchSiteThemeColor,
                     siteTintColor = siteTintColor,
+                    webDarkModeEnabled = webDarkModeEnabled,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
                     barCollapseProgress = barCollapseProgressProvider,
                     tabIsLoading = actualSelectedContent?.loading == true,
@@ -2772,7 +2865,7 @@ fun LuminaRoot(
                     // hot-path mapIndexed below does not call sitePrefsStore.get() per tab per frame.
                     val tabPadPxMap = remember(sitePrefsVersion, tabsList) {
                         tabsList.associate { tab ->
-                            val host = hostFromUrl(tab.content.url)
+                            val host = siteHostFromUrl(tab.content.url)
                             val padDp = if (host.isNotEmpty() && sitePrefsStore.get(host).topPaddingFix) {
                                 topChromeInsetDp
                             } else {
@@ -3202,11 +3295,11 @@ fun LuminaRoot(
                             }
                         },
                         canGoForward = selectedContent?.canGoForward == true,
-                        onAaTap = { aaInitialTab = 0; showAa = true },
+                        onAaTap = { showAa = true },
                         onAaLongPress = {
                             selectedTabId?.let { tabId ->
                                 val currentUrl = selectedContent?.url.orEmpty()
-                                val readerHost = hostFromUrl(currentUrl)
+                                val readerHost = siteHostFromUrl(currentUrl)
                                 val turnedOn = readerManager.toggleReader(tabId, currentUrl, selectedEngineSession)
                                 components.sitePreferencesStore.setReaderPreferred(readerHost, turnedOn)
                                 components.sitePreferencesStore.setReaderAutoDisabled(readerHost, !turnedOn)
@@ -3406,6 +3499,53 @@ fun LuminaRoot(
                         onDismiss = { components.firefoxSyncController.dismissReceivedTab() },
                     )
 
+                    // "Open in app" persistent banner — a base-of-stack card (temporary banners pile
+                    // in front) that reserves viewport space. All state is hoisted to the top of the
+                    // composable (so the dvh inset is reserved before ContentHost binds); this only
+                    // renders it.
+                    com.firebolt9907.luminabrowser.ui.OpenInAppBannerHost(
+                        appName = openInAppName,
+                        packageName = openInAppPackage,
+                        requested = openInAppRequested,
+                        visible = openInAppActive,
+                        bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
+                        collapseProgress = barCollapseProgressProvider,
+                        stack = bannerStack,
+                        onOpen = {
+                            val req = requestedLaunch
+                            if (req != null) {
+                                launchExternalApp(appContext, req.intent, req.fallbackUrl) { fb ->
+                                    req.tabId?.let { components.tabRepository.loadUrl(fb, it) }
+                                }
+                                com.firebolt9907.luminabrowser.ui.content.AppLaunchRequests.clear()
+                            } else {
+                                val app = associatedApp
+                                val url = selectedContent?.url
+                                if (app != null && !url.isNullOrBlank()) {
+                                    launchAssociatedApp(appContext, url, app.packageName)
+                                }
+                                openInAppPassiveHost?.let { appLinkStats.recordOpen(it) }
+                                // Hide for THIS page only; a new tab / navigation re-offers it.
+                                openInAppActedKey = openInAppPassiveKey
+                            }
+                        },
+                        onDismiss = {
+                            if (requestedLaunch != null) {
+                                com.firebolt9907.luminabrowser.ui.content.AppLaunchRequests.clear()
+                            } else {
+                                openInAppPassiveHost?.let { host ->
+                                    dismissedAppHosts.add(host)
+                                    // Track the rejection; if this host has crossed the dismissal
+                                    // count + rate thresholds, offer to blacklist it (once).
+                                    if (appLinkStats.recordDismiss(host)) {
+                                        openInAppBlacklistPrompt = host to (associatedApp?.label ?: "the app")
+                                    }
+                                }
+                            }
+                        },
+                    )
+
                 } else if (isVideoFullscreen && !isInPipMode) {
                     com.firebolt9907.luminabrowser.ui.video.VideoFullscreenOverlay(
                         engineSession = selectedEngineSession,
@@ -3455,6 +3595,7 @@ fun LuminaRoot(
                 barSearchEngine = components.globalPreferencesStore.searchEngine
                 matchSiteThemeColor = components.globalPreferencesStore.matchSiteThemeColor
                 tintPagesToSystemColor = components.globalPreferencesStore.tintPagesToSystemColor
+                webDarkModeEnabled = components.globalPreferencesStore.webDarkModeEnabled
                 viewModel.refreshDisplayPrefs()
             },
             onReplayOnboarding = {
@@ -3482,7 +3623,6 @@ fun LuminaRoot(
             showDownloads = showDownloads,
             onDismissDownloads = { showDownloads = false },
             showAa = showAa,
-            aaInitialTab = aaInitialTab,
             onDismissAa = { showAa = false },
             onAaEngineRefresh = { engineRefreshTick += 1 },
             onFindInPage = {
@@ -3528,5 +3668,41 @@ fun LuminaRoot(
         // "This site can't load over HTTPS — open it over HTTP?" prompt, raised when a navigation
         // fails under HTTPS-Only mode (e.g. a self-hosted immich.lab with no TLS).
         HttpsOnlyExceptionDialog(components)
+
+        // "You keep dismissing this — stop suggesting the app for <host>?" Offered once per host after
+        // it crosses the dismissal-count + rejection-rate thresholds (see AppLinkBannerStats). Adding
+        // to the blacklist permanently suppresses the passive "Open in app" suggestion for that host.
+        openInAppBlacklistPrompt?.let { (host, appLabel) ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = {
+                    appLinkStats.markPrompted(host)
+                    openInAppBlacklistPrompt = null
+                },
+                title = { androidx.compose.material3.Text("Stop suggesting apps for $host?") },
+                text = {
+                    androidx.compose.material3.Text(
+                        "You've dismissed “Open in $appLabel” several times on $host. Want to stop " +
+                            "showing the app suggestion for this site?",
+                    )
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            appLinkStats.addToBlacklist(host)
+                            blacklistedAppHosts.add(host)
+                            openInAppBlacklistPrompt = null
+                        },
+                    ) { androidx.compose.material3.Text("Stop showing") }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            appLinkStats.markPrompted(host)
+                            openInAppBlacklistPrompt = null
+                        },
+                    ) { androidx.compose.material3.Text("Keep showing") }
+                },
+            )
+        }
     }
 }

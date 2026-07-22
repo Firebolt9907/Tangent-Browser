@@ -217,6 +217,19 @@ class LuminaBrowserComponents(application: Application) {
         // Font size factor
         runCatching { engine.settings.fontSizeFactor = prefs.fontSizeFactor }
 
+        // Web dark mode — Tier 1 (native). Flip the `prefers-color-scheme: dark` media query for all
+        // content so any site with a real dark theme renders it for free (best quality, zero cost).
+        // Tier 2 (the filter-invert fallback for sites that stay light) is injected per-load by
+        // ContentHost via WebDarkMode. When off, follow the system so the media query still reflects
+        // the device's light/dark setting. See ui/content/WebDarkMode.kt.
+        runCatching {
+            engine.settings.preferredColorScheme = if (prefs.webDarkModeEnabled) {
+                mozilla.components.concept.engine.mediaquery.PreferredColorScheme.Dark
+            } else {
+                mozilla.components.concept.engine.mediaquery.PreferredColorScheme.System
+            }
+        }
+
         // Login Autofill — the engine flag maps to Gecko's `signon.autofillForms`, which does
         // *silent* page-load autofill: when a form has exactly one saved match Gecko fills it on
         // load with NO prompt and NO biometric. That is the path that made autofill sometimes fill

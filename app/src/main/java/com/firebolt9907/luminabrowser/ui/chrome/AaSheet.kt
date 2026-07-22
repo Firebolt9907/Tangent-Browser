@@ -97,7 +97,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -636,6 +638,7 @@ private fun PageTabContent(
                                     .border(borderWidth, optionBorderColor, CircleShape)
                                     .semantics {
                                         contentDescription = themeLabel
+                                        role = Role.RadioButton
                                         if (readerTheme == themeOption) selected = true
                                     }
                                     .clickable { haptics.select(); readerManager.setTheme(themeOption) }

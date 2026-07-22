@@ -514,6 +514,45 @@ Each toggle writes to `GlobalPreferencesStore` and immediately calls `LuminaBrow
 
 The top padding is bound to *each rendered view*, not just the live engine. A `topPadDpFor(url)` helper in `LuminaRoot` resolves any URL's host through the store and returns the inset in dp. Every transition snapshot (`adjacentSnapshot`, `movingCurrentSnapshot`, `incomingSnapshotBitmap`, `leavingSnapshotBitmap`, `stickyIncomingSnapshot`) applies `Modifier.padding(top = pad)` *before* its `graphicsLayer { translationX = … }` so the bitmap occupies the same lower region during a swipe that the live `EngineView` would, with `clip(switchPaneShape)` rounding the corners of that smaller area. The commit-time padding amounts are captured into `leavingSnapshotTopPadPx` / `incomingSnapshotTopPadPx` / `stickyIncomingTopPadPx` so the post-release slide uses the leaving and incoming tabs' actual settings even if the user has since navigated. Without this, tabs with the fix on showed a vertically-stretched or top-aligned bitmap at the start of every drag — the snapshot was captured at `screenH − topChromeInsetPx` but rendered at full screen height.
 
+## Web dark mode (`ui/content/WebDarkMode.kt`, `engine/Engine.kt`, `ui/content/ContentHost.kt`)
+
+"Dark mode for every website" — DarkReader-level coverage at a fraction of DarkReader *dynamic*
+mode's cost. DarkReader dynamic parses every stylesheet, computes a dark equivalent for every declared
+color, analyzes background-image pixels, and re-runs that on every DOM mutation via a `MutationObserver`
+— high quality, but measurable jank and steady CPU/memory. We split the problem into a **native tier**
+and a **GPU-composited fallback tier** so most sites cost nothing and the rest cost one filter pass:
+
+- **Tier 1 — native `prefers-color-scheme`.** `applyEngineSettings` sets
+  `engine.settings.preferredColorScheme` (MC, runtime-settable, no restart). Only the explicit **On**
+  trigger forces `Dark`; **Auto** and **Off** stay `System` — so under Auto, Gecko already flips the
+  `prefers-color-scheme: dark` media query whenever the device is dark, and any site with a real dark
+  theme renders it authored-quality for free. No injection.
+- **Tier 2 — filter-invert fallback (`WebDarkMode.buildApplyScript`).** For pages that stay *light*
+  under Tier 1, one class on `<html>` applies `filter: invert(1) hue-rotate(180deg) contrast(0.9)`
+  (the `contrast(0.9)` softens pure black/white to DarkReader-comfortable grays). Media
+  (`img`/`video`/`canvas`/`iframe`/inline-bg) is re-inverted by a static CSS selector with the
+  *inverse* `contrast(1.1111)` so photos net ≈ `contrast(1.0)` and stay crisp. "Light vs dark" is one
+  `getComputedStyle` luminance read (`pageIsDark`); a directly-viewed image/video/PDF (`isMediaDoc`,
+  via `document.contentType`) is excluded so it isn't turned into a negative. Newly-added nodes need no
+  JS — the selector engine keeps them correct.
+
+**Opt-in aggressive sub-mode** (`webDarkModeAggressive`, off by default) closes the one gap the cheap
+tier leaves — class-based (non-inline) CSS background images inverting into negatives — far more
+cheaply than DarkReader dynamic: a bounded (≤4000-element) `getComputedStyle` walk *tags* elements with
+a `url(...)` background (`[data-lumina-dark-bg]`, added to the re-invert selector) plus a rAF-batched
+`MutationObserver` that tags only newly-added subtrees. It tags once instead of recomputing every color
+on every mutation; gradients are left alone; the observer is disconnected on removal.
+
+**Wiring.** Injected like `SiteTint` — per-load in `ContentHost.injectSpacer` (behind
+`suppressJavascriptLoadCallback`) and via a `LaunchedEffect(webDarkModeEnabled, webDarkModeAggressive)`
+for live toggles/tab-swaps. The global trigger is `WebDarkModeTrigger {Off, On, Auto}` (migrates the
+legacy boolean); `Auto` resolves against `isSystemInDarkTheme()` in the UI layer. A per-site override
+`SiteDarkMode {Default, On, Off}` (in `SitePreferences`, aA → Page Settings) resolves over the global
+value, so a site that looks wrong inverted can be excluded (or one force-darkened). The effective
+boolean feeds `ContentHost`'s existing `webDarkModeEnabled` param at both call sites (`LuminaRoot`,
+`CustomTabRoot`). Controls: Settings picker (Off/On/Match system) + aggressive sub-toggle, aA quick
+toggle, aA Page-Settings per-site override. Pure script builders are JVM-tested (`WebDarkMode*Test`).
+
 ## Tried and reverted
 
 - **Walk header descendants and shift abs-positioned `top` by `topPx`** in `PageBottomSpacer.kt` to fix apple.com globalnav children landing under the status bar. Each pass added one `style.setProperty` per abs descendant; the existing `MutationObserver` on `documentElement{attributeFilter:['class','style','slot']}` re-fired on every one of those mutations and re-scheduled `applyHeaderInsets` via RAF, putting the page in a continuous restyle loop. `engineView.captureThumbnail` landed on transitional frames and `TabSnapshotCache` filled with empty/dark bitmaps, so every tab switch showed a uniform dark cover. The current header pass avoids this by editing only selected top-level fixed/sticky header candidates and leaving nested absolute-positioned descendants alone.

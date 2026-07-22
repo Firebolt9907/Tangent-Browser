@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBackIos
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -1326,6 +1327,12 @@ private fun SettingsPicker(
             options.forEach { (label, onSelect) ->
                 DropdownMenuItem(
                     text = { Text(label) },
+                    // Mark the active choice so opening the menu shows what's currently selected.
+                    trailingIcon = if (label == selectedLabel) {
+                        { Icon(Icons.Default.Check, contentDescription = "Selected") }
+                    } else {
+                        null
+                    },
                     onClick = {
                         haptics?.select()
                         onSelect()

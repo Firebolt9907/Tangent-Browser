@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.luminabrowser.state.GlobalPreferencesStore
 import com.firebolt9907.luminabrowser.state.PreloadMode
+import com.firebolt9907.luminabrowser.state.WebDarkModeTrigger
 import com.firebolt9907.luminabrowser.state.SearchEngine
 import com.firebolt9907.luminabrowser.ui.BiometricGate
 import com.firebolt9907.luminabrowser.ui.chrome.WideBarLayout
@@ -116,7 +117,7 @@ fun SettingsSheet(
     var showBottomToolbar by remember { mutableStateOf(globalPrefsStore.showBottomToolbar) }
     var matchSiteThemeColor by remember { mutableStateOf(globalPrefsStore.matchSiteThemeColor) }
     var tintPagesToSystemColor by remember { mutableStateOf(globalPrefsStore.tintPagesToSystemColor) }
-    var webDarkModeEnabled by remember { mutableStateOf(globalPrefsStore.webDarkModeEnabled) }
+    var webDarkModeTrigger by remember { mutableStateOf(globalPrefsStore.webDarkModeTrigger) }
     var webDarkModeAggressive by remember { mutableStateOf(globalPrefsStore.webDarkModeAggressive) }
     var handoffEnabled by remember { mutableStateOf(globalPrefsStore.handoffEnabled) }
     var wideBarLayout by remember {
@@ -451,17 +452,20 @@ fun SettingsSheet(
                 },
             )
             SheetRowDivider()
-            SettingsToggle(
+            SettingsPicker(
                 title = "Dark mode for every website",
                 subtitle = "Use each site's dark theme when it has one, and darken the rest — fast, unlike heavy page recolorers",
-                checked = webDarkModeEnabled,
-                onCheckedChange = {
-                    webDarkModeEnabled = it
-                    globalPrefsStore.webDarkModeEnabled = it
-                    onSettingChanged()
+                selectedLabel = webDarkModeTrigger.label,
+                options = WebDarkModeTrigger.entries.map { trigger ->
+                    trigger.label to {
+                        webDarkModeTrigger = trigger
+                        globalPrefsStore.webDarkModeTrigger = trigger
+                        onSettingChanged()
+                    }
                 },
+                haptics = haptics,
             )
-            if (webDarkModeEnabled) {
+            if (webDarkModeTrigger != WebDarkModeTrigger.Off) {
                 SheetRowDivider()
                 SettingsToggle(
                     title = "Fix dark-mode background images",

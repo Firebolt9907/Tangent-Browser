@@ -125,6 +125,7 @@ import com.firebolt9907.luminabrowser.state.BarMode
 import com.firebolt9907.luminabrowser.state.BarUiState
 import com.firebolt9907.luminabrowser.state.LuminaViewModel
 import com.firebolt9907.luminabrowser.state.SitePreferences
+import com.firebolt9907.luminabrowser.state.WebDarkModeTrigger
 import com.firebolt9907.luminabrowser.state.addressBarLabel
 import com.firebolt9907.luminabrowser.state.hostFromUrl
 import com.firebolt9907.luminabrowser.ui.archive.siteHostFromUrl
@@ -226,7 +227,10 @@ fun LuminaRoot(
     // When on, the high-performance "dark mode for every website" is active (native
     // prefers-color-scheme override + filter-invert fallback). Persisted; toggled in the aA sheet /
     // Settings → Appearance. See WebDarkMode.kt.
-    var webDarkModeEnabled by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeEnabled) }
+    var webDarkModeTrigger by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeTrigger) }
+    // Resolved on/off for the global feature, folding in the system theme for the "Match system"
+    // trigger. Per-site overrides (currentSitePrefs.darkMode) resolve against this.
+    val webDarkModeActive = webDarkModeTrigger.resolve(isSystemInDarkTheme())
     // Opt-in aggressive sub-mode (re-invert class-based background images). Persisted.
     var webDarkModeAggressive by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeAggressive) }
     // When on, a search-results page shows the typed query in the bar instead of the engine's host.
@@ -2629,7 +2633,7 @@ fun LuminaRoot(
                     themeColorSamplingEnabled = matchSiteThemeColor,
                     siteTintColor = siteTintColor,
                     // Per-site override (aA → Page Settings) wins over the global toggle.
-                    webDarkModeEnabled = currentSitePrefs.darkMode.resolve(webDarkModeEnabled),
+                    webDarkModeEnabled = currentSitePrefs.darkMode.resolve(webDarkModeActive),
                     webDarkModeAggressive = webDarkModeAggressive,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
                     barCollapseProgress = barCollapseProgressProvider,
@@ -3599,7 +3603,7 @@ fun LuminaRoot(
                 barSearchEngine = components.globalPreferencesStore.searchEngine
                 matchSiteThemeColor = components.globalPreferencesStore.matchSiteThemeColor
                 tintPagesToSystemColor = components.globalPreferencesStore.tintPagesToSystemColor
-                webDarkModeEnabled = components.globalPreferencesStore.webDarkModeEnabled
+                webDarkModeTrigger = components.globalPreferencesStore.webDarkModeTrigger
                 webDarkModeAggressive = components.globalPreferencesStore.webDarkModeAggressive
                 viewModel.refreshDisplayPrefs()
             },
@@ -3654,11 +3658,14 @@ fun LuminaRoot(
             siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
             onSiteTrackingProtectionDisabledChange = { siteTrackingProtectionDisabled = it },
             onToggleWebDarkMode = { enabled ->
-                webDarkModeEnabled = enabled
-                components.globalPreferencesStore.webDarkModeEnabled = enabled
+                // The aA quick toggle is a simple on/off; it sets an explicit On/Off trigger (the
+                // "Match system" option lives in Settings). Tier 2 live-injection follows the state
+                // var below via ContentHost's LaunchedEffect.
+                val trigger = if (enabled) WebDarkModeTrigger.On else WebDarkModeTrigger.Off
+                webDarkModeTrigger = trigger
+                components.globalPreferencesStore.webDarkModeTrigger = trigger
                 // Tier 1 (native prefers-color-scheme override) is an engine setting; re-apply it now
-                // so it flips without a restart. Tier 2 live-injection follows the state var above via
-                // ContentHost's LaunchedEffect.
+                // so it flips without a restart.
                 components.applyEngineSettings()
             },
             utilityWeb = utilityWeb,

@@ -104,9 +104,22 @@ class GlobalPreferencesStore(context: Context) {
     // so sites with a real dark theme render it for free; Tier 2 injects a GPU-composited
     // filter-invert only on pages that stay light. Off by default; toggled in the aA sheet /
     // Settings → Appearance. Far cheaper than a DarkReader-style per-element dynamic recolor.
-    var webDarkModeEnabled: Boolean
-        get() = prefs.getBoolean("webDarkModeEnabled", false)
-        set(value) { prefs.edit { putBoolean("webDarkModeEnabled", value) } }
+    // Trigger for the global "dark mode for every website" feature: Off, On (always), or Auto (follow
+    // the device's system dark-mode setting). Migrates the legacy boolean pref on first read. Resolved
+    // to a concrete on/off where the system theme is known (the UI layer) via
+    // WebDarkModeTrigger.resolve(systemDark). See ui/content/WebDarkMode.kt.
+    var webDarkModeTrigger: WebDarkModeTrigger
+        get() {
+            val raw = prefs.getString("webDarkModeTrigger", null)
+            if (raw != null) return WebDarkModeTrigger.fromName(raw)
+            // Legacy migration: the old boolean pref maps On/Off.
+            return if (prefs.getBoolean("webDarkModeEnabled", false)) {
+                WebDarkModeTrigger.On
+            } else {
+                WebDarkModeTrigger.Off
+            }
+        }
+        set(value) { prefs.edit { putString("webDarkModeTrigger", value.name) } }
 
     // Opt-in "aggressive" sub-mode for web dark mode (only meaningful when webDarkModeEnabled). When
     // on, the Tier-2 fallback also detects class-based (non-inline) CSS background images at runtime
@@ -382,5 +395,28 @@ class GlobalPreferencesStore(context: Context) {
         const val DEFAULT_HTTP_CACHE_MB = 512
         const val MIN_HTTP_CACHE_MB = 64
         const val MAX_HTTP_CACHE_MB = 2048
+    }
+}
+
+/**
+ * How the global web dark mode is triggered. [Auto] follows the device's system dark-mode setting;
+ * [On]/[Off] force it. Resolved to a concrete boolean by [resolve] where the current system theme is
+ * known (the Compose UI layer). Note Tier 1 (Gecko `preferredColorScheme`) handles [Auto] for free by
+ * staying on `System` — only Tier 2 (the injected filter) needs this resolved boolean.
+ */
+enum class WebDarkModeTrigger(val label: String) {
+    Off("Off"),
+    On("On"),
+    Auto("Match system");
+
+    fun resolve(systemDark: Boolean): Boolean = when (this) {
+        Off -> false
+        On -> true
+        Auto -> systemDark
+    }
+
+    companion object {
+        fun fromName(name: String?): WebDarkModeTrigger =
+            entries.firstOrNull { it.name == name } ?: Off
     }
 }

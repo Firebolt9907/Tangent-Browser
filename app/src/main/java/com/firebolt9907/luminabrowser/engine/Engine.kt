@@ -220,14 +220,17 @@ class LuminaBrowserComponents(application: Application) {
         // Web dark mode — Tier 1 (native). Flip the `prefers-color-scheme: dark` media query for all
         // content so any site with a real dark theme renders it for free (best quality, zero cost).
         // Tier 2 (the filter-invert fallback for sites that stay light) is injected per-load by
-        // ContentHost via WebDarkMode. When off, follow the system so the media query still reflects
-        // the device's light/dark setting. See ui/content/WebDarkMode.kt.
+        // ContentHost via WebDarkMode. Only the explicit "On" trigger forces Dark; "Auto" and "Off"
+        // stay on System — which for Auto means Gecko already follows the OS dark setting natively, so
+        // dark-theme sites render dark whenever the device is dark with no extra work. See
+        // ui/content/WebDarkMode.kt.
         runCatching {
-            engine.settings.preferredColorScheme = if (prefs.webDarkModeEnabled) {
-                mozilla.components.concept.engine.mediaquery.PreferredColorScheme.Dark
-            } else {
-                mozilla.components.concept.engine.mediaquery.PreferredColorScheme.System
-            }
+            engine.settings.preferredColorScheme =
+                if (prefs.webDarkModeTrigger == com.firebolt9907.luminabrowser.state.WebDarkModeTrigger.On) {
+                    mozilla.components.concept.engine.mediaquery.PreferredColorScheme.Dark
+                } else {
+                    mozilla.components.concept.engine.mediaquery.PreferredColorScheme.System
+                }
         }
 
         // Login Autofill — the engine flag maps to Gecko's `signon.autofillForms`, which does

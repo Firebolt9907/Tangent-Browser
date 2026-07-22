@@ -17,6 +17,7 @@ import mozilla.appservices.places.BookmarkRoot
 import mozilla.components.concept.storage.BookmarksStorage
 import androidx.compose.material.icons.filled.History
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -253,7 +254,7 @@ fun AaSheet(
                     store = store,
                     pageUrl = pageUrl,
                     engineSession = engineSession,
-                    globalWebDarkEnabled = globalPrefsStore.webDarkModeEnabled,
+                    globalWebDarkEnabled = globalPrefsStore.webDarkModeTrigger.resolve(isSystemInDarkTheme()),
                     trackingProtectionEnabledGlobally = trackingProtectionEnabledGlobally,
                     siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
                     onToggleSiteTrackingProtection = onToggleSiteTrackingProtection,
@@ -316,6 +317,7 @@ private fun PageTabContent(
 ) {
     val context = LocalContext.current
     val haptics = rememberLuminaHaptics()
+    val systemDark = isSystemInDarkTheme()
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
     val bookmarkScope = rememberCoroutineScope()
@@ -527,7 +529,9 @@ private fun PageTabContent(
 
         // ---------- 2b. Dark mode for every website (global, high-performance) ----------
         if (hasRealUrl) {
-            var webDark by remember { mutableStateOf(globalPrefsStore.webDarkModeEnabled) }
+            var webDark by remember {
+                mutableStateOf(globalPrefsStore.webDarkModeTrigger.resolve(systemDark))
+            }
             Spacer(Modifier.height(14.dp))
             AaToggleRow(
                 title = "Dark mode",

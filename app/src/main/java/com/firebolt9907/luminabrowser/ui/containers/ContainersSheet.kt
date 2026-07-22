@@ -42,6 +42,7 @@ import com.firebolt9907.luminabrowser.state.TabRepository
 import com.firebolt9907.luminabrowser.ui.components.EmptyState
 import com.firebolt9907.luminabrowser.ui.components.LuminaModalSheet
 import com.firebolt9907.luminabrowser.ui.components.SheetHeader
+import com.firebolt9907.luminabrowser.ui.rememberLuminaHaptics
 import mozilla.components.browser.state.state.ContainerState
 
 /** Firefox container colours mapped to concrete swatches. */
@@ -74,8 +75,12 @@ fun ContainersSheet(
 ) {
     val containers by repository.containers.collectAsStateWithLifecycle()
     val tabs by tabRepository.tabs.collectAsStateWithLifecycle()
+    val haptics = rememberLuminaHaptics()
 
     var showCreate by remember { mutableStateOf(false) }
+    // Deleting a container drops an isolated cookie/login jar — confirm first (like the app's other
+    // destructive actions), rather than wiping it on a single tap of the trash icon.
+    var showDeleteConfirm by remember { mutableStateOf<ContainerState?>(null) }
 
     LuminaModalSheet(onDismissRequest = onDismiss, scrollable = true) {
         SheetHeader(
@@ -109,7 +114,7 @@ fun ContainersSheet(
             ContainerRow(
                 container = container,
                 onNewTab = { onNewTabInContainer(container.contextId); onDismiss() },
-                onDelete = { repository.removeContainer(container.contextId) },
+                onDelete = { showDeleteConfirm = container },
             )
             Spacer(Modifier.size(10.dp))
         }
@@ -122,6 +127,31 @@ fun ContainersSheet(
                 showCreate = false
             },
             onDismiss = { showCreate = false },
+        )
+    }
+
+    showDeleteConfirm?.let { container ->
+        val name = container.name.ifBlank { "Container" }
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = null },
+            title = { Text("Delete container?") },
+            text = {
+                Text("Delete the “$name” container? Sites you opened in it will no longer be kept separate.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    haptics.remove()
+                    repository.removeContainer(container.contextId)
+                    showDeleteConfirm = null
+                }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = null }) {
+                    Text("Cancel")
+                }
+            },
         )
     }
 }

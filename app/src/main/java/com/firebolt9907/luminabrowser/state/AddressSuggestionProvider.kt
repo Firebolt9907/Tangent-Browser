@@ -72,8 +72,15 @@ suspend fun addressSuggestions(
 
     val byUrl = LinkedHashMap<String, AddressSuggestion>()
     for (suggestion in bookmarkMatches + historyMatches) {
-        val key = suggestion.url.trimEnd('/').lowercase()
-        if (!byUrl.containsKey(key)) byUrl[key] = suggestion
+        val key = canonicalUrlKey(suggestion.url)
+        val existing = byUrl[key]
+        when {
+            existing == null -> byUrl[key] = suggestion
+            // Same canonical page seen twice (e.g. http:// and https://, www and bare): keep the
+            // more trustworthy variant — an https URL over a plain-http one — without reordering.
+            existing.url.startsWith("http://") && suggestion.url.startsWith("https://") ->
+                byUrl[key] = suggestion.copy(title = existing.title)
+        }
     }
     // Re-rank host-aware. Places `getSuggestions` returns a plain frecency order over any URL that
     // *contains* the query as a substring, so typing "apple.com" can surface a deep, frequently-opened
@@ -84,6 +91,19 @@ suspend fun addressSuggestions(
         .sortedByDescending { rankScore(q, it) }
         .take(max)
         .toList()
+}
+
+/**
+ * Canonical de-duplication key for a page URL: drops the scheme, a leading `www.`, and any trailing
+ * slash, and lowercases. So `http://apple.com/`, `https://apple.com`, and `https://www.apple.com/`
+ * all collapse to `apple.com`, while distinct paths (`apple.com/mac`) stay separate. Shared by the
+ * provider's local dedup and the UI's row merge so a synthesised domain row never duplicates a
+ * history row for the same page.
+ */
+internal fun canonicalUrlKey(url: String): String {
+    val trimmed = url.trim()
+    val noScheme = trimmed.substringAfter("://", trimmed)
+    return noScheme.removePrefix("www.").trimEnd('/').lowercase()
 }
 
 /**

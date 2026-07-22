@@ -88,11 +88,14 @@ fun TabGroupsSheet(
     onOpenTab: (tabId: String) -> Unit,
     // Open a fresh tab into the group (in the group's default container, if any) and close the overview.
     onNewTabInGroup: (groupId: String) -> Unit,
+    // Bulk-close a group's member tabs (the group itself is kept).
+    onCloseTabs: (ids: List<String>) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val groups by repository.groups.collectAsStateWithLifecycle()
     val tabs by tabRepository.tabs.collectAsStateWithLifecycle()
     val tabsById = remember(tabs) { tabs.associateBy { it.id } }
+    val containersById = remember(containers) { containers.associateBy { it.contextId } }
     val groupedIds = remember(groups) { groups.flatMap { it.tabIds }.toHashSet() }
     val ungrouped = remember(tabs, groupedIds) { tabs.filter { it.id !in groupedIds } }
 
@@ -126,12 +129,14 @@ fun TabGroupsSheet(
                 group = group,
                 tabsById = tabsById,
                 containers = containers,
+                containersById = containersById,
                 onOpenTab = { onOpenTab(it); onDismiss() },
                 onNewTab = { onNewTabInGroup(group.id) },
                 onRemoveTab = { repository.removeTabFromGroup(it) },
                 onRename = { renameTarget = group },
                 onRecolor = { repository.setColor(group.id, it) },
                 onSetDefaultContainer = { repository.setDefaultContainer(group.id, it) },
+                onCloseTabs = { onCloseTabs(group.tabIds.toList()) },
                 onDelete = { repository.deleteGroup(group.id) },
             )
             Spacer(Modifier.size(12.dp))
@@ -199,12 +204,14 @@ private fun GroupCard(
     group: LuminaTabGroup,
     tabsById: Map<String, LuminaTab>,
     containers: List<ContainerState>,
+    containersById: Map<String, ContainerState>,
     onOpenTab: (String) -> Unit,
     onNewTab: () -> Unit,
     onRemoveTab: (String) -> Unit,
     onRename: () -> Unit,
     onRecolor: (TabGroupColor) -> Unit,
     onSetDefaultContainer: (contextId: String?) -> Unit,
+    onCloseTabs: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val accent = group.color.swatch()
@@ -264,9 +271,11 @@ private fun GroupCard(
                 current = group.color,
                 containers = containers,
                 currentDefaultContextId = group.defaultContextId,
+                hasTabs = group.tabIds.isNotEmpty(),
                 onRename = onRename,
                 onRecolor = onRecolor,
                 onSetDefaultContainer = onSetDefaultContainer,
+                onCloseTabs = onCloseTabs,
                 onDelete = onDelete,
             )
         }
@@ -282,6 +291,7 @@ private fun GroupCard(
             TabRow(
                 tab = tab,
                 accent = accent,
+                container = tab.contextId?.let { containersById[it] },
                 onOpen = { onOpenTab(tab.id) },
                 trailing = {
                     IconButton(onClick = { onRemoveTab(tab.id) }) {
@@ -301,6 +311,7 @@ private fun GroupCard(
 private fun TabRow(
     tab: LuminaTab,
     accent: Color?,
+    container: ContainerState? = null,
     onOpen: () -> Unit,
     trailing: @Composable () -> Unit,
 ) {
@@ -326,13 +337,33 @@ private fun TabRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = tab.url,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // Surface the tab's container (if any) so its isolation is visible from the group list.
+            if (container != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(container.color.swatch()),
+                    )
+                    Spacer(Modifier.size(5.dp))
+                    Text(
+                        text = container.name.ifBlank { "Container" },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            } else {
+                Text(
+                    text = tab.url,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         trailing()
     }
@@ -372,9 +403,11 @@ private fun GroupOverflow(
     current: TabGroupColor,
     containers: List<ContainerState>,
     currentDefaultContextId: String?,
+    hasTabs: Boolean,
     onRename: () -> Unit,
     onRecolor: (TabGroupColor) -> Unit,
     onSetDefaultContainer: (contextId: String?) -> Unit,
+    onCloseTabs: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
@@ -397,6 +430,12 @@ private fun GroupOverflow(
                 DropdownMenuItem(
                     text = { Text("Default container") },
                     onClick = { open = false; containerOpen = true },
+                )
+            }
+            if (hasTabs) {
+                DropdownMenuItem(
+                    text = { Text("Close all tabs") },
+                    onClick = { open = false; onCloseTabs() },
                 )
             }
             DropdownMenuItem(

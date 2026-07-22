@@ -233,6 +233,8 @@ fun LuminaRoot(
     val webDarkModeActive = webDarkModeTrigger.resolve(isSystemInDarkTheme())
     // Opt-in aggressive sub-mode (re-invert class-based background images). Persisted.
     var webDarkModeAggressive by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeAggressive) }
+    // Experimental Tier-3 image classification (pixel-content photo-vs-graphic). Persisted.
+    var webDarkModeImageAnalysis by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeImageAnalysis) }
     // When on, a search-results page shows the typed query in the bar instead of the engine's host.
     // Persisted; toggled in Settings. Paired with the current search engine for label resolution.
     var showSearchTermsInBar by remember { mutableStateOf(components.globalPreferencesStore.showSearchTermsInBar) }
@@ -2635,6 +2637,7 @@ fun LuminaRoot(
                     // Per-site override (aA → Page Settings) wins over the global toggle.
                     webDarkModeEnabled = currentSitePrefs.darkMode.resolve(webDarkModeActive),
                     webDarkModeAggressive = webDarkModeAggressive,
+                    webDarkModeImageAnalysis = webDarkModeImageAnalysis,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
                     barCollapseProgress = barCollapseProgressProvider,
                     tabIsLoading = actualSelectedContent?.loading == true,
@@ -3605,6 +3608,7 @@ fun LuminaRoot(
                 tintPagesToSystemColor = components.globalPreferencesStore.tintPagesToSystemColor
                 webDarkModeTrigger = components.globalPreferencesStore.webDarkModeTrigger
                 webDarkModeAggressive = components.globalPreferencesStore.webDarkModeAggressive
+                webDarkModeImageAnalysis = components.globalPreferencesStore.webDarkModeImageAnalysis
                 viewModel.refreshDisplayPrefs()
             },
             onReplayOnboarding = {

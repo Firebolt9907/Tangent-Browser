@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
@@ -21,6 +22,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,6 +46,9 @@ import mozilla.components.concept.storage.BookmarkNode
 import mozilla.components.concept.storage.BookmarkNodeType
 import mozilla.components.concept.storage.BookmarksStorage
 
+/** Folder (under the Mobile bookmarks root) that backs the Safari-style Reading List. */
+private const val READING_LIST_FOLDER = "Reading List"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BookmarksSheet(
@@ -59,12 +64,19 @@ fun BookmarksSheet(
     var searchQuery by remember { mutableStateOf("") }
 
     suspend fun reload() {
-        bookmarks = bookmarksStorage.getTree(BookmarkRoot.Mobile.id, recursive = true)
+        val topLevel = bookmarksStorage.getTree(BookmarkRoot.Mobile.id, recursive = true)
             .getOrNull()
             ?.children
-            ?.filter { it.type == BookmarkNodeType.ITEM && !it.url.isNullOrBlank() }
-            ?.sortedByDescending { it.dateAdded }
             .orEmpty()
+        val items = topLevel.filter { it.type == BookmarkNodeType.ITEM && !it.url.isNullOrBlank() }
+        // Reading List pages live one folder deep; surface them alongside plain bookmarks so the
+        // relocated "Add to Reading List" action (below) doesn't save into a place nothing shows.
+        val readingListItems = topLevel
+            .firstOrNull { it.type == BookmarkNodeType.FOLDER && it.title == READING_LIST_FOLDER }
+            ?.children
+            ?.filter { it.type == BookmarkNodeType.ITEM && !it.url.isNullOrBlank() }
+            .orEmpty()
+        bookmarks = (items + readingListItems).sortedByDescending { it.dateAdded }
         loading = false
     }
 
@@ -114,6 +126,43 @@ fun BookmarksSheet(
                 Spacer(Modifier.height(0.dp))
                 Text(
                     text = "  Add this page",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            // Add to Reading List (Safari-style save-for-later). Relocated from the aA sheet; backed
+            // by a dedicated "Reading List" folder under the Mobile root, created on first use. These
+            // items are flattened back into the list above by reload().
+            TextButton(
+                onClick = {
+                    scope.launch {
+                        runCatching {
+                            val root = bookmarksStorage
+                                .getTree(BookmarkRoot.Mobile.id, recursive = false).getOrNull()
+                            val folderGuid = root?.children
+                                ?.firstOrNull {
+                                    it.type == BookmarkNodeType.FOLDER && it.title == READING_LIST_FOLDER
+                                }
+                                ?.guid
+                                ?: bookmarksStorage
+                                    .addFolder(BookmarkRoot.Mobile.id, READING_LIST_FOLDER, null)
+                                    .getOrThrow()
+                            bookmarksStorage.addItem(
+                                parentGuid = folderGuid,
+                                url = currentPageUrl,
+                                title = currentPageTitle.ifBlank { currentPageUrl },
+                                position = null,
+                            )
+                        }
+                        reload()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null)
+                Text(
+                    text = "  Add to Reading List",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

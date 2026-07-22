@@ -54,6 +54,7 @@ import com.firebolt9907.luminabrowser.ui.components.Favicon
 import com.firebolt9907.luminabrowser.state.AddressSuggestionKind
 import com.firebolt9907.luminabrowser.state.SearchEngine
 import com.firebolt9907.luminabrowser.state.addressSuggestions
+import com.firebolt9907.luminabrowser.state.canonicalUrlKey
 import com.firebolt9907.luminabrowser.state.compactHost
 import com.firebolt9907.luminabrowser.state.hostOf
 import com.firebolt9907.luminabrowser.state.looksLikeUrlInput
@@ -405,7 +406,7 @@ private fun buildSuggestionRows(
                 URIPath(s.url).let { it.isEmpty() || it == "/" }
         }
         if (directHost != null && !alreadyRooted) {
-            rows["u:" + direct.trimEnd('/').lowercase()] = AddressSuggestion(
+            rows["u:" + canonicalUrlKey(direct)] = AddressSuggestion(
                 title = compactHost(direct),
                 url = direct,
                 kind = AddressSuggestionKind.History,
@@ -414,7 +415,7 @@ private fun buildSuggestionRows(
     }
 
     for (s in local) {
-        val key = "u:" + s.url.trimEnd('/').lowercase()
+        val key = "u:" + canonicalUrlKey(s.url)
         if (!rows.containsKey(key)) rows[key] = s
     }
     // The "search for exactly what I typed" row goes before the remote suggestions so it is the

@@ -2,6 +2,8 @@ package com.firebolt9907.luminabrowser.ui
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -12,16 +14,23 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
+import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
+import kotlin.math.abs
+import kotlinx.coroutines.launch
 
 /**
  * Coordinates the **Z-axis card stack** shared by every [MorphingBannerHost] anchored above the pill,
@@ -70,10 +79,68 @@ class BannerStackState {
 @Composable
 fun rememberBannerStackState(): BannerStackState = remember { BannerStackState() }
 
+/**
+ * Follows the finger while the user drags a banner card away (downward, since the cards live at the
+ * bottom, or sideways) and dismisses it when the drag passes a distance/velocity threshold; otherwise
+ * springs the card back to rest. Keeps the tap-to-act / X-to-dismiss affordances intact — a small
+ * touch-slop of travel is required before the drag takes over. Shared by every banner card above the
+ * pill.
+ */
+internal fun Modifier.bannerSwipeToDismiss(onDismiss: () -> Unit): Modifier = composed {
+    val scope = rememberCoroutineScope()
+    val offsetX = remember { Animatable(0f) }
+    val offsetY = remember { Animatable(0f) }
+    val density = LocalDensity.current
+    // Distance past which a release commits the dismissal.
+    val dismissThresholdPx = with(density) { 96.dp.toPx() }
+
+    this
+        .graphicsLayer {
+            translationX = offsetX.value
+            translationY = offsetY.value
+            // Fade as the card is flung away for a softer exit.
+            val travel = maxOf(abs(offsetX.value), abs(offsetY.value))
+            alpha = (1f - (travel / (dismissThresholdPx * 2.5f))).coerceIn(0.15f, 1f)
+        }
+        .pointerInput(Unit) {
+            detectDragGestures(
+                onDrag = { change, delta ->
+                    change.consume()
+                    scope.launch {
+                        offsetX.snapTo(offsetX.value + delta.x)
+                        // Bottom banners resist upward travel — dismiss is a downward gesture.
+                        offsetY.snapTo(offsetY.value + delta.y)
+                    }
+                },
+                onDragEnd = {
+                    val flungDown = offsetY.value > dismissThresholdPx
+                    val flungSide = abs(offsetX.value) > dismissThresholdPx
+                    if (flungDown || flungSide) {
+                        onDismiss()
+                    } else {
+                        scope.launch { offsetX.animateTo(0f, spring()) }
+                        scope.launch { offsetY.animateTo(0f, spring()) }
+                    }
+                },
+                onDragCancel = {
+                    scope.launch { offsetX.animateTo(0f, spring()) }
+                    scope.launch { offsetY.animateTo(0f, spring()) }
+                },
+            )
+        }
+}
+
 /** Per-depth geometry of the card stack — how much each banner behind the front shrinks / lifts. */
 private const val StackScalePerDepth = 0.07f
 private const val StackMinScale = 0.80f
 private val StackPeekPerDepth = 22.dp
+// Drop shadow cast by the whole card at the stack-transform layer. The front card (depth 0) casts the
+// strongest shadow so its lower edge lifts off the page; each card behind adds a little more so its
+// peeking top edge reads as a separate surface rather than a flat seam. Rendered on the stack layer
+// (not the inner Surface) so it survives the scale-down/lift that would otherwise bury the 6dp inner
+// shadow behind the front card.
+private val StackShadowBase = 10.dp
+private val StackShadowPerDepth = 4.dp
 
 /**
  * The shared container for every banner that floats above the address pill (Internet Archive scrubber,
@@ -165,8 +232,11 @@ fun MorphingBannerHost(
     val depth = stack?.depthOf(stackId, stackPriority) ?: 0
     val targetScale = (1f - StackScalePerDepth * depth).coerceAtLeast(StackMinScale)
     val targetPeekPx = with(LocalDensity.current) { (StackPeekPerDepth * depth).toPx() }
+    val targetShadowPx = with(LocalDensity.current) { (StackShadowBase + StackShadowPerDepth * depth).toPx() }
     val stackScale = animateFloatAsState(targetScale, LuminaMotion.BarCollapse, label = "bannerStackScale")
     val stackPeek = animateFloatAsState(targetPeekPx, LuminaMotion.BarCollapse, label = "bannerStackPeek")
+    val stackShadow = animateFloatAsState(targetShadowPx, LuminaMotion.BarCollapse, label = "bannerStackShadow")
+    val bannerShape = SquircleShape(28.dp)
 
     // Folds the springy enter/exit with the live scroll intent into one progress. Multiplying means
     // either one reaching "collapsed" tucks the banner away. Read in the draw phase only.
@@ -198,6 +268,10 @@ fun MorphingBannerHost(
                     alpha = gridAlpha * (1f - switchFade())
                 }
                 // The morph layer — the Now-Bar dive/squash/fade, anchored to the bottom (pill) edge.
+                // The card's drop shadow rides on THIS layer (not the stack layer above) so it dives,
+                // squashes and fades in lockstep with the banner instead of hovering at full size/
+                // position while the card animates in or out. clip = false keeps the inner content's
+                // own shadow/overshoot from being cut; the shape only shapes the shadow.
                 .graphicsLayer {
                     val p = reveal()
                     val pc = p.coerceIn(0f, 1f)
@@ -209,6 +283,13 @@ fun MorphingBannerHost(
                     translationY = (1f - pc) * (size.height * 1.15f + 28.dp.toPx())
                     // Fully faded by ~45% of the travel — invisible before it overlaps the pill.
                     alpha = (pc / 0.45f).coerceIn(0f, 1f)
+                    // Drop shadow so the pile reads as layered surfaces; sized by stack depth so each
+                    // peeking top edge is legible. Fades out with the layer alpha as the card leaves.
+                    shape = bannerShape
+                    clip = false
+                    shadowElevation = stackShadow.value
+                    ambientShadowColor = Color.Black
+                    spotShadowColor = Color.Black
                 },
         ) {
             // Staggered content reveal: the inner content fades and settles up starting at 30% of the

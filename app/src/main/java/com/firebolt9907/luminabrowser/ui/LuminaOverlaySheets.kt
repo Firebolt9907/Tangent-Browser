@@ -228,6 +228,7 @@ internal fun LuminaOverlaySheets(
                 onDismissTabGroups()
                 if (gridEngaged) onCloseGrid(true)
             },
+            onCloseTabs = { ids -> components.tabRepository.closeTabs(ids) },
             onDismiss = onDismissTabGroups,
         )
     }
@@ -242,6 +243,11 @@ internal fun LuminaOverlaySheets(
                 onDismissContainers()
                 if (gridEngaged) onCloseGrid(true)
             },
+            onOpenTab = { tabId ->
+                components.tabRepository.selectTab(tabId)
+                if (gridEngaged) onCloseGrid(true)
+            },
+            onCloseTabs = { ids -> components.tabRepository.closeTabs(ids) },
             onDismiss = onDismissContainers,
         )
     }

@@ -407,3 +407,18 @@ class WaybackManager {
         """.trimIndent().replace("\n", "")
     }
 }
+
+/**
+ * The site host for [url], de-archiving a Wayback snapshot first so per-site state — preferences
+ * (desktop mode, tracking protection, top-padding, reader-preferred), the sampled `theme-color`, and
+ * reader auto-disable — keys on the ORIGINAL site rather than `web.archive.org`. Use this instead of
+ * [com.firebolt9907.luminabrowser.state.hostFromUrl] wherever a host scopes persistent per-site
+ * behavior, so a site's settings carry into its archived view and toggles there affect the real site
+ * (not every archived page at once). Plain (non-snapshot) URLs pass straight through.
+ */
+fun siteHostFromUrl(url: String?): String {
+    val u = url.orEmpty()
+    val wb = WaybackManager.instance
+    val original = if (wb.isArchiveUrl(u)) wb.originalFromArchiveUrl(u) ?: u else u
+    return com.firebolt9907.luminabrowser.state.hostFromUrl(original)
+}

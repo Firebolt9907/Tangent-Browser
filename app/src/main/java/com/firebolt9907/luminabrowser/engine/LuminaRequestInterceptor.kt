@@ -1,7 +1,9 @@
 package com.firebolt9907.luminabrowser.engine
 
 import android.content.Context
+import android.content.Intent
 import android.os.Build
+import androidx.core.net.toUri
 import java.net.URI
 import java.net.URLEncoder
 import mozilla.components.browser.errorpages.ErrorPages
@@ -15,9 +17,14 @@ import mozilla.components.concept.engine.request.RequestInterceptor
  * Fenix uses. The page HTML lives in `assets/error_page_js.html`; [ErrorPages.createUrlEncodedErrorPage]
  * fills it with the localized strings the `browser-errorpages` component ships for each [ErrorType].
  *
- * Only [onErrorRequest] is overridden: we don't intercept normal load requests (external-app / intent
- * handling stays at the activity boundary — see IntentUrls / the two activities), and app-initiated
- * `loadUrl` calls are left alone ([interceptsAppInitiatedRequests] stays false).
+ * [onErrorRequest] serves the branded error pages. [onLoadRequest] additionally intercepts a page's
+ * attempt to open a native app — an `intent://` or custom-scheme deep link (e.g. a site redirecting
+ * to `whatsapp://…` or `market://…`). It resolves the target app ([resolveAppLink]) and returns an
+ * [RequestInterceptor.InterceptionResponse.AppIntent]; GeckoView then fires
+ * `EngineSession.Observer.onLaunchIntentRequest`, which the app surfaces as the "Open in <app>"
+ * banner (or auto-opens per the `autoOpenAppLinks` pref). This only fires for **web-content-initiated**
+ * navigations — [interceptsAppInitiatedRequests] stays false, so our own `loadUrl` calls (which are
+ * always http/https anyway) are never touched. Ordinary web navigations return null and pass through.
  *
  * @param onHttpsOnlyError invoked with the blocked URI when a navigation fails under HTTPS-Only mode.
  *   The app surfaces an in-app "load over HTTP" prompt (HttpsOnlyExceptionController + the dialog in
@@ -29,6 +36,30 @@ class LuminaRequestInterceptor(
     private val context: Context,
     private val onHttpsOnlyError: (String) -> Unit = {},
 ) : RequestInterceptor {
+
+    override fun onLoadRequest(
+        engineSession: EngineSession,
+        uri: String,
+        lastUri: String?,
+        hasUserGesture: Boolean,
+        isSameDomain: Boolean,
+        isRedirect: Boolean,
+        isDirectNavigation: Boolean,
+        isSubframeRequest: Boolean,
+    ): RequestInterceptor.InterceptionResponse? {
+        return when (val link = resolveAppLink(context, uri)) {
+            is AppLinkResult.Launch -> RequestInterceptor.InterceptionResponse.AppIntent(
+                appIntent = link.intent,
+                url = uri,
+                fallbackUrl = link.fallbackUrl,
+                appName = link.appName,
+            )
+            // No app handles the deep link, but the site declared an http(s) fallback — follow it
+            // in place, matching Chrome's `browser_fallback_url` behavior, instead of erroring.
+            is AppLinkResult.Fallback -> RequestInterceptor.InterceptionResponse.Url(link.url)
+            null -> null
+        }
+    }
 
     override fun onErrorRequest(
         session: EngineSession,
@@ -93,4 +124,77 @@ class LuminaRequestInterceptor(
             url
         }
     }
+}
+
+/** Our own package — never hand a page's deep link back to ourselves. */
+private const val OWN_PKG = "com.firebolt9907.luminabrowser"
+
+/**
+ * Schemes GeckoView renders itself. Anything NOT in this set and NOT a real navigation is treated as
+ * a potential native-app deep link. (`ws`/`wss` are here defensively — they never reach onLoadRequest,
+ * but must never be mistaken for an app link.)
+ */
+private val WEB_SCHEMES = setOf(
+    "http", "https", "about", "blob", "data", "javascript", "file",
+    "resource", "chrome", "moz-extension", "view-source", "ws", "wss",
+)
+
+/** Outcome of resolving a non-web URL to how it should be handled. */
+internal sealed interface AppLinkResult {
+    /** An installed app ([appName]) claims this deep link; launch [intent]. */
+    data class Launch(val intent: Intent, val appName: String?, val fallbackUrl: String?) : AppLinkResult
+
+    /** No app handles the link, but the site declared an http(s) fallback to load instead. */
+    data class Fallback(val url: String) : AppLinkResult
+}
+
+/**
+ * Resolve a page navigation to a native-app deep link, the way Chrome opens an `intent://` or a
+ * custom app scheme (`whatsapp://`, `spotify:`, `market://`, …). Returns null for ordinary web URLs
+ * (and for app links nothing on the device can handle and with no web fallback), so the caller lets
+ * the navigation proceed normally.
+ *
+ * Security (a page can put an arbitrary string here): the parsed intent is stripped of any explicit
+ * [Intent.component]/[Intent.setSelector] and of every URI-permission grant flag before it is
+ * resolved, so a hostile page cannot target a non-exported/internal component or smuggle a permission
+ * grant — only an app that *publicly* claims the URL via a BROWSABLE VIEW intent can be launched.
+ */
+internal fun resolveAppLink(context: Context, url: String): AppLinkResult? {
+    val uri = runCatching { url.toUri() }.getOrNull() ?: return null
+    val scheme = uri.scheme?.lowercase() ?: return null
+    if (scheme in WEB_SCHEMES) return null
+
+    val intent = runCatching {
+        if (scheme == "intent") {
+            Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+        } else {
+            Intent(Intent.ACTION_VIEW, uri)
+        }
+    }.getOrNull() ?: return null
+
+    intent.apply {
+        addCategory(Intent.CATEGORY_BROWSABLE)
+        component = null
+        selector = null
+        flags = flags and (
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+            ).inv()
+    }
+
+    // The site's declared web fallback (only http(s) is honored — a fallback could itself be hostile).
+    val fallbackUrl = intent.getStringExtra("browser_fallback_url")
+        ?.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
+
+    val pm = context.packageManager
+    val resolved = pm.resolveActivity(intent, 0)
+    val pkg = resolved?.activityInfo?.packageName
+    // pkg == "android" is the system disambiguation/resolver activity — treat as "no dedicated app".
+    if (pkg == null || pkg == OWN_PKG || pkg == "android") {
+        return fallbackUrl?.let { AppLinkResult.Fallback(it) }
+    }
+    val appName = runCatching { resolved.loadLabel(pm)?.toString() }.getOrNull()
+    return AppLinkResult.Launch(intent, appName, fallbackUrl)
 }

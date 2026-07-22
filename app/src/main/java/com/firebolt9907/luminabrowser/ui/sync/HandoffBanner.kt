@@ -1,9 +1,7 @@
 package com.firebolt9907.luminabrowser.ui.sync
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,24 +25,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import kotlin.math.abs
-import kotlinx.coroutines.launch
 import com.firebolt9907.luminabrowser.sync.FirefoxHandoffTab
 import com.firebolt9907.luminabrowser.sync.FirefoxReceivedTab
 import com.firebolt9907.luminabrowser.ui.BannerStackState
 import com.firebolt9907.luminabrowser.ui.MorphingBannerHost
+import com.firebolt9907.luminabrowser.ui.bannerSwipeToDismiss
 import com.firebolt9907.luminabrowser.ui.shape.SquircleShape
 
 /**
@@ -396,56 +387,6 @@ private fun ReceivedTabCard(
             }
         }
     }
-}
-
-/**
- * Follows the finger while the user drags a banner card away (downward, since the cards live at the
- * bottom, or sideways) and dismisses it when the drag passes a distance/velocity threshold; otherwise
- * springs the card back to rest. Keeps the tap-to-act / X-to-dismiss affordances intact — a small
- * touch-slop of travel is required before the drag takes over.
- */
-private fun Modifier.bannerSwipeToDismiss(onDismiss: () -> Unit): Modifier = composed {
-    val scope = rememberCoroutineScope()
-    val offsetX = remember { Animatable(0f) }
-    val offsetY = remember { Animatable(0f) }
-    val density = LocalDensity.current
-    // Distance past which a release commits the dismissal.
-    val dismissThresholdPx = with(density) { 96.dp.toPx() }
-
-    this
-        .graphicsLayer {
-            translationX = offsetX.value
-            translationY = offsetY.value
-            // Fade as the card is flung away for a softer exit.
-            val travel = maxOf(abs(offsetX.value), abs(offsetY.value))
-            alpha = (1f - (travel / (dismissThresholdPx * 2.5f))).coerceIn(0.15f, 1f)
-        }
-        .pointerInput(Unit) {
-            detectDragGestures(
-                onDrag = { change, delta ->
-                    change.consume()
-                    scope.launch {
-                        offsetX.snapTo(offsetX.value + delta.x)
-                        // Bottom banners resist upward travel — dismiss is a downward gesture.
-                        offsetY.snapTo(offsetY.value + delta.y)
-                    }
-                },
-                onDragEnd = {
-                    val flungDown = offsetY.value > dismissThresholdPx
-                    val flungSide = abs(offsetX.value) > dismissThresholdPx
-                    if (flungDown || flungSide) {
-                        onDismiss()
-                    } else {
-                        scope.launch { offsetX.animateTo(0f, spring()) }
-                        scope.launch { offsetY.animateTo(0f, spring()) }
-                    }
-                },
-                onDragCancel = {
-                    scope.launch { offsetX.animateTo(0f, spring()) }
-                    scope.launch { offsetY.animateTo(0f, spring()) }
-                },
-            )
-        }
 }
 
 // Icon for a synced device. The handoff/received banners pass an inferred label

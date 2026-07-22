@@ -76,6 +76,30 @@ class ContainerRepository(
     }
 
     /**
+     * Rename / recolor / re-icon an existing container **in place**, preserving its `contextId` so
+     * every tab already isolated in it stays in the same cookie jar. mozilla-components has no
+     * "update container" action (and `AddContainerAction` no-ops when the id already exists), so this
+     * removes then re-adds the [ContainerState] under the same id. The isolation is keyed by
+     * `contextId`, which never changes, so open tabs stay in their cookie jar and no site data is
+     * lost. No-op if the container doesn't exist.
+     */
+    fun updateContainer(
+        contextId: String,
+        name: String,
+        color: ContainerState.Color,
+        icon: ContainerState.Icon = ContainerState.Icon.CIRCLE,
+    ) {
+        if (store.state.containers[contextId] == null) return
+        store.dispatch(ContainerAction.RemoveContainerAction(contextId))
+        store.dispatch(
+            ContainerAction.AddContainerAction(
+                ContainerState(contextId = contextId, name = name.trim(), color = color, icon = icon),
+            ),
+        )
+        saveRegistry()
+    }
+
+    /**
      * Remove a container from the registry/store. Existing tabs keep their `contextId` and their
      * already-isolated data; they simply no longer resolve to a named container in the UI. (We don't
      * force-close a container's tabs here — that's a UI decision left to the caller.)

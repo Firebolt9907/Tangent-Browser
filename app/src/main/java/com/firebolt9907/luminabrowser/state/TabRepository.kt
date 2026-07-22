@@ -29,6 +29,13 @@ interface TabRepository {
     fun removeTab(id: String)
 
     /**
+     * Close every tab in [ids] (recording each real page onto the reopen stack), used for bulk
+     * actions like "close all tabs in this container/group". If this would leave zero tabs open, a
+     * single fresh blank tab is seeded so the browser never sits at zero tabs. No-op for an empty list.
+     */
+    fun closeTabs(ids: List<String>)
+
+    /**
      * Close every open tab (recording each real page onto the reopen stack) and leave a single fresh
      * blank tab selected, so the browser is never left with zero tabs. Returns the new blank tab id.
      */

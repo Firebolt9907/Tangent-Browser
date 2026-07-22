@@ -2,6 +2,7 @@ package com.firebolt9907.luminabrowser.ui.chrome
 
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.core.net.toUri
 
 /**
@@ -57,9 +58,19 @@ internal fun nativeAppFor(pm: PackageManager, url: String): NativeApp? {
 }
 
 internal fun installedBrowsers(pm: PackageManager): List<BrowserInfo> {
-    // Use flags=0 to get every app that handles https, not only the current default.
-    val probe = Intent(Intent.ACTION_VIEW, "https://example.com".toUri())
-    val dynamic = pm.queryIntentActivities(probe, 0)
+    // A "browser" = an app that handles a **host-less** `http:` VIEW/BROWSABLE intent — the exact
+    // definition the Android system uses for its default-browser picker. Two things matter here and
+    // both were missing before (so only the hardcoded few showed up):
+    //  - CATEGORY_BROWSABLE: browsers register their web intent-filter under it; without the category
+    //    the query matches almost nothing.
+    //  - a host-less URI (`http:` with empty host, not `https://example.com`): every real browser
+    //    claims the generic web scheme, while host-specific apps (Instagram, Maps, …) do NOT — so
+    //    this returns browsers only, and MATCH_ALL returns *every* installed one, not just the default.
+    val probe = Intent()
+        .setAction(Intent.ACTION_VIEW)
+        .addCategory(Intent.CATEGORY_BROWSABLE)
+        .setData(Uri.fromParts("http", "", null))
+    val dynamic = pm.queryIntentActivities(probe, PackageManager.MATCH_ALL)
         .map { ri ->
             BrowserInfo(
                 packageName = ri.activityInfo.packageName,
@@ -68,17 +79,16 @@ internal fun installedBrowsers(pm: PackageManager): List<BrowserInfo> {
         }
         .distinctBy { it.packageName }
         .filter { it.packageName != OWN_PKG }
+        .sortedBy { it.label.lowercase() }
 
-    val dynamicPkgs = dynamic.map { it.packageName }.toSet()
-
-    // For hardcoded entries also verify installation directly, since some packages
-    // may not surface via queryIntentActivities on all Android versions.
-    val hardcodedAvailable = HARDCODED_BROWSERS.filter { b ->
-        b.packageName.isEmpty() ||
-            b.packageName in dynamicPkgs ||
-            runCatching { pm.getApplicationInfo(b.packageName, 0) }.isSuccess
+    // Fallback for the rare device/OS combo where the system query returns nothing: verify the
+    // hardcoded packages are actually installed.
+    val discovered = dynamic.ifEmpty {
+        HARDCODED_BROWSERS.drop(1).filter {
+            runCatching { pm.getApplicationInfo(it.packageName, 0) }.isSuccess
+        }
     }
-    val hardcodedPkgs = hardcodedAvailable.map { it.packageName }.toSet()
-    val rest = dynamic.filter { it.packageName !in hardcodedPkgs }.sortedBy { it.label }
-    return hardcodedAvailable + rest
+
+    // "Default browser" (no package constraint) always leads, then every installed browser A→Z.
+    return listOf(BrowserInfo("", "Default browser")) + discovered
 }

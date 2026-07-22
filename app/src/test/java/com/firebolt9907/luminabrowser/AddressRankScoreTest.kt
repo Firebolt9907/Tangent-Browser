@@ -2,7 +2,10 @@ package com.firebolt9907.luminabrowser
 
 import com.firebolt9907.luminabrowser.state.AddressSuggestion
 import com.firebolt9907.luminabrowser.state.AddressSuggestionKind
+import com.firebolt9907.luminabrowser.state.canonicalUrlKey
 import com.firebolt9907.luminabrowser.state.rankScore
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -49,5 +52,18 @@ class AddressRankScoreTest {
         val bookmark = AddressSuggestion("Apple", "https://apple.com/", AddressSuggestionKind.Bookmark)
         val historyRow = history("https://apple.com/")
         assertTrue(rankScore("apple.com", bookmark) > rankScore("apple.com", historyRow))
+    }
+
+    @Test
+    fun `canonical key collapses scheme www and trailing slash`() {
+        val key = canonicalUrlKey("https://apple.com/")
+        assertEquals(key, canonicalUrlKey("http://apple.com"))
+        assertEquals(key, canonicalUrlKey("https://www.apple.com/"))
+        assertEquals(key, canonicalUrlKey("apple.com/"))
+    }
+
+    @Test
+    fun `canonical key keeps distinct paths separate`() {
+        assertNotEquals(canonicalUrlKey("https://apple.com/mac"), canonicalUrlKey("https://apple.com/"))
     }
 }

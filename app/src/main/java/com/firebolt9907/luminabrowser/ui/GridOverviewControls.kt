@@ -23,8 +23,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddToHomeScreen
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.GridView
@@ -65,6 +67,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.firebolt9907.luminabrowser.engine.LuminaBrowserComponents
@@ -213,11 +216,19 @@ internal fun ColumnScope.GridOverviewControls(
             // Secondary library/settings destinations live in an overflow menu
             // so the bar stays focused on tab actions (New Tab, layout, sync).
             Box {
+                val context = LocalContext.current
                 var overflowOpen by remember { mutableStateOf(false) }
                 var confirmCloseAll by remember { mutableStateOf(false) }
                 val reopenableCount by components.tabRepository.reopenableCount
                     .collectAsStateWithLifecycle()
                 val openTabCount = components.store.state.tabs.size
+                // The current tab backs the two page-level actions below (Duplicate / Add to Home
+                // Screen), relocated here from the aA sheet. Read at compose time — the menu
+                // recomposes each time it opens, so this reflects the tab that's currently selected.
+                val selectedTab = components.store.state.selectedTabId
+                    ?.let { id -> components.store.state.tabs.firstOrNull { it.id == id } }
+                val selectedTabIsWeb = selectedTab?.content?.url
+                    ?.startsWith("http", ignoreCase = true) == true
                 FilledTonalIconButton(
                     onClick = { overflowOpen = true },
                     enabled = toolbarEnabled,
@@ -299,6 +310,35 @@ internal fun ColumnScope.GridOverviewControls(
                         onClick = {
                             overflowOpen = false
                             confirmCloseAll = true
+                        },
+                    )
+                    // Duplicate the current page into a new foreground tab (branch browsing).
+                    // Relocated from the aA sheet so the action isn't lost.
+                    DropdownMenuItem(
+                        text = { Text("Duplicate Tab") },
+                        leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                        enabled = selectedTabIsWeb,
+                        onClick = {
+                            overflowOpen = false
+                            selectedTab?.content?.let { c ->
+                                viewModel.onOpenNewTab(url = c.url, title = c.title, selectTab = true)
+                            }
+                            haptics.create()
+                            onCloseGrid()
+                        },
+                    )
+                    // Pin the current page to the launcher home screen (Safari's "Add to Home
+                    // Screen"). Relocated from the aA sheet; uses the page favicon when available.
+                    DropdownMenuItem(
+                        text = { Text("Add to Home Screen") },
+                        leadingIcon = { Icon(Icons.Default.AddToHomeScreen, contentDescription = null) },
+                        enabled = selectedTabIsWeb,
+                        onClick = {
+                            overflowOpen = false
+                            selectedTab?.content?.let { c ->
+                                pinPageToHomeScreen(context, c.url, c.title, c.icon)
+                            }
+                            haptics.softClick()
                         },
                     )
                     HorizontalDivider()

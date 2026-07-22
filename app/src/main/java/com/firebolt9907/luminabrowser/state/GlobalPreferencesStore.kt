@@ -131,6 +131,15 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("webDarkModeAggressive", false)
         set(value) { prefs.edit { putBoolean("webDarkModeAggressive", value) } }
 
+    // Experimental Tier-3 image classification for web dark mode (only meaningful when
+    // webDarkModeEnabled). When on, images the cheap Tier-2 structural classifier can't decide are
+    // classified photo-vs-graphic from their actual pixels (16x16 canvas decode, cached by URL) so
+    // each is darkened correctly. Heavier (a per-pixel loop; CORS-tainted images fall back to
+    // "photo"), so it's OFF by default and exposed as a testing toggle. See ui/content/WebDarkMode.kt.
+    var webDarkModeImageAnalysis: Boolean
+        get() = prefs.getBoolean("webDarkModeImageAnalysis", false)
+        set(value) { prefs.edit { putBoolean("webDarkModeImageAnalysis", value) } }
+
     // When off, the "Continue from <device>" handoff banner (a tab recently active on another
     // Firefox Sync device) is never surfaced. Read by FirefoxSyncController when picking a handoff
     // candidate. On by default. Does not affect received "Send tab" pushes or synced-tab lists.

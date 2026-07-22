@@ -120,6 +120,7 @@ fun SettingsSheet(
     var tintPagesToSystemColor by remember { mutableStateOf(globalPrefsStore.tintPagesToSystemColor) }
     var webDarkModeTrigger by remember { mutableStateOf(globalPrefsStore.webDarkModeTrigger) }
     var webDarkModeAggressive by remember { mutableStateOf(globalPrefsStore.webDarkModeAggressive) }
+    var webDarkModeImageAnalysis by remember { mutableStateOf(globalPrefsStore.webDarkModeImageAnalysis) }
     var handoffEnabled by remember { mutableStateOf(globalPrefsStore.handoffEnabled) }
     var wideBarLayout by remember {
         mutableStateOf(WideBarLayout.fromName(globalPrefsStore.wideBarLayoutName))
@@ -469,8 +470,8 @@ fun SettingsSheet(
             if (webDarkModeTrigger != WebDarkModeTrigger.Off) {
                 SheetRowDivider()
                 SettingsToggle(
-                    title = "Fix dark-mode background images",
-                    subtitle = "Correct photos and banners that would otherwise look inverted. Slightly heavier on complex pages",
+                    title = "Adaptive recoloring",
+                    subtitle = "Recolor each section instead of inverting the whole page. Keeps photos true and preserves sections a site already made dark. Heavier on complex pages",
                     checked = webDarkModeAggressive,
                     onCheckedChange = {
                         webDarkModeAggressive = it
@@ -478,6 +479,19 @@ fun SettingsSheet(
                         onSettingChanged()
                     },
                 )
+                if (!webDarkModeAggressive) {
+                    SheetRowDivider()
+                    SettingsToggle(
+                        title = "Analyze image content (experimental)",
+                        subtitle = "Sample image pixels to tell photos from icons and logos, so each is darkened correctly. Heavier; for testing",
+                        checked = webDarkModeImageAnalysis,
+                        onCheckedChange = {
+                            webDarkModeImageAnalysis = it
+                            globalPrefsStore.webDarkModeImageAnalysis = it
+                            onSettingChanged()
+                        },
+                    )
+                }
             }
         }
 

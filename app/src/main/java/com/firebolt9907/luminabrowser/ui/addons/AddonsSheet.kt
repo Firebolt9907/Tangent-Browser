@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Extension
@@ -98,6 +99,9 @@ internal fun AddonsManagerSheetContent(
     onOpenSettings: (InstalledAddon) -> Unit,
     onOpenQuickSettings: (InstalledAddon) -> Unit,
     onUninstall: (String) -> Unit,
+    // When non-null, the header's leading icon becomes a Back control (returns to the Page view).
+    // Used by the aA sheet, which reaches Add-ons via a button rather than a top-level tab.
+    onBack: (() -> Unit)? = null,
 ) {
     val haptics = rememberLuminaHaptics()
     Column(
@@ -108,7 +112,15 @@ internal fun AddonsManagerSheetContent(
     ) {
         SheetHeader(
             title = "Add-ons",
-            leadingIcon = { Icon(Icons.Default.Extension, contentDescription = null) },
+            leadingIcon = {
+                if (onBack != null) {
+                    IconButton(onClick = { haptics.softClick(); onBack() }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                } else {
+                    Icon(Icons.Default.Extension, contentDescription = null)
+                }
+            },
             trailing = {
                 if (state.isBusy) {
                     CircularProgressIndicator(

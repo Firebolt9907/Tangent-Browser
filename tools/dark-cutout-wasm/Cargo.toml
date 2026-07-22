@@ -1,0 +1,15 @@
+[package]
+name = "dark-cutout-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "In-page WASM kernel that keys out an image's light, edge-connected background for web dark mode."
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true

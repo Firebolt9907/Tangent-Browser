@@ -151,6 +151,27 @@ object WebDarkMode {
         loadJavascriptUrl(buildRemoveScript())
     }
 
+    /**
+     * Lightweight teardown of ONLY the document_start pre-paint filter (the `lumina-dark-fallback`
+     * class + `#lumina-dark-style`), without the heavy per-element inline-style walk of
+     * [buildRemoveScript]. Used per-load on a page where web dark mode is globally on but this
+     * specific site is set to Off: the pre-paint content script still ran (extension is global), so
+     * its provisional invert must be stripped, but the page has no dynamic recolors to undo.
+     */
+    fun EngineSession.removeWebDarkModePrePaint() {
+        loadJavascriptUrl(buildRemovePrePaintScript())
+    }
+
+    /** @see removeWebDarkModePrePaint. Pure/JVM-testable; block comments only (flattened to one line). */
+    internal fun buildRemovePrePaintScript(): String {
+        return """
+            javascript:(function(){
+              try{document.documentElement.classList.remove('${FALLBACK_CLASS}');}catch(e){}
+              try{var s=document.getElementById('${STYLE_ID}');if(s&&s.parentNode)s.parentNode.removeChild(s);}catch(e){}
+            })();
+        """.trimIndent().replace("\n", " ")
+    }
+
     /** Cap on elements the aggressive background-image scan touches per pass — bounds worst-case cost. */
     private const val AGGRESSIVE_SCAN_CAP = 4000
 
@@ -390,6 +411,11 @@ object WebDarkMode {
               var BASE_BG='${DYN_BASE_BG}';
               var CAP=${DYN_SCAN_CAP};
               var DONE='__lumDynDone';
+              /* The document_start pre-paint extension (darkmode.js) always applies the FILTER tier
+                 (invert) to kill the white flash, before it knows the user picked the dynamic tier.
+                 Strip that filter here so the page isn't both inverted AND recolored. */
+              try{document.documentElement.classList.remove('${FALLBACK_CLASS}');}catch(e){}
+              try{var _fs=document.getElementById('${STYLE_ID}');if(_fs&&_fs.parentNode)_fs.parentNode.removeChild(_fs);}catch(e){}
               function baseStyle(){
                 var css='html.'+CLS+'{background-color:'+BASE_BG+' !important;color-scheme:dark;}'
                   +'html.'+CLS+' img,html.'+CLS+' video,html.'+CLS+' canvas,html.'+CLS+' picture,html.'+CLS+' iframe,html.'+CLS+' embed,html.'+CLS+' object{filter:none !important;}';

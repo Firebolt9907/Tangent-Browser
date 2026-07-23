@@ -488,6 +488,8 @@ fun CustomTabRoot(
                             ),
                         webDarkModeAggressive = components.globalPreferencesStore.webDarkModeAggressive,
                         webDarkModeImageAnalysis = components.globalPreferencesStore.webDarkModeImageAnalysis,
+                        webDarkModeGloballyActive = components.globalPreferencesStore.webDarkModeTrigger
+                            .resolve(isSystemInDarkTheme()),
                         onPageScrollDelta = ::onPageScrollDelta,
                         onFullScreenChange = { enabled ->
                             isVideoFullscreen = enabled

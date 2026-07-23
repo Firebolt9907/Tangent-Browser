@@ -106,6 +106,11 @@ fun ContentHost(
     // Filter-tier only (dynamic mode ignores it): enables experimental Tier-3 pixel-content image
     // classification (photo-vs-graphic from a canvas decode). See WebDarkMode.kt.
     webDarkModeImageAnalysis: Boolean = false,
+    // The GLOBAL resolved dark-mode state (before the per-site override folds in). When this is true
+    // but webDarkModeEnabled is false, the site is per-site-Off while dark mode is globally on: the
+    // document_start pre-paint extension (installed globally) still inverted this page, so its
+    // provisional filter must be stripped per-load. See injectSpacer / WebDarkModeExtension.
+    webDarkModeGloballyActive: Boolean = false,
     pageZoomFactor: Float = 1.0f,
     // Live scroll-collapse progress (0 = pill expanded, 1 = compact), as a lambda so the per-frame
     // spring updates drive the engine's vertical clipping via snapshotFlow without recomposing
@@ -466,12 +471,20 @@ fun ContentHost(
                 // Re-apply the web-dark-mode Tier-2 fallback on every load (fresh DOM). The
                 // LaunchedEffect below covers the already-loaded page and tab swaps.
                 if (webDarkModeEnabled) {
+                    DarkImageSegmenter.enabled = webDarkModeAggressive
+                    if (webDarkModeAggressive) DarkImageSegmenter.warmup()
                     with(WebDarkMode) {
                         engineSession.injectWebDarkMode(
                             dynamic = webDarkModeAggressive,
                             analyze = webDarkModeImageAnalysis,
+                            mlReady = DarkImageSegmenter.modelReady,
                         )
                     }
+                } else if (webDarkModeGloballyActive) {
+                    // Site is per-site-Off but dark mode is globally on: the document_start pre-paint
+                    // extension inverted this page before we could tell. Strip its provisional filter
+                    // (lightweight — no dynamic recolors to undo on a freshly loaded page).
+                    with(WebDarkMode) { engineSession.removeWebDarkModePrePaint() }
                 }
             }
             fun injectAmoInstaller(url: String, force: Boolean = false) {
@@ -765,10 +778,13 @@ fun ContentHost(
     // prefers-color-scheme override) is an engine-wide setting and needs no per-tab injection.
     LaunchedEffect(engineSession, webDarkModeEnabled, webDarkModeAggressive, webDarkModeImageAnalysis, tabId) {
         if (engineSession == null) return@LaunchedEffect
+        DarkImageSegmenter.enabled = webDarkModeEnabled && webDarkModeAggressive
+        if (webDarkModeEnabled && webDarkModeAggressive) DarkImageSegmenter.warmup()
         with(WebDarkMode) {
             if (webDarkModeEnabled) engineSession.injectWebDarkMode(
                 dynamic = webDarkModeAggressive,
                 analyze = webDarkModeImageAnalysis,
+                mlReady = DarkImageSegmenter.modelReady,
             )
             else engineSession.removeWebDarkMode()
         }

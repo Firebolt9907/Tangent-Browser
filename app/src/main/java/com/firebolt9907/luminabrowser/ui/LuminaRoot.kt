@@ -231,6 +231,16 @@ fun LuminaRoot(
     // Resolved on/off for the global feature, folding in the system theme for the "Match system"
     // trigger. Per-site overrides (currentSitePrefs.darkMode) resolve against this.
     val webDarkModeActive = webDarkModeTrigger.resolve(isSystemInDarkTheme())
+    // Gate the document_start pre-paint dark-mode extension (the white-flash fix) on the global
+    // resolved state: its content script runs on every page, so it must be enabled only while web dark
+    // mode is actually on. Per-site overrides / filter-vs-dynamic are reconciled by the native FCP
+    // injection, not the extension. See WebDarkModeExtension / darkmode.js.
+    LaunchedEffect(webDarkModeActive) {
+        com.firebolt9907.luminabrowser.ui.content.WebDarkModeExtension.setEnabled(
+            components.engine,
+            webDarkModeActive,
+        )
+    }
     // Opt-in aggressive sub-mode (re-invert class-based background images). Persisted.
     var webDarkModeAggressive by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeAggressive) }
     // Experimental Tier-3 image classification (pixel-content photo-vs-graphic). Persisted.
@@ -1209,6 +1219,23 @@ fun LuminaRoot(
             com.firebolt9907.luminabrowser.ui.content.OtpAutofill.codeFiller = null
             com.firebolt9907.luminabrowser.ui.content.OtpAutofill.onFieldDetected = null
         }
+    }
+    // Web dark mode's ML-Kit image cutout (DarkImageSegmenter) returns a finished mask on a background
+    // thread; inject it onto the tab that asked, but only while that tab is still foreground (so a mask
+    // can't land on the wrong page after a tab switch). Marshalled to main for the GeckoSession call.
+    val maskTabId by rememberUpdatedState(actualSelectedTabId)
+    val maskSession by rememberUpdatedState(selectedEngineSession)
+    DisposableEffect(Unit) {
+        com.firebolt9907.luminabrowser.ui.content.DarkImageSegmenter.maskApplier = { tabId, id, uri, natW, natH ->
+            scope.launch {
+                if (maskTabId == tabId) {
+                    maskSession?.loadJavascriptUrl(
+                        com.firebolt9907.luminabrowser.ui.content.WebDarkMode.buildApplyMaskScript(id, uri, natW, natH),
+                    )
+                }
+            }
+        }
+        onDispose { com.firebolt9907.luminabrowser.ui.content.DarkImageSegmenter.maskApplier = null }
     }
     // Live clipboard-change signal: while foreground, an in-app copy (or a paste from another app
     // that surfaces here) flips the banner on if an OTP field is present. No contents are read — the
@@ -2648,6 +2675,7 @@ fun LuminaRoot(
                     webDarkModeEnabled = currentSitePrefs.darkMode.resolve(webDarkModeActive),
                     webDarkModeAggressive = webDarkModeAggressive,
                     webDarkModeImageAnalysis = webDarkModeImageAnalysis,
+                    webDarkModeGloballyActive = webDarkModeActive,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
                     barCollapseProgress = barCollapseProgressProvider,
                     tabIsLoading = actualSelectedContent?.loading == true,

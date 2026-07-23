@@ -370,6 +370,14 @@ class LuminaBrowserComponents(application: Application) {
         // they're still looking at the restored tab / new-tab bar.
         engine.speculativeCreateSession()
         speculativePreconnector.warmTopSites(historyStorage)
+        // Install the built-in document_start dark-mode pre-paint extension (removes the white flash
+        // on light pages). Enabled only while web dark mode is globally on — start enabled iff the
+        // trigger is explicitly On; LuminaRoot corrects for the Auto/system case once it composes.
+        com.firebolt9907.luminabrowser.ui.content.WebDarkModeExtension.install(
+            engine,
+            initialEnabled = globalPreferencesStore.webDarkModeTrigger ==
+                com.firebolt9907.luminabrowser.state.WebDarkModeTrigger.On,
+        )
     }
 
     companion object {

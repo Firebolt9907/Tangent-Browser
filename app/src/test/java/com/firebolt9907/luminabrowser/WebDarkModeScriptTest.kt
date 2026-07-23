@@ -172,6 +172,47 @@ class WebDarkModeScriptTest {
         assertTrue("exports capacity", text.contains("capacity"))
         assertTrue("exports blur_alpha", text.contains("blur_alpha"))
         assertTrue("exports smooth_rgb", text.contains("smooth_rgb"))
+        assertTrue("exports to_alpha_mask", text.contains("to_alpha_mask"))
+    }
+
+    @Test
+    fun `cutout is non-destructive - applies a CSS mask, never swaps the image src`() {
+        // Blur fix: the image pixels are never replaced; we mask the original so it stays full-res.
+        assertTrue("worker collapses to an alpha mask in the kernel",
+            String(Base64.getDecoder().decode(DarkCutoutAssets.WORKER_B64), Charsets.UTF_8).contains("to_alpha_mask"))
+        assertTrue("driver applies a CSS mask", DarkCutoutAssets.DRIVER_JS.contains("mask-image"))
+        assertTrue("mask reads the alpha channel", DarkCutoutAssets.DRIVER_JS.contains("mask-mode"))
+        assertFalse("never swaps the src (that caused the blur)", DarkCutoutAssets.DRIVER_JS.contains("img.src = bu"))
+    }
+
+    @Test
+    fun `cutout keying is adaptive to the measured background, not an absolute contrast`() {
+        // The kernel takes a colorBand (distance from the seed/border mean) so keying is relative to
+        // the image's own background rather than a hardcoded threshold; the host threads it through.
+        assertTrue("host passes colorBand", WebDarkMode.buildImageCutoutScript().contains("colorBand:"))
+        assertTrue("worker passes colorBand to the kernel",
+            String(Base64.getDecoder().decode(DarkCutoutAssets.WORKER_B64), Charsets.UTF_8).contains("P.colorBand"))
+    }
+
+    @Test
+    fun `ml-ready cutout takes the native segmentation bridge, not the wasm worker`() {
+        val ml = WebDarkMode.buildImageCutoutScript(mlReady = true)
+        assertTrue("flags the ML path", ml.contains("mlReady:true"))
+        assertTrue("carries the nonce-tagged darkcut bridge", ml.contains("lumina-darkcut"))
+        assertTrue("driver has the ML setup", DarkCutoutAssets.DRIVER_JS.contains("lumCutSetupML"))
+        // Default is the offline WASM fallback.
+        assertTrue("fallback path", WebDarkMode.buildImageCutoutScript().contains("mlReady:false"))
+    }
+
+    @Test
+    fun `apply-mask script is a single-line javascript url that masks the tagged image`() {
+        val s = WebDarkMode.buildApplyMaskScript("lc7", "data:image/png;base64,AAAA", 800, 600)
+        assertTrue(s.startsWith("javascript:"))
+        assertFalse(s.contains("\n"))
+        assertTrue("targets the tagged element", s.contains("data-lumina-cut-id=\"lc7\""))
+        assertTrue("applies the mask", s.contains("mask-image") && s.contains("mask-mode"))
+        assertTrue("carries the mask data URI", s.contains("data:image/png;base64,AAAA"))
+        assertTrue("aligns under object-fit", s.contains("objectFit"))
     }
 
     @Test
@@ -195,6 +236,74 @@ class WebDarkModeScriptTest {
         assertTrue("driver has a dead/skip path", DarkCutoutAssets.DRIVER_JS.contains("markSkipAll"))
     }
 
+    // --- document_start pre-paint extension (white-flash fix) ---
+
+    private fun readAsset(rel: String): String {
+        // JVM unit tests run with the module dir (app/) as cwd.
+        val candidates = listOf(java.io.File(rel), java.io.File("app/$rel"))
+        val f = candidates.firstOrNull { it.exists() }
+            ?: error("asset not found from ${java.io.File(".").absolutePath}: $rel")
+        return f.readText()
+    }
+
+    @Test
+    fun `pre-paint content script runs at document_start on all pages`() {
+        val manifest = readAsset("src/main/assets/extensions/darkmode/manifest.json")
+        assertTrue("must inject before first paint", manifest.contains("\"run_at\": \"document_start\""))
+        assertTrue("covers all pages", manifest.contains("<all_urls>"))
+        assertTrue("loads the content script", manifest.contains("darkmode.js"))
+    }
+
+    @Test
+    fun `pre-paint script uses the SAME filter class-id-contrast as the native filter tier`() {
+        // Reusing the class/id lets the native FCP injection seamlessly take over (no double-invert);
+        // matching contrast keeps the pre-paint frame identical to the settled one. Cross-check the
+        // literals against what buildApplyScript emits so the two can't silently drift.
+        val js = readAsset("src/main/assets/extensions/darkmode/darkmode.js")
+        val apply = WebDarkMode.buildApplyScript()
+        // Literals present verbatim in both.
+        for (token in listOf("lumina-dark-fallback", "lumina-dark-style", "invert(1) hue-rotate(180deg)")) {
+            assertTrue("darkmode.js missing '$token'", js.contains(token))
+            assertTrue("buildApplyScript missing '$token' (drift!)", apply.contains(token))
+        }
+        // darkmode.js builds the CSS by concatenation, so the contrast constants appear as JS values;
+        // the native script emits them inlined. Assert both so they can't drift.
+        assertTrue("darkmode.js root contrast", js.contains("ROOT_CONTRAST = '0.9'"))
+        assertTrue("darkmode.js media contrast", js.contains("MEDIA_CONTRAST = '1.1111'"))
+        assertTrue("native root contrast", apply.contains("contrast(0.9)"))
+        assertTrue("native media contrast", apply.contains("contrast(1.1111)"))
+    }
+
+    @Test
+    fun `pre-paint script removes the invert before first paint for genuinely dark pages`() {
+        val js = readAsset("src/main/assets/extensions/darkmode/darkmode.js")
+        // rAF fires before the frame's paint; getComputedStyle is filter-independent, so a dark page
+        // loses the provisional invert before it can flash light.
+        assertTrue("re-decides on a pre-paint frame", js.contains("requestAnimationFrame"))
+        assertTrue("checks the real background", js.contains("getComputedStyle") && js.contains("pageIsDark"))
+        assertTrue("never inverts a media document", js.contains("isMediaDoc"))
+        assertTrue("drops the class when dark", js.contains("classList.remove"))
+    }
+
+    @Test
+    fun `dynamic tier strips the pre-paint filter so the page is not both inverted and recolored`() {
+        val s = WebDarkMode.buildDynamicScript()
+        assertTrue("removes the pre-paint filter class", s.contains("classList.remove('lumina-dark-fallback')"))
+        assertTrue("removes the pre-paint filter style", s.contains("getElementById('lumina-dark-style')"))
+    }
+
+    @Test
+    fun `pre-paint strip is a lightweight single-line url that drops only the filter`() {
+        val s = WebDarkMode.buildRemovePrePaintScript()
+        assertTrue(s.startsWith("javascript:"))
+        assertFalse(s.contains("\n"))
+        assertTrue(s.contains("lumina-dark-fallback"))
+        assertTrue(s.contains("lumina-dark-style"))
+        // Must NOT do the heavy per-element inline-style walk (that's buildRemoveScript's job).
+        assertFalse("no destructive element walk", s.contains("getElementsByTagName('*')"))
+        assertFalse("no inline-style stripping", s.contains("removeProperty"))
+    }
+
     @Test
     fun `remove drops both the class and the injected style`() {
         val s = WebDarkMode.buildRemoveScript()
@@ -208,5 +317,6 @@ class WebDarkModeScriptTest {
         assertTrue(s.contains("__luminaDynObserver"))
         assertTrue("strips per-element inline recolors", s.contains("removeProperty"))
         assertTrue("terminates the cutout worker", s.contains("__lumCut") && s.contains("terminate"))
+        assertTrue("strips the cutout CSS mask", s.contains("mask-image"))
     }
 }

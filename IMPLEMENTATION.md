@@ -553,6 +553,27 @@ boolean feeds `ContentHost`'s existing `webDarkModeEnabled` param at both call s
 `CustomTabRoot`). Controls: Settings picker (Off/On/Match system) + aggressive sub-toggle, aA quick
 toggle, aA Page-Settings per-site override. Pure script builders are JVM-tested (`WebDarkMode*Test`).
 
+**No white flash — the `document_start` pre-paint extension** (`assets/extensions/darkmode/`,
+`WebDarkModeExtension.kt`). Tier 2 injects at first-contentful-paint / load-complete — *after* a
+light-only page has already painted white — so those pages flashed white before darkening, and a
+`javascript:` URL has no earlier hook. A built-in WebExtension content script (`darkmode.js`,
+`run_at: document_start`, `<all_urls>`) applies the **same** filter class/id/contrast as Tier 2
+*before* the first paint, so a light page's first frame is already dark. It then re-decides on the
+first `requestAnimationFrame` (which fires **before** that frame's paint, by which point
+render-blocking CSS — hence a site's own dark theme under Tier 1 — has applied) and *removes* the
+invert for pages that turn out genuinely dark or are media documents, so those never flash *light*
+either; `getComputedStyle` reports real colors regardless of the CSS filter, so `pageIsDark` still
+works with the filter on. Reusing the Tier-2 class/id means the native FCP injection takes over
+seamlessly (no double-invert); the dynamic tier strips the pre-paint filter first (so a page isn't
+both inverted *and* recolored). Installed **once** at startup (`LuminaBrowserComponents.init`) and
+enabled/disabled via `enable/disableWebExtension` to track the **global** resolved state
+(`LuminaRoot` `LaunchedEffect(webDarkModeActive)`) — the content script matches every page, so it
+must only run while dark mode is globally on; it costs nothing when off. A per-site-Off page (dark
+mode globally on) still gets the pre-paint invert, so `injectSpacer` strips it per-load with a
+lightweight `removeWebDarkModePrePaint` (gated on `webDarkModeGloballyActive && !webDarkModeEnabled`,
+so dark-mode-off users pay no per-load teardown). `WebDarkModeScriptTest` pins the content script to
+`document_start` and cross-checks its class/id/contrast against `buildApplyScript` so they can't drift.
+
 ## Tried and reverted
 
 - **Walk header descendants and shift abs-positioned `top` by `topPx`** in `PageBottomSpacer.kt` to fix apple.com globalnav children landing under the status bar. Each pass added one `style.setProperty` per abs descendant; the existing `MutationObserver` on `documentElement{attributeFilter:['class','style','slot']}` re-fired on every one of those mutations and re-scheduled `applyHeaderInsets` via RAF, putting the page in a continuous restyle loop. `engineView.captureThumbnail` landed on transitional frames and `TabSnapshotCache` filled with empty/dark bitmaps, so every tab switch showed a uniform dark cover. The current header pass avoids this by editing only selected top-level fixed/sticky header candidates and leaving nested absolute-positioned descendants alone.

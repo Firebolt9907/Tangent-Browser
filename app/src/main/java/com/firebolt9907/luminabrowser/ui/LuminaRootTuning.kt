@@ -41,6 +41,14 @@ internal const val ReaderBarHideSlopPx = 6f
 // screen-sized bitmap for every page ever visited. Evicted entries still live in the disk cache.
 internal const val MaxRecentPageSnapshots = 24
 internal const val CompactInteractionThreshold = 0.5f
+// Chrome Input Framer equivalent: after the VSync frame boundary, wait this long for late-arriving
+// scroll events before committing the frame. At 120 Hz one refresh cycle is ~8.3 ms; 1/3 of that
+// is ~2.8 ms. At 60 Hz one cycle is ~16.7 ms; 1/3 is ~5.6 ms. We use a fixed ~3 ms which works
+// well for both: long enough to catch most late events, short enough to not delay the frame visibly.
+internal const val ScrollFrameGracePeriodMs = 3L
+// Maximum age (ms) of velocity samples used for input prediction. Samples older than this are
+// discarded so a stale velocity from a prior scroll doesn't predict into a new gesture.
+internal const val ScrollVelocityMaxAgeMs = 80L
 // Decelerate-only curve for gesture-release slides (predictive back, grid dismiss): the motion
 // continues from the finger and eases into the target without re-accelerating, matching iOS's
 // interactive-pop settle. Default FastOutSlowIn eases in *and* out, which feels wrong mid-gesture.

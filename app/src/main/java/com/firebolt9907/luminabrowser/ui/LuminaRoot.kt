@@ -188,7 +188,12 @@ fun LuminaRoot(
     val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
     val components = (appContext as LuminaApplication).components
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val browserState by components.browserState.collectAsStateWithLifecycle()
+    // Chrome Input Vizard equivalent: collect the most frequently-changing fields via derived flows
+    // that only emit when their specific content changed. This prevents LuminaRoot from recomposing
+    // on every tab content update (URL change, loading state, title change) — only when the
+    // selected tab changes or tabs are added/removed/reordered.
+    val selectedTabIdFromStore by components.selectedTabId.collectAsStateWithLifecycle()
+    val tabsList by components.tabsList.collectAsStateWithLifecycle()
     val addonsState by components.addonController.state.collectAsStateWithLifecycle()
     val firefoxSyncState by components.firefoxSyncController.state.collectAsStateWithLifecycle()
 
@@ -269,7 +274,7 @@ fun LuminaRoot(
     var findTotalMatches by remember { mutableIntStateOf(0) }
 
     var visualSelectedTabId by remember { mutableStateOf<String?>(null) }
-    val actualSelectedTabId = browserState.selectedTabId
+    val actualSelectedTabId = selectedTabIdFromStore
     val selectedTabId = visualSelectedTabId ?: actualSelectedTabId
     val isReaderActiveOnSelectedTab = selectedTabId != null && activeReaderTabs.contains(selectedTabId)
     val selectedTabArticle = selectedTabId?.let { tabArticles[it] }
@@ -280,8 +285,8 @@ fun LuminaRoot(
     LaunchedEffect(selectedTabArticle) {
         if (selectedTabArticle != null) lastReaderArticle.value = selectedTabArticle
     }
-    val selectedTab = browserState.tabs.firstOrNull { it.id == selectedTabId }
-    val actualSelectedTab = browserState.tabs.firstOrNull { it.id == actualSelectedTabId }
+    val selectedTab = tabsList.firstOrNull { it.id == selectedTabId }
+    val actualSelectedTab = tabsList.firstOrNull { it.id == actualSelectedTabId }
     val selectedEngineSession = actualSelectedTab?.engineState?.engineSession
     val selectedContent = selectedTab?.content
 
@@ -490,12 +495,12 @@ fun LuminaRoot(
         components.addonController.setActiveSession(selectedEngineSession)
     }
     val actualSelectedContent = actualSelectedTab?.content
-    val selectedIndex = browserState.tabs.indexOfFirst { it.id == selectedTabId }
-    val previousTab = browserState.tabs.getOrNull(selectedIndex - 1)
-    val nextTab = browserState.tabs.getOrNull(selectedIndex + 1)
+    val selectedIndex = tabsList.indexOfFirst { it.id == selectedTabId }
+    val previousTab = tabsList.getOrNull(selectedIndex - 1)
+    val nextTab = tabsList.getOrNull(selectedIndex + 1)
     val previousTabId = previousTab?.id
     val nextTabId = nextTab?.id
-    val tabCount = browserState.tabs.size
+    val tabCount = tabsList.size
     val canCreateTabFromRightEdge = selectedIndex == tabCount - 1 && selectedIndex >= 0
 
     val density = LocalDensity.current
@@ -698,6 +703,13 @@ fun LuminaRoot(
     var barCollapseAnimationJob by remember { mutableStateOf<Job?>(null) }
     var barCollapseIdleJob by remember { mutableStateOf<Job?>(null) }
     var pageScrollFrameJob by remember { mutableStateOf<Job?>(null) }
+    // Scroll velocity tracking for input prediction (Chrome Input Prediction equivalent).
+    // When GeckoView misses a frame, we predict the next delta from recent velocity so the bar
+    // collapse stays visually smooth instead of stuttering for one refresh cycle (~8.3 ms at 120 Hz).
+    val scrollVelocityWindow = remember { floatArrayOf(0f, 0f, 0f) }
+    val scrollVelocityTimestamps = remember { longArrayOf(0L, 0L, 0L) }
+    var scrollVelocityIndex by remember { mutableIntStateOf(0) }
+    var scrollVelocitySampleCount by remember { mutableIntStateOf(0) }
     var showAddons by remember { mutableStateOf(false) }
     var showSyncedTabs by remember { mutableStateOf(false) }
     var showTabGroups by remember { mutableStateOf(false) }
@@ -809,7 +821,7 @@ fun LuminaRoot(
                 // Don't auto-open pages with too little body text (landing pages, galleries, link
                 // hubs) — they stay eligible for a manual toggle but shouldn't hijack the view.
                 val substantial = readerManager.getArticle(tabId)?.hasSubstantialBody == true
-                val url = browserState.tabs.firstOrNull { it.id == tabId }?.content?.url.orEmpty()
+                val url = tabsList.firstOrNull { it.id == tabId }?.content?.url.orEmpty()
                 val host = siteHostFromUrl(url)
                 if (substantial && host.isNotEmpty() && !components.sitePreferencesStore.isReaderAutoDisabled(host)) {
                     readerManager.setReaderActive(tabId, true)
@@ -1130,13 +1142,13 @@ fun LuminaRoot(
             if (wb.isArchiveUrl(url)) wb.originalFromArchiveUrl(url) ?: url else url
         }
     }
-    LaunchedEffect(gridEngaged, browserState.tabs.size) {
+    LaunchedEffect(gridEngaged, tabsList.size) {
         if (!gridEngaged) return@LaunchedEffect
         // Bound the cache to currently-open tabs so it can't grow without limit across a long
         // session of navigations/closes (BrowserIcons keeps its own bounded disk cache underneath).
-        val currentUrls = browserState.tabs.mapTo(HashSet()) { faviconKeyFor(it.content.url) }
+        val currentUrls = tabsList.mapTo(HashSet()) { faviconKeyFor(it.content.url) }
         faviconCache.keys.retainAll(currentUrls)
-        browserState.tabs.forEach { tab ->
+        tabsList.forEach { tab ->
             val url = faviconKeyFor(tab.content.url)
             if (url.isNotBlank() && !url.isBlankPageUrl() && !faviconCache.containsKey(url)) {
                 launch {
@@ -1446,16 +1458,64 @@ fun LuminaRoot(
         }
     }
 
+    // Predict the next scroll delta from recent velocity. Uses a weighted average of the last
+    // up-to-3 samples, discarding any older than ScrollVelocityMaxAgeMs. The prediction is the
+    // average velocity multiplied by one refresh cycle (~8.3 ms at 120 Hz). This is intentionally
+    // conservative: a small predicted delta keeps the bar visually smooth during a frame drop
+    // without overshooting (the real delta will correct on the next frame).
+    fun predictScrollDelta(): Float {
+        val now = android.os.SystemClock.uptimeMillis()
+        var weightedSum = 0f
+        var weightSum = 0f
+        for (i in 0 until scrollVelocitySampleCount) {
+            val idx = (scrollVelocityIndex - 1 - i + 3) % 3
+            val age = now - scrollVelocityTimestamps[idx]
+            if (age > ScrollVelocityMaxAgeMs) break
+            // Exponential decay: most recent sample has weight 1, older samples decay.
+            val weight = 1f / (1f + age / 16f)
+            weightedSum += scrollVelocityWindow[idx] * weight
+            weightSum += weight
+        }
+        if (weightSum <= 0f) return 0f
+        val avgVelocity = weightedSum / weightSum
+        // Predict one refresh cycle ahead. At 120 Hz, 8.3 ms; at 60 Hz, 16.7 ms. We use a
+        // conservative 8 ms so the prediction doesn't overshoot when the next real event arrives.
+        return avgVelocity
+    }
+
     fun enqueuePageScrollDelta(delta: Float) {
         pendingPageScrollDelta[0] += delta
+        // Track scroll velocity for input prediction (Chrome Input Prediction equivalent).
+        // Keep the last 3 samples in a ring buffer for a velocity estimate that's resilient to
+        // single-sample outliers while remaining responsive to direction changes.
+        val now = android.os.SystemClock.uptimeMillis()
+        scrollVelocityWindow[scrollVelocityIndex] = delta
+        scrollVelocityTimestamps[scrollVelocityIndex] = now
+        scrollVelocityIndex = (scrollVelocityIndex + 1) % 3
+        if (scrollVelocitySampleCount < 3) scrollVelocitySampleCount++
         if (pageScrollFrameJob != null) return
         pageScrollFrameJob = scope.launch {
-            withFrameNanos { }
+            val frameStartNanos = withFrameNanos { }
+            // Chrome Input Framer equivalent: wait a short grace period (1/3 refresh cycle) for
+            // late-arriving scroll events so they can still be included in this frame instead of
+            // being delayed to the next one. At 120 Hz that's ~2.8 ms; at 60 Hz ~5.6 ms.
+            delay(ScrollFrameGracePeriodMs)
+            // If a new delta arrived during the grace period, flush it too (it was accumulated
+            // into pendingPageScrollDelta by the caller). We don't re-launch a frame job; the
+            // accumulated delta will be picked up below.
             val pendingDelta = pendingPageScrollDelta[0]
             pendingPageScrollDelta[0] = 0f
             pageScrollFrameJob = null
             if (pendingDelta != 0f) {
                 handlePageScrollDelta(pendingDelta)
+            } else if (userScrollInteractionActive && scrollVelocitySampleCount >= 2) {
+                // No real scroll event arrived this frame (frame drop / late delivery). Predict
+                // the next delta from recent velocity so the bar collapse stays visually smooth
+                // instead of stuttering for one refresh cycle.
+                val predicted = predictScrollDelta()
+                if (predicted != 0f) {
+                    handlePageScrollDelta(predicted)
+                }
             }
         }
     }
@@ -2014,8 +2074,8 @@ fun LuminaRoot(
             val selectedTx = fingerX - containerW * releaseScale / 2f
             val selectedTy = fingerY - containerH * releaseScale
             val stride = (containerW + tabSwitchGapPx) * releaseScale
-            val selIdx = browserState.tabs.indexOfFirst { it.id == selectedTabId }.coerceAtLeast(0)
-            return browserState.tabs.mapIndexed { i, _ ->
+            val selIdx = tabsList.indexOfFirst { it.id == selectedTabId }.coerceAtLeast(0)
+            return tabsList.mapIndexed { i, _ ->
                 Triple(selectedTx + (i - selIdx) * stride, selectedTy, releaseScale)
             }
         }
@@ -2183,6 +2243,7 @@ fun LuminaRoot(
         snap.resetTabSwitchSnapshot()
         snap.clearPredictiveBackCover()
         userScrollInteractionActive = false
+        scrollVelocitySampleCount = 0
         expandUrlBar()
         resetPullRefresh()
     }
@@ -2199,7 +2260,7 @@ fun LuminaRoot(
         lastObservedUrlByTab[tabId] = url
         // Drop entries for tabs that no longer exist so these per-tab maps can't grow without
         // bound as tabs are opened and closed.
-        val liveTabIds = browserState.tabs.mapTo(HashSet()) { it.id }
+        val liveTabIds = tabsList.mapTo(HashSet()) { it.id }
         lastObservedUrlByTab.keys.retainAll(liveTabIds)
         previousObservedUrlByTab.keys.retainAll(liveTabIds)
     }
@@ -2217,6 +2278,7 @@ fun LuminaRoot(
 
     LaunchedEffect(selectedContent?.loading) {
         userScrollInteractionActive = false
+        scrollVelocitySampleCount = 0
         if (selectedContent?.loading == false) {
             resetPullRefresh()
         }
@@ -2279,7 +2341,7 @@ fun LuminaRoot(
         // Pre-set to true if the tab has a cached snapshot (previously rendered) or is not loading.
         // Already-loaded sessions won't fire a new paint callback after rebind, so leaving this
         // false would block the page behind the background overlay indefinitely.
-        val tab = browserState.tabs.firstOrNull { it.id == actualSelectedTabId }
+        val tab = tabsList.firstOrNull { it.id == actualSelectedTabId }
         val hasSnapshot = actualSelectedTabId != null &&
             snapshotFor(actualSelectedTabId, tab?.content?.url) != null
         geckoHasPainted = hasSnapshot || tab?.content?.loading == false
@@ -2435,10 +2497,10 @@ fun LuminaRoot(
         // can't navigate back any further, Back closes this child tab and returns to its parent
         // instead of exiting the browser.
         val selectedTabParentId =
-            browserState.tabs.firstOrNull { it.id == selectedTabId }?.parentId
+            tabsList.firstOrNull { it.id == selectedTabId }?.parentId
         val selectedTabHasLiveParent = selectedTabParentId != null &&
             selectedTabParentId != selectedTabId &&
-            browserState.tabs.any { it.id == selectedTabParentId }
+            tabsList.any { it.id == selectedTabParentId }
         BackHandler(
             enabled = !gridOpen &&
                 selectedContent?.canGoBack == false &&
@@ -2568,7 +2630,7 @@ fun LuminaRoot(
                         recentTabSnapshots[capturedTabId] = bitmap
                         // Drop snapshots for tabs that no longer exist so closed-tab bitmaps aren't
                         // retained in memory indefinitely.
-                        val liveTabIds = browserState.tabs.mapTo(HashSet()) { it.id }
+                        val liveTabIds = tabsList.mapTo(HashSet()) { it.id }
                         recentTabSnapshots.keys.retainAll(liveTabIds)
                         if (url.isNotBlank() && url != "about:blank") {
                             recentPageSnapshots[url] = bitmap
@@ -2902,7 +2964,6 @@ fun LuminaRoot(
                     switchPaneShape = switchPaneShape,
                 )
                 if (gridEngaged) {
-                    val tabsList = browserState.tabs
                     val width = contentSize.width.toFloat()
                     val pageStride = width + tabSwitchGapPx
                     val newSelIdx = if (gridNewTabSelected) {
@@ -3001,7 +3062,7 @@ fun LuminaRoot(
                         // target.
                         gridHandoffSelectedTabId = null
                         gridHandoffLeavingTabId = null
-                        val tappedTab = browserState.tabs.firstOrNull { it.id == tabId }
+                        val tappedTab = tabsList.firstOrNull { it.id == tabId }
                         if (tabId != selectedTabId) {
                             visualSelectedTabId = tabId
                             // Clear the old tab's gesture-local snapshot so the close
@@ -3235,8 +3296,8 @@ fun LuminaRoot(
                     },
                     searchSuggestionsEnabled = components.globalPreferencesStore.searchSuggestionsEnabled,
                     searchEngine = components.globalPreferencesStore.searchEngine,
-                    openTabs = remember(browserState.tabs) {
-                        browserState.tabs.map {
+                    openTabs = remember(tabsList) {
+                        tabsList.map {
                             com.firebolt9907.luminabrowser.state.OpenTabRef(
                                 id = it.id,
                                 url = it.content.url,

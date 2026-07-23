@@ -21,6 +21,7 @@ import mozilla.components.browser.engine.gecko.GeckoEngine
 import mozilla.components.browser.icons.BrowserIcons
 import mozilla.components.browser.state.engine.EngineMiddleware
 import mozilla.components.browser.state.state.BrowserState
+import mozilla.components.browser.state.state.TabSessionState
 import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.concept.engine.DefaultSettings
 import mozilla.components.concept.engine.Engine
@@ -144,6 +145,8 @@ class LuminaBrowserComponents(application: Application) {
         scope,
         loginsStorage,
         creditCardsStorage,
+        historyStorage,
+        bookmarksStorage,
     )
     val sitePermissionController =
         com.firebolt9907.luminabrowser.permissions.SitePermissionController(application)
@@ -331,8 +334,28 @@ class LuminaBrowserComponents(application: Application) {
     private val _browserState = MutableStateFlow(store.state)
     val browserState: StateFlow<BrowserState> = _browserState.asStateFlow()
 
+    // Derived flow that only emits when the selected tab ID changes, not on every BrowserState
+    // update (tab content changes, loading state, etc.). Collecting this instead of the full
+    // browserState prevents LuminaRoot from recomposing on every tab content update.
+    private val _selectedTabId = MutableStateFlow(store.state.selectedTabId)
+    val selectedTabId: StateFlow<String?> = _selectedTabId.asStateFlow()
+
+    // Derived flow for the tabs list — only emits when tabs are added/removed/reordered, not when
+    // a tab's content (URL, title, loading state) changes. This prevents recomposition of the
+    // tab-overview and grid composables when unrelated tabs update.
+    private val _tabsList = MutableStateFlow(store.state.tabs)
+    val tabsList: StateFlow<List<mozilla.components.browser.state.state.TabSessionState>> = _tabsList.asStateFlow()
+
     private val storeSubscription = store.observeManually { state ->
         _browserState.value = state
+        // Only emit derived flows when their specific content changed, avoiding downstream
+        // recompositions on the hot path (scroll, content updates).
+        if (_selectedTabId.value != state.selectedTabId) {
+            _selectedTabId.value = state.selectedTabId
+        }
+        if (_tabsList.value != state.tabs) {
+            _tabsList.value = state.tabs
+        }
     }
 
     // Bridges GeckoView's autofill to our stores: when Gecko detects a login or credit-card field it
@@ -687,6 +710,35 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           # still *accepts* pushed streams by default; turn that off so we match Chrome's posture
           # (push off, Early Hints on) and never spend battery receiving unsolicited pushed bytes.
           network.http.http2.allow-push: false
+          # --- Scroll smoothness: keep the content thread off the scroll critical path (APZ) ---
+          # Chrome's 2023-2026 "halved scroll jank" work (Input Vizard / Input Framer / Input
+          # Prediction / Direct2Thread) all reduce to one idea: never let a busy main/content
+          # thread block a scroll from being produced on the compositor. GeckoView's equivalent is
+          # APZ (Async Pan/Zoom), which already scrolls on the compositor thread — but two of its
+          # knobs decide how much it still defers to the content thread, and Gecko's defaults are
+          # tuned conservatively. Tighten them:
+          #
+          #  * apz.content_response_timeout — when a touch lands on an element whose page registered
+          #    a *non-passive* touch listener, APZ must wait to hear whether the page will
+          #    preventDefault() (i.e. handle the gesture itself) before it dares async-scroll, or it
+          #    would scroll a carousel/canvas/custom-scroller that meant to consume the touch. It
+          #    waits up to this timeout for the (possibly janky) content thread to answer; until then
+          #    the finger drags but the page doesn't move. Gecko's default is 400ms — long enough
+          #    that a momentarily-busy page shows a visible hitch at scroll *start*. Passive
+          #    listeners (the modern default, and all of scroll-anchored content) don't wait at all,
+          #    so this only bites the non-passive case; lowering it to 250ms means a wedged content
+          #    thread cedes to the compositor ~1.5x sooner. Cost: if a page's non-passive handler is
+          #    legitimately >250ms late to preventDefault, APZ may start scrolling under it — rare on
+          #    real sites and the same tradeoff Chrome makes with its aggressive async scrolling.
+          apz.content_response_timeout: 250
+          #  * apz.paint_skipping.enabled — lets APZ keep advancing the scroll offset purely on the
+          #    compositor across frames where the content thread hasn't produced a fresh paint yet,
+          #    instead of stalling scroll to stay in lockstep with main-thread painting. This is the
+          #    direct analog of the article's "the GPU process applies each frame's scroll offset"
+          #    without waiting on the slower thread. It's default-on, but (like the 0-RTT / Early
+          #    Hints prefs above) set explicitly so this GeckoView build keeps it regardless of
+          #    channel defaults; worst case (already on) = no-op.
+          apz.paint_skipping.enabled: true
           # --- Credit-card autofill ---
           # Turn on Gecko's form-autofill detection for credit-card fields so it invokes our
           # autocomplete storage delegate (GeckoCreditCardsAddressesStorageDelegate) to offer/save

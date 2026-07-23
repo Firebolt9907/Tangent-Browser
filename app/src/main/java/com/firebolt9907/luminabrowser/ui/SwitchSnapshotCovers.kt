@@ -34,26 +34,24 @@ internal fun SwitchSnapshotCovers(
     switchPaneShape: Shape,
 ) {
     val density = LocalDensity.current
+    // Bitmap references: read at composition time (correct — bitmap identity changes are infrequent
+    // and need composition to swap Image nodes). Animation-frame-dependent values (offsetX, pad)
+    // are read ONLY inside graphicsLayer/drawBehind blocks (draw phase) to avoid per-frame
+    // recomposition during the commit spring.
     val leavingSnapshotBitmap by snap.leavingSnapshotBitmap
     val incomingSnapshotBitmap by snap.incomingSnapshotBitmap
     val commitAnimNewTab by snap.commitAnimNewTab
-    val incomingSnapshotTopPadPx by snap.incomingSnapshotTopPadPx
-    val incomingSnapshotOffsetX by snap.incomingSnapshotOffsetX
-    val leavingSnapshotTopPadPx by snap.leavingSnapshotTopPadPx
-    val leavingSnapshotOffsetX by snap.leavingSnapshotOffsetX
     val stickyBackCoverSnapshot by snap.stickyBackCoverSnapshot
     val stickyBackCoverUrl by snap.stickyBackCoverUrl
     val stickyIncomingSnapshot by snap.stickyIncomingSnapshot
     val stickyIncomingTabId by snap.stickyIncomingTabId
-    val stickyIncomingTopPadPx by snap.stickyIncomingTopPadPx
     val fadingCoverActive by snap.fadingCoverActive
     val fadingCoverBitmap by snap.fadingCoverBitmap
-    val fadingCoverTopPadPx by snap.fadingCoverTopPadPx
     val fadingCoverAlpha = snap.fadingCoverAlpha
     val geckoHasPainted by snap.geckoHasPainted
 
     stickyIncomingSnapshot?.let { bitmap ->
-        val pad = with(density) { stickyIncomingTopPadPx.toDp() }
+        val pad = with(density) { snap.stickyIncomingTopPadPx.value.toDp() }
         SnapshotImage(
             bitmap = bitmap,
             modifier = Modifier
@@ -67,7 +65,7 @@ internal fun SwitchSnapshotCovers(
     // in graphicsLayer so the fade animates in the draw phase only.
     if (fadingCoverActive) {
         val fadingBitmap = fadingCoverBitmap
-        val pad = with(density) { fadingCoverTopPadPx.toDp() }
+        val pad = with(density) { snap.fadingCoverTopPadPx.value.toDp() }
         if (fadingBitmap != null) {
             SnapshotImage(
                 bitmap = fadingBitmap,
@@ -96,13 +94,13 @@ internal fun SwitchSnapshotCovers(
                 .background(MaterialTheme.colorScheme.background),
         )
         incomingSnapshotBitmap?.let { bitmap ->
-            val pad = with(density) { incomingSnapshotTopPadPx.toDp() }
+            val pad = with(density) { snap.incomingSnapshotTopPadPx.value.toDp() }
             SnapshotImage(
                 bitmap = bitmap,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(top = pad)
-                    .graphicsLayer { translationX = incomingSnapshotOffsetX }
+                    .graphicsLayer { translationX = snap.incomingSnapshotOffsetX.value }
                     .clip(switchPaneShape),
             )
         }
@@ -114,21 +112,21 @@ internal fun SwitchSnapshotCovers(
                     // per-frame alpha update runs in the draw phase only, instead of
                     // recomposing this block on every frame of the new-tab spring.
                     .graphicsLayer {
-                        translationX = incomingSnapshotOffsetX
-                        alpha = (1f - (incomingSnapshotOffsetX / pageStride))
+                        translationX = snap.incomingSnapshotOffsetX.value
+                        alpha = (1f - (snap.incomingSnapshotOffsetX.value / pageStride))
                             .coerceIn(0f, 1f)
                     }
                     .clip(switchPaneShape)
                     .background(MaterialTheme.colorScheme.surface),
             )
         }
-        val leavingPad = with(density) { leavingSnapshotTopPadPx.toDp() }
+        val leavingPad = with(density) { snap.leavingSnapshotTopPadPx.value.toDp() }
         if (leavingSnapshotBitmap == null && (incomingSnapshotBitmap != null || commitAnimNewTab)) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(top = leavingPad)
-                    .graphicsLayer { translationX = leavingSnapshotOffsetX }
+                    .graphicsLayer { translationX = snap.leavingSnapshotOffsetX.value }
                     .clip(switchPaneShape)
                     .background(MaterialTheme.colorScheme.background),
             )
@@ -139,7 +137,7 @@ internal fun SwitchSnapshotCovers(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(top = leavingPad)
-                    .graphicsLayer { translationX = leavingSnapshotOffsetX }
+                    .graphicsLayer { translationX = snap.leavingSnapshotOffsetX.value }
                     .clip(switchPaneShape),
             )
         }

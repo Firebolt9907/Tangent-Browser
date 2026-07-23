@@ -1,8 +1,8 @@
 package com.firebolt9907.luminabrowser.ui.content
 
-import android.util.Base64
 import java.net.URI
 import java.security.SecureRandom
+import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -49,11 +49,12 @@ object BridgeGuard {
     /** Separator between a bridge message name and the nonce. URL/JS-safe and absent from names. */
     private const val SEP = '~'
 
-    /** Per-process, unguessable channel token. Regenerated each app process. */
+    /** Per-process, unguessable channel token. Regenerated each app process. `java.util.Base64` (not
+     *  `android.util.Base64`) so the object initializes under plain JVM unit tests too. */
     val nonce: String = run {
         val bytes = ByteArray(18)
         SecureRandom().nextBytes(bytes)
-        Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
             .trim()
             .replace(SEP, '_')
     }

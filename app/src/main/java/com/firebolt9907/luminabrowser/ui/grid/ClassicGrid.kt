@@ -31,7 +31,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateMapOf
@@ -816,31 +816,24 @@ private fun GridTabCard(
                 lastSnapshot = snapshot
             }
 
-            val animAlpha by key(snapshot) {
-                var target by remember {
-                    mutableStateOf(
-                        if (isGesture) 1f
-                        else if (animateOnLoad || prev != null) 0f
-                        else 1f
+            // Draw-phase-only crossfade: the Animatable lives outside any key() block so it
+            // persists across snapshot changes. LaunchedEffect(snapshot) restarts the animation
+            // when a new bitmap arrives; animAlpha is read ONLY inside graphicsLayer/drawBehind
+            // blocks (draw phase), so the card never recomposes on animation frames.
+            val crossfadeAlpha = remember { Animatable(if (isGesture) 1f else 1f) }
+            LaunchedEffect(snapshot) {
+                if (!isGesture && (animateOnLoad || prev != null)) {
+                    crossfadeAlpha.snapTo(0f)
+                    crossfadeAlpha.animateTo(
+                        targetValue = 1f,
+                        animationSpec = tween(180),
                     )
-                }
-                LaunchedEffect(Unit) {
-                    if (!isGesture) {
-                        target = 1f
-                    }
-                }
-                animateFloatAsState(
-                    targetValue = target,
-                    animationSpec = tween(180),
-                    label = "thumbnail_crossfade"
-                )
-            }
-
-            LaunchedEffect(animAlpha) {
-                if (animAlpha >= 1f) {
                     tracker.previous = null
+                } else {
+                    crossfadeAlpha.snapTo(1f)
                 }
             }
+            val animAlpha by remember { derivedStateOf { crossfadeAlpha.value } }
 
             val showPlaceholder = snapshot == null || (prev == null && animAlpha < 1f)
 

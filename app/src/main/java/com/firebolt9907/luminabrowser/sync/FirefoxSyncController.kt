@@ -29,6 +29,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import mozilla.appservices.fxaclient.FxaServer
 import mozilla.components.browser.state.store.BrowserStore
+import mozilla.components.browser.storage.sync.PlacesBookmarksStorage
+import mozilla.components.browser.storage.sync.PlacesHistoryStorage
 import mozilla.components.browser.storage.sync.RemoteTabsStorage
 import mozilla.components.concept.base.crash.Breadcrumb
 import mozilla.components.concept.base.crash.CrashReporting
@@ -102,6 +104,8 @@ class FirefoxSyncController(
     private val scope: CoroutineScope,
     private val loginsStorage: PlacesLoginsStorage? = null,
     private val creditCardsStorage: mozilla.components.service.sync.autofill.AutofillCreditCardsAddressesStorage? = null,
+    private val historyStorage: mozilla.components.browser.storage.sync.PlacesHistoryStorage? = null,
+    private val bookmarksStorage: mozilla.components.browser.storage.sync.PlacesBookmarksStorage? = null,
 ) {
     private val crashReporter = object : CrashReporting {
         override fun submitCaughtException(throwable: Throwable): Job = Job()
@@ -118,7 +122,14 @@ class FirefoxSyncController(
             secureStateAtRest = true,
         ),
         syncConfig = SyncConfig(
-            supportedEngines = setOf(SyncEngine.Tabs, SyncEngine.Passwords, SyncEngine.CreditCards),
+            supportedEngines = setOf(
+                SyncEngine.Tabs,
+                SyncEngine.Passwords,
+                SyncEngine.CreditCards,
+                SyncEngine.History,
+                SyncEngine.Bookmarks,
+                SyncEngine.Addresses,
+            ),
             periodicSyncConfig = PeriodicSyncConfig(periodMinutes = 240, initialDelayMinutes = 5),
         ),
         crashReporter = crashReporter,
@@ -154,6 +165,9 @@ class FirefoxSyncController(
         add(SyncEngine.Tabs)
         if (loginsStorage != null) add(SyncEngine.Passwords)
         if (creditCardsStorage != null) add(SyncEngine.CreditCards)
+        if (historyStorage != null) add(SyncEngine.History)
+        if (bookmarksStorage != null) add(SyncEngine.Bookmarks)
+        if (creditCardsStorage != null) add(SyncEngine.Addresses)
     }
 
     @Volatile private var authInFlight = false
@@ -236,6 +250,19 @@ class FirefoxSyncController(
             GlobalSyncableStoreProvider.configureStore(
                 SyncEngine.CreditCards to lazy { creditCardsStorage },
                 keyProvider = lazy { creditCardsStorage.crypto },
+            )
+            GlobalSyncableStoreProvider.configureStore(
+                SyncEngine.Addresses to lazy { creditCardsStorage },
+            )
+        }
+        if (historyStorage != null) {
+            GlobalSyncableStoreProvider.configureStore(
+                SyncEngine.History to lazy { historyStorage },
+            )
+        }
+        if (bookmarksStorage != null) {
+            GlobalSyncableStoreProvider.configureStore(
+                SyncEngine.Bookmarks to lazy { bookmarksStorage },
             )
         }
         syncedTabsStorage.start()

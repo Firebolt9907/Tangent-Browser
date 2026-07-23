@@ -38,7 +38,6 @@ class PullRefreshContainer(context: Context) : FrameLayout(context), NestedScrol
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent?): Boolean {
         if (ev?.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
-            android.util.Log.d("LuminaPill", "PullRefreshContainer dispatchTouchEvent ACTION_DOWN: invoking onTouchDown()")
             onTouchDown()
         }
         return super.dispatchTouchEvent(ev)

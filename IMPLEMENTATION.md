@@ -234,7 +234,7 @@ Known limitations:
 
 ## Firefox Sync (`sync/FirefoxSyncController.kt`, `sync/PlacesLoginsStorage.kt`, `ui/sync/SyncedTabsSheet.kt`, `ui/passwords/PasswordsSheet.kt`)
 
-Firefox Sync supports the `tabs` and `passwords` engines. Passwords are stored locally using AES-256-GCM encryption backed by Android KeyStore and synced via Firefox Sync when the user is signed in.
+Firefox Sync supports the `tabs`, `passwords`, `creditCards`, `history`, `bookmarks`, and `addresses` engines. Passwords are stored locally using AES-256-GCM encryption backed by Android KeyStore and synced via Firefox Sync when the user is signed in.
 
 - `LuminaApplication` initializes application-services HTTP plumbing via `AppServicesInitializer` / `RustHttpConfig`.
 - `FirefoxSyncController` owns `FxaAccountManager`, `RemoteTabsStorage`, and `SyncedTabsStorage`.
@@ -250,7 +250,7 @@ Firefox Sync supports the `tabs` and `passwords` engines. Passwords are stored l
 
 - **Encryption**: Managed natively by the Rust logins crate (SQLite + encryption). `KeyManager.getKey()` must return the UTF-8 bytes of an appservices **JWK** from `mozilla.appservices.logins.createKey()` (a `{"kty":"oct",…}` string) — **not** 32 raw random bytes, which fail appservices' `from_utf8`→JWK parse with `InvalidKey` and silently break every encrypt/decrypt (see AGENTS.md invariant #14). The JWK is resolved eagerly and sealed under an AndroidKeyStore AES-GCM wrapping key.
 - **Persistence**: The Rust `DatabaseLoginsStorage` writes to `lumina_logins.db` in the app's private database directory. All crypto and serialization happens in native code via the Rust logins crate, backed by the `libmegazord.so` native library.
-- **Sync registration**: `DatabaseLoginsStorage.registerWithSyncManager()` registers the Rust store with the native sync engine. The store is also registered with `GlobalSyncableStoreProvider` in `FirefoxSyncController.init` for the `SyncEngine.Passwords` engine. `FxaAccountManager` is configured with `supportedEngines = setOf(SyncEngine.Tabs, SyncEngine.Passwords)`.
+- **Sync registration**: `DatabaseLoginsStorage.registerWithSyncManager()` registers the Rust store with the native sync engine. The store is also registered with `GlobalSyncableStoreProvider` in `FirefoxSyncController.init` for the `SyncEngine.Passwords` engine. `FxaAccountManager` is configured with `supportedEngines = setOf(SyncEngine.Tabs, SyncEngine.Passwords, SyncEngine.CreditCards, SyncEngine.History, SyncEngine.Bookmarks, SyncEngine.Addresses)`.
 - **API**: `list()`, `get(id)`, `getByBaseDomain(domain)`, `add(LoginEntry)`, `update(id, LoginEntry)`, `addOrUpdate(LoginEntry)`, `findLoginToUpdate(LoginEntry)`, `touch(id)`, `delete(id)`, `wipeLocal()`.
 - **Autofill**: `engine.settings.loginAutofillEnabled = true` is set at construction time in `buildDefaultSettings()`.
 

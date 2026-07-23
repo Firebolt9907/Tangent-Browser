@@ -129,6 +129,29 @@ function ok(cond, msg) { if (cond) { pass++; } else { fail++; console.log('  FAI
     console.log(`7. defringe subject-aware: light product kept (filled=${filled})`);
   }
 
+  // 8. Separable blur_alpha feathers a hard alpha edge into a gradient. Left half transparent (0),
+  //    right half opaque (255); after the blur the seam columns must hold intermediate values, while
+  //    the far interior of each half stays saturated (uniform neighbourhood → unchanged).
+  {
+    const w = 32, h = 8, mid = 16;
+    const view = new Uint8Array(ex.memory.buffer, pptr, w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4; view[o] = view[o + 1] = view[o + 2] = 128;
+      view[o + 3] = x < mid ? 0 : 255;
+    }
+    ex.blur_alpha(w, h, 6);
+    const al = (x, y) => view[(y * w + x) * 4 + 3];
+    let intermediate = false;
+    for (let x = 0; x < w; x++) { const a = al(x, 4); if (a > 10 && a < 245) intermediate = true; }
+    ok(intermediate, 'blur produced a soft gradient at the seam');
+    ok(al(0, 4) === 0, 'far transparent interior stays transparent');
+    ok(al(w - 1, 4) === 255, 'far opaque interior stays opaque');
+    // Monotonic non-decreasing across the seam (a real feather, not noise).
+    let mono = true; for (let x = 1; x < w; x++) if (al(x, 4) < al(x - 1, 4)) mono = false;
+    ok(mono, 'feather is monotonic left→right');
+    console.log(`8. blur_alpha separable: soft monotonic seam`);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

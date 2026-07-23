@@ -260,10 +260,14 @@ pub extern "C" fn defringe(w: usize, h: usize, l_edge: u32, iters: u32) {
     }
 }
 
-/// Apply a multi-pass 3×3 box blur to the alpha channel only, feathering the hard binary edge
-/// left by the flood fill. Fully-transparent and fully-opaque regions are unchanged (their
-/// neighbors are uniform), only the boundary gets a smooth ~1–2 px gradient.
-/// Uses `VIS` as scratch (the visited map is no longer needed after `cutout`).
+/// Apply a multi-pass box blur to the alpha channel only, feathering the hard binary edge left by the
+/// flood fill. Fully-transparent and fully-opaque regions are unchanged (their neighbors are uniform),
+/// only the boundary gets a smooth gradient.
+///
+/// **Separable** (like [smooth_rgb]): each pass is a horizontal 1D box blur then a vertical 1D box
+/// blur, which composes to the same 3×3 box average at 3+3 = 6 taps per pixel instead of 9 — a third
+/// less work, and this is the heaviest stage (most passes). Uses `VIS` as the horizontal-pass scratch
+/// (the visited map is no longer needed after `cutout`).
 #[no_mangle]
 pub extern "C" fn blur_alpha(w: usize, h: usize, passes: u32) {
     let n = w * h;
@@ -274,33 +278,26 @@ pub extern "C" fn blur_alpha(w: usize, h: usize, passes: u32) {
     let tmp = unsafe { core::slice::from_raw_parts_mut(addr_of_mut!(VIS) as *mut u8, n) };
 
     for _ in 0..passes {
-        // 3×3 box blur: read alpha from PIX, write averaged result to tmp.
+        // Horizontal 1D box blur of the alpha channel: PIX alpha -> tmp (edges clamp).
         for y in 0..h {
+            let row = y * w;
             for x in 0..w {
-                let mut sum: u32 = 0;
-                let mut cnt: u32 = 0;
-                let y0 = if y > 0 { y - 1 } else { 0 };
-                let y1 = if y + 1 < h { y + 1 } else { h - 1 };
                 let x0 = if x > 0 { x - 1 } else { 0 };
                 let x1 = if x + 1 < w { x + 1 } else { w - 1 };
-                let mut yy = y0;
-                while yy <= y1 {
-                    let mut xx = x0;
-                    while xx <= x1 {
-                        sum += pix[(yy * w + xx) * 4 + 3] as u32;
-                        cnt += 1;
-                        xx += 1;
-                    }
-                    yy += 1;
-                }
-                tmp[y * w + x] = (sum / cnt) as u8;
+                let sum = pix[(row + x0) * 4 + 3] as u32
+                    + pix[(row + x) * 4 + 3] as u32
+                    + pix[(row + x1) * 4 + 3] as u32;
+                tmp[row + x] = (sum / 3) as u8;
             }
         }
-        // Copy blurred alpha back into PIX.
-        let mut i = 0;
-        while i < n {
-            pix[i * 4 + 3] = tmp[i];
-            i += 1;
+        // Vertical 1D box blur of the horizontally-blurred alpha: tmp -> PIX alpha (edges clamp).
+        for y in 0..h {
+            let y0 = if y > 0 { y - 1 } else { 0 };
+            let y1 = if y + 1 < h { y + 1 } else { h - 1 };
+            for x in 0..w {
+                let sum = tmp[y0 * w + x] as u32 + tmp[y * w + x] as u32 + tmp[y1 * w + x] as u32;
+                pix[(y * w + x) * 4 + 3] = (sum / 3) as u8;
+            }
         }
     }
 }

@@ -106,6 +106,29 @@ function ok(cond, msg) { if (cond) { pass++; } else { fail++; console.log('  FAI
     console.log(`6. defringe: seam keyed, subject kept (filled=${filled})`);
   }
 
+  // 7. Subject-aware defringe: a LIGHT product on a LIGHT background must NOT be eroded. White field
+  //    (255) with a slightly-off-white product (238) the flood fill halts at (step 255->238 = 51 >
+  //    STEP). After cutout the product is opaque; defringe must leave its edge intact because the
+  //    pixel INWARD from the keyed edge is light (the product interior), not a dark subject.
+  {
+    const w = 40, h = 40, lo = 12, hi = 28;
+    const view = new Uint8Array(ex.memory.buffer, pptr, w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const inProd = x >= lo && x < hi && y >= lo && y < hi;
+      const v = inProd ? 238 : 255;
+      const o = (y * w + x) * 4; view[o] = v; view[o + 1] = v; view[o + 2] = v; view[o + 3] = 255;
+    }
+    const filled = ex.cutout(w, h, L_SEED, L_FLOOR, STEP, MIN_A, BAND);
+    const a = (x, y) => view[(y * w + x) * 4 + 3];
+    ok(a(lo, 20) === 255 && a(hi - 1, 20) === 255, 'light product opaque after cutout');
+    ex.defringe(w, h, 150, 2);
+    ok(a(lo, 20) === 255, 'light product left edge NOT eroded');           // subject-aware: preserved
+    ok(a(hi - 1, 20) === 255, 'light product right edge NOT eroded');
+    ok(a(lo + 2, 20) === 255, 'light product interior intact');
+    ok(a(1, 1) === 0, 'background still keyed');
+    console.log(`7. defringe subject-aware: light product kept (filled=${filled})`);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

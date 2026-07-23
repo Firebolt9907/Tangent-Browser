@@ -191,11 +191,17 @@ pub extern "C" fn smooth_rgb(w: usize, h: usize, passes: u32) {
 /// `color_band`), so the last ring of anti-aliased pixels — background color blended against the
 /// subject edge, still light — stays opaque and reads as a bright fringe/glow on the dark page.
 ///
-/// For `iters` rings: any opaque pixel that (a) 4-borders an already-transparent (keyed) pixel and
-/// (b) is still light (luminance >= `l_edge`) is itself keyed out. The `l_edge` gate is what keeps
-/// this from eating the subject: a genuine dark subject edge fails it and survives, only the light
-/// blended fringe peels away. Marks are collected per pass (into `VIS`) and applied together so a
-/// single pass can't cascade inward. Call after `cutout`, before `blur_alpha`. Uses `VIS` as scratch.
+/// **Subject-aware**, so it removes the halo around a *dark* subject without eroding a *light* one
+/// (a white product on a white background, where the fill also halts one pixel out): a candidate is
+/// an opaque, still-light (luminance >= `l_edge`) pixel that borders an already-transparent (keyed)
+/// pixel AND whose **inward** neighbor — the pixel on the far side, away from the keyed edge — is
+/// dark (< `l_edge`). The inward-dark test is the discriminator: a true halo sits between keyed
+/// background and a dark subject (inward is the dark subject → keyed out), whereas the edge of a light
+/// subject has a light interior (inward is light → preserved). At the image border (no inward pixel)
+/// the candidate is background fringe, so it's keyed. `iters` rings; marks are collected per pass
+/// (into `VIS`) and applied together so a pass can't cascade inward within itself — and because each
+/// new ring re-tests inward darkness, peeling naturally stops at the subject outline regardless of
+/// `iters`. Call after `cutout`, before `blur_alpha`. Uses `VIS` as scratch.
 #[no_mangle]
 pub extern "C" fn defringe(w: usize, h: usize, l_edge: u32, iters: u32) {
     let n = w * h;
@@ -204,6 +210,17 @@ pub extern "C" fn defringe(w: usize, h: usize, l_edge: u32, iters: u32) {
     }
     let pix = unsafe { core::slice::from_raw_parts_mut(addr_of_mut!(PIX) as *mut u8, n * 4) };
     let mark = unsafe { core::slice::from_raw_parts_mut(addr_of_mut!(VIS) as *mut u8, n) };
+
+    // True iff the pixel one step in `(dx,dy)` from (x,y) is dark, treating out-of-bounds (the image
+    // border, i.e. background side) as dark so a border fringe pixel is still peeled.
+    let inward_dark = |pix: &[u8], x: usize, y: usize, dx: isize, dy: isize| -> bool {
+        let nx = x as isize + dx;
+        let ny = y as isize + dy;
+        if nx < 0 || ny < 0 || nx >= w as isize || ny >= h as isize {
+            return true;
+        }
+        lum_of(pix, ny as usize * w + nx as usize) < l_edge
+    };
 
     for _ in 0..iters {
         for m in mark[..n].iter_mut() {
@@ -216,11 +233,14 @@ pub extern "C" fn defringe(w: usize, h: usize, l_edge: u32, iters: u32) {
                 if (pix[i * 4 + 3] as u32) == 0 || lum_of(pix, i) < l_edge {
                     continue;
                 }
-                let transparent_nb = (x > 0 && pix[(i - 1) * 4 + 3] == 0)
-                    || (x + 1 < w && pix[(i + 1) * 4 + 3] == 0)
-                    || (y > 0 && pix[(i - w) * 4 + 3] == 0)
-                    || (y + 1 < h && pix[(i + w) * 4 + 3] == 0);
-                if transparent_nb {
+                // Keyed neighbor on one side + dark neighbor on the OPPOSITE (inward) side ⇒ halo
+                // before a dark subject. A light interior on the inward side ⇒ edge of a light
+                // subject ⇒ leave it.
+                let eat = (x > 0 && pix[(i - 1) * 4 + 3] == 0 && inward_dark(pix, x, y, 1, 0))
+                    || (x + 1 < w && pix[(i + 1) * 4 + 3] == 0 && inward_dark(pix, x, y, -1, 0))
+                    || (y > 0 && pix[(i - w) * 4 + 3] == 0 && inward_dark(pix, x, y, 0, 1))
+                    || (y + 1 < h && pix[(i + w) * 4 + 3] == 0 && inward_dark(pix, x, y, 0, -1));
+                if eat {
                     mark[i] = 1;
                 }
             }

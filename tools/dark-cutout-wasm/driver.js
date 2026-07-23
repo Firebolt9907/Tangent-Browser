@@ -8,6 +8,27 @@
        (aligned to the displayed content rect under object-fit), leaving the image pixels crisp,
    all fail-safe: any CSP/worker/wasm failure just leaves images untouched (element recolor stands).
    window.__lumCut guards one setup per page; __lumCutSweep re-scans for lazy/late images. */
+/* Strip the alpha mask (and free its blob URL) from an image whose cutout is now stale — used when a
+   carousel/slideshow swaps the same <img>'s src between slides, so slide 1's mask isn't left applied
+   to slide 2. Fail-safe. */
+function lumStripMask(img) {
+  try {
+    var s = img.style;
+    s.removeProperty('mask-image'); s.removeProperty('-webkit-mask-image');
+    s.removeProperty('mask-size'); s.removeProperty('-webkit-mask-size');
+    s.removeProperty('mask-position'); s.removeProperty('-webkit-mask-position');
+    s.removeProperty('mask-repeat'); s.removeProperty('-webkit-mask-repeat');
+    s.removeProperty('mask-mode');
+    if (img.__lumMaskUrl) { try { URL.revokeObjectURL(img.__lumMaskUrl); } catch (e) {} img.__lumMaskUrl = null; }
+  } catch (e) {}
+}
+
+/* True iff `img` was already processed but its current source no longer matches what we processed —
+   i.e. the element was reused for a different image (carousel next-slide, responsive srcset swap). */
+function lumSrcChanged(img) {
+  return !!img.__lumCut && img.__lumCutSrc !== undefined && (img.currentSrc || img.src) !== img.__lumCutSrc;
+}
+
 function lumCutSetup(WASM_B64, WORKER_B64, PARAMS) {
   if (window.__lumCut) { if (window.__lumCutSweep) window.__lumCutSweep(); return; }
   /* Primary path: hand large images to native ML Kit Subject Segmentation (semantic — keeps a
@@ -105,6 +126,7 @@ function lumCutSetup(WASM_B64, WORKER_B64, PARAMS) {
        left untouched (fail-safe). Same-origin images take this path harmlessly too. */
     var src = img.currentSrc || img.src;
     if (!src) { img.__lumCut = 0; return; }
+    img.__lumCutSrc = src; /* remember what we keyed, so a later src swap re-processes (carousels) */
     var probe = new Image();
     probe.crossOrigin = 'anonymous';
     probe.decoding = 'async';
@@ -132,8 +154,19 @@ function lumCutSetup(WASM_B64, WORKER_B64, PARAMS) {
   if (!window.__lumCutObserver) {
     var pending = false;
     var queue = [];
+    var requeue = [];
     function flush() {
       pending = false;
+      /* Re-process images whose src changed under us (carousel next slide): drop the stale mask and
+         run the pipeline again for the new source. */
+      var rq = requeue; requeue = [];
+      for (var k = 0; k < rq.length; k++) {
+        var ri = rq[k];
+        if (!lumSrcChanged(ri)) continue;
+        lumStripMask(ri); ri.__lumCut = 0;
+        if (ri.complete && ri.naturalWidth) process(ri);
+        else ri.addEventListener('load', function (e) { process(e.target); }, { once: true });
+      }
       var q = queue; queue = [];
       for (var i = 0; i < q.length; i++) {
         var node = q[i];
@@ -154,12 +187,17 @@ function lumCutSetup(WASM_B64, WORKER_B64, PARAMS) {
     }
     window.__lumCutObserver = new MutationObserver(function (recs) {
       for (var i = 0; i < recs.length; i++) {
-        var added = recs[i].addedNodes;
+        var rec = recs[i];
+        if (rec.type === 'attributes') {
+          if (rec.target && rec.target.tagName === 'IMG' && rec.target.__lumCut) requeue.push(rec.target);
+          continue;
+        }
+        var added = rec.addedNodes;
         for (var j = 0; j < added.length; j++) { queue.push(added[j]); }
       }
-      if (queue.length && !pending) { pending = true; requestAnimationFrame(flush); }
+      if ((queue.length || requeue.length) && !pending) { pending = true; requestAnimationFrame(flush); }
     });
-    try { window.__lumCutObserver.observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
+    try { window.__lumCutObserver.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset'] }); } catch (e) {}
   }
 }
 
@@ -179,6 +217,7 @@ function lumCutSetupML(PARAMS) {
     img.__lumCut = 1;
     var src = img.currentSrc || img.src;
     if (!src) { img.__lumCut = 0; return null; }
+    img.__lumCutSrc = src; /* remember what we posted, so a later src swap re-segments (carousels) */
     var id = 'lc' + (st.seq++);
     img.setAttribute('data-lumina-cut-id', id);
     return { id: id, src: src };
@@ -195,9 +234,19 @@ function lumCutSetupML(PARAMS) {
   window.__lumCutSweep = sweep;
   sweep();
   if (!window.__lumCutObserver) {
-    var pending = false, queue = [];
+    var pending = false, queue = [], requeue = [];
     function flush() {
       pending = false; var q = queue; queue = []; var batch = [];
+      /* Re-segment images whose src changed (carousel next slide): strip the stale native mask,
+         clear the id/guard, and collect them afresh. */
+      var rq = requeue; requeue = [];
+      for (var k = 0; k < rq.length; k++) {
+        var ri = rq[k];
+        if (!lumSrcChanged(ri)) continue;
+        lumStripMask(ri); ri.__lumCut = 0; try { ri.removeAttribute('data-lumina-cut-id'); } catch (e) {}
+        if (ri.complete && ri.naturalWidth) { var rit = collect(ri); if (rit) batch.push(rit); }
+        else ri.addEventListener('load', function (e) { var t3 = collect(e.target); if (t3) post([t3]); }, { once: true });
+      }
       for (var i = 0; i < q.length; i++) {
         var node = q[i];
         if (node.nodeType !== 1) continue;
@@ -217,10 +266,17 @@ function lumCutSetupML(PARAMS) {
       post(batch);
     }
     window.__lumCutObserver = new MutationObserver(function (recs) {
-      for (var i = 0; i < recs.length; i++) { var added = recs[i].addedNodes; for (var j = 0; j < added.length; j++) { queue.push(added[j]); } }
-      if (queue.length && !pending) { pending = true; requestAnimationFrame(flush); }
+      for (var i = 0; i < recs.length; i++) {
+        var rec = recs[i];
+        if (rec.type === 'attributes') {
+          if (rec.target && rec.target.tagName === 'IMG' && rec.target.__lumCut) requeue.push(rec.target);
+          continue;
+        }
+        var added = rec.addedNodes; for (var j = 0; j < added.length; j++) { queue.push(added[j]); }
+      }
+      if ((queue.length || requeue.length) && !pending) { pending = true; requestAnimationFrame(flush); }
     });
-    try { window.__lumCutObserver.observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
+    try { window.__lumCutObserver.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset'] }); } catch (e) {}
   }
 }
 
@@ -324,6 +380,7 @@ function lumCutSetupMain(WASM_B64, PARAMS) {
     var src = img.currentSrc || img.src;
     if (!src) return;
     img.__lumCut = 1;
+    img.__lumCutSrc = src; /* remember what we keyed, so a later src swap re-processes (carousels) */
     st.q.push(img);
     if (st.ready) drain();
   }
@@ -340,9 +397,18 @@ function lumCutSetupMain(WASM_B64, PARAMS) {
   window.__lumCutSweep = sweep;
   sweep();
   if (!window.__lumCutObserver) {
-    var pending = false, queue = [];
+    var pending = false, queue = [], requeue = [];
     function flush() {
-      pending = false; var q = queue; queue = [];
+      pending = false;
+      var rq = requeue; requeue = [];
+      for (var k = 0; k < rq.length; k++) {
+        var ri = rq[k];
+        if (!lumSrcChanged(ri)) continue;
+        lumStripMask(ri); ri.__lumCut = 0;
+        if (ri.complete && ri.naturalWidth) process(ri);
+        else ri.addEventListener('load', function (e) { process(e.target); }, { once: true });
+      }
+      var q = queue; queue = [];
       for (var i = 0; i < q.length; i++) {
         var node = q[i];
         if (node.nodeType !== 1) continue;
@@ -361,9 +427,16 @@ function lumCutSetupMain(WASM_B64, PARAMS) {
       }
     }
     window.__lumCutObserver = new MutationObserver(function (recs) {
-      for (var i = 0; i < recs.length; i++) { var added = recs[i].addedNodes; for (var j = 0; j < added.length; j++) { queue.push(added[j]); } }
-      if (queue.length && !pending) { pending = true; requestAnimationFrame(flush); }
+      for (var i = 0; i < recs.length; i++) {
+        var rec = recs[i];
+        if (rec.type === 'attributes') {
+          if (rec.target && rec.target.tagName === 'IMG' && rec.target.__lumCut) requeue.push(rec.target);
+          continue;
+        }
+        var added = rec.addedNodes; for (var j = 0; j < added.length; j++) { queue.push(added[j]); }
+      }
+      if ((queue.length || requeue.length) && !pending) { pending = true; requestAnimationFrame(flush); }
     });
-    try { window.__lumCutObserver.observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
+    try { window.__lumCutObserver.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset'] }); } catch (e) {}
   }
 }

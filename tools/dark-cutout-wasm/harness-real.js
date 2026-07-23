@@ -91,6 +91,31 @@ function shippingParams() {
     });
     console.log('REAL driver path:', info.path, forceMain ? '(forced main)' : '', '| images masked:', info.masked, '| params:', JSON.stringify(params));
     if (forceMain && info.path !== 'main') console.error('WARN: expected main-thread fallback but ran path=' + info.path);
+
+    if (process.argv.includes('--swap')) {
+      // Simulate a carousel swapping a processed <img>'s src to a different image, then verify the
+      // REAL driver re-runs its pipeline for the new source (the observer's attribute path).
+      const swap = await page.evaluate(async () => {
+        var imgs = Array.prototype.slice.call(document.getElementsByTagName('img'));
+        var target = imgs.find(function (i) { return i.__lumCut && i.__lumCutSrc; });
+        if (!target) return { ok: false, reason: 'no processed image found' };
+        var other = imgs.find(function (i) { return (i.currentSrc || i.src) && (i.currentSrc || i.src) !== target.__lumCutSrc; });
+        if (!other) return { ok: false, reason: 'no distinct second source found' };
+        var before = target.__lumCutSrc;
+        var newSrc = other.currentSrc || other.src;
+        // Neutralize <picture>/srcset so the swap sticks, then swap the src.
+        if (target.parentElement && target.parentElement.tagName === 'PICTURE') {
+          Array.prototype.forEach.call(target.parentElement.querySelectorAll('source'), function (s) { s.remove(); });
+        }
+        target.removeAttribute('srcset');
+        target.src = newSrc;
+        await new Promise(function (r) { setTimeout(r, 2500); });
+        return { ok: true, before: before, newSrc: newSrc, after: target.__lumCutSrc, reprocessed: target.__lumCutSrc === newSrc };
+      });
+      if (!swap.ok) console.log('swap test skipped:', swap.reason);
+      else console.log('swap test:', swap.reprocessed ? 'PASS' : 'FAIL',
+        '- driver re-processed on src change:', swap.reprocessed, '(', swap.before, '->', swap.after, ')');
+    }
     await page.screenshot({ path: out, fullPage: false });
     console.log('shot ->', out);
   } finally { await browser.close(); }

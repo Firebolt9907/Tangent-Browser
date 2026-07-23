@@ -534,6 +534,9 @@ object WebDarkMode {
      *  Matches the kernel's 1536px arena so full-bleed hero/product images key at native 2×-DPR
      *  resolution instead of a soft 768px downscale that looked pixelated on large slots. */
     private const val CUT_MAX_DIM = 1536
+    /** Max long side for the **main-thread** fallback (worker-blocked CSP), smaller than [CUT_MAX_DIM]
+     *  so the synchronous flood fill on the UI thread stays a short task; the mask is upscaled anyway. */
+    private const val CUT_MAX_DIM_MAIN = 768
     /** Border seed luminance (0-255): only opaque pixels this bright seed the background fill. */
     private const val CUT_L_SEED = 210
     /** Fill floor luminance: growing stops below this so a soft edge can't leak into a dark subject. */
@@ -581,7 +584,7 @@ object WebDarkMode {
         // their URLs over this nonce-tagged bridge (DarkImageSegmenter). Otherwise it runs the WASM
         // flood-fill fallback with the tuning params below.
         val bridge = BridgeGuard.tag(DarkImageSegmenter.BRIDGE_MESSAGE)
-        val params = "{minSize:$CUT_MIN_SIZE,maxDim:$CUT_MAX_DIM,lSeed:$CUT_L_SEED,lFloor:$CUT_L_FLOOR," +
+        val params = "{minSize:$CUT_MIN_SIZE,maxDim:$CUT_MAX_DIM,maxDimMain:$CUT_MAX_DIM_MAIN,lSeed:$CUT_L_SEED,lFloor:$CUT_L_FLOOR," +
             "stepMax:$CUT_STEP_MAX,minAlpha:$CUT_MIN_ALPHA,colorBand:$CUT_COLOR_BAND," +
             "lEdge:$CUT_L_EDGE,defringeIters:$CUT_DEFRINGE_ITERS," +
             "minFrac:$CUT_MIN_FRAC,maxFrac:$CUT_MAX_FRAC,mlReady:$mlReady,bridge:\"$bridge\"}"

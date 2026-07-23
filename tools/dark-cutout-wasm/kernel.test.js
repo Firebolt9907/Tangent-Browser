@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const wasmBytes = fs.readFileSync(path.resolve(__dirname, 'target/wasm32-unknown-unknown/release/dark_cutout_wasm.wasm'));
 
-const L_SEED = 210, L_FLOOR = 170, STEP = 5, MIN_A = 128;
+const L_SEED = 210, L_FLOOR = 170, STEP = 5, MIN_A = 128, BAND = 70;
 let pass = 0, fail = 0;
 function ok(cond, msg) { if (cond) { pass++; } else { fail++; console.log('  FAIL:', msg); } }
 
@@ -21,7 +21,7 @@ function ok(cond, msg) { if (cond) { pass++; } else { fail++; console.log('  FAI
       const [r, g, b, a] = fillPixel(x, y);
       const o = (y * w + x) * 4; view[o] = r; view[o + 1] = g; view[o + 2] = b; view[o + 3] = a;
     }
-    const filled = ex.cutout(w, h, L_SEED, L_FLOOR, STEP, MIN_A);
+    const filled = ex.cutout(w, h, L_SEED, L_FLOOR, STEP, MIN_A, BAND);
     return { filled, alphaAt: (x, y) => view[(y * w + x) * 4 + 3] };
   }
 
@@ -80,6 +80,30 @@ function ok(cond, msg) { if (cond) { pass++; } else { fail++; console.log('  FAI
     });
     ok(r.filled === 0, `transparent-matte image untouched (filled=${r.filled})`);
     console.log(`5. transparent cutout: filled=${r.filled}/${w * h}`);
+  }
+
+  // 6. De-fringe peels the light halo ring the fill leaves short of the subject, keeps the dark edge.
+  //    A light field (255) around a dark square (20) with a one-pixel LIGHT-GREY seam (200) that the
+  //    fill can't cross (step 255->200 = 55 > STEP): the seam stays opaque after cutout, then
+  //    defringe (l_edge below 200) keys it out, while the dark square (20 < l_edge) is preserved.
+  {
+    const w = 40, h = 40, lo = 12, hi = 28; // dark square [12,28)
+    const view = new Uint8Array(ex.memory.buffer, pptr, w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const inSq = x >= lo && x < hi && y >= lo && y < hi;
+      const onSeam = !inSq && x >= lo - 1 && x < hi + 1 && y >= lo - 1 && y < hi + 1;
+      const [r, g, b] = inSq ? [20, 20, 20] : onSeam ? [200, 200, 200] : [255, 255, 255];
+      const o = (y * w + x) * 4; view[o] = r; view[o + 1] = g; view[o + 2] = b; view[o + 3] = 255;
+    }
+    const filled = ex.cutout(w, h, L_SEED, L_FLOOR, STEP, MIN_A, BAND);
+    const a = (x, y) => view[(y * w + x) * 4 + 3];
+    ok(a(lo - 1, 20) === 255, 'light seam survives cutout (halo present)'); // seam opaque pre-defringe
+    ok(a(lo, 20) === 255, 'dark square opaque after cutout');
+    ex.defringe(w, h, 150, 2);
+    ok(a(lo - 1, 20) === 0, 'light seam keyed out by defringe');           // halo peeled
+    ok(a(lo, 20) === 255, 'dark square preserved through defringe');       // subject kept
+    ok(a(2, 2) === 0, 'background still keyed');
+    console.log(`6. defringe: seam keyed, subject kept (filled=${filled})`);
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

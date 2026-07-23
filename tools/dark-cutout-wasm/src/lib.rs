@@ -62,10 +62,24 @@ fn step_diff(pix: &[u8], a: usize, b: usize) -> u32 {
     d(0) + d(1) + d(2)
 }
 
-/// Try to grow the region from `cur` into neighbor `nb`: cross only if `nb` is opaque, not too dark
-/// (>= `l_floor`, so a soft edge into a dark subject doesn't leak), and the step from `cur` to `nb`
-/// is below the edge barrier (`step_max`) — so the fill flows across the smooth background gradient
-/// but halts at the subject's outline.
+/// Sum-of-absolute per-channel distance from the measured background color `(br,bg,bb)`. This is the
+/// *global* constraint that makes the keyer adaptive rather than tuned to one site's contrast: the
+/// fill may only stay in pixels whose color is still within `color_band` of the background sampled
+/// from the border, so a smooth gradient that drifts off the real background (white easing into a
+/// light-grey product surface) is halted when it leaves the band — regardless of absolute contrast.
+#[inline(always)]
+fn bg_dist(pix: &[u8], i: usize, br: u32, bg: u32, bb: u32) -> u32 {
+    let o = i * 4;
+    let d = |c: u32, b: u32| (c as i32 - b as i32).unsigned_abs();
+    d(pix[o] as u32, br) + d(pix[o + 1] as u32, bg) + d(pix[o + 2] as u32, bb)
+}
+
+/// Try to grow the region from `cur` into neighbor `nb`. Three complementary gates:
+/// - `nb` must be opaque and not too dark (>= `l_floor`, so a soft edge into a dark subject doesn't
+///   leak);
+/// - the local step `cur`→`nb` must be below the edge barrier (`step_max`) — halts at a sharp outline;
+/// - `nb` must be within `color_band` of the measured background color `(br,bg,bb)` — halts gradient
+///   *creep* into an off-background region even when every local step is tiny (the adaptive gate).
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn grow(
@@ -78,6 +92,10 @@ fn grow(
     l_floor: u32,
     step_max: u32,
     min_alpha: u32,
+    br: u32,
+    bg: u32,
+    bb: u32,
+    color_band: u32,
 ) {
     if vis[nb] != 0 {
         return;
@@ -86,6 +104,9 @@ fn grow(
         return;
     }
     if step_diff(pix, cur, nb) > step_max {
+        return;
+    }
+    if bg_dist(pix, nb, br, bg, bb) > color_band {
         return;
     }
     vis[nb] = 1;
@@ -165,6 +186,60 @@ pub extern "C" fn smooth_rgb(w: usize, h: usize, passes: u32) {
     }
 }
 
+/// Remove the residual light **halo ring** the flood fill leaves where it stopped just short of the
+/// subject. The fill halts one pixel before the outline (a step over `step_max`, or a drift past
+/// `color_band`), so the last ring of anti-aliased pixels — background color blended against the
+/// subject edge, still light — stays opaque and reads as a bright fringe/glow on the dark page.
+///
+/// For `iters` rings: any opaque pixel that (a) 4-borders an already-transparent (keyed) pixel and
+/// (b) is still light (luminance >= `l_edge`) is itself keyed out. The `l_edge` gate is what keeps
+/// this from eating the subject: a genuine dark subject edge fails it and survives, only the light
+/// blended fringe peels away. Marks are collected per pass (into `VIS`) and applied together so a
+/// single pass can't cascade inward. Call after `cutout`, before `blur_alpha`. Uses `VIS` as scratch.
+#[no_mangle]
+pub extern "C" fn defringe(w: usize, h: usize, l_edge: u32, iters: u32) {
+    let n = w * h;
+    if n == 0 || n > CAP || w < 2 || h < 2 {
+        return;
+    }
+    let pix = unsafe { core::slice::from_raw_parts_mut(addr_of_mut!(PIX) as *mut u8, n * 4) };
+    let mark = unsafe { core::slice::from_raw_parts_mut(addr_of_mut!(VIS) as *mut u8, n) };
+
+    for _ in 0..iters {
+        for m in mark[..n].iter_mut() {
+            *m = 0;
+        }
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                // Only opaque, still-light pixels are candidates.
+                if (pix[i * 4 + 3] as u32) == 0 || lum_of(pix, i) < l_edge {
+                    continue;
+                }
+                let transparent_nb = (x > 0 && pix[(i - 1) * 4 + 3] == 0)
+                    || (x + 1 < w && pix[(i + 1) * 4 + 3] == 0)
+                    || (y > 0 && pix[(i - w) * 4 + 3] == 0)
+                    || (y + 1 < h && pix[(i + w) * 4 + 3] == 0);
+                if transparent_nb {
+                    mark[i] = 1;
+                }
+            }
+        }
+        let mut i = 0;
+        let mut any = false;
+        while i < n {
+            if mark[i] != 0 {
+                pix[i * 4 + 3] = 0;
+                any = true;
+            }
+            i += 1;
+        }
+        if !any {
+            break;
+        }
+    }
+}
+
 /// Apply a multi-pass 3×3 box blur to the alpha channel only, feathering the hard binary edge
 /// left by the flood fill. Fully-transparent and fully-opaque regions are unchanged (their
 /// neighbors are uniform), only the boundary gets a smooth ~1–2 px gradient.
@@ -235,10 +310,13 @@ pub extern "C" fn to_alpha_mask(w: usize, h: usize) {
 /// Key out the light, edge-connected background in the RGBA buffer at `pixels_ptr()` (`w`x`h`).
 ///
 /// Seeds every opaque border pixel brighter than `l_seed`, then edge-aware-grows: crossing into a
-/// neighbor requires it be opaque, at least `l_floor` bright, and within `step_max` sum-abs channel
-/// distance of the current pixel (the edge barrier). Filled pixels become transparent. Returns the
-/// count made transparent (0 when nothing qualified — e.g. a full-bleed photo with no light border —
-/// so the host leaves such images untouched).
+/// neighbor requires it be opaque, at least `l_floor` bright, within `step_max` sum-abs channel
+/// distance of the current pixel (the local edge barrier), AND within `color_band` sum-abs channel
+/// distance of the **measured background color** (the mean of the seed pixels). That last, adaptive
+/// gate is what stops the fill creeping through a smooth fade into a light-but-off-background surface
+/// (a MacBook's silver deck) even when no sharp edge separates them — without hardcoding the site's
+/// contrast. Filled pixels become transparent. Returns the count made transparent (0 when nothing
+/// qualified — e.g. a full-bleed photo with no light border — so the host leaves such images alone).
 #[no_mangle]
 pub extern "C" fn cutout(
     w: usize,
@@ -247,6 +325,7 @@ pub extern "C" fn cutout(
     l_floor: u32,
     step_max: u32,
     min_alpha: u32,
+    color_band: u32,
 ) -> u32 {
     let n = w * h;
     if n == 0 || n > CAP || w == 0 || h == 0 {
@@ -277,6 +356,18 @@ pub extern "C" fn cutout(
         seed(y * w + (w - 1), vis, stk, &mut sp); // right col
     }
 
+    // Measure the background color from the seed (border) pixels — the mean R/G/B over stk[0..sp].
+    // Done before the fill consumes the stack. If there are no seeds we never enter the loop below.
+    let (mut sr, mut sg, mut sb): (u64, u64, u64) = (0, 0, 0);
+    for k in 0..sp {
+        let o = stk[k] as usize * 4;
+        sr += pix[o] as u64;
+        sg += pix[o + 1] as u64;
+        sb += pix[o + 2] as u64;
+    }
+    let seeds = sp.max(1) as u64;
+    let (br, bg, bb) = ((sr / seeds) as u32, (sg / seeds) as u32, (sb / seeds) as u32);
+
     let mut filled: u32 = 0;
     while sp > 0 {
         sp -= 1;
@@ -286,16 +377,16 @@ pub extern "C" fn cutout(
         let x = i % w;
         let y = i / w;
         if x > 0 {
-            grow(pix, vis, stk, &mut sp, i, i - 1, l_floor, step_max, min_alpha);
+            grow(pix, vis, stk, &mut sp, i, i - 1, l_floor, step_max, min_alpha, br, bg, bb, color_band);
         }
         if x + 1 < w {
-            grow(pix, vis, stk, &mut sp, i, i + 1, l_floor, step_max, min_alpha);
+            grow(pix, vis, stk, &mut sp, i, i + 1, l_floor, step_max, min_alpha, br, bg, bb, color_band);
         }
         if y > 0 {
-            grow(pix, vis, stk, &mut sp, i, i - w, l_floor, step_max, min_alpha);
+            grow(pix, vis, stk, &mut sp, i, i - w, l_floor, step_max, min_alpha, br, bg, bb, color_band);
         }
         if y + 1 < h {
-            grow(pix, vis, stk, &mut sp, i, i + w, l_floor, step_max, min_alpha);
+            grow(pix, vis, stk, &mut sp, i, i + w, l_floor, step_max, min_alpha, br, bg, bb, color_band);
         }
     }
     filled

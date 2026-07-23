@@ -8,7 +8,7 @@
    (no downscale/re-encode blur) and a mis-key is non-destructive (the original image is untouched).
 
    Protocol (main <-> worker):
-     -> {type:'init', wasm:<base64>, params:{maxDim,lSeed,lFloor,stepMax,minAlpha,minFrac,maxFrac}}
+     -> {type:'init', wasm:<base64>, params:{maxDim,lSeed,lFloor,stepMax,minAlpha,colorBand,lEdge,defringeIters,minFrac,maxFrac}}
      <- {type:'ready'} | {type:'fail', err}
      -> {type:'img', id, bitmap:<ImageBitmap>, params?}         (bitmap is transferred)
      <- {type:'done', id, keyed:true, blob:<Blob(mask PNG)>, natW, natH}
@@ -56,10 +56,15 @@
       /* Pre-smooth RGB to kill JPEG compression noise before the flood fill — without this,
          per-pixel noise exceeding step_max creates scattered boundary pixels (grainy edges). */
       ex.smooth_rgb(w, h, 2);
-      var filled = ex.cutout(w, h, P.lSeed, P.lFloor, P.stepMax, P.minAlpha);
-      /* Feather the binary alpha edge. Enough passes that the gradient is visible after the
-         browser downscales the processed image to display size (~3× on mobile). */
-      if (filled > 0) ex.blur_alpha(w, h, 6);
+      var filled = ex.cutout(w, h, P.lSeed, P.lFloor, P.stepMax, P.minAlpha, P.colorBand);
+      /* Peel the residual light halo ring the fill left one pixel short of the subject outline
+         (light anti-aliased fringe that would glow on the dark page), then feather the binary alpha
+         edge. Enough blur passes that the gradient is visible after the browser downscales the
+         processed image to display size (~3× on mobile). */
+      if (filled > 0) {
+        if (P.defringeIters > 0) ex.defringe(w, h, P.lEdge, P.defringeIters);
+        ex.blur_alpha(w, h, 6);
+      }
       var frac = filled / (w * h);
       if (frac < P.minFrac || frac > P.maxFrac) {
         postMessage({ type: 'done', id: id, keyed: false, reason: 'frac:' + frac.toFixed(3) });

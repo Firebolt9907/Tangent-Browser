@@ -90,7 +90,13 @@ import mozilla.components.concept.engine.EngineSession
  * comfort. It reuses the same `pageIsDark`/`isMediaDoc` gates, but decides *once* (before it mutates
  * any color — otherwise its own darkening would make the re-check see a "dark" page and bail).
  *
- * ### Dynamic tier — WASM image cutout ([buildImageCutoutScript])
+ * ### Dynamic tier — image cutout: ML Kit primary, WASM fallback ([buildImageCutoutScript])
+ * The cutout has two keyers. **Primary:** native ML Kit **Subject Segmentation**
+ * ([DarkImageSegmenter]) — semantic, so it keeps a light-on-light product (apple.com's silver
+ * MacBook on a light-blue canvas) *whole* where a color/edge threshold physically cannot (the
+ * palm-rest pixels sit inside the background's own color spread). When its model is ready the driver
+ * only posts image URLs to native over the `lumina-darkcut` bridge. **Fallback** (offline / model not
+ * yet downloaded): the WASM flood fill below.
  * The recolor above leaves images untouched, which is right for photos but wrong for the one case it
  * can't otherwise reach: a section whose entire background is a full-bleed **image** with a light
  * color baked in (apple.com's product heroes). Those stay glaring-light on the dark page, and any
@@ -134,9 +140,10 @@ object WebDarkMode {
         dynamic: Boolean = false,
         aggressive: Boolean = false,
         analyze: Boolean = false,
+        mlReady: Boolean = false,
     ) {
         loadJavascriptUrl(if (dynamic) buildDynamicScript() else buildApplyScript(aggressive, analyze))
-        if (dynamic) loadJavascriptUrl(buildImageCutoutScript())
+        if (dynamic) loadJavascriptUrl(buildImageCutoutScript(mlReady))
     }
 
     /** Removes both the filter fallback and the dynamic recoloring (used when dark mode is off). */
@@ -537,6 +544,22 @@ object WebDarkMode {
     private const val CUT_STEP_MAX = 5
     /** Min alpha to treat a pixel as opaque background (transparent cutouts already show the page). */
     private const val CUT_MIN_ALPHA = 128
+    /** Adaptive background band: max sum-abs per-channel distance a filled pixel may sit from the
+     *  **measured** background color (mean of the seed/border pixels). This is what makes keying
+     *  relative to the image's own background instead of an absolute contrast threshold — it halts the
+     *  fill creeping through a smooth fade into a light-but-off-background surface (a MacBook's silver
+     *  deck), even where no sharp edge exists, while still allowing a genuine background gradient
+     *  (which stays near its own mean). Fallback-tier only now — the ML segmenter is the primary
+     *  keyer — so it errs toward preserving product surfaces (70 ≈ 23/channel). */
+    private const val CUT_COLOR_BAND = 70
+    /** De-fringe luminance gate: after the fill, opaque pixels bordering a keyed pixel whose luminance
+     *  is at least this get keyed too, peeling the light anti-aliased halo ring the fill leaves one
+     *  pixel short of the subject outline. Kept above mid-luma so a genuine dark subject edge survives
+     *  (only the light blended fringe, which glows on the dark page, is removed). */
+    private const val CUT_L_EDGE = 150
+    /** How many halo rings to peel (each pass removes one pixel of light fringe). Two clears the
+     *  typical 1–2 px anti-aliased seam without visibly eroding the subject. 0 disables de-fringing. */
+    private const val CUT_DEFRINGE_ITERS = 2
     /** Apply the result only if the keyed fraction lands in this band (else it's a photo / near-blank). */
     private const val CUT_MIN_FRAC = "0.02"
     /** Upper reject bound: only a *near-total* key (essentially the whole image read as light) is
@@ -553,11 +576,56 @@ object WebDarkMode {
      * element recolor stands. Same one-line-`javascript:` shape as the other builders; the driver is
      * pre-flattened and block-comment-only (invariant #11) in [DarkCutoutAssets].
      */
-    internal fun buildImageCutoutScript(): String {
+    internal fun buildImageCutoutScript(mlReady: Boolean = false): String {
+        // When mlReady, the driver takes the native ML-Kit path: it only tags large <img>s and posts
+        // their URLs over this nonce-tagged bridge (DarkImageSegmenter). Otherwise it runs the WASM
+        // flood-fill fallback with the tuning params below.
+        val bridge = BridgeGuard.tag(DarkImageSegmenter.BRIDGE_MESSAGE)
         val params = "{minSize:$CUT_MIN_SIZE,maxDim:$CUT_MAX_DIM,lSeed:$CUT_L_SEED,lFloor:$CUT_L_FLOOR," +
-            "stepMax:$CUT_STEP_MAX,minAlpha:$CUT_MIN_ALPHA,minFrac:$CUT_MIN_FRAC,maxFrac:$CUT_MAX_FRAC}"
+            "stepMax:$CUT_STEP_MAX,minAlpha:$CUT_MIN_ALPHA,colorBand:$CUT_COLOR_BAND," +
+            "lEdge:$CUT_L_EDGE,defringeIters:$CUT_DEFRINGE_ITERS," +
+            "minFrac:$CUT_MIN_FRAC,maxFrac:$CUT_MAX_FRAC,mlReady:$mlReady,bridge:\"$bridge\"}"
         return "javascript:(function(){${DarkCutoutAssets.DRIVER_JS} try{lumCutSetup(" +
             "\"${DarkCutoutAssets.WASM_B64}\",\"${DarkCutoutAssets.WORKER_B64}\",$params);}catch(e){}})();"
+    }
+
+    /**
+     * A self-contained `javascript:` that applies a finished alpha mask (a `data:image/png` URI) to the
+     * `<img>` the ML path tagged `data-lumina-cut-id="[id]"`. Injected by the host when
+     * [DarkImageSegmenter] returns a segmentation result. Sizes/positions the mask to the displayed
+     * content rect so `object-fit` still lines up — same geometry as the driver's WASM applyMask.
+     * Self-contained (doesn't depend on the driver still being present) and fail-safe.
+     */
+    internal fun buildApplyMaskScript(id: String, maskDataUri: String, natW: Int, natH: Int): String {
+        return """
+            javascript:(function(){
+              try{
+                var el=document.querySelector('[data-lumina-cut-id="$id"]');
+                if(!el)return;
+                var natW=$natW,natH=$natH;
+                var boxW=el.clientWidth,boxH=el.clientHeight;if(!boxW||!boxH)return;
+                var fit='fill';try{fit=getComputedStyle(el).objectFit||'fill';}catch(e){}
+                var size='100% 100%',pos='0 0';
+                if(fit!=='fill'&&natW>0&&natH>0){
+                  var na=natW/natH,ba=boxW/boxH,cw,ch;
+                  if(fit==='none'||(fit==='scale-down'&&natW<=boxW&&natH<=boxH)){cw=natW;ch=natH;}
+                  else if(fit==='cover'){if(na>ba){ch=boxH;cw=boxH*na;}else{cw=boxW;ch=boxW/na;}}
+                  else{if(na>ba){cw=boxW;ch=boxW/na;}else{ch=boxH;cw=boxH*na;}}
+                  size=Math.round(cw)+'px '+Math.round(ch)+'px';pos='center';
+                }
+                var u='$maskDataUri';var s=el.style;
+                s.setProperty('-webkit-mask-image','url('+u+')','important');
+                s.setProperty('mask-image','url('+u+')','important');
+                s.setProperty('-webkit-mask-size',size,'important');
+                s.setProperty('mask-size',size,'important');
+                s.setProperty('-webkit-mask-position',pos,'important');
+                s.setProperty('mask-position',pos,'important');
+                s.setProperty('-webkit-mask-repeat','no-repeat','important');
+                s.setProperty('mask-repeat','no-repeat','important');
+                s.setProperty('mask-mode','alpha','important');
+              }catch(e){}
+            })();
+        """.trimIndent().replace("\n", " ")
     }
 
     /**

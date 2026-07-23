@@ -54,8 +54,8 @@ function driverSrc(b64, params) {
       var view=new Uint8Array(mem.buffer,pptr,w*h*4);
       view.set(id.data);
       ex.smooth_rgb(w,h,2);
-      var filled=ex.cutout(w,h,P.lSeed,P.lFloor,P.stepMax,P.minAlpha);
-      if(filled>0)ex.blur_alpha(w,h,6);
+      var filled=ex.cutout(w,h,P.lSeed,P.lFloor,P.stepMax,P.minAlpha,P.colorBand);
+      if(filled>0){if(P.defringeIters>0)ex.defringe(w,h,P.lEdge,P.defringeIters);ex.blur_alpha(w,h,6);}
       var frac=filled/(w*h);
       window.__cutStats.done++;
       if(frac<P.minFrac||frac>P.maxFrac){window.__cutStats.skipped++;return;}
@@ -98,9 +98,13 @@ function driverSrc(b64, params) {
 (async () => {
   const url = process.argv[2] || 'https://www.apple.com';
   const out = process.argv[3] || path.resolve(__dirname, 'out-apple.png');
+  // Mirror the SHIPPING params in WebDarkMode.kt (CUT_*), so the harness reproduces what users see.
+  // The tight edge barrier (stepMax=5) is what stops the fill at a product's outline instead of
+  // eating its light surfaces (e.g. a MacBook trackpad); looser values over-key.
   const params = {
-    minSize: 100, maxDim: 768,
-    lSeed: 195, lFloor: 150, stepMax: 30, minAlpha: 128,
+    minSize: 100, maxDim: 1536,
+    lSeed: 210, lFloor: 170, stepMax: 5, minAlpha: 128, colorBand: 70,
+    lEdge: 150, defringeIters: 2,
     minFrac: 0.02, maxFrac: 0.985,
   };
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new',

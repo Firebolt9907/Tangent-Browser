@@ -39,6 +39,7 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
     var isInPipMode by mutableStateOf(false)
         private set
     var isVideoFullscreen by mutableStateOf(false)
+        private set
 
     // Captures file downloads from the engine and hands them to the system DownloadManager
     // (notification + storage handled by the OS). Started/stopped with the activity lifecycle.
@@ -161,9 +162,46 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
         isInPipMode = isInPictureInPictureMode
     }
 
+    /**
+     * Called when web video enters/exits fullscreen. Besides tracking the flag for the UI, this arms
+     * **auto-enter PiP** (API 31+): the system then plays its high-quality seamless transition into
+     * Picture-in-Picture on a home-swipe, instead of us reacting late in [onUserLeaveHint] (which
+     * yields a visibly worse animation — the reason lint flags manual PiP). On API < 31 there is no
+     * auto-enter, so [onUserLeaveHint] remains the entry path there.
+     */
+    fun onVideoFullscreenChanged(enabled: Boolean) {
+        isVideoFullscreen = enabled
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            runCatching {
+                setPictureInPictureParams(
+                    PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(16, 9))
+                        .setAutoEnterEnabled(enabled)
+                        // The fullscreen video fills the content view, so its on-screen bounds are the
+                        // correct starting rectangle for the system's shrink-to-PiP animation.
+                        .setSourceRectHint(if (enabled) contentViewBounds() else null)
+                        .build(),
+                )
+            }
+        }
+    }
+
+    /** Global on-screen rectangle of the activity's content view, or null if not laid out yet. */
+    private fun contentViewBounds(): android.graphics.Rect? {
+        val content = findViewById<android.view.View>(android.R.id.content) ?: return null
+        if (content.width == 0 || content.height == 0) return null
+        val loc = IntArray(2)
+        content.getLocationOnScreen(loc)
+        return android.graphics.Rect(loc[0], loc[1], loc[0] + content.width, loc[1] + content.height)
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (isVideoFullscreen) enterPipIfSupported()
+        // API 31+ enters via auto-enter (armed in setVideoFullscreen) for the seamless transition;
+        // only drive PiP manually here on older versions that lack it.
+        if (isVideoFullscreen && android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
+            enterPipIfSupported()
+        }
     }
 
     fun requestPipMode() {

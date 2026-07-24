@@ -127,7 +127,7 @@ class CustomTabActivity : TangentBrowserActivity() {
                 onOpenNewLink = ::openNewLinkInTangent,
                 onClose = { finish() },
                 isInPipMode = isInPipMode,
-                onFullScreenChanged = { isVideoFullscreen = it },
+                onFullScreenChanged = { onVideoFullscreenChanged(it) },
                 onRequestPipMode = ::requestPipMode,
             )
         }

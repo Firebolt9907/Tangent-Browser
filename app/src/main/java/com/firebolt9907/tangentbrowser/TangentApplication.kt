@@ -14,6 +14,11 @@ import mozilla.components.support.rusthttp.RustHttpConfig
 class TangentApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Surface main-thread I/O and leaked resources during development only (penaltyLog, never
+        // death). Compiled out of release via BuildConfig.DEBUG.
+        if (BuildConfig.DEBUG) {
+            com.firebolt9907.tangentbrowser.util.TangentStrictMode.enable()
+        }
         AppServicesInitializer.init(AppServicesInitializer.Config(null))
         RustHttpConfig.setClient(lazy { HttpURLConnectionClient() })
         // Load per-site reader overrides (assets/reader_rules.json + cached remote file) once, off the

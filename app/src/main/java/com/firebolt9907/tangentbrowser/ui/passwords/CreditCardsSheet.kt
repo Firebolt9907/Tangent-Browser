@@ -212,7 +212,7 @@ private fun AddCardDialog(
     val digits = number.filter { it.isDigit() }
     val monthNum = month.toLongOrNull()
     val yearNum = year.toLongOrNull()
-    val canSave = digits.length in 12..19 &&
+    val canSave = CardValidation.isLuhnValid(digits) &&
         monthNum != null && monthNum in 1..12 &&
         yearNum != null && yearNum in 2000..2100
 

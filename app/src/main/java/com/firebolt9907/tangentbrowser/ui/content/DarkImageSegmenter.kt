@@ -3,7 +3,6 @@ package com.firebolt9907.tangentbrowser.ui.content
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
-import android.util.Log
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
@@ -182,7 +181,7 @@ object DarkImageSegmenter {
             val dataUri = mask.toPngDataUri() ?: return
             maskApplier?.invoke(tabId, id, dataUri, w, h)
         } catch (e: Exception) {
-            Log.d(TAG, "segmentation skipped for $id: ${e.message}")
+            com.firebolt9907.tangentbrowser.util.TangentLog.debug(TAG) { "segmentation skipped for $id: ${e.message}" }
         }
     }
 

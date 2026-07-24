@@ -36,7 +36,7 @@ object ReaderExtractor {
     fun registerPromptDelegate(engineSession: EngineSession, tabId: String) {
         val geckoSession = getGeckoSession(engineSession)
         if (geckoSession == null) {
-            Log.d("ReaderDbg", "registerPromptDelegate: NO geckoSession tab=$tabId")
+            com.firebolt9907.tangentbrowser.util.TangentLog.debug("ReaderDbg") { "registerPromptDelegate: NO geckoSession tab=$tabId" }
             return
         }
         val oldDelegate = geckoSession.promptDelegate
@@ -44,7 +44,7 @@ object ReaderExtractor {
         // Avoid wrapping multiple times
         if (oldDelegate is ReaderPromptDelegate) return
 
-        Log.d("ReaderDbg", "registerPromptDelegate wrapping old=${oldDelegate?.javaClass?.simpleName} tab=$tabId")
+        com.firebolt9907.tangentbrowser.util.TangentLog.debug("ReaderDbg") { "registerPromptDelegate wrapping old=${oldDelegate?.javaClass?.simpleName} tab=$tabId" }
         geckoSession.promptDelegate = ReaderPromptDelegate(oldDelegate, tabId)
     }
 

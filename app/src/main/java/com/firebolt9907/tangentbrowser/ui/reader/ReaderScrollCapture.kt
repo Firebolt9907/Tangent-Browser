@@ -64,7 +64,7 @@ class ReaderScrollCaptureCallback(
     override fun onScrollCaptureSearch(signal: CancellationSignal, onReady: Consumer<Rect>) {
         viewportW = hostView.width
         viewportH = hostView.height
-        android.util.Log.d(TAG, "onScrollCaptureSearch w=$viewportW h=$viewportH max=${scrollState.maxValue}")
+        com.firebolt9907.tangentbrowser.util.TangentLog.debug(TAG) { "onScrollCaptureSearch w=$viewportW h=$viewportH max=${scrollState.maxValue}" }
         // Only worth offering if there is off-screen content to stitch.
         if (viewportW <= 0 || viewportH <= 0 || scrollState.maxValue <= 0) {
             onReady.accept(Rect())
@@ -78,7 +78,7 @@ class ReaderScrollCaptureCallback(
         signal: CancellationSignal,
         onReady: Runnable,
     ) {
-        android.util.Log.d(TAG, "onScrollCaptureStart startScroll=${scrollState.value}")
+        com.firebolt9907.tangentbrowser.util.TangentLog.debug(TAG) { "onScrollCaptureStart startScroll=${scrollState.value}" }
         startScroll = scrollState.value
         ReaderScrollCapture.setCapturing(true)
         // Give the capturing flag a couple of frames to hide the reader overlays and arm the

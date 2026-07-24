@@ -271,7 +271,7 @@ class AddonController(
      */
     fun openPopup(addonId: String) {
         val action = actions[addonId]
-        android.util.Log.d("TangentAddon", "openPopup $addonId action=$action enabled=${action?.enabled} activeSession=$activeSession")
+        com.firebolt9907.tangentbrowser.util.TangentLog.debug("TangentAddon") { "openPopup $addonId action=$action enabled=${action?.enabled} activeSession=$activeSession" }
         if (action == null) {
             setError("This add-on has no quick settings")
             return
@@ -281,7 +281,7 @@ class AddonController(
             return
         }
         action.onClick()
-        android.util.Log.d("TangentAddon", "openPopup $addonId onClick() returned")
+        com.firebolt9907.tangentbrowser.util.TangentLog.debug("TangentAddon") { "openPopup $addonId onClick() returned" }
     }
 
     private fun remember(webExtension: WebExtension) {
@@ -302,7 +302,7 @@ class AddonController(
      * Pass `null` when the active tab is itself a popup tab, so the originating page stays active.
      */
     fun setActiveSession(session: EngineSession?) {
-        android.util.Log.d("TangentAddon", "setActiveSession $session (was $activeSession)")
+        com.firebolt9907.tangentbrowser.util.TangentLog.debug("TangentAddon") { "setActiveSession $session (was $activeSession)" }
         if (session == null) return
         if (session === activeSession) return
         // Clear the active flag on the tab we're leaving so extensions don't see two active tabs.
@@ -342,7 +342,7 @@ class AddonController(
         override fun onToggleActionPopup(extension: WebExtension, action: Action): EngineSession? {
             val popupSession = engine.createSession()
             val name = extensions[extension.id]?.displayName() ?: "Add-on"
-            android.util.Log.d("TangentAddon", "onToggleActionPopup ${extension.id} popupSession=$popupSession activeSession=$activeSession")
+            com.firebolt9907.tangentbrowser.util.TangentLog.debug("TangentAddon") { "onToggleActionPopup ${extension.id} popupSession=$popupSession activeSession=$activeSession" }
             onActionPopupTabRequested?.invoke(name, popupSession)
             return popupSession
         }

@@ -553,7 +553,7 @@ fun ContentHost(
                 if (tabId != null) {
                     val isReaderActive = ReaderManager.instance.isReaderActive(tabId)
                     if (isReaderActive && readerExtractedForCurrentLoad) {
-                        android.util.Log.d("ReaderDbg", "triggerInitialReaderCheck: reader is active and already extracted once for this load, skipping")
+                        com.firebolt9907.tangentbrowser.util.TangentLog.debug("ReaderDbg") { "triggerInitialReaderCheck: reader is active and already extracted once for this load, skipping" }
                         return
                     }
                     readerExtractedForCurrentLoad = true
@@ -563,7 +563,7 @@ fun ContentHost(
 
             val observer = object : Observer {
                 override fun onLocationChange(url: String, hasUserGesture: Boolean) {
-                    android.util.Log.d("ReaderDbg", "onLocationChange tab=$tabId url=$url")
+                    com.firebolt9907.tangentbrowser.util.TangentLog.debug("ReaderDbg") { "onLocationChange tab=$tabId url=$url" }
                     if (handleFirefoxAuthRedirect(url)) return
                     if (!url.startsWith("javascript:", ignoreCase = true)) {
                         val navigatedAway = url != currentUrl
@@ -614,7 +614,7 @@ fun ContentHost(
                 }
 
                 override fun onLoadingStateChange(loading: Boolean) {
-                    android.util.Log.d("ReaderDbg", "onLoadingStateChange tab=$tabId loading=$loading suppress=$suppressJavascriptLoadCallback url=$currentUrl")
+                    com.firebolt9907.tangentbrowser.util.TangentLog.debug("ReaderDbg") { "onLoadingStateChange tab=$tabId loading=$loading suppress=$suppressJavascriptLoadCallback url=$currentUrl" }
                     if (suppressJavascriptLoadCallback) {
                         if (!loading) suppressJavascriptLoadCallback = false
                         return

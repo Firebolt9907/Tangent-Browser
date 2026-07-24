@@ -65,6 +65,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     // Skip stripping debug symbols from the ~1 GB of Gecko/appservices native libraries.
     // This is the single slowest packaging step; for local dev installs (debug keystore, no

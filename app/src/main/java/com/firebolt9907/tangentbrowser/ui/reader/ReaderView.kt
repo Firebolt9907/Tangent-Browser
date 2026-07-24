@@ -244,10 +244,9 @@ fun ReaderView(
                     runCatching { captureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
                 },
             ) else null
-            android.util.Log.d(
-                "ReaderScrollCapture",
-                "register callback: target=${captureTarget?.javaClass?.simpleName} host=${hostView.javaClass.simpleName}",
-            )
+            com.firebolt9907.tangentbrowser.util.TangentLog.debug("ReaderScrollCapture") {
+                "register callback: target=${captureTarget?.javaClass?.simpleName} host=${hostView.javaClass.simpleName}"
+            }
             captureTarget?.setScrollCaptureCallback(callback)
             captureTarget?.scrollCaptureHint = android.view.View.SCROLL_CAPTURE_HINT_INCLUDE or android.view.View.SCROLL_CAPTURE_HINT_EXCLUDE_DESCENDANTS
             hostView.scrollCaptureHint = android.view.View.SCROLL_CAPTURE_HINT_EXCLUDE_DESCENDANTS

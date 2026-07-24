@@ -171,7 +171,7 @@ class ReaderManager {
     }
 
     fun setReaderEligible(tabId: String, article: ReaderArticle) {
-        android.util.Log.d("ReaderDbg", "setReaderEligible tab=$tabId pending=${_pendingActivationTabs.value.contains(tabId)}")
+        com.firebolt9907.tangentbrowser.util.TangentLog.debug("ReaderDbg") { "setReaderEligible tab=$tabId pending=${_pendingActivationTabs.value.contains(tabId)}" }
         _eligibleReaderTabs.update { it + tabId }
         _tabArticles.update { it + (tabId to article) }
 

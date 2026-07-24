@@ -1,6 +1,7 @@
 package com.firebolt9907.tangentbrowser.ui.reader
 
 import android.util.Log
+import com.firebolt9907.tangentbrowser.util.TangentLog
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.webextension.MessageHandler
 import mozilla.components.concept.engine.webextension.Port
@@ -44,7 +45,7 @@ class ReaderPortHandler : MessageHandler {
         }
         sessionTabIds[session] = tabId
         extension.registerContentMessageHandler(session, name, this)
-        Log.d(TAG, "registerHandler tab=$tabId session=$session")
+        TangentLog.debug(TAG) { "registerHandler tab=$tabId session=$session" }
     }
 
     /**
@@ -54,13 +55,13 @@ class ReaderPortHandler : MessageHandler {
     fun sendExtract(session: EngineSession) {
         val port = ports[session]
         if (port == null) {
-            Log.d(TAG, "sendExtract: no port for session=$session")
+            TangentLog.debug(TAG) { "sendExtract: no port for session=$session" }
             return
         }
         try {
             val msg = JSONObject().put("action", "extract")
             port.postMessage(msg)
-            Log.d(TAG, "sendExtract sent to session=$session")
+            TangentLog.debug(TAG) { "sendExtract sent to session=$session" }
         } catch (e: Exception) {
             Log.w(TAG, "sendExtract failed", e)
         }
@@ -74,7 +75,7 @@ class ReaderPortHandler : MessageHandler {
         }
         ports[session] = port
         val tabId = sessionTabIds[session] ?: "unknown"
-        Log.d(TAG, "onPortConnected tab=$tabId session=$session port=${port.name()}")
+        TangentLog.debug(TAG) { "onPortConnected tab=$tabId session=$session port=${port.name()}" }
     }
 
     override fun onPortMessage(message: Any, port: Port) {
@@ -96,10 +97,10 @@ class ReaderPortHandler : MessageHandler {
                     try {
                         val article = ReaderExtractor.parseArticleJson(articleJson.toString())
                         if (article != null) {
-                            Log.d(TAG, "onPortMessage: article received tab=$tabId title=${article.title.take(40)}")
+                            TangentLog.debug(TAG) { "onPortMessage: article received tab=$tabId title=${article.title.take(40)}" }
                             ReaderManager.instance.setReaderEligible(tabId, article)
                         } else {
-                            Log.d(TAG, "onPortMessage: parseArticleJson returned null tab=$tabId")
+                            TangentLog.debug(TAG) { "onPortMessage: parseArticleJson returned null tab=$tabId" }
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "onPortMessage: failed to parse article tab=$tabId", e)
@@ -107,10 +108,10 @@ class ReaderPortHandler : MessageHandler {
                 }
             }
             "none" -> {
-                Log.d(TAG, "onPortMessage: page not readable tab=$tabId")
+                TangentLog.debug(TAG) { "onPortMessage: page not readable tab=$tabId" }
             }
             else -> {
-                Log.d(TAG, "onPortMessage: unknown type=$type tab=$tabId")
+                TangentLog.debug(TAG) { "onPortMessage: unknown type=$type tab=$tabId" }
             }
         }
     }
@@ -119,7 +120,7 @@ class ReaderPortHandler : MessageHandler {
         val session = port.engineSession ?: return
         val removed = ports.remove(session)
         if (removed != null) {
-            Log.d(TAG, "onPortDisconnected session=$session")
+            TangentLog.debug(TAG) { "onPortDisconnected session=$session" }
         }
     }
 

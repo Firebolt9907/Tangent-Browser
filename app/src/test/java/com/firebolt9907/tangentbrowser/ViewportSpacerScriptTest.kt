@@ -169,10 +169,12 @@ class ViewportSpacerScriptTest {
         // colored nav bar reads as continuous to the screen top. Falls back to body/html base color.
         val s = script()
         assertTrue("samples the element below the strip", s.contains("elementFromPoint(x,topPx+2)"))
-        assertTrue("computes a fill color for the strip", s.contains("function topBg(sp)"))
+        assertTrue("computes a fill for the strip", s.contains("function topBg(sp)"))
+        assertTrue("reads a solid or gradient bg per element", s.contains("function topPick(n)"))
         assertTrue("walks up to the first opaque background", s.contains("function topOpaque(c)"))
         assertTrue("applies the sampled bg to the spacer", s.contains("var __sbg=topBg(el)"))
-        assertTrue("falls back to the body base color", s.contains("getComputedStyle(document.body).backgroundColor"))
+        assertTrue("carries a branded gradient header up into the strip", s.contains("/gradient/i.test(img)"))
+        assertTrue("falls back to the page base color", s.contains("topPick(document.body)"))
     }
 
     @Test

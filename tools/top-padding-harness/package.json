@@ -1,7 +1,7 @@
 {
   "name": "top-padding-harness",
   "version": "1.0.0",
-  "description": "Headless-Chrome harness verifying Lumina's top viewport-spacer injection on real sites",
+  "description": "Headless-Chrome harness verifying Tangent's top viewport-spacer injection on real sites",
   "private": true,
   "type": "commonjs",
   "scripts": {

@@ -6,7 +6,7 @@ const puppeteer = require('puppeteer-core');
 
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
-const KT = path.resolve(__dirname, '../../app/src/main/java/com/firebolt9907/luminabrowser/ui/content/WebDarkMode.kt');
+const KT = path.resolve(__dirname, '../../app/src/main/java/com/firebolt9907/tangentbrowser/ui/content/WebDarkMode.kt');
 
 function extractDynamic() {
   const src = fs.readFileSync(KT, 'utf8');
@@ -21,8 +21,8 @@ function extractDynamic() {
   const indent = Math.min(...lines.filter(l => l.trim()).map(l => l.match(/^\s*/)[0].length));
   tpl = lines.map(l => l.slice(indent)).join('\n');
   // Kotlin interpolations: constants
-  tpl = tpl.replace("${DYN_STYLE_ID}", 'lumina-dyn-style')
-           .replace("${DYN_CLASS}", 'lumina-dyn')
+  tpl = tpl.replace("${DYN_STYLE_ID}", 'tangent-dyn-style')
+           .replace("${DYN_CLASS}", 'tangent-dyn')
            .replace("${DYN_BASE_BG}", '#1c1c1e')
            .replace("${DYN_SCAN_CAP}", '8000');
   return tpl.replace(/\n/g, ' ');
@@ -44,7 +44,7 @@ function probeSrc() {
     return {rootBg:getComputedStyle(document.documentElement).backgroundColor,
       bodyBg:getComputedStyle(document.body).backgroundColor,
       bodyInline:document.body.style.backgroundColor,
-      htmlHasClass:document.documentElement.classList.contains('lumina-dyn'),
+      htmlHasClass:document.documentElement.classList.contains('tangent-dyn'),
       dynActive:!!window.__lumDynActive, sample:out};
   })()`;
 }
@@ -72,7 +72,7 @@ function probeSrc() {
 
     const res = await page.evaluate(probeSrc());
     console.log(`\n=== ${url} AFTER dynamic dark inject ===`);
-    console.log('dynActive=', res.dynActive, ' html.lumina-dyn=', res.htmlHasClass);
+    console.log('dynActive=', res.dynActive, ' html.tangent-dyn=', res.htmlHasClass);
     console.log('html bg=', res.rootBg, ' body bg=', res.bodyBg, ' body inline=', JSON.stringify(res.bodyInline));
     console.log('\nBig visible sections (bgL = bg luminance 0-255, high=light):');
     for (const s of res.sample) {

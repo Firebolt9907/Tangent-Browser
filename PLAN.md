@@ -1,4 +1,4 @@
-# LuminaBrowser — Build Plan
+# TangentBrowser — Build Plan
 
 Context for a fresh agent picking up mid-build. Read this top to bottom before touching code.
 
@@ -6,7 +6,7 @@ Context for a fresh agent picking up mid-build. Read this top to bottom before t
 
 Android browser app, single Gradle module, Compose UI. Target experience: an iOS 18 Safari-style bottom URL/tab pill, eventually backed by GeckoView via Mozilla Android Components.
 
-Package root: `com.firebolt9907.luminabrowser`. minSdk 26, compileSdk 36, Compose BOM 2024.09.00, Kotlin 2.0.21.
+Package root: `com.firebolt9907.tangentbrowser`. minSdk 26, compileSdk 36, Compose BOM 2024.09.00, Kotlin 2.0.21.
 
 ## What "iOS 18 Safari tab bar" means here
 
@@ -28,14 +28,14 @@ Explicitly **not** building in v1: tab groups, full aA formatting menu, true fro
 Gate: app shows mock URL in the bar; horizontal-swiping the bar switches between 3 seeded mock tabs; URL updates accordingly. Tap URL → editing mode (visual only, no real submit). No engine yet.
 
 What's in place:
-- `state/LuminaTab.kt`, `TabRepository.kt` (interface), `MockTabRepository.kt` seeded with apple.com / nytimes.com / wikipedia.org. `MockTabRepository.instance` singleton accessed by the VM.
+- `state/TangentTab.kt`, `TabRepository.kt` (interface), `MockTabRepository.kt` seeded with apple.com / nytimes.com / wikipedia.org. `MockTabRepository.instance` singleton accessed by the VM.
 - `state/BarUiState.kt` — `BarUiState(displayUrl, tabCount, mode, editingText)` + `BarMode { Expanded, Compact, Editing }`. **State-layer model**, not UI-layer.
-- `state/LuminaViewModel.kt` — combines repo flows + local mode/editingText into `StateFlow<BarUiState>`. Exposes `onUrlTap`, `onEditingTextChange`, `onEditingSubmit` (currently just exits edit mode), `onEditingCancel`, `onSwitchTab(direction: Int)`.
+- `state/TangentViewModel.kt` — combines repo flows + local mode/editingText into `StateFlow<BarUiState>`. Exposes `onUrlTap`, `onEditingTextChange`, `onEditingSubmit` (currently just exits edit mode), `onEditingCancel`, `onSwitchTab(direction: Int)`.
 - `ui/chrome/SafariBar.kt` — `AnimatedContent` keyed by `state.mode`, spring `SizeTransform`. Bottom-centered with 24dp bottom padding.
 - `ui/chrome/BarPill.kt` — shared Surface + horizontal-draggable wrapper. Owns drag accumulator (`SWITCH_THRESHOLD_PX = 120f`, `FLING_VELOCITY_PX_PER_S = 800f`). Direction convention: drag right (positive) = previous tab.
 - `ui/chrome/BarExpanded.kt`, `BarCompact.kt`, `BarEditing.kt` — three sub-composables. Each `@Preview`d.
 - `ui/chrome/TabCountChip.kt` — non-interactive count chip.
-- `ui/LuminaRoot.kt` — wires everything; uses `remember(viewModel) { BarCallbacks(...) }` for stable references; outer `Box` around SafariBar applies `imePadding()` so the bar lifts above the keyboard cleanly.
+- `ui/TangentRoot.kt` — wires everything; uses `remember(viewModel) { BarCallbacks(...) }` for stable references; outer `Box` around SafariBar applies `imePadding()` so the bar lifts above the keyboard cleanly.
 - Gradle: `kotlinx-coroutines-android`, `lifecycle-runtime-compose` added.
 
 Known limitations carried into later days (intentional):
@@ -58,10 +58,10 @@ What's in place:
   - `feature-session`
   - `feature-tabs`
 - Kotlin upgraded from `2.0.21` to `2.2.21` because current Android Components are compiled with Kotlin 2.2 metadata.
-- `LuminaApplication` owns app-scoped `LuminaBrowserComponents`: `GeckoEngine`, `BrowserStore`, `SessionUseCases`, `TabsUseCases`, and `GeckoTabRepository`.
+- `TangentApplication` owns app-scoped `TangentBrowserComponents`: `GeckoEngine`, `BrowserStore`, `SessionUseCases`, `TabsUseCases`, and `GeckoTabRepository`.
 - `BrowserStore` is created with `EngineMiddleware.create(engine, scope)`, so tab creation/loading gets real `EngineSession`s.
-- `GeckoTabRepository` implements `TabRepository` and maps `BrowserState.tabs` to `LuminaTab`; selection/add/remove go through `TabsUseCases`; URL loads go through `SessionUseCases.loadUrl`.
-- `LuminaViewModel` now uses the Gecko-backed repo, submits editing text to the selected session, and computes compact host labels via `Uri.parse(...).host?.removePrefix("www.")`.
+- `GeckoTabRepository` implements `TabRepository` and maps `BrowserState.tabs` to `TangentTab`; selection/add/remove go through `TabsUseCases`; URL loads go through `SessionUseCases.loadUrl`.
+- `TangentViewModel` now uses the Gecko-backed repo, submits editing text to the selected session, and computes compact host labels via `Uri.parse(...).host?.removePrefix("www.")`.
 - `ContentHost` creates an Android Components `EngineView`, wraps it with `AndroidView`, renders the selected tab's `EngineSession`, and forwards lifecycle events manually.
 - App seeds three real tabs (`apple.com`, `nytimes.com`, `wikipedia.org`) and selects Apple first, preserving Day 2 bar-swipe behavior.
 
@@ -76,7 +76,7 @@ Items in priority order:
 
 If item 2 slips: ship Day 4 without content cross-slide (bar-only swipe) and treat cross-slide as Day 5.
 
-Implementation note: the bar-side drag detection already lives in `BarPill.kt`. Adding content cross-slide means hoisting drag accumulator state higher (probably to the VM or a `LuminaRoot`-level `remember`) so `ContentHost` can observe it and translate accordingly. Be deliberate about this — it'll touch the clean callback surface that Day 2 just landed.
+Implementation note: the bar-side drag detection already lives in `BarPill.kt`. Adding content cross-slide means hoisting drag accumulator state higher (probably to the VM or a `TangentRoot`-level `remember`) so `ContentHost` can observe it and translate accordingly. Be deliberate about this — it'll touch the clean callback surface that Day 2 just landed.
 
 ## Day 5 — Tab grid + swipe-up-from-bar transition
 

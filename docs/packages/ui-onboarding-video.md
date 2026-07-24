@@ -4,7 +4,7 @@ Two unrelated small UI packages grouped here.
 
 ## `ui/onboarding/`
 
-### `LuminaOnboarding.kt`
+### `TangentOnboarding.kt`
 The first-run pager host: a welcome hero, the three feature/permission pages, and a finish page.
 `onFinish` fires on Skip or on completing with "Get started". The host owns page navigation — the page
 composables must not add their own nav buttons.
@@ -33,6 +33,6 @@ that miss a control pass through to the video beneath.
 
 ## When to touch these
 
-- Onboarding copy/pages → `OnboardingFeaturePages` (content) / `LuminaOnboarding` (flow).
+- Onboarding copy/pages → `OnboardingFeaturePages` (content) / `TangentOnboarding` (flow).
 - Video controls → `VideoFullscreenOverlay` (UI) + `VideoPlayer` (bridge/state). The page-side
   isolation that makes PiP show only the video lives in `ui/content/YouTubeCleanPlayer.kt`.

@@ -20,7 +20,7 @@ const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (
 function bandProbeSrc(topPx) {
   return `(() => {
     const band = ${topPx};
-    const SPACER = 'lumina-top-scroll-spacer';
+    const SPACER = 'tangent-top-scroll-spacer';
     function opaque(c){ return c && c !== 'transparent' && !/rgba\\(0, 0, 0, 0\\)/.test(c) && !/^rgba\\(.*,\\s*0\\)$/.test(c); }
     const hits = [];
     // Descend into open shadow roots, mirroring the injected script's collect(): web-component

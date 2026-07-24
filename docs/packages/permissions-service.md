@@ -18,10 +18,10 @@ key.
 
 ## `service/`
 
-### `LuminaCustomTabsService.kt`
+### `TangentCustomTabsService.kt`
 The `CustomTabsService` the app advertises (see the manifest `<service>`). Registering it is what
 makes callers that speak the Custom Tabs protocol — most notably the Google app / Discover —
-recognize Expedition as a Custom Tabs provider and route article links to it (rather than a plain
+recognize Tangent as a Custom Tabs provider and route article links to it (rather than a plain
 `ACTION_VIEW`). Also the entry point for the `mayLaunchUrl` warmup handshake that feeds
 `ExternalLinkPreloader` (see [`state.md`](state.md)).
 
@@ -35,6 +35,6 @@ tabs) under memory pressure. **Strictly opt-in** via
 
 - New content-permission type → `SitePermissionController` (decision + remember logic) and
   `ui/SitePermissionDialog.kt` (presentation). Keep origin-scoped storage.
-- Custom Tabs protocol behaviour (warmups, session callbacks) → `LuminaCustomTabsService`.
+- Custom Tabs protocol behaviour (warmups, session callbacks) → `TangentCustomTabsService`.
 - The keep-alive is deliberately dumb; don't grow it into a general background worker — periodic sync
   already has WorkManager (see [`sync.md`](sync.md)).

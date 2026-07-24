@@ -14,7 +14,7 @@ if (!url) { console.error('usage: node spaTest.js <url> [topPx]'); process.exit(
 // Reuse the same ink-in-band probe semantics as run.js.
 function bandProbeSrc(topPx) {
   return `(() => {
-    const band = ${topPx}, SPACER='lumina-top-scroll-spacer';
+    const band = ${topPx}, SPACER='tangent-top-scroll-spacer';
     function opaque(c){ return c && c!=='transparent' && !/rgba\\(0, 0, 0, 0\\)/.test(c) && !/^rgba\\(.*,\\s*0\\)$/.test(c); }
     function collectDeep(root,out){(root.querySelectorAll?root.querySelectorAll('*'):[]).forEach(el=>{out.push(el);if(el.shadowRoot)collectDeep(el.shadowRoot,out);});return out;}
     const hits=[]; collectDeep(document,[]).forEach(el=>{
@@ -67,7 +67,7 @@ function bandProbeSrc(topPx) {
         if (location.href !== before) return { kind: 'link-click', to: location.href };
       }
       // fallback: synthetic SPA route change
-      history.pushState({}, '', origin + '/lumina-spa-probe-' + Date.now());
+      history.pushState({}, '', origin + '/tangent-spa-probe-' + Date.now());
       window.dispatchEvent(new PopStateEvent('popstate'));
       return { kind: 'pushState', to: location.href };
     }).catch(() => ({ kind: 'link-click', to: '(full navigation)' })); // context destroyed = full nav
@@ -78,7 +78,7 @@ function bandProbeSrc(topPx) {
     // A full-page navigation destroys the execution context (and, on a real device, ContentHost
     // re-injects on the new load — that's the re-inject path, not the SPA self-heal invariant). If
     // the page did a full nav, report N/A instead of crashing.
-    const isSpaNav = await page.evaluate(() => !!window.__luminaListenersBound).catch(() => false);
+    const isSpaNav = await page.evaluate(() => !!window.__tangentListenersBound).catch(() => false);
     if (!isSpaNav) {
       console.log(`\n=== SPA self-heal: ${url}  topPx=${topPx} ===`);
       console.log(`inject band clean: ${bandAfterInject.length === 0 ? 'yes' : 'NO ('+bandAfterInject.length+')'}`);
@@ -97,8 +97,8 @@ function bandProbeSrc(topPx) {
     await new Promise(r => setTimeout(r, 700));
 
     const spacerAlive = await page.evaluate(() => {
-      const sp = document.getElementById('lumina-top-scroll-spacer');
-      const style = document.getElementById('lumina-viewport-scroll-style');
+      const sp = document.getElementById('tangent-top-scroll-spacer');
+      const style = document.getElementById('tangent-viewport-scroll-style');
       const sc = style && /scroll-padding-top/.test(style.textContent);
       return { spacer: !!sp, spacerInBody: sp ? sp.parentElement === (document.body||document.documentElement) : false,
                spacerFirst: sp ? (sp.parentElement && sp.parentElement.firstElementChild === sp) : false, scrollStyle: !!sc };

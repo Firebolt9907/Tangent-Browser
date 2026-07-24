@@ -2,13 +2,13 @@
 
 ### `CustomTabRoot.kt`
 The slim UI for a Custom Tab, hosted by `CustomTabActivity` (see [`top-level.md`](top-level.md)). It is
-deliberately **not** `LuminaRoot` — there is no tab grid, no tab-switching, and no address bar. It is:
+deliberately **not** `TangentRoot` — there is no tab grid, no tab-switching, and no address bar. It is:
 
 - a single `ui/content/ContentHost` bound to the external link's custom-tab session,
 - an optional reader overlay,
-- a bottom bar (domain, reload, share, "Open in Expedition", close).
+- a bottom bar (domain, reload, share, "Open in Tangent", close).
 
-"Open in Expedition" migrates the custom-tab session into a real tab and hands off to `MainActivity`.
+"Open in Tangent" migrates the custom-tab session into a real tab and hands off to `MainActivity`.
 
 ### Exit animation (two paths — do not collapse)
 This surface owns the subtle back-gesture behaviour documented at length in

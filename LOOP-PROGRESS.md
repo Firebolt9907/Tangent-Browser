@@ -1,13 +1,13 @@
 # Automated improvement loop — progress tracker
 
-## [A] CustomTabsService — Discover/CCT exit animation (the "Chrome animates, Lumina cuts" fix)
+## [A] CustomTabsService — Discover/CCT exit animation (the "Chrome animates, Tangent cuts" fix)
 Root cause (confirmed): the Google app launches article links via the Custom Tabs protocol
 (`CustomTabsIntent`), attaching an `EXTRA_EXIT_ANIMATION_BUNDLE`. It only hands that bundle over to
-apps registered as **Custom Tabs providers**. Lumina had no `CustomTabsService`, so the Google app
+apps registered as **Custom Tabs providers**. Tangent had no `CustomTabsService`, so the Google app
 fell back to a plain `ACTION_VIEW` with no session and no animation bundle → the close cut.
 Fix (3 pieces, all compile + `assembleRelease`/`testReleaseUnitTest` GREEN):
 - `engine/Engine.kt`: added `customTabsServiceStore = CustomTabsServiceStore()` to the DI graph.
-- `service/LuminaCustomTabsService.kt`: `AbstractCustomTabsService` (feature-customtabs) supplying
+- `service/TangentCustomTabsService.kt`: `AbstractCustomTabsService` (feature-customtabs) supplying
   `engine` + `customTabsServiceStore`; handles warmup/session/mayLaunchUrl for free.
 - `AndroidManifest.xml`: `<service>` with `android.support.customtabs.action.CustomTabsService`
   (verified present in merged manifest).
@@ -19,7 +19,7 @@ Fix (3 pieces, all compile + `assembleRelease`/`testReleaseUnitTest` GREEN):
   that OS path is taken with the caller's animation. **Not device-verified** — no device connected
   this tick (installRelease pending). Needs on-device check against a real Discover article.
 
-Self-paced loop. Goals: (A) add Safari features Lumina lacks, (B) reduce resource usage,
+Self-paced loop. Goals: (A) add Safari features Tangent lacks, (B) reduce resource usage,
 (C) make top-padding JS injection more robust, (D) remove bottom-padding JS injection.
 One focused, compiling improvement per iteration. Deploy via background `installRelease`.
 
@@ -36,7 +36,7 @@ One focused, compiling improvement per iteration. Deploy via background `install
   listener (fixed/sticky offsets are scroll-invariant; MutationObserver already catches
   lazily-inserted headers) — cuts per-scroll DOM walks. File: `PageBottomSpacer.kt`. Compiles.
 
-- **[C] Iter 3** — Self-healing top spacer. The `lumina-top-scroll-spacer` div was created
+- **[C] Iter 3** — Self-healing top spacer. The `tangent-top-scroll-spacer` div was created
   once at inject time; SPA client-side navs that replace/clear `<body>` dropped it with no
   recovery (no FCP/load fires on client nav), hiding top content under the status bar.
   `applyHeaderInsets` (driven by the MutationObserver) now re-ensures the idempotent spacer
@@ -59,11 +59,11 @@ Gecko lowMemoryDetection. Low-risk resource fruit is largely picked.
 
 - **[A] Iter 6** — Added "Add Bookmark" to the aA page menu (Safari's page-menu parity).
   Threaded `bookmarksStorage` through AaSheet → PageTabContent; writes to `BookmarkRoot.Mobile`
-  (same as BookmarksSheet quick-add). Wired at the LuminaRoot call site. Files:
-  `ui/chrome/AaSheet.kt`, `ui/LuminaRoot.kt`. Compiles. (Not device-verified.)
+  (same as BookmarksSheet quick-add). Wired at the TangentRoot call site. Files:
+  `ui/chrome/AaSheet.kt`, `ui/TangentRoot.kt`. Compiles. (Not device-verified.)
 
 - **[B] Iter 7** — Adaptive backoff in the header-inset JS. Once the chosen header set is
-  stable for 3 passes, the re-walk cooldown widens 500ms→2000ms (`window.__luminaCooldownMs`),
+  stable for 3 passes, the re-walk cooldown widens 500ms→2000ms (`window.__tangentCooldownMs`),
   cutting steady-state full-document `getComputedStyle` walks ~4× on busy SPAs; snaps back to
   500ms the instant the header set changes, so late cookie banners are still caught quickly.
   Also ran a full `:app:assembleRelease` checkpoint — **release APK builds clean** across all
@@ -86,9 +86,9 @@ Gecko lowMemoryDetection. Low-risk resource fruit is largely picked.
 
 - **[B] Iter 11** — Release the TTS engine under memory pressure. `PageSpeaker.releaseIfIdle()`
   shuts down TextToSpeech (and its bound service) when not speaking; called from
-  `LuminaApplication.onTrimMemory` at ≥TRIM_MEMORY_BACKGROUND. Re-inits lazily on next use.
+  `TangentApplication.onTrimMemory` at ≥TRIM_MEMORY_BACKGROUND. Re-inits lazily on next use.
   Ran `:app:assembleRelease` — GREEN with TTS integrated. Files: `PageSpeaker.kt`,
-  `LuminaApplication.kt`.
+  `TangentApplication.kt`.
 
 - **[A] Iter 12** — Added "Add to Reading List" (Safari parity, separate from bookmarks).
   aA-sheet action find-or-creates a "Reading List" folder under `BookmarkRoot.Mobile` and
@@ -98,8 +98,8 @@ Gecko lowMemoryDetection. Low-risk resource fruit is largely picked.
 
 - **[A] Iter 13** — Add-to-Home-Screen now uses the page favicon (`ContentState.icon`) via
   `IconCompat.createWithBitmap`, falling back to the app icon. Threaded `pageIcon` through
-  AaSheet → PageTabContent; wired `selectedContent?.icon` at the LuminaRoot call site. Files:
-  `ui/chrome/AaSheet.kt`, `ui/LuminaRoot.kt`. Compiles.
+  AaSheet → PageTabContent; wired `selectedContent?.icon` at the TangentRoot call site. Files:
+  `ui/chrome/AaSheet.kt`, `ui/TangentRoot.kt`. Compiles.
 
 - **[B/quality] Iter 14** — Add Bookmark & Add to Reading List now report real success/failure.
   Toast moved into the coroutine, keyed on the storage `Result` (`.getOrThrow()` inside
@@ -127,9 +127,9 @@ higher bar. **Work is uncommitted** — ready for the user to review/commit when
   Common-mistakes row. Protects the iter-1/3/4/7 work from accidental revert. File: `AGENTS.md`.
 
 - **[C] Iter 18** — Crash-proofed the header-inset self-heal. `applyHeaderInsets` set
-  `__luminaApplyingHeaderInsets=true` before the apply loop and cleared it after; if any
+  `__tangentApplyingHeaderInsets=true` before the apply loop and cleared it after; if any
   `applyFixed`/`applySticky` threw (detached node, exotic element), the flag stayed `true`
-  forever and the MutationObserver's `if(__luminaApplyingHeaderInsets)return` guard permanently
+  forever and the MutationObserver's `if(__tangentApplyingHeaderInsets)return` guard permanently
   disabled the observer — killing the iter-3/4 self-heal for the whole session. Wrapped the
   apply loop in `try/finally` (flag + timestamps always reset) and each per-element apply in
   `try/catch` so one bad header can't abort the batch. File: `PageBottomSpacer.kt`.
@@ -146,12 +146,12 @@ higher bar. **Work is uncommitted** — ready for the user to review/commit when
 - **[C] Iter 20** — Re-inset after late reflow. Header height/position often finalizes only
   after web-font swap or late image loads, leaving the +topPx inset stale (content re-hidden or
   over-padded). Added `document.fonts.ready` and window `load` as reschedule triggers. Also
-  wrapped resize/load/fonts registration in a `window.__luminaListenersBound` dedup guard so the
+  wrapped resize/load/fonts registration in a `window.__tangentListenersBound` dedup guard so the
   repeated FCP/load injections stop stacking duplicate window listeners. File:
   `PageBottomSpacer.kt`. Compiles (assembleRelease GREEN; install skipped — no device connected).
 
 - **[C] Iter 21** — Top spacer now survives flex/grid app-shell layouts. The
-  `lumina-top-scroll-spacer` div is prepended to `<body>`, but when `body` is `display:flex`/
+  `tangent-top-scroll-spacer` div is prepended to `<body>`, but when `body` is `display:flex`/
   `grid` it became a flex/grid *item* that no longer reliably pushed content down (grid: lands
   in one cell instead of spanning; flex/grid `order` can move it off the top) — content stayed
   under the status bar. Added `width:100%`, `flex:0 0 auto`, `grid-column:1 / -1`, and a minimal
@@ -175,7 +175,7 @@ higher bar. **Work is uncommitted** — ready for the user to review/commit when
   visible again. File: `PageBottomSpacer.kt`. Compiles (install skipped — no device connected).
 
 - **[C] Iter 24** — Cancel flex/grid column gap under the top spacer (extra-padding fix). Iter 21
-  made the `lumina-top-scroll-spacer` push content in flex/grid bodies, but when `body` is a
+  made the `tangent-top-scroll-spacer` push content in flex/grid bodies, but when `body` is a
   *column* flex/grid container the spacer becomes a track/item that the container's `row-gap`/`gap`
   separates from the real first child — inserting an extra `gap` px, so content dropped by
   `topPx + gap` (visible over-padding on app-shell sites). `spacer()` now reads the parent's
@@ -189,7 +189,7 @@ higher bar. **Work is uncommitted** — ready for the user to review/commit when
   whole header via `history.pushState`/`replaceState` with no page load — and per the iter-3
   note, no FCP/load fires on client nav, so the new header could land under the status bar until
   some unrelated mutation happened to trigger a pass. Now wraps `pushState`/`replaceState` (once,
-  idempotently via a `__luminaWrapped` flag, `try/catch` around reassignment) and listens for
+  idempotently via a `__tangentWrapped` flag, `try/catch` around reassignment) and listens for
   `popstate`, each rescheduling immediately + a 300ms delayed pass to catch the post-nav
   re-render. In the dedup-guarded listeners block. File: `PageBottomSpacer.kt`. Compiles
   (install skipped — no device connected).
@@ -219,7 +219,7 @@ higher bar. **Work is uncommitted** — ready for the user to review/commit when
   host `padding-top` to a bare `topPx !important`, which **replaced** any body padding the site
   already applied via its stylesheet (e.g. `body{padding-top:60px}`) — so flex-row sites with
   their own top padding lost it (content jumped up / broke layout). Now stores the site's real
-  computed padding once as a base (`luminaHostBasePad`, guarded by the same `luminaHostPadSaved`
+  computed padding once as a base (`tangentHostBasePad`, guarded by the same `tangentHostPadSaved`
   flag so native's FCP+load double-inject can't accumulate) and applies `base + topPx`, so the
   site's padding is preserved and the safe-area offset is added on top. File: `PageBottomSpacer.kt`.
   Compiles (`compileReleaseKotlin` GREEN; install pending device).
@@ -236,22 +236,22 @@ higher bar. **Work is uncommitted** — ready for the user to review/commit when
 
 - **[C/B] Iter 29** — Stopped a self-perpetuating full-document walk (real battery/CPU drain).
   Every `applyHeaderInsets` pass rewrites the spacer div's `style` (line 33, unconditionally),
-  which fires the MutationObserver. Its `allOurs` guard only treated `luminaSafeTopApplied`
+  which fires the MutationObserver. Its `allOurs` guard only treated `tangentSafeTopApplied`
   targets as "ours", so the spacer's own style write was seen as an external change → reschedule
   → re-walk → rewrite spacer → forever. The adaptive 500→2000ms backoff never went quiet; it
   re-walked the whole DOM (`getComputedStyle` on every node) every 2s on *every page,
-  indefinitely*. `allOurs` now also treats `luminaIgnoreSafeTop==='true'` (the spacer div) as
+  indefinitely*. `allOurs` now also treats `tangentIgnoreSafeTop==='true'` (the spacer div) as
   ours, so pure self-churn no longer reschedules. Self-heal is unaffected — it's driven by *real*
   DOM mutations (SPA body swaps, late headers), which still trip the observer. File:
   `PageBottomSpacer.kt`. Compiles (`compileReleaseKotlin` GREEN; install pending device).
-  (Note: an unlogged `__luminaStickyIO` IntersectionObserver — the iter-27 queued follow-up —
+  (Note: an unlogged `__tangentStickyIO` IntersectionObserver — the iter-27 queued follow-up —
   already exists in the script; it observes top-pinned stickies and reschedules on intersection.)
 
 - **[C] Iter 29** — Restore header insets when the top inset collapses to 0.
   `applyHeaderInsets` early-returned on `topPx<=0` *without* restoring previously-insetted
   headers, so when the status bar hides (immersive/fullscreen, or any re-injection with
   `topPx=0`) fixed/sticky headers kept a phantom `+topPx` offset from the prior injection —
-  pushed down by a gap that no longer exists. Now `topPx<=0` restores all `__luminaInsetedEls`
+  pushed down by a gap that no longer exists. Now `topPx<=0` restores all `__tangentInsetedEls`
   and clears the set before returning (the spacer already collapses to height 0). Corrective
   only; the normal `topPx>0` path is unchanged. File: `PageBottomSpacer.kt`. Compiles
   (install skipped — no device connected).
@@ -285,7 +285,7 @@ higher bar. **Work is uncommitted** — ready for the user to review/commit when
   receiver, no side effects); `injectViewportSpacers` now just `loadUrl`s its result — behaviour
   identical. Added `ViewportSpacerScriptTest` (9 JVM tests) pinning the invariants most likely to
   silently break: single-line `javascript:` URL, topPx/skipHeader threading, **no bottom
-  spacer/`scroll-padding-bottom`** (AGENTS §11), the iter-29 `luminaIgnoreSafeTop` anti-churn
+  spacer/`scroll-padding-bottom`** (AGENTS §11), the iter-29 `tangentIgnoreSafeTop` anti-churn
   guard, the iter-26/28 flex-row host-padding fallback + base-padding preservation, the iter-24
   gap-cancel, and iter-25 SPA-nav rewrapping. All 9 GREEN (`:app:testReleaseUnitTest`). Files:
   `PageBottomSpacer.kt`, `app/src/test/.../ViewportSpacerScriptTest.kt`.
@@ -327,7 +327,7 @@ higher bar. **Work is uncommitted** — ready for the user to review/commit when
   scrolls visibly above the header, which looks bad. `applySticky` now adds a solid upward
   `box-shadow` (`0 -topPx 0 0 <cs.backgroundColor>`, appended to any existing shadow) so that strip
   is painted the header's own background color; skipped when the header's `backgroundColor` is
-  transparent. Original inline `box-shadow` saved as `luminaOrigShadow` and reverted in `restore`.
+  transparent. Original inline `box-shadow` saved as `tangentOrigShadow` and reverted in `restore`.
   (Fixed headers already fill the strip via their own `top:0` background, so this is sticky-only.)
   Files: `PageBottomSpacer.kt`, `ViewportSpacerScriptTest.kt` (new assertion). Compiles;
   `testReleaseUnitTest` GREEN. **On-device VERIFIED** (Pixel 8): with the sub-nav pinned at the
@@ -605,7 +605,7 @@ Notes per site:
 ## Device-gated (need a connected device to verify — do NOT ship blind)
 - [Reader] Tappable links in paragraphs (Safari keeps them live). Requires: extractor emitting
   paragraph text as segments with link offsets + AnnotatedString rendering + an onLinkClick host
-  callback threaded to BOTH ReaderView call sites (LuminaRoot, CustomTabRoot) that exits reader
+  callback threaded to BOTH ReaderView call sites (TangentRoot, CustomTabRoot) that exits reader
   and loads the URL. Multi-part + unverifiable without a device → deferred.
 - [A] Page Translation (Gecko translations engine) — big/version-sensitive.
 - [C] Absolutely-positioned full-height app-shell root inset (high double-pad risk).
@@ -645,7 +645,7 @@ Notes per site:
   delivers there).
   Action (user chose option 1): REMOVED the extraction retry mechanism (no more repeated poking of
   hostile pages); KEPT the single first-paint extraction (fixes ~45s auto-activation on normal
-  sites) and the iframe native-prompt bridge (`luminaBridge`, robustness vs own-property prompt
+  sites) and the iframe native-prompt bridge (`tangentBridge`, robustness vs own-property prompt
   overrides; verified delivering on normal sites). All debug instrumentation removed; source clean;
   reader test suites GREEN (extractor-script 7, parser 10). Installed clean build to Pixel.
   FOLLOW-UP (proper fix, not yet done): capture a native bridge (prompt/console) at document_start

@@ -2,10 +2,10 @@
   "manifest_version": 2,
   "browser_specific_settings": {
     "gecko": {
-      "id": "reader@lumina.firebolt9907"
+      "id": "reader@tangent.firebolt9907"
     }
   },
-  "name": "Lumina Reader Extractor",
+  "name": "Tangent Reader Extractor",
   "description": "Extracts article content for reader mode from an isolated content script, so hostile pages cannot observe or intercept it.",
   "version": "1.0",
   "content_scripts": [

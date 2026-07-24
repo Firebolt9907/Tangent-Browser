@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# On-device visual check: launch a URL in Lumina (it opens as a Custom Tab, which uses the SAME
+# On-device visual check: launch a URL in Tangent (it opens as a Custom Tab, which uses the SAME
 # ContentHost injection path as the main browser) on a connected device and pull a screenshot, so
 # the top-padding can be eyeballed on REAL GeckoView — the one thing the Chromium harness can't do.
 #
@@ -8,7 +8,7 @@
 set -euo pipefail
 URL="${1:?usage: ./device-shot.sh <url> [out.png]}"
 OUT="${2:-device-shot.png}"
-PKG="com.firebolt9907.luminabrowser"
+PKG="com.firebolt9907.tangentbrowser"
 # Pick the first fully-qualified adb serial (handles the multi-transport mDNS duplicates).
 S="$(adb devices | awk -F'\t' '/\tdevice$/{print $1}' | grep '_tcp$' | head -1)"
 [ -n "$S" ] || S="$(adb devices | awk -F'\t' '/\tdevice$/{print $1}' | head -1)"

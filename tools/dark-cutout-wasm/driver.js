@@ -219,7 +219,7 @@ function lumCutSetupML(PARAMS) {
     if (!src) { img.__lumCut = 0; return null; }
     img.__lumCutSrc = src; /* remember what we posted, so a later src swap re-segments (carousels) */
     var id = 'lc' + (st.seq++);
-    img.setAttribute('data-lumina-cut-id', id);
+    img.setAttribute('data-tangent-cut-id', id);
     return { id: id, src: src };
   }
   function sweep() {
@@ -243,7 +243,7 @@ function lumCutSetupML(PARAMS) {
       for (var k = 0; k < rq.length; k++) {
         var ri = rq[k];
         if (!lumSrcChanged(ri)) continue;
-        lumStripMask(ri); ri.__lumCut = 0; try { ri.removeAttribute('data-lumina-cut-id'); } catch (e) {}
+        lumStripMask(ri); ri.__lumCut = 0; try { ri.removeAttribute('data-tangent-cut-id'); } catch (e) {}
         if (ri.complete && ri.naturalWidth) { var rit = collect(ri); if (rit) batch.push(rit); }
         else ri.addEventListener('load', function (e) { var t3 = collect(e.target); if (t3) post([t3]); }, { once: true });
       }

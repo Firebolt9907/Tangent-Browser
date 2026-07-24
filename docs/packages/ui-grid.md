@@ -2,7 +2,7 @@
 
 The tab overview that opens when the user swipes up on the pill. It has **three selectable layouts**
 (`TabViewMode`, persisted in `GlobalPreferencesStore`, cycled from the overview toolbar); all three
-share the same layout-agnostic gesture core in `LuminaRoot` (progress, release, invariants #4/#5) and
+share the same layout-agnostic gesture core in `TangentRoot` (progress, release, invariants #4/#5) and
 only swap the destination geometry. See [`AGENTS.md`](../../AGENTS.md) → invariant #5a.
 
 ## Files
@@ -40,10 +40,10 @@ the radii match exactly at `progress = 0`.
 - **Swipe-up on a deck card is distance-sensitive**: a gentle swipe navigates to the older tab; a
   decisive one (~38% of the screen) closes it.
 - **Handoff with the horizontal switch**: if the user grabs the pill while a horizontal-commit spring
-  is still running, `LuminaRoot` pins the leaving/incoming tab ids + X offsets into `gridHandoff*`
+  is still running, `TangentRoot` pins the leaving/incoming tab ids + X offsets into `gridHandoff*`
   fields; the overlay derives their carousel positions from that instead of the live `offsetX`, so
   there's no discontinuity at handoff.
-- **Captions load real favicons** via `components.icons` (URL-keyed cache in `LuminaRoot`, pruned to
+- **Captions load real favicons** via `components.icons` (URL-keyed cache in `TangentRoot`, pruned to
   open tabs), falling back to `ContentState.icon` then a letter tile.
 - **Snapshot source per cell**: the selected tab prefers the gesture-fresh capture
   (`tabSwitchCurrentSnapshot ?: cache.get(...)`); others use `TabSnapshotCache.get(url-key)`, rendering
@@ -53,6 +53,6 @@ the radii match exactly at `progress = 0`.
 
 - Deck/pixel geometry → `Grid.kt` + `GridModel.kt` (`deckSlot` / `pixelSlot`).
 - Classic 2-col layout → `ClassicGrid.kt` (keep its helpers file-scoped).
-- Open/close springs live in `LuminaRoot.kt`, not here.
+- Open/close springs live in `TangentRoot.kt`, not here.
 - Both overlays consume the same gesture core — a new mode means a new slot function + a render path,
   not a new gesture pipeline.

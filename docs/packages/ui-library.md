@@ -16,7 +16,7 @@ only when it isn't the current one). Backed by Places history storage.
 
 ### `ui/downloads/DownloadsSheet.kt`
 The in-app downloads list. The app routes file downloads to the platform `DownloadManager`
-(`LuminaBrowserActivity`'s `DownloadsFeature` / `AndroidDownloadManager`), so this sheet reads back
+(`TangentBrowserActivity`'s `DownloadsFeature` / `AndroidDownloadManager`), so this sheet reads back
 from that same queue — `DownloadManager.query` only returns this app's downloads, and the OS keeps the
 list across process death. It polls while running downloads exist so progress bars advance without a
 manual refresh.

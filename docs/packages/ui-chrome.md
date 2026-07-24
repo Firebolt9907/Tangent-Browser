@@ -6,7 +6,7 @@ All bottom-bar rendering. No engine, no Gecko — just `BarUiState` in, composed
 
 | File | What it owns |
 |---|---|
-| `SafariBar.kt` | Public composable. Picks one of `BarExpanded` / `BarEditing` based on `state.mode`; animates the swap. Reports its measured height so `LuminaRoot` can size the Gecko bottom inset. |
+| `SafariBar.kt` | Public composable. Picks one of `BarExpanded` / `BarEditing` based on `state.mode`; animates the swap. Reports its measured height so `TangentRoot` can size the Gecko bottom inset. |
 | `BarExpanded.kt` | The single interpolated surface from full expanded → compact. Width, height, corner radius, padding, side controls, and tab-count chip all driven by `collapseProgress: Float (0..1)`. Compact mode just renders `BarExpanded` with `collapseProgress = 1f`. |
 | `BarCompact.kt` | Currently unused at runtime; kept as a reference / preview composable for the compact-only state. |
 | `BarEditing.kt` | Full-width text field + cancel button shown in `BarMode.Editing`. Auto-selects the existing address on entry so replacement typing is the default. |
@@ -33,7 +33,7 @@ When `interactive = false` (ghost pills or compact mode past halfway), the gestu
 
 ## `collapseProgress` choreography
 
-`LuminaRoot` owns a `barCollapseProgressState: Animatable<Float>` and passes it down. Everything that interpolates with the collapse — bar width, height, corner radius, side-control padding, tab-count chip alpha — reads the same value. See `IMPLEMENTATION.md` for the hybrid preview/snap model that produces those numbers from raw `EngineView.verticalScrollDelta`.
+`TangentRoot` owns a `barCollapseProgressState: Animatable<Float>` and passes it down. Everything that interpolates with the collapse — bar width, height, corner radius, side-control padding, tab-count chip alpha — reads the same value. See `IMPLEMENTATION.md` for the hybrid preview/snap model that produces those numbers from raw `EngineView.verticalScrollDelta`.
 
 ## Why `BarExpanded` does both expanded and compact
 

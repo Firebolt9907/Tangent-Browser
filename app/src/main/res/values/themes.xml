@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.LuminaBrowser" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.TangentBrowser" parent="android:Theme.Material.Light.NoActionBar" />
 
-    <style name="Theme.LuminaBrowser.Starting" parent="Theme.SplashScreen">
+    <style name="Theme.TangentBrowser.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">?android:attr/colorBackground</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
-        <item name="postSplashScreenTheme">@style/Theme.LuminaBrowser</item>
+        <item name="postSplashScreenTheme">@style/Theme.TangentBrowser</item>
     </style>
 </resources>

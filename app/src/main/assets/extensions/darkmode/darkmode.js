@@ -1,5 +1,5 @@
 /*
- * Lumina web-dark-mode pre-paint content script (run_at: document_start).
+ * Tangent web-dark-mode pre-paint content script (run_at: document_start).
  *
  * WHY: the native dark-mode injection (WebDarkMode.injectWebDarkMode) runs at first-contentful-paint /
  * load-complete — i.e. AFTER a light-only page has already painted its white background — so those
@@ -7,7 +7,7 @@
  * content script can put a dark filter in place before the first paint.
  *
  * WHAT: at document_start this adds the SAME filter class/style the native filter tier uses
- * (`lumina-dark-fallback` + `#lumina-dark-style`), so the very first paint is already inverted-dark on
+ * (`tangent-dark-fallback` + `#tangent-dark-style`), so the very first paint is already inverted-dark on
  * a light page — no white flash. It then re-decides BEFORE the first paint (a requestAnimationFrame
  * callback runs ahead of that frame's paint, by which point render-blocking CSS — and therefore a
  * site's own dark theme honored via prefers-color-scheme — has applied): if the page is genuinely dark
@@ -25,8 +25,8 @@
  * ROOT_CONTRAST, MEDIA_CONTRAST) — WebDarkModeScriptTest asserts they match.
  */
 (function () {
-  var CLS = 'lumina-dark-fallback';
-  var STYLE_ID = 'lumina-dark-style';
+  var CLS = 'tangent-dark-fallback';
+  var STYLE_ID = 'tangent-dark-style';
   var ROOT_CONTRAST = '0.9';
   var MEDIA_CONTRAST = '1.1111';
 

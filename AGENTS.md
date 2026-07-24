@@ -1,16 +1,17 @@
-# Expedition Browser — Agent & Contributor Guide
+# Tangent Browser — Agent & Contributor Guide
 
 Non-obvious invariants anyone (human or AI) changing this code MUST respect to avoid regressions.
 Full rationale: `IMPLEMENTATION.md`. Read after `README.md` / `ARCHITECTURE.md`.
 
-> **Naming:** app is *Expedition Browser*; code still uses the original *Lumina* name in the package
-> (`com.firebolt9907.luminabrowser`), classes (`LuminaRoot`, `LuminaApplication`), and files
-> (`lumina_tabs.json`). A full rename is pending; this guide uses the real symbol names.
+> **Naming:** app is *Tangent Browser*, and code matches — package
+> `com.firebolt9907.tangentbrowser`, classes (`TangentRoot`, `TangentApplication`), and files
+> (`tangent_tabs.json`). (The project was formerly named *Lumina*, then *Expedition*; the
+> `firebolt9907` package segment is the original author handle and is retained.)
 
 ## Project layout
 
 ```
-app/src/main/java/com/firebolt9907/luminabrowser/
+app/src/main/java/com/firebolt9907/tangentbrowser/
   engine/         # GeckoEngine + BrowserStore DI graph
   state/          # Data layer (repos, snapshot cache, view models, prefs stores)
   addons/         # WebExtension install/runtime wrapper
@@ -32,9 +33,9 @@ app/src/main/java/com/firebolt9907/luminabrowser/
     shape/        # SquircleShape
     addons/       # AddonsSheet UI
     theme/        # Material 3 colors/type
-  LuminaRoot.kt        # ~3000-line main composable — most gesture orchestration lives here
-  LuminaBrowserActivity.kt # shared activity base (lifecycle, ActivityDelegate, downloads)
-  MainActivity.kt      # the browser (LuminaRoot). Own singleTask task. LAUNCHER + home-shortcut only.
+  TangentRoot.kt        # ~3000-line main composable — most gesture orchestration lives here
+  TangentBrowserActivity.kt # shared activity base (lifecycle, ActivityDelegate, downloads)
+  MainActivity.kt      # the browser (TangentRoot). Own singleTask task. LAUNCHER + home-shortcut only.
   CustomTabActivity.kt # external ACTION_VIEW/SEND links → a Custom Tab (own document task)
   IntentUrls.kt        # shared intent-URL parsing (both activities)
 ```
@@ -46,7 +47,7 @@ External links from other apps (e.g. Google Discover) do NOT open in `MainActivi
 `launchMode="singleTask"` + `autoRemoveFromRecents`) hosting `ui/customtab/CustomTabRoot`. The page
 is a mozilla-components **custom-tab session** (`store.state.customTabs`, via
 `components.customTabsUseCases.add`), NOT a normal tab — it never appears in the tab grid,
-`lumina_tabs.json`, or Firefox Sync. "Open in Expedition" migrates it to a real tab
+`tangent_tabs.json`, or Firefox Sync. "Open in Tangent" migrates it to a real tab
 (`customTabsUseCases.migrate`) and hands off to `MainActivity`.
 
 Exit animation — two paths, do not collapse:
@@ -73,7 +74,7 @@ removing one degrades a different scenario:
 1. **Background WorkManager** — `SyncConfig.periodicSyncConfig = PeriodicSyncConfig(240, 5)`. Every
    4h even when backgrounded/dead. Slow baseline.
 2. **Foreground poll** — `startForegroundPeriodicSync()`/`stopForegroundPeriodicSync()`, driven by
-   `LuminaRoot`'s lifecycle observer (ON_RESUME start, ON_PAUSE/onDispose stop). Quiet full sync
+   `TangentRoot`'s lifecycle observer (ON_RESUME start, ON_PAUSE/onDispose stop). Quiet full sync
    every `ForegroundSyncIntervalMs` (30 min). The **fallback** for missed pushes; keep it relaxed
    while push is the fast path.
 3. **FxA push (fast path) — currently INERT; see below** — `initPush()`. In vanilla Firefox a remote
@@ -112,7 +113,7 @@ launches `MainActivity` with `EXTRA_OPEN_URL`, opening the URL as a normal tab v
 ### 1. Single EngineView per foreground activity / single rebind site
 
 Each activity hosts **exactly one** `EngineView` (created in `ContentHost`). `MainActivity`
-(`LuminaRoot`) and `CustomTabActivity` (`CustomTabRoot`) each have their own, never interactively
+(`TangentRoot`) and `CustomTabActivity` (`CustomTabRoot`) each have their own, never interactively
 foreground at once — the backgrounded one's `EngineView` is released via its lifecycle
 `onStop`/`release` in `ContentHost.kt`. Do NOT add a second live `EngineView` *within* one activity.
 
@@ -153,7 +154,7 @@ render both at once.
 ### 5a. Tab overview has three selectable modes (do not assume the 2-column grid)
 
 Persisted `TabViewMode` (`state/GlobalPreferencesStore.tabViewModeName`, parsed by
-`TabViewMode.fromName`, default `DECK`), cycled from the overview toolbar button in `LuminaRoot`:
+`TabViewMode.fromName`, default `DECK`), cycled from the overview toolbar button in `TangentRoot`:
 - **DECK** (default) — iOS app-switcher: centred focus card, newer card stacked on top pushed far
   right, older cards a geometrically-tapering left stack fading with depth. Geometry: `deckSlot(p)`
   in `GridModel.kt`.
@@ -163,7 +164,7 @@ Persisted `TabViewMode` (`state/GlobalPreferencesStore.tabViewModeName`, parsed 
   `GridModel.kt`.
 
 Both `TabGridOverlay` (DECK/PIXEL) and `ClassicTabGridOverlay` (GRID) consume the **same**
-layout-agnostic gesture core in `LuminaRoot` (progress, release positions, invariants #4/#5) — the
+layout-agnostic gesture core in `TangentRoot` (progress, release positions, invariants #4/#5) — the
 mode only swaps the destination layout. Non-obvious:
 - `TabGridOverlay` routes all per-card placement through one `slotProvider(p)` (deckSlot vs
   pixelSlot) read in the draw phase; drag/scroll `stepPx` is mode-aware too.
@@ -174,7 +175,7 @@ mode only swaps the destination layout. Non-obvious:
 - Swipe-up on a deck card is distance-sensitive: gentle navigates to the older tab, decisive (~38% of
   screen) closes it.
 - Captions load **real favicons** via `components.icons` (mozilla `BrowserIcons`, URL-keyed cache in
-  `LuminaRoot` pruned to open tabs), falling back to `ContentState.icon` then a letter tile.
+  `TangentRoot` pruned to open tabs), falling back to `ContentState.icon` then a letter tile.
 
 ### 6. Snapshot capture — `EngineView.captureThumbnail`, not `EngineSession`
 
@@ -226,7 +227,7 @@ once the header set is stable) to bound the steady-state full-document walk.
   an end-of-document spacer `<div>` (+ `scroll-padding-bottom`) sized to the pill so ordinary
   **in-flow** bottom content (footer links, a "forgot password" button) gets scroll room to clear the
   always-visible compact pill. It does NOT push content up (pill stays a scrolled-under overlay),
-  only lengthens the scrollable document. Marks itself `data-luminaIgnoreSafeTop` (top-inset walk
+  only lengthens the scrollable document. Marks itself `data-tangentIgnoreSafeTop` (top-inset walk
   skips it); self-heals via a bounded MutationObserver for SPAs that rebuild `<body>`. Re-added after
   being wrongly removed as a double-pad.
 
@@ -262,10 +263,10 @@ the old, now-undecryptable DB. Do NOT swap back to a self-generated AES key.
 
 ### 15. Autofill needs the runtime autocomplete delegate — not just engine flags
 
-Login/credit-card autofill works only because `LuminaBrowserComponents` sets
+Login/credit-card autofill works only because `TangentBrowserComponents` sets
 `runtime.autocompleteStorageDelegate = GeckoAutocompleteStorageDelegate(ccDelegate, loginDelegate)`.
 `engine.settings.loginAutofillEnabled` / `extensions.formautofill.creditCards.*` prefs only tell Gecko
-to *try* — without the delegate it has no store. Logins: `LuminaLoginStorageDelegate` →
+to *try* — without the delegate it has no store. Logins: `TangentLoginStorageDelegate` →
 `PlacesLoginsStorage`. Credit cards: mozilla-components `service-sync-autofill`
 (`AutofillCreditCardsAddressesStorage`, numbers encrypted at rest, PAN never decrypted for the list UI
 — only last4 shown). **Credit cards have no CVC field and never will** — GeckoView's
@@ -287,12 +288,12 @@ manually via `ui/passwords/AddressesSheet.kt` (overview menu → "Addresses"); c
 `CreditCardsSheet`. Address storage shares the encrypted `creditCardsStorage`
 (`AutofillCreditCardsAddressesStorage`) — its address side is enabled by the delegate's
 `isAddressAutofillEnabled` lambda in `Engine.kt` (was hard-`false`). `PromptHandler` is mounted in
-both surfaces (`LuminaOverlaySheets`, `CustomTabRoot`); a new prompt type added to the one `when`
+both surfaces (`TangentOverlaySheets`, `CustomTabRoot`); a new prompt type added to the one `when`
 works in both.
 
 **Generic form-field memory is separate — a JS bridge, not Gecko autofill.** Logins/cards/addresses
 are all Gecko `formautofill`; freeform fields (a name, an age, an email outside a login) are not, so
-`ui/content/FormFieldMemory.kt` handles them over the `lumina-formfill-save`/`-get` bridge messages
+`ui/content/FormFieldMemory.kt` handles them over the `tangent-formfill-save`/`-get` bridge messages
 (routed in `ReaderExtractor.onTextPrompt` — `-get` answers **synchronously** via `prompt.confirm(json)`,
 the one bridge path that reads a return value). Capture-on-submit/blur + an in-page suggestion dropdown
 on focus; sensitive fields (password/cc/otp) are excluded in JS. Gated host-side by
@@ -300,17 +301,17 @@ on focus; sensitive fields (password/cc/otp) are excluded in JS. Gated host-side
 store is `attach`ed once in the `Engine` init. Injected per-load in `ContentHost` next to the OTP/login
 detectors.
 
-**The `lumina-*` prompt bridge is security-hardened — do not bypass `BridgeGuard`.** The bridge is
-just `window.prompt("lumina-…", payload)`, so *any* script in the page realm (incl. third-party ad
+**The `tangent-*` prompt bridge is security-hardened — do not bypass `BridgeGuard`.** The bridge is
+just `window.prompt("tangent-…", payload)`, so *any* script in the page realm (incl. third-party ad
 scripts) could otherwise drive our probes or read stored data. Two guards in
 `ui/content/BridgeGuard.kt`, both load-bearing:
 - **Nonce.** Every message our injected scripts emit is tagged `name~<nonce>` via `BridgeGuard.tag(…)`
   (per-process `SecureRandom` token, embedded only in the injected closures). `onTextPrompt` runs the
-  message through `BridgeGuard.resolve()`; a `lumina-*~…` with a wrong/missing nonce is **swallowed**
+  message through `BridgeGuard.resolve()`; a `tangent-*~…` with a wrong/missing nonce is **swallowed**
   (`Rejected`), a message with no separator is `Foreign` (falls through). **Any new probe that posts
   over the bridge MUST emit `'${'$'}{BridgeGuard.tag(NAME)}'`, and any new handler MUST live inside the
   `Accepted` branch** — a bare `prompt.message == NAME` check reopens the channel to page JS.
-  (`lumina-reader`/`lumina-video` are intentionally left as legacy exact-match — one-way, low-severity.)
+  (`tangent-reader`/`tangent-video` are intentionally left as legacy exact-match — one-way, low-severity.)
 - **Trusted-origin binding.** `FormFieldMemory.onSave`/`getSuggestions` take the `tabId` and key storage
   by `BridgeGuard.trustedOrigin(tabId)` (the tab's REAL origin, recorded by `ContentHost` on inject +
   `onLocationChange`), **never** the host in the page's payload — otherwise `evil.com` could read
@@ -319,7 +320,7 @@ scripts) could otherwise drive our probes or read stored data. Two guards in
 
 **`ReaderPromptDelegate` must forward EVERY prompt callback it doesn't handle.** Reader mode
 (`ui/reader/ReaderExtractor.registerPromptDelegate`) installs a `GeckoSession.PromptDelegate` that
-**replaces** the session's delegate to intercept `onTextPrompt` for the `lumina-*` bridge
+**replaces** the session's delegate to intercept `onTextPrompt` for the `tangent-*` bridge
 (reader/theme/OTP/link probes). Because it replaces (not chains before) the mozilla-components
 `GeckoPromptDelegate`, any callback it doesn't override hits the no-op interface default and is
 **silently dropped** — exactly what made autofill look dead (`onLoginSelect`/`onLoginSave` weren't
@@ -331,7 +332,7 @@ plus alert/button/choice/beforeunload/repost) must pass through to `oldDelegate`
 **Fill flow (biometric + auto-submit):** `SelectLoginPrompt` renders `SelectLoginSheet` (M3 bottom
 sheet). Selecting a credential runs `BiometricGate.authenticate` (fingerprint/face or device
 credential; a no-op that fills immediately when the device has no secure lock, so autofill is never
-un-triggerable — why `LuminaBrowserActivity` extends `FragmentActivity`, the only host
+un-triggerable — why `TangentBrowserActivity` extends `FragmentActivity`, the only host
 `androidx.biometric.BiometricPrompt` supports). On success it calls `onConfirm(login)` **and** injects
 `buildLoginSubmitScript()` to press the form's login button; that script acts only on a form
 containing a filled `input[type=password]`, so it never submits a stray search box.
@@ -340,13 +341,13 @@ containing a filled `input[type=password]`, so it never submits a stray search b
 
 Two halves via the `OtpAutofill` singleton (`ui/content`): a JS **detector** (`buildDetectScript`,
 injected per-load in `ContentHost` like the other probes) reports OTP fields over the `window.prompt`
-bridge (routed in `ReaderExtractor`'s prompt delegate — same `lumina-*` channel as
+bridge (routed in `ReaderExtractor`'s prompt delegate — same `tangent-*` channel as
 ThemeColorProbe/LinkRectProbe) with heuristics broader than GBoard's `autocomplete="one-time-code"`
 check; and a **filler** (`buildFillScript`) that types the code (handles split single-char boxes; uses
 the native value setter for React inputs). The SMS is read via Play Services **SMS User Consent**
 (`OtpSmsController`, `play-services-auth-api-phone`) — **no** SMS permission, one-tap consent dialog
 per code. `MainActivity` owns the SMS side (`smsListenStarter` set in onResume, cleared in onPause);
-`LuminaRoot` owns the page side (`codeFiller` injects into the selected session) plus the manual
+`TangentRoot` owns the page side (`codeFiller` injects into the selected session) plus the manual
 "paste code" fallback banner (`OtpPasteBannerHost`). Do NOT gate receipt on `RECEIVE_SMS`
 (intentionally avoided — Play Store restriction).
 
@@ -359,7 +360,7 @@ from `AndroidView.update`, #2 `startDragImmediately = true`, #4 `snapTo` on hot 
 
 Unit tests: `app/src/test/` (JVM via `./gradlew :app:test` if no Android framework); device tests:
 `app/src/androidTest/`. `normalizeUrl`/`compactHost` have JVM tests in
-`app/src/test/java/com/firebolt9907/luminabrowser/UrlNormalizationTest.kt`.
+`app/src/test/java/com/firebolt9907/tangentbrowser/UrlNormalizationTest.kt`.
 
 ## Build notes
 

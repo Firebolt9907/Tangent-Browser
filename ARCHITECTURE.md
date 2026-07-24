@@ -1,13 +1,13 @@
 # Architecture
 
-A top-down tour of Lumina Browser, written for a contributor who's never seen the code before. Read this once; then use [`docs/packages/`](docs/packages/) for the per-package detail and [`IMPLEMENTATION.md`](IMPLEMENTATION.md) when a particular behavior looks odd in the source.
+A top-down tour of Tangent Browser, written for a contributor who's never seen the code before. Read this once; then use [`docs/packages/`](docs/packages/) for the per-package detail and [`IMPLEMENTATION.md`](IMPLEMENTATION.md) when a particular behavior looks odd in the source.
 
 ## One-screen mental model
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │  MainActivity (single Activity, edge-to-edge)                     │
-│  └── LuminaRoot()  — the whole UI                                 │
+│  └── TangentRoot()  — the whole UI                                 │
 │       ├── ContentHost   ── one EngineView, rebinds per tab        │
 │       ├── TabGridOverlay                                          │
 │       ├── snapshot/parallax layers (predictive back, switch)      │
@@ -18,7 +18,7 @@ A top-down tour of Lumina Browser, written for a contributor who's never seen th
                 │ user intents             │ state
                 ▼                          │
 ┌───────────────────────────────────────────────────────────────────┐
-│  LuminaViewModel  (combines flows for the bottom bar)             │
+│  TangentViewModel  (combines flows for the bottom bar)             │
 └───────────────────────────────────────────────────────────────────┘
                 │                          ▲
                 ▼                          │
@@ -42,15 +42,15 @@ Around that core sit four supporting subsystems:
 
 ## Data flow
 
-1. **`LuminaApplication.components`** lazily builds **`LuminaBrowserComponents`** (`engine/Engine.kt`), which is the DI root. It constructs the `GeckoEngine`, the `BrowserStore`, two use-case bundles (`SessionUseCases`, `TabsUseCases`), the `GeckoTabRepository`, the snapshot cache, the site preferences store, the addon controller, and tab persistence. Tabs are restored from disk (`state/TabPersistence`) on launch; starter tabs are only seeded when there's nothing to restore.
+1. **`TangentApplication.components`** lazily builds **`TangentBrowserComponents`** (`engine/Engine.kt`), which is the DI root. It constructs the `GeckoEngine`, the `BrowserStore`, two use-case bundles (`SessionUseCases`, `TabsUseCases`), the `GeckoTabRepository`, the snapshot cache, the site preferences store, the addon controller, and tab persistence. Tabs are restored from disk (`state/TabPersistence`) on launch; starter tabs are only seeded when there's nothing to restore.
 
-2. **`BrowserStore`** is the mozilla-components source of truth — it holds every tab's state, the current selection, content URL, history, loading flags, etc. Lumina mirrors it through `store.observeManually` into a `StateFlow<BrowserState>` (used by `LuminaRoot`) and a flat `StateFlow<List<LuminaTab>>` (used by `LuminaViewModel`).
+2. **`BrowserStore`** is the mozilla-components source of truth — it holds every tab's state, the current selection, content URL, history, loading flags, etc. Tangent mirrors it through `store.observeManually` into a `StateFlow<BrowserState>` (used by `TangentRoot`) and a flat `StateFlow<List<TangentTab>>` (used by `TangentViewModel`).
 
 3. **`GeckoTabRepository`** is the UI-facing façade. It exposes the `TabRepository` interface (`tabs`, `selectedTabId`, `selectTab`, `selectAdjacent`, `loadUrl`, `addTab`, `removeTab`) plus the Gecko-specific `dismissBlankTabAndReturn()` used by back-gesture handling. It also owns `normalizeUrl()` and `compactHost()`, the two URL utilities every screen uses.
 
-4. **`LuminaViewModel`** combines `repo.tabs`, `repo.selectedTabId`, an internal `mode` flow, and an internal `editingText` flow into a single `BarUiState`. It's the only thing the bottom bar reads.
+4. **`TangentViewModel`** combines `repo.tabs`, `repo.selectedTabId`, an internal `mode` flow, and an internal `editingText` flow into a single `BarUiState`. It's the only thing the bottom bar reads.
 
-5. **`LuminaRoot`** reads `browserState` *directly* from the components graph (not via the ViewModel) because it needs the full `BrowserState`: `selectedTab.content.{url,title,loading,history,canGoBack}`, the engine session, the loading progress, etc. Think of the ViewModel as a small bottom-bar projection, and `LuminaRoot` as the rich engine-aware consumer.
+5. **`TangentRoot`** reads `browserState` *directly* from the components graph (not via the ViewModel) because it needs the full `BrowserState`: `selectedTab.content.{url,title,loading,history,canGoBack}`, the engine session, the loading progress, etc. Think of the ViewModel as a small bottom-bar projection, and `TangentRoot` as the rich engine-aware consumer.
 
 6. **`ContentHost`** wraps the **single** `EngineView` in an `AndroidView` and rebinds it to the currently selected `EngineSession`. Only one engine view exists for the whole app — see [`IMPLEMENTATION.md`](IMPLEMENTATION.md) for why. `ContentHost` also runs the snapshot capture pipeline (post-bind, first-contentful-paint, load-complete, pre-navigation, gesture-start, dispose) and translates Gecko scroll/observer callbacks into Compose state.
 
@@ -59,13 +59,13 @@ Around that core sit four supporting subsystems:
 | Type | Where | Purpose |
 |---|---|---|
 | `BrowserState` | `mozilla.components` | Authoritative store: every tab, every URL, content/history. |
-| `LuminaTab` | `state/` | UI projection — `(id, url, title)`. |
+| `TangentTab` | `state/` | UI projection — `(id, url, title)`. |
 | `BarUiState` + `BarMode` | `state/` | Drives `SafariBar`. `BarMode` is `Expanded / Compact / Editing`. |
 | `SitePreferences` | `state/` | `(topPaddingFix, zoomFactor)` keyed by host. |
 
 All of these are immutable data classes; reactivity is `StateFlow` everywhere.
 
-## The UI: `LuminaRoot.kt`
+## The UI: `TangentRoot.kt`
 
 This file is ~3,000 lines and holds the gesture orchestration; most rendered surfaces and state
 clusters have been extracted into sibling files in `ui/` (see [`docs/packages/ui-root.md`](docs/packages/ui-root.md)).
@@ -90,7 +90,7 @@ Don't read it linearly. Mental model:
   - Else when `canGoBack` → predictive-back / `goBack`.
   - Else when URL is `about:blank` → `dismissBlankTabAndReturn()`.
 
-Everything else in `LuminaRoot` is animation plumbing for those three things. [`IMPLEMENTATION.md`](IMPLEMENTATION.md) covers the non-obvious decisions (single engine view, snapshot capture timing, the dual-offset commit slide, the velocity-keyed damping helper, the corner-radius interpolation).
+Everything else in `TangentRoot` is animation plumbing for those three things. [`IMPLEMENTATION.md`](IMPLEMENTATION.md) covers the non-obvious decisions (single engine view, snapshot capture timing, the dual-offset commit slide, the velocity-keyed damping helper, the corner-radius interpolation).
 
 ## The capture pipeline
 
@@ -113,7 +113,7 @@ Captures go through `EngineView.captureThumbnail` (not `EngineSession.captureThu
 
 | Gesture | Owned by | Behavior |
 |---|---|---|
-| Horizontal swipe on pill | `BarPill` pointer-input → `LuminaRoot` | `offsetX` tracks finger; commit = `viewModel.onSwitchTab(direction)`; cancel = spring back. |
+| Horizontal swipe on pill | `BarPill` pointer-input → `TangentRoot` | `offsetX` tracks finger; commit = `viewModel.onSwitchTab(direction)`; cancel = spring back. |
 | Vertical swipe up on pill | same | `gridDragProgress` accumulates; commit at ≥50% travel or ≥1000 px/s. |
 | Past-last-tab swipe | same | Adjacent-pane area reveals a centered `+` icon; commit creates `about:blank`. |
 | Predictive back | system `PredictiveBackHandler` | Previous-page bitmap parallax + current-page slide-out. |
@@ -133,8 +133,8 @@ Captures go through `EngineView.captureThumbnail` (not `EngineSession.captureThu
 ## Where things live, one-liner edition
 
 - **Want to change the URL bar look?** `ui/chrome/BarExpanded.kt` (also covers compact via `collapseProgress=1`).
-- **Want to change how a tab switch animates?** `ui/LuminaRoot.kt`, the `dragCommit` / `dragCancel` blocks and `dampingForVelocity`.
-- **Want to change the grid?** `ui/grid/Grid.kt` (render) + `ui/LuminaRoot.kt` (gesture).
+- **Want to change how a tab switch animates?** `ui/TangentRoot.kt`, the `dragCommit` / `dragCancel` blocks and `dampingForVelocity`.
+- **Want to change the grid?** `ui/grid/Grid.kt` (render) + `ui/TangentRoot.kt` (gesture).
 - **Want to change page-edge spacers?** `ui/content/PageBottomSpacer.kt`.
 - **Want to add a new tab repository operation?** `state/TabRepository.kt` interface, then `GeckoTabRepository.kt` + `MockTabRepository.kt`.
 - **Want to add a new per-site preference?** `state/SitePreferencesStore.kt` + `ui/chrome/AaSheet.kt`.

@@ -1,4 +1,4 @@
-# Lumina Browser — Implementation Notes
+# Tangent Browser — Implementation Notes
 
 Snapshot of the app's design and the rationale behind the choices that aren't obvious from the code. Updated as state changes; if it disagrees with the source, trust the source.
 
@@ -10,7 +10,7 @@ Snapshot of the app's design and the rationale behind the choices that aren't ob
 
 ## Components graph (`engine/Engine.kt`)
 
-`LuminaApplication.components` holds:
+`TangentApplication.components` holds:
 
 - `globalPreferencesStore: GlobalPreferencesStore` — initialized first so its values can be passed to `GeckoEngine` at construction time.
 - `engine: GeckoEngine` — constructed with `buildDefaultSettings(globalPreferencesStore)` so stored engine settings survive process death.
@@ -26,7 +26,7 @@ Snapshot of the app's design and the rationale behind the choices that aren't ob
 
 Three demo tabs are seeded on first launch (Apple, NYT, Wikipedia).
 
-## UI layout (`ui/LuminaRoot.kt`)
+## UI layout (`ui/TangentRoot.kt`)
 
 Top to bottom in the `Box`:
 
@@ -37,7 +37,7 @@ Top to bottom in the `Box`:
 
 No status-bar scrim is drawn — the page renders directly under the system bar icons. See "Edge-to-edge & status-bar area" below.
 
-## Tab switching (`ui/LuminaRoot.kt`)
+## Tab switching (`ui/TangentRoot.kt`)
 
 Finger-tracking drag, single source of truth `var offsetX: Float`.
 
@@ -45,8 +45,8 @@ Finger-tracking drag, single source of truth `var offsetX: Float`.
 - `BarPill`'s `draggable` uses `startDragImmediately = false`. With `true`, the `draggable` modifier consumes the very first `ACTION_DOWN` into the drag stream and child pointer input never fires, which makes every `IconButton` (`aA`, Extensions, Reload) and the URL `Row.clickable` effectively dead. The cost of `false` is one touch-slop's worth of finger travel before a swipe registers, which is imperceptible compared to losing the chrome buttons.
 - The active bar also sets `interactive = false` once the scroll-collapsed compact progress is past halfway. Compact mode is tap-to-expand only; horizontal tab switching is intentionally disabled there so a narrow domain pill does not accidentally switch tabs.
 - During drag, `offsetX += delta`, clamped to one page stride in either direction. A page stride is `width + 64.dp`, which creates the Safari-style visual gap between pages during the switch.
-- Because GeckoView is a `SurfaceView`, Compose transforms cannot be trusted to move the live engine pixels. While `offsetX != 0`, `LuminaRoot` draws bitmap layers above the engine: a neutral background, the adjacent tab/new-tab pane, and a gesture-local current-page snapshot translated by `offsetX`. All three switch panes are clipped to a `SquircleShape` (n=5 superellipse, sampled into a path) at radius `0.8 × topChromeInsetPx` so corners scale with the device's status-bar / cutout inset and the curvature reads as iOS-style continuous corners rather than a circular fillet.
-- The hot-path drag reads of `offsetX` are kept out of the main composable scope: structural conditionals (`overlayActive`, `showNewTabPane`, `adjacentDirection`) go through `derivedStateOf` so they only invalidate `LuminaRoot` on sign flips; per-frame translation/alpha/scale reads live inside `graphicsLayer { … }` blocks so the snapshot system rerenders just the layer instead of recomposing. The `adjacentSnapshot` `remember` is keyed on `adjacentDirection` (sign), not raw `offsetX`, so `cache.get` does not run every frame.
+- Because GeckoView is a `SurfaceView`, Compose transforms cannot be trusted to move the live engine pixels. While `offsetX != 0`, `TangentRoot` draws bitmap layers above the engine: a neutral background, the adjacent tab/new-tab pane, and a gesture-local current-page snapshot translated by `offsetX`. All three switch panes are clipped to a `SquircleShape` (n=5 superellipse, sampled into a path) at radius `0.8 × topChromeInsetPx` so corners scale with the device's status-bar / cutout inset and the curvature reads as iOS-style continuous corners rather than a circular fillet.
+- The hot-path drag reads of `offsetX` are kept out of the main composable scope: structural conditionals (`overlayActive`, `showNewTabPane`, `adjacentDirection`) go through `derivedStateOf` so they only invalidate `TangentRoot` on sign flips; per-frame translation/alpha/scale reads live inside `graphicsLayer { … }` blocks so the snapshot system rerenders just the layer instead of recomposing. The `adjacentSnapshot` `remember` is keyed on `adjacentDirection` (sign), not raw `offsetX`, so `cache.get` does not run every frame.
 - Tab-switch drags request a fresh `captureThumbnail` at `BarPill.onDragStart`, and seed the moving current-page Image from the cached `currentPageSnapshot` immediately so it has something to draw on the very first frame. The fresh capture overwrites the seed when it lands. The seed prevents a black flash while the async capture is in flight; the trade-off is that if the cached bitmap is at an older scroll position, the user briefly sees that scroll position before the fresh capture corrects it. (Earlier this was avoided entirely by waiting for the fresh capture, but the resulting black flash was worse.)
 - The full overlay layer (background + adjacent + new-tab pane) renders whenever `offsetX != 0`, regardless of whether the moving current-page snapshot is ready yet. If a bitmap is missing, a clipped background pane is still drawn at the same transform so the Safari-style rounded corners do not disappear while an async capture/disk decode catches up. Earlier the layer was gated on the snapshot being non-null, which made rapid back-to-back tab switches look frozen — the new tab's post-bind capture hadn't run yet, so the gate held and `SurfaceView` translation was invisible.
 - Adjacent snapshot is positioned at `offsetX - sign(offsetX) * pageStride`.
@@ -56,14 +56,14 @@ Finger-tracking drag, single source of truth `var offsetX: Float`.
   - **Commit**: snap `offsetX` to 0 *immediately* and run the slide on a *separate* offset variable that drives two cosmetic layers in tandem: `leavingSnapshotBitmap` (the just-captured outgoing page) translates from the release offset to ±pageStride, and `incomingSnapshotBitmap` (the adjacent tab's bitmap) translates from `release ∓ pageStride` to 0. Both are driven by one velocity-seeded spring with `dampingRatio = dampingForVelocity(velocity)` and `stiffness = Spring.StiffnessMediumLow`. `visualSelectedTabId` advances at commit start so the URL pill and next/previous-tab math match the page the user is seeing, but the actual Gecko selection/rebind is staged in `pendingGeckoSelectTabId` until the spring settles. The active SafariBar follows `incomingSnapshotOffsetX` during the commit spring, so it stays attached to the incoming page instead of snapping to center. If a new drag or grid handoff interrupts the spring, the pending Gecko selection is flushed before the cosmetic layers are cancelled.
   - **Cancel**: animate `offsetX` to 0 with `spring(dampingRatio = dampingForVelocity(velocity), stiffness = Spring.StiffnessMedium)` seeded with the release velocity.
 - The new-tab create path uses the same dual-offset commit overlay, but the incoming layer renders the empty translucent blank-tab page instead of a bitmap. Visual `about:blank` also gets a persistent translucent blank-page layer behind the editing text field, so the page does not abruptly become a plain Gecko `about:blank` background when input appears.
-- Page `target=_blank` / `window.open()` requests arrive as `EngineSession.Observer.onWindowRequest(WindowRequest.Type.OPEN)`. `ContentHost` prepares the child `EngineSession`, and `LuminaRoot` adds it unselected while reusing the same new-tab commit overlay: the current snapshot slides left and the incoming new-tab pane slides in from the right. The tab is selected and `WindowRequest.start()` is called after the spring finishes, so Gecko's child-window load/render work does not compete with the animation.
+- Page `target=_blank` / `window.open()` requests arrive as `EngineSession.Observer.onWindowRequest(WindowRequest.Type.OPEN)`. `ContentHost` prepares the child `EngineSession`, and `TangentRoot` adds it unselected while reusing the same new-tab commit overlay: the current snapshot slides left and the incoming new-tab pane slides in from the right. The tab is selected and `WindowRequest.start()` is called after the spring finishes, so Gecko's child-window load/render work does not compete with the animation.
 - Extension `WebExtensionDelegate.onNewTab` requests are bridged through `AddonController.onNewTabRequested` into the same tab-creation path. Active extension tabs animate in from the right and select after the spring; inactive extension tabs are added without selecting.
 - `ContentHost` reports selected-tab paint from Gecko observer callbacks. The sticky cover clears shortly after the selected tab paints, with a 700 ms fallback so an already-loaded session that does not emit a fresh paint callback cannot leave the bitmap stuck onscreen.
 - Starting a new drag cancels any in-flight switch animation and clears the sticky cover, but first flushes any pending Gecko selection so a grid handoff or rapid next swipe cannot lose the already-committed tab intent. A horizontal re-grab during the commit spring stays in tab-switch mode; it only becomes a grid handoff after actual upward movement.
 
 Why not two live engine views? GeckoView only supports one rendered session at a time, and `engineView.render(session)` is the rebind point. Two engine views would each try to bind the same session set and instantiate huge GL state. Snapshots are the cheaper way to keep visual continuity.
 
-## Scroll-collapsing URL bar (`ui/LuminaRoot.kt`, `ui/chrome/BarExpanded.kt`)
+## Scroll-collapsing URL bar (`ui/TangentRoot.kt`, `ui/chrome/BarExpanded.kt`)
 
 - `ContentHost` collects `EngineView.verticalScrollDelta`; positive deltas increase `barCollapsePx`, negative deltas restore it. Deltas are accumulated and applied once per frame via `withFrameNanos` so Gecko scroll callbacks cannot start unlimited Compose/coroutine work.
 - Collapse uses a hybrid preview/snap model. While scrolling below the compact threshold, the bar only previews up to ~28% collapsed using `CubicBezierEasing(0.33, 0, 0.2, 1)`, so the user sees responsive feedback without leaving the bar in awkward mid-states.
@@ -72,7 +72,7 @@ Why not two live engine views? GeckoView only supports one rendered session at a
 - The bar is one continuous `BarExpanded` surface, not a discrete Expanded/Compact composable switch. Width, height, corner radius, padding, side controls, and tab-count visibility interpolate from full to compact.
 - Full size is screen width minus 40 dp. Compact target width is based on the displayed domain length, clamped so short domains remain tappable and long domains cannot exceed the full bar width.
 - The tab-count chip fades/shrinks out before full compact. Tapping the compact domain pill expands the URL bar instead of entering text editing.
-- `BottomBarLayer` owns the read of `barCollapseProgressState.value`; `LuminaRoot` passes the `Animatable` down instead of reading its value directly. This limits per-frame invalidation during pill animation to the bottom bar layer instead of recomposing the full root around Gecko.
+- `BottomBarLayer` owns the read of `barCollapseProgressState.value`; `TangentRoot` passes the `Animatable` down instead of reading its value directly. This limits per-frame invalidation during pill animation to the bottom bar layer instead of recomposing the full root around Gecko.
 - `SafariBar` reports stable bottom inset heights instead of its animated height: 56 dp for normal/compact and 72 dp for Editing, plus 24 dp bottom padding. This avoids resizing the Gecko viewport on every collapse frame while still giving the address text field enough vertical room.
 - `bottomChromeInsetPx` (measured via `onGloballyPositioned` on the `SafariBar` box) is the single source of truth for how much vertical space the pill occupies. It is passed to `ContentHost` for the Gecko viewport inset **and** to every `ModalBottomSheet` (`AddonsSheet`, `AaSheet`) as `windowInsets = WindowInsets(bottom = bottomInsetDp)`, replacing the default `navigationBars` inset. The 24 dp bottom padding already clears the gesture-nav bar, so the full pill height is the correct sheet inset — sheets stop above the pill rather than behind it.
 - `ContentHost` calls `engineView.setDynamicToolbarMaxHeight(bottomChromeInsetPx)` and `engineView.setVerticalClipping(bottomChromeInsetPx)` (both **positive**) via `SideEffect`. This tells Gecko the pill occupies `bottomChromeInsetPx` pixels at the bottom, so `window.innerHeight` / `visualViewport.height` exclude the pill and `position: fixed; bottom: 0` elements land at the pill's top edge — while the GeckoView itself remains full-screen so content can scroll beneath the pill. Both calls are guarded by `> 0` to avoid calling `setDynamicToolbarMaxHeight(0)` on the initial composition before `SafariBar` is measured, which GeckoView treats as "no toolbar" and may not re-enable. Do not negate `bottomChromeInsetPx` when passing to `setVerticalClipping` — the parameter is a positive pixel height, not a negative offset.
@@ -88,31 +88,31 @@ Why not two live engine views? GeckoView only supports one rendered session at a
 - `pruneDisk()` is throttled to at most once every 5 s. Without that, the 4–5 captures per page load × N tabs each listed and sorted the entire snapshot directory.
 - Snapshot keys are versioned (`v2:` prefix) to ignore older cache files written before URL capture timing was tightened.
 - `ContentHost` deduplicates capture calls: the 600 ms post-bind delay, `onFirstContentfulPaint`, and `onLoadingStateChange(loading=false)` share a 750 ms `(tabId, url)` window — if the same key was captured within 750 ms, the call is skipped. The `onDispose` and `currentSnapshotRequestId`-driven captures are never deduplicated since they must always run.
-- `ContentHost` reports every successful capture to `LuminaRoot`, which keeps a small in-memory URL-to-bitmap map for immediate predictive-back use before disk/cache flow timing catches up.
-- `LuminaRoot` also keeps a tab-id keyed in-memory `recentTabSnapshots` map. Transition lookup goes through `snapshotFor(tabId, url)`, preferring latest tab bitmap → latest URL bitmap → `TabSnapshotCache`. This covers rapid visual tab changes where the disk cache has not decoded yet and URL-keyed lookup is ambiguous or stale.
+- `ContentHost` reports every successful capture to `TangentRoot`, which keeps a small in-memory URL-to-bitmap map for immediate predictive-back use before disk/cache flow timing catches up.
+- `TangentRoot` also keeps a tab-id keyed in-memory `recentTabSnapshots` map. Transition lookup goes through `snapshotFor(tabId, url)`, preferring latest tab bitmap → latest URL bitmap → `TabSnapshotCache`. This covers rapid visual tab changes where the disk cache has not decoded yet and URL-keyed lookup is ambiguous or stale.
 - The Gecko observer in `ContentHost` is keyed by session/insets/tab, not by `pageUrl`, so it stays registered across URL changes and can reliably capture the outgoing page before `currentUrl` advances.
 - Capture sites in `ContentHost`:
   - one delayed post-bind capture at ~600 ms after a session is rendered, keyed only on `tabId` — covers already-loaded / fast-painting pages whose Gecko callbacks may have fired before observer registration.
   - `onFirstContentfulPaint` — early warm-up.
   - `onLoadingStateChange(loading=false)` — final state of the page.
   - outgoing-page capture on `onLoadRequest` / `onLocationChange` before `currentUrl` is updated — warms the page being left for browser-history back gestures.
-  - explicit current-page capture when `LuminaRoot` starts a predictive-back or tab-switch gesture — produces a gesture-local bitmap at the current scroll position.
+  - explicit current-page capture when `TangentRoot` starts a predictive-back or tab-switch gesture — produces a gesture-local bitmap at the current scroll position.
   - `DisposableEffect` `onDispose` when the session is about to unbind — best-effort, may race with GeckoView surface teardown but worth trying.
 - The `DisposableEffect(engineView, engineSession, tabId)` is the **single** rebind site. The `AndroidView` `update` lambda intentionally does not call `engineView.render(session)` — when both did it, the applier rebound the engine to the incoming session before the leaving `DisposableEffect`'s `onDispose` ran, so the leaving-tab `captureThumbnail` sampled the new session and stored it under the old tab's cache key. Every tab switch overwrote the leaving tab's snapshot with a transitional frame of the incoming tab.
 - Recent tab/url bitmaps live in heap; older retained snapshots live in the app cache partition and may be evicted by Android under storage pressure.
 
-## Predictive back gesture (`ui/LuminaRoot.kt`, `ui/content/ContentHost.kt`)
+## Predictive back gesture (`ui/TangentRoot.kt`, `ui/content/ContentHost.kt`)
 
 - Uses Android's system `PredictiveBackHandler`, not a custom left-edge `EngineView` touch gesture. `AndroidManifest.xml` opts into the platform back-invoked callback with `android:enableOnBackInvokedCallback="true"`.
 - The handler enables as soon as the selected page reports `content.canGoBack == true`. It no longer waits for `content.history` or a previous-page screenshot, so the gesture can start immediately after Gecko exposes back availability.
-- If `content.history` has a target URL, `LuminaRoot` resolves a previous-page bitmap by URL only — first from `recentPageSnapshots[previousHistoryUrl]`, then `TabSnapshotCache`. It deliberately does **not** fall back to `recentTabSnapshots[selectedTabId]` because that map is keyed by tab ID and returns the most recent frame for the tab (the current page), which would make the peek show the same page the user is leaving. During a provisional load where the visible URL has advanced but history still points at the last committed page, the target is the current history entry; once the load is committed, the target is `currentIndex - 1`. If engine history has not populated yet, `LuminaRoot` falls back to the last observed non-blank URL for the tab. Missing bitmap is allowed: the gesture still runs over a neutral background and commits `goBack()`.
+- If `content.history` has a target URL, `TangentRoot` resolves a previous-page bitmap by URL only — first from `recentPageSnapshots[previousHistoryUrl]`, then `TabSnapshotCache`. It deliberately does **not** fall back to `recentTabSnapshots[selectedTabId]` because that map is keyed by tab ID and returns the most recent frame for the tab (the current page), which would make the peek show the same page the user is leaving. During a provisional load where the visible URL has advanced but history still points at the last committed page, the target is the current history entry; once the load is committed, the target is `currentIndex - 1`. If engine history has not populated yet, `TangentRoot` falls back to the last observed non-blank URL for the tab. Missing bitmap is allowed: the gesture still runs over a neutral background and commits `goBack()`.
 - The previous-page bitmap, when available, stays constant size and receives only parallax translation plus a dim fade. It is drawn above the live engine view because live Gecko pixels cannot be reliably transformed by Compose.
-- At gesture start, `LuminaRoot` seeds the moving current-page layer from the cached current-page bitmap, then increments `currentSnapshotRequestId`; `ContentHost` captures the live engine view immediately and replaces the seed with a gesture-local bitmap at the current scroll position.
+- At gesture start, `TangentRoot` seeds the moving current-page layer from the cached current-page bitmap, then increments `currentSnapshotRequestId`; `ContentHost` captures the live engine view immediately and replaces the seed with a gesture-local bitmap at the current scroll position.
 - During progress, the gesture-local current-page bitmap always dismisses toward the right, regardless of which screen edge initiated the system gesture. The previous-page parallax also keeps the same left-origin back-navigation model for both edges. The live Gecko view remains stationary underneath until commit/cancel.
 - On completion, the current-page bitmap animates offscreen, `sessionUseCases.goBack` is invoked on the same tab, and the previous-page screenshot is pinned as a temporary cover. If no previous-page bitmap exists, a neutral cover is pinned instead so the old live Gecko surface cannot flash while the previous page starts loading.
 - The predictive-back cover does not clear just because `selectedContent.url` changes to the target URL; Android Components can update URL state before Gecko has repainted the surface. It clears on a matching paint callback, or after the target URL is reached, loading is false, and the fallback delay expires. A hard stale-cover timeout also clears it if Gecko reports a normalized URL that never exactly matches the pinned target.
 - Cancel cleanup runs in a `finally` path so an interrupted cancel animation cannot leave the screenshot layer above the live engine.
-- The old `ContentHost` custom predictive-back touch callbacks still exist in the API surface but are disabled from `LuminaRoot` (`canStartPredictiveBack = false`). They can be removed later if the system handler remains the only supported path.
+- The old `ContentHost` custom predictive-back touch callbacks still exist in the API surface but are disabled from `TangentRoot` (`canStartPredictiveBack = false`). They can be removed later if the system handler remains the only supported path.
 
 ## Custom Tab exit animation (`ui/customtab/CustomTabRoot.kt`)
 
@@ -139,19 +139,19 @@ External links open in `CustomTabActivity` (own task); its close has two paths �
 
 The top and bottom spacer `<div>`s use `display: block; visibility: hidden; pointer-events: none` — `clear: both` was removed because it is a float-clearance mechanism that is a no-op in flex/grid layouts and can unexpectedly shift content in float-based layouts.
 
-Triggered on FCP and load-complete. `injectedForCurrentLoad` debounces, and a `suppressJavascriptLoadCallback` guard prevents the `javascript:` URL itself from re-triggering injection. The header pass restores Lumina's own previous inline edits before each scan, chooses ancestor header candidates before nested children to avoid compounding padding in complex navs, and reruns from a `MutationObserver`, resize, scroll, and delayed timers for late-rendered site shells.
+Triggered on FCP and load-complete. `injectedForCurrentLoad` debounces, and a `suppressJavascriptLoadCallback` guard prevents the `javascript:` URL itself from re-triggering injection. The header pass restores Tangent's own previous inline edits before each scan, chooses ancestor header candidates before nested children to avoid compounding padding in complex navs, and reruns from a `MutationObserver`, resize, scroll, and delayed timers for late-rendered site shells.
 
 The MutationObserver has two guards to prevent it from firing on its own style mutations:
-- `window.__luminaApplyingHeaderInsets` is set to `true` during the `applyFixed`/`applySticky` write pass and cleared after; the observer callback returns immediately when this flag is set.
-- If all mutated targets have `dataset.luminaSafeTopApplied != null` (i.e. any value Lumina has written, either `'true'` from the apply pass or `'false'` from the restore pass), the observer skips scheduling. The check was previously `=== 'true'` only, which caused restore mutations to be misidentified as external site changes and trigger spurious `schedule()` calls.
+- `window.__tangentApplyingHeaderInsets` is set to `true` during the `applyFixed`/`applySticky` write pass and cleared after; the observer callback returns immediately when this flag is set.
+- If all mutated targets have `dataset.tangentSafeTopApplied != null` (i.e. any value Tangent has written, either `'true'` from the apply pass or `'false'` from the restore pass), the observer skips scheduling. The check was previously `=== 'true'` only, which caused restore mutations to be misidentified as external site changes and trigger spurious `schedule()` calls.
 
-`applyHeaderInsets` throttles itself to at most one run per 500 ms via a time check against `window.__luminaLastHeaderInsetMs`. This check is performed **before** any DOM work so that a throttled call exits immediately without first stripping the insets — the previous restore-then-check order was the source of the scroll-triggered top-padding flicker. The element-identity dedupe (`window.__luminaLastChosenKey`) was removed; the time check alone is sufficient since `requestAnimationFrame` in `schedule()` already coalesces rapid triggers to one call per frame.
+`applyHeaderInsets` throttles itself to at most one run per 500 ms via a time check against `window.__tangentLastHeaderInsetMs`. This check is performed **before** any DOM work so that a throttled call exits immediately without first stripping the insets — the previous restore-then-check order was the source of the scroll-triggered top-padding flicker. The element-identity dedupe (`window.__tangentLastChosenKey`) was removed; the time check alone is sufficient since `requestAnimationFrame` in `schedule()` already coalesces rapid triggers to one call per frame.
 
-The restore step only touches the elements Lumina previously inset, tracked in `window.__luminaInsetedEls`. Earlier it called `collect(document, [])` and iterated every DOM element, of which only 1–3 would have `luminaSafeTopApplied === 'true'`. The candidate scan still walks every element for `getComputedStyle`, but `getBoundingClientRect` (which forces a synchronous layout reflow) is now guarded behind a `position !== fixed/sticky` early return.
+The restore step only touches the elements Tangent previously inset, tracked in `window.__tangentInsetedEls`. Earlier it called `collect(document, [])` and iterated every DOM element, of which only 1–3 would have `tangentSafeTopApplied === 'true'`. The candidate scan still walks every element for `getComputedStyle`, but `getBoundingClientRect` (which forces a synchronous layout reflow) is now guarded behind a `position !== fixed/sticky` early return.
 
 The setTimeout cascade is three timers: 1 s, 3 s, 10 s. The 250 ms timer was removed — with the 500 ms throttle gate, it was always a no-op. These guards collectively prevent the self-firing restyle loop that previously caused `captureThumbnail` to land on transitional frames and fill the snapshot cache with dark bitmaps.
 
-## Address input (`state/GeckoTabRepository.kt`, `state/LuminaViewModel.kt`)
+## Address input (`state/GeckoTabRepository.kt`, `state/TangentViewModel.kt`)
 
 Address submission goes through `normalizeUrl`:
 
@@ -168,7 +168,7 @@ Entering or tapping the editing text field selects the full current address, mak
 
 `GeckoTabRepository` tracks the last-selected tab id. `dismissBlankTabAndReturn()` removes the current tab and re-selects the previous one only if the current tab's URL is `about:blank` and the previous tab still exists in the store. Wired to:
 
-- The system back gesture in `LuminaRoot` when `canGoBack == false` and the URL is `about:blank` (a second `BackHandler` below the history-back one).
+- The system back gesture in `TangentRoot` when `canGoBack == false` and the URL is `about:blank` (a second `BackHandler` below the history-back one).
 - The Editing-mode cancel callback when the underlying URL is still `about:blank` (typically a brand-new tab the user opened then bailed out of without typing).
 
 If no previous tab exists the call is a no-op — the only tab is never killed.
@@ -223,9 +223,9 @@ Add-ons use Gecko's built-in WebExtension APIs directly instead of the larger `f
 - `AddonController` registers a `WebExtensionDelegate` at component construction time, then mirrors installed extensions into a `StateFlow`.
 - The add-ons manager lives in the **Add-ons tab of `AaSheet`** (the sheet opened by the `aA` button). There is no separate add-ons toolbar button. The tab embeds `AddonsManagerSheetContent` inline — install by AMO slug / page URL / direct `.xpi` URL, enable/disable with a switch, remove with a trash icon, and open an extension's options page via its settings icon.
 - Slugs/pages are normalized to `https://addons.mozilla.org/firefox/downloads/latest/{slug}/latest.xpi`; direct `.xpi` URLs are passed through.
-- Installed add-ons can be enabled, disabled, removed, and opened to their manifest-declared options/settings page from the tab. `AddonController` exposes `WebExtension.Metadata.optionsPageUrl` on each `InstalledAddon`; the manager shows a settings icon when that URL exists, and `LuminaRoot` opens it in a normal selected tab.
+- Installed add-ons can be enabled, disabled, removed, and opened to their manifest-declared options/settings page from the tab. `AddonController` exposes `WebExtension.Metadata.optionsPageUrl` on each `InstalledAddon`; the manager shows a settings icon when that URL exists, and `TangentRoot` opens it in a normal selected tab.
 - **`AddonsSheet` is permission-prompt-only.** Install, update, and optional permission prompts are bridged into `AddonsSheet` as a separate `ModalBottomSheet` that appears automatically above `AaSheet` when Gecko issues a permission callback. This is required because Gecko waits for those callbacks before completing installation. The prompt groups requested access into extension, website, and data-collection sections, with common WebExtension permission keys rendered as readable descriptions instead of raw manifest strings. Accepting or denying the prompt dismisses `AddonsSheet` immediately.
-- AMO detail pages get a small page-level click bridge injected from `ContentHost`: clicking “Add to Firefox” navigates to the add-on's latest `.xpi`, and `.xpi` / AMO download requests are intercepted and passed to `AddonController.installFromPageRequest`. `LuminaRoot` observes `AddonController.state.pendingPrompt` and opens `AddonsSheet` automatically so Gecko's install permission dialog appears regardless of whether the user has `AaSheet` open.
+- AMO detail pages get a small page-level click bridge injected from `ContentHost`: clicking “Add to Firefox” navigates to the add-on's latest `.xpi`, and `.xpi` / AMO download requests are intercepted and passed to `AddonController.installFromPageRequest`. `TangentRoot` observes `AddonController.state.pendingPrompt` and opens `AddonsSheet` automatically so Gecko's install permission dialog appears regardless of whether the user has `AaSheet` open.
 
 Known limitations:
 
@@ -236,7 +236,7 @@ Known limitations:
 
 Firefox Sync supports the `tabs`, `passwords`, `creditCards`, `history`, `bookmarks`, and `addresses` engines. Passwords are stored locally using AES-256-GCM encryption backed by Android KeyStore and synced via Firefox Sync when the user is signed in.
 
-- `LuminaApplication` initializes application-services HTTP plumbing via `AppServicesInitializer` / `RustHttpConfig`.
+- `TangentApplication` initializes application-services HTTP plumbing via `AppServicesInitializer` / `RustHttpConfig`.
 - `FirefoxSyncController` owns `FxaAccountManager`, `RemoteTabsStorage`, and `SyncedTabsStorage`.
 - The FxA OAuth flow uses Mozilla's public Android sample client id (`3c49430b43dfba77`) and redirects to `https://accounts.firefox.com/oauth/success/{clientId}`. `ContentHost` intercepts that success URL from Gecko observer callbacks (both `onLoadRequest` and `onLocationChange`), extracts `code` / `state`, and calls `FxaAccountManager.finishAuthentication`. A `@Volatile authInFlight` flag in `FirefoxSyncController` prevents `finishAuthentication` from being called twice if both callbacks fire before `stopLoading()` takes effect.
 - `SyncedTabsStorage.start()` watches the `BrowserStore`, stores non-private loaded local tabs into the remote-tabs store, and syncs the tabs engine after debounced tab changes.
@@ -249,7 +249,7 @@ Firefox Sync supports the `tabs`, `passwords`, `creditCards`, `history`, `bookma
 `PlacesLoginsStorage` implements `LoginsStorage` (from `concept-storage`) and `SyncableStore` (from `concept-sync`), wrapping `mozilla.appservices.logins.DatabaseLoginsStorage` from the native Rust logins crate (`org.mozilla.appservices:logins:147.0.1`):
 
 - **Encryption**: Managed natively by the Rust logins crate (SQLite + encryption). `KeyManager.getKey()` must return the UTF-8 bytes of an appservices **JWK** from `mozilla.appservices.logins.createKey()` (a `{"kty":"oct",…}` string) — **not** 32 raw random bytes, which fail appservices' `from_utf8`→JWK parse with `InvalidKey` and silently break every encrypt/decrypt (see AGENTS.md invariant #14). The JWK is resolved eagerly and sealed under an AndroidKeyStore AES-GCM wrapping key.
-- **Persistence**: The Rust `DatabaseLoginsStorage` writes to `lumina_logins.db` in the app's private database directory. All crypto and serialization happens in native code via the Rust logins crate, backed by the `libmegazord.so` native library.
+- **Persistence**: The Rust `DatabaseLoginsStorage` writes to `tangent_logins.db` in the app's private database directory. All crypto and serialization happens in native code via the Rust logins crate, backed by the `libmegazord.so` native library.
 - **Sync registration**: `DatabaseLoginsStorage.registerWithSyncManager()` registers the Rust store with the native sync engine. The store is also registered with `GlobalSyncableStoreProvider` in `FirefoxSyncController.init` for the `SyncEngine.Passwords` engine. `FxaAccountManager` is configured with `supportedEngines = setOf(SyncEngine.Tabs, SyncEngine.Passwords, SyncEngine.CreditCards, SyncEngine.History, SyncEngine.Bookmarks, SyncEngine.Addresses)`.
 - **API**: `list()`, `get(id)`, `getByBaseDomain(domain)`, `add(LoginEntry)`, `update(id, LoginEntry)`, `addOrUpdate(LoginEntry)`, `findLoginToUpdate(LoginEntry)`, `touch(id)`, `delete(id)`, `wipeLocal()`.
 - **Autofill**: `engine.settings.loginAutofillEnabled = true` is set at construction time in `buildDefaultSettings()`.
@@ -286,7 +286,7 @@ Known limitations:
 ### Sync triggers & why FxA push is inert
 
 `FirefoxSyncController` keeps synced tabs fresh via three layered mechanisms — a background WorkManager
-sync every 4h (`PeriodicSyncConfig(240, 5)`), a 30-min foreground poll driven by `LuminaRoot`'s
+sync every 4h (`PeriodicSyncConfig(240, 5)`), a 30-min foreground poll driven by `TangentRoot`'s
 lifecycle observer, and the FxA push fast-path (`initPush()`). AGENTS.md "Firefox Sync — three sync
 triggers" carries the inline guardrails; this is the full analysis of why push delivers nothing on our
 build and must not be "fixed" by retrying it.
@@ -339,8 +339,8 @@ Reader mode extracts article content from the live page via JavaScript and rende
 ### Architecture
 
 - `ReaderManager` (singleton) holds four `StateFlow`s: `activeReaderTabs`, `eligibleReaderTabs`, `tabArticles`, `pendingActivationTabs`. All keyed by tab id.
-- `ReaderExtractor.extractReaderContent(engineSession, tabId)` injects a `javascript:` URL that walks the DOM (article element scoring → heading/paragraph/blockquote/list block extraction) and calls `window.prompt("lumina-reader", JSON.stringify(articleData))` to send the result back to Kotlin.
-- `ReaderExtractor.registerPromptDelegate(engineSession, tabId)` wraps `GeckoSession.promptDelegate` with `ReaderPromptDelegate` which intercepts `TextPrompt` where `prompt.message == "lumina-reader"`. The data is in `prompt.defaultValue` (the second argument to `window.prompt`). Guard `if (oldDelegate is ReaderPromptDelegate) return` prevents double-wrapping on re-render.
+- `ReaderExtractor.extractReaderContent(engineSession, tabId)` injects a `javascript:` URL that walks the DOM (article element scoring → heading/paragraph/blockquote/list block extraction) and calls `window.prompt("tangent-reader", JSON.stringify(articleData))` to send the result back to Kotlin.
+- `ReaderExtractor.registerPromptDelegate(engineSession, tabId)` wraps `GeckoSession.promptDelegate` with `ReaderPromptDelegate` which intercepts `TextPrompt` where `prompt.message == "tangent-reader"`. The data is in `prompt.defaultValue` (the second argument to `window.prompt`). Guard `if (oldDelegate is ReaderPromptDelegate) return` prevents double-wrapping on re-render.
 - `ContentHost` calls `registerPromptDelegate` inside `DisposableEffect(engineView, engineSession, tabId)` after `engineView.render(session)`.
 
 ### Critical: `prompt.message` not `prompt.title`
@@ -353,7 +353,7 @@ Reader mode extracts article content from the live page via JavaScript and rende
 2. If already eligible → `readerManager.setReaderActive(tabId, true)` — immediate.
 3. If not yet eligible → `readerManager.requestReaderActivation(tabId)` (adds to `pendingActivationTabs`) then `ReaderExtractor.extractReaderContent(engineSession, tabId)`.
 4. When the `javascript:` prompt fires, `ReaderPromptDelegate` calls `ReaderManager.setReaderEligible(tabId, article)`, which also auto-activates any pending tab.
-5. `LuminaRoot` observes `activeReaderTabs` and `tabArticles` — when both have an entry for the selected tab, `ReaderView` overlays `ContentHost`.
+5. `TangentRoot` observes `activeReaderTabs` and `tabArticles` — when both have an entry for the selected tab, `ReaderView` overlays `ContentHost`.
 
 ### JS injection guard
 
@@ -371,7 +371,7 @@ Reader mode extracts article content from the live page via JavaScript and rende
 File downloads are captured by mozilla-components and handed off to the **platform**
 `android.app.DownloadManager`:
 
-- `LuminaBrowserComponents.downloadsUseCases = DownloadsUseCases(store, application)`.
+- `TangentBrowserComponents.downloadsUseCases = DownloadsUseCases(store, application)`.
 - `MainActivity.downloadsFeature` is a `DownloadsFeature` wired with `AndroidDownloadManager`,
   started in `onStart` / stopped in `onStop`. It observes the selected tab's `content.download`,
   consumes it, and enqueues into the system DownloadManager (OS owns the notification, storage,
@@ -409,11 +409,11 @@ The sticky-cover system is excluded from the gate so the two layers don't double
 - Strip native debug symbols (`debugSymbolLevel = "none"`) for production-shape release builds.
 - Investigate moving GeckoEngineView to TextureView for working backdrop blur (would let the top status-bar fill go back to a real blur).
 
-## Tab grid view (`ui/grid/Grid.kt`, `ui/LuminaRoot.kt`, `ui/chrome/BarPill.kt`)
+## Tab grid view (`ui/grid/Grid.kt`, `ui/TangentRoot.kt`, `ui/chrome/BarPill.kt`)
 
 The 2D tab grid is a swipe-up-on-pill gesture continuous with the existing horizontal swipe-to-switch. `BarPill` runs a single `pointerInput { awaitEachGesture { … } }` block that does *not* axis-lock — every move dispatches a 2D `Offset` delta and release dispatches `(totalDelta, velocity)` as `Offset` pairs. The pre-slop down is *not* consumed, so child `IconButton`s and the URL `Row.clickable` keep firing for taps. The horizontal and vertical components of the same finger motion drive the carousel `offsetX` and the grid progress simultaneously — like Safari on iOS, where you can blend the two in a single drag and the release decides which gesture committed.
 
-State in `LuminaRoot`:
+State in `TangentRoot`:
 
 - `gridProgressState: Animatable<Float>` — used only for spring animations (open/close/cancel). Never snapTo'd during drag.
 - `gridDragProgress: Float` (plain `mutableFloatStateOf`) — the live drag progress written directly on the hot delta path with zero coroutine overhead. The render reads `if (gridGestureActive) gridDragProgress else gridProgressState.value` so the two sources are never mixed.
@@ -430,7 +430,7 @@ The selected tab's snapshot is `tabSwitchCurrentSnapshot ?: snapshotFor(tab.id, 
 
 `gridTabs` (the `List<GridTab>` passed to `TabGridOverlay`) is wrapped in `remember { derivedStateOf { … } }`. All state it reads on the hot path — `gridGestureActive`, `gridDragProgress`, `gridDragPx`, `offsetX`, `gridHandoffSelectedTabId`, `gridHandoffSelectedOffsetX`, `gridCommitFromPositions` — must be read **inside** the `derivedStateOf` lambda so Compose tracks them as snapshot dependencies and the lambda re-runs on every drag frame. Capturing these as plain-float or plain-value locals outside the lambda and then using those captures inside the lambda is not tracked by `derivedStateOf` and causes positions to freeze mid-gesture or commit positions to remain `null` even after they are set.
 
-Unified gesture handlers in `LuminaRoot`:
+Unified gesture handlers in `TangentRoot`:
 
 - `onPillDragStart`: if a horizontal-commit spring is mid-flight, freeze its leaving/incoming offsets into the handoff slots and flush the pending Gecko selection before cancelling the cosmetic spring. It seeds `gridDragProgress` from `gridProgressState.value`, but does not mark `gridGestureActive` until upward movement actually arrives; this keeps quick repeated horizontal swipes from being mistaken for grid handoffs. If a close/cancel animation was interrupted, it also seeds `gridDragProgress` from `gridProgressState.value` so the re-grabbed card continues from its current visual position without a pop. Otherwise it preps the existing horizontal-switch capture (cached `currentPageSnapshot` seed, fresh `requestTabSwitchSnapshot()`). The `gridXProgressState.snapTo(0f)` coroutine that previously ran here is removed — `xProgress` is derived as `0f` whenever `gridGestureActive` is true, so x is always correct with no async work.
 - `onPillDragDelta(Offset)`: feed `delta.x` into the existing `applyHorizontalDelta` — guarded by `tabSwitchingEnabled || gridGestureActive`. During grid gesture, `applyHorizontalDelta` skips the first/last-tab boundary clamps so the user can wiggle the card freely in both directions (the left boundary that blocked the first tab from moving right is removed when `gridGestureActive`). `delta.y` (negated, clamped to ≥0) accumulates into `gridDragPx`; `gridDragProgress` is written directly (`gridDragPx / travelPx`) with no coroutine launch. Marking `gridGestureActive = true` once `gridDragPx > 0` is what flips `gridEngaged`, hides the existing horizontal overlays, and reveals the grid.
@@ -445,7 +445,7 @@ Domain pills (`pillAlpha` in `TabGridOverlay`) are suppressed entirely while `is
 A **new-tab "+" cell** is always appended at `index = tabs.size` in `TabGridOverlay`. It uses the same `gridCellRect` position as if it were an extra tab, fades in with `pillAlpha` (same gate as domain pills — suppressed during the gesture, visible after), and is always placed at its grid position with no browse-layer lerp. `totalItems = tabs.size + 1` is used for the row-count / content-height calculation so it correctly reserves space for the extra cell.
 
 Tapping the "+" cell transitions directly to the new blank tab without a carousel slide animation:
-1. `gridNewTabSelected = true` is set in `LuminaRoot`, which shifts `newSelIdx` to `tabsList.size` in the `gridTabs` computation. This makes all real tabs' `browseTranslationX` negative (they lerp off-screen left during the grid close). `gridNewTabSelected` is added to the `gridTabs remember` keys so that `derivedStateOf` captures the updated `newSelIdx`.
+1. `gridNewTabSelected = true` is set in `TangentRoot`, which shifts `newSelIdx` to `tabsList.size` in the `gridTabs` computation. This makes all real tabs' `browseTranslationX` negative (they lerp off-screen left during the grid close). `gridNewTabSelected` is added to the `gridTabs remember` keys so that `derivedStateOf` captures the updated `newSelIdx`.
 2. `TabGridOverlay` receives `newTabSelected = true`, which suppresses the fixed-position "+" cell and instead renders an **animated** "+" cell using the standard lerp: `scale = lerp(1, cellScale, progress)`, `tx = lerp(0, cell.left, xProgress)`, `ty = lerp(scrollOffset, cell.top, progress)`. At progress=0 (grid fully closed) the cell is at fullscreen; at progress=1 it is at its grid slot. This mirrors exactly how a real selected tab expands to fullscreen.
 3. `closeGrid(animateBack = true)` runs the 300 ms ease-out close animation. In `afterClose`, `gridNewTabSelected = false`, `viewModel.onCreateTabFromEdge(selectTab = false)` creates the new tab, `stickyIncomingTabId` is set to cover GeckoView, and `commitPendingGeckoSelection()` selects the tab with `editBlankTab = true` (bar goes to Editing). All state changes in `afterClose` are in the same coroutine continuation as `gridWaitingForAfterClose = false`, so Compose batches `gridEngaged = false` with the new-tab setup atomically.
 
@@ -455,7 +455,7 @@ Tapping a cell clears the handoff pins, calls `tabRepository.selectTab` if chang
 
 `BackHandler` for `gridOpen` calls `closeGrid(animateBack = true)`; the existing history-back and `about:blank` handlers are gated on `!gridOpen` so the system back button doesn't double-fire.
 
-## Velocity-keyed tab switch damping (`ui/LuminaRoot.kt`)
+## Velocity-keyed tab switch damping (`ui/TangentRoot.kt`)
 
 Both the commit and cancel springs in `onDragEnd` pull their `dampingRatio` from a shared top-level helper `dampingForVelocity(velocity)`. Slow swipes (`|v| < 400 px/s`) get a critically damped settle (1.0), the average band (400–1500 px/s) interpolates linearly from 1.0 down to 0.88 for a barely-perceptible bounce, and fast swipes (`>= 1500 px/s`) snap to 0.82 for a slightly noticeable overshoot. Stiffness stays fixed: `Spring.StiffnessMediumLow` for commit, `Spring.StiffnessMedium` for cancel. The new-tab pop spring is unchanged.
 
@@ -471,7 +471,7 @@ Contains per-site controls. `about:blank` / empty hosts open the sheet but the p
 - **Add top padding for this site** — per-site override switch for the viewport top-padding fix.
 - **Request desktop site** — per-host switch persisted in `SitePreferences.desktopMode`. Toggling it
   calls `engineSession.toggleDesktopMode(enabled, reload = true)` for immediate effect. A
-  `LaunchedEffect(selectedEngineSession, currentHost, …)` in `LuminaRoot` re-applies the host's saved
+  `LaunchedEffect(selectedEngineSession, currentHost, …)` in `TangentRoot` re-applies the host's saved
   preference (`reload = false`) on tab-switch / cross-host navigation / restored tabs, so the desktop
   UA follows the site rather than the session.
 
@@ -479,15 +479,15 @@ For real URLs, the tab also exposes:
 
 - **Share** — fires `Intent.ACTION_SEND` (`text/plain`) wrapped in `createChooser` so the system share sheet appears. Dismisses `AaSheet` on tap.
 - **Open in [browser]** — launches `Intent.ACTION_VIEW` targeting the user's stored preferred browser package. Falls back to the system chooser via a bare `ACTION_VIEW` on `ActivityNotFoundException`. The button label resolves the package to a human-readable app name via `PackageManager.getApplicationLabel`; shows "Open in browser" when no preference is set. When the stored preference is `""` (empty string), it means the user explicitly chose "Default browser" and no `setPackage` is applied, so the OS routes to the system default.
-- **Change** — opens an `AlertDialog` listing browsers available on the device. The list is built by querying `PackageManager.queryIntentActivities` with an HTTPS probe intent and **`flags=0`** (not `MATCH_DEFAULT_ONLY` — that flag returns only the current system default, so every other installed browser is invisible), then **filtering out Lumina's own package** (`com.firebolt9907.luminabrowser`) so the app does not appear as its own fallback. Hardcoded well-known entries (Default browser, Chrome, Firefox, Firefox Nightly) are pinned at the top of the list; each is included if its package appears in the query results *or* if `PackageManager.getApplicationInfo` confirms it is installed (the second check covers packages that are installed but don't surface via `queryIntentActivities` on some Android versions). "Default browser" (empty package) is always present. Any remaining dynamically discovered browsers follow in alphabetical order. If the user has picked a browser before, a **Recent** section (up to 5 entries) appears above a divider so prior choices are one tap away. Tapping any entry writes its package name (or `""` for Default) to `GlobalPreferencesStore`, adds it to the recent list, and immediately updates the button label.
+- **Change** — opens an `AlertDialog` listing browsers available on the device. The list is built by querying `PackageManager.queryIntentActivities` with an HTTPS probe intent and **`flags=0`** (not `MATCH_DEFAULT_ONLY` — that flag returns only the current system default, so every other installed browser is invisible), then **filtering out Tangent's own package** (`com.firebolt9907.tangentbrowser`) so the app does not appear as its own fallback. Hardcoded well-known entries (Default browser, Chrome, Firefox, Firefox Nightly) are pinned at the top of the list; each is included if its package appears in the query results *or* if `PackageManager.getApplicationInfo` confirms it is installed (the second check covers packages that are installed but don't surface via `queryIntentActivities` on some Android versions). "Default browser" (empty package) is always present. Any remaining dynamically discovered browsers follow in alphabetical order. If the user has picked a browser before, a **Recent** section (up to 5 entries) appears above a divider so prior choices are one tap away. Tapping any entry writes its package name (or `""` for Default) to `GlobalPreferencesStore`, adds it to the recent list, and immediately updates the button label.
 
 ### Add-ons tab
 
-Embeds `AddonsManagerSheetContent` (from `ui/addons/AddonsSheet.kt`) inline — no nested `ModalBottomSheet`. Shows the install field, the installed-addon list, and relays the `onOpenAddonSettings` callback back to `LuminaRoot` to open an extension's options page in a new tab. `AaSheet` receives `AddonController` directly and collects its state via `collectAsStateWithLifecycle` inside the tab content. The `initialTab: Int` parameter lets `LuminaRoot` open the sheet directly to the Add-ons tab if needed.
+Embeds `AddonsManagerSheetContent` (from `ui/addons/AddonsSheet.kt`) inline — no nested `ModalBottomSheet`. Shows the install field, the installed-addon list, and relays the `onOpenAddonSettings` callback back to `TangentRoot` to open an extension's options page in a new tab. `AaSheet` receives `AddonController` directly and collects its state via `collectAsStateWithLifecycle` inside the tab content. The `initialTab: Int` parameter lets `TangentRoot` open the sheet directly to the Add-ons tab if needed.
 
 ## Global preferences (`state/GlobalPreferencesStore.kt`)
 
-`GlobalPreferencesStore` holds app-wide (not per-host) user preferences, backed by the `lumina_global_prefs` `SharedPreferences` file. Keys:
+`GlobalPreferencesStore` holds app-wide (not per-host) user preferences, backed by the `tangent_global_prefs` `SharedPreferences` file. Keys:
 
 - `preferredBrowserPackage` — a nullable string. `null` = no preference set; `""` (empty string) = user explicitly chose "Default browser" (no package constraint on the intent); any other value is a package name.
 - `recentBrowserPackages` — a pipe-separated list of up to 5 package strings the user has previously selected from the Change picker (most-recent-first). `""` in the list represents "Default browser". Managed via `recordRecentBrowser(pkg: String)`, which prepends and caps at 5.
@@ -497,7 +497,7 @@ Embeds `AddonsManagerSheetContent` (from `ui/addons/AddonsSheet.kt`) inline — 
 - `httpsOnly: Boolean` (default `false`) — maps to `Engine.HttpsOnlyMode.ENABLED` vs `DISABLED`.
 - `globalPrivacyControl: Boolean` (default `false`) — maps to `GeckoEngine.settings.globalPrivacyControlEnabled`.
 
-No reactive flow is needed because browser-package values are only read when `AaSheet` opens. Engine settings are read at startup (see Engine section). Constructed once in `LuminaBrowserComponents` **before** the engine so `buildDefaultSettings` can read stored values at engine construction time.
+No reactive flow is needed because browser-package values are only read when `AaSheet` opens. Engine settings are read at startup (see Engine section). Constructed once in `TangentBrowserComponents` **before** the engine so `buildDefaultSettings` can read stored values at engine construction time.
 
 ## Settings sheet (`ui/settings/SettingsSheet.kt`)
 
@@ -506,13 +506,13 @@ No reactive flow is needed because browser-package values are only read when `Aa
 - **Privacy & Security** — Enhanced Tracking Protection, Global Privacy Control, HTTPS-Only Mode.
 - **Content** — Block Pop-ups, JavaScript.
 
-Each toggle writes to `GlobalPreferencesStore` and immediately calls `LuminaBrowserComponents.applyEngineSettings()`, which mutates `engine.settings` in place so the change takes effect for subsequent navigations without an app restart. The engine settings are also applied at startup via `buildDefaultSettings(globalPreferencesStore)` passed to the `GeckoEngine` constructor, so stored preferences survive process death.
+Each toggle writes to `GlobalPreferencesStore` and immediately calls `TangentBrowserComponents.applyEngineSettings()`, which mutates `engine.settings` in place so the change takes effect for subsequent navigations without an app restart. The engine settings are also applied at startup via `buildDefaultSettings(globalPreferencesStore)` passed to the `GeckoEngine` constructor, so stored preferences survive process death.
 
 ## Per-site top padding & zoom (`ui/content/ContentHost.kt`, `ui/content/PageBottomSpacer.kt`)
 
-`LuminaRoot` derives `currentSitePrefs` from the active host through the store, and `sitePrefsVersion` bumps on every `sitePrefsStore.updates` emission (not just the current host) so prefs changes for inactive tabs are reactive too. `ContentHost` accepts `topPaddingFixActive` and `pageZoomFactor`. When `topPaddingFixActive` is true the `EngineView` is wrapped with `Modifier.padding(top = topChromeInsetPx.toDp())` so it does not draw under the status bar, and `injectViewportSpacers` is called with `topPx = 0` and `skipHeaderInsets = true` — the JS still installs bottom spacing but does not add a second document-flow top spacer or run the fixed/sticky header walker. This makes the aA per-site switch a native viewport fallback for sites whose own header/layout scripts fight the injected safe-area edits. `injectPageZoom(factor)` sets `document.documentElement.style.zoom` (or empty string for 1.0) via a `javascript:` URL, called on FCP, load-complete, and through a `LaunchedEffect(pageZoomFactor)` so live changes from the sheet apply without a navigation.
+`TangentRoot` derives `currentSitePrefs` from the active host through the store, and `sitePrefsVersion` bumps on every `sitePrefsStore.updates` emission (not just the current host) so prefs changes for inactive tabs are reactive too. `ContentHost` accepts `topPaddingFixActive` and `pageZoomFactor`. When `topPaddingFixActive` is true the `EngineView` is wrapped with `Modifier.padding(top = topChromeInsetPx.toDp())` so it does not draw under the status bar, and `injectViewportSpacers` is called with `topPx = 0` and `skipHeaderInsets = true` — the JS still installs bottom spacing but does not add a second document-flow top spacer or run the fixed/sticky header walker. This makes the aA per-site switch a native viewport fallback for sites whose own header/layout scripts fight the injected safe-area edits. `injectPageZoom(factor)` sets `document.documentElement.style.zoom` (or empty string for 1.0) via a `javascript:` URL, called on FCP, load-complete, and through a `LaunchedEffect(pageZoomFactor)` so live changes from the sheet apply without a navigation.
 
-The top padding is bound to *each rendered view*, not just the live engine. A `topPadDpFor(url)` helper in `LuminaRoot` resolves any URL's host through the store and returns the inset in dp. Every transition snapshot (`adjacentSnapshot`, `movingCurrentSnapshot`, `incomingSnapshotBitmap`, `leavingSnapshotBitmap`, `stickyIncomingSnapshot`) applies `Modifier.padding(top = pad)` *before* its `graphicsLayer { translationX = … }` so the bitmap occupies the same lower region during a swipe that the live `EngineView` would, with `clip(switchPaneShape)` rounding the corners of that smaller area. The commit-time padding amounts are captured into `leavingSnapshotTopPadPx` / `incomingSnapshotTopPadPx` / `stickyIncomingTopPadPx` so the post-release slide uses the leaving and incoming tabs' actual settings even if the user has since navigated. Without this, tabs with the fix on showed a vertically-stretched or top-aligned bitmap at the start of every drag — the snapshot was captured at `screenH − topChromeInsetPx` but rendered at full screen height.
+The top padding is bound to *each rendered view*, not just the live engine. A `topPadDpFor(url)` helper in `TangentRoot` resolves any URL's host through the store and returns the inset in dp. Every transition snapshot (`adjacentSnapshot`, `movingCurrentSnapshot`, `incomingSnapshotBitmap`, `leavingSnapshotBitmap`, `stickyIncomingSnapshot`) applies `Modifier.padding(top = pad)` *before* its `graphicsLayer { translationX = … }` so the bitmap occupies the same lower region during a swipe that the live `EngineView` would, with `clip(switchPaneShape)` rounding the corners of that smaller area. The commit-time padding amounts are captured into `leavingSnapshotTopPadPx` / `incomingSnapshotTopPadPx` / `stickyIncomingTopPadPx` so the post-release slide uses the leaving and incoming tabs' actual settings even if the user has since navigated. Without this, tabs with the fix on showed a vertically-stretched or top-aligned bitmap at the start of every drag — the snapshot was captured at `screenH − topChromeInsetPx` but rendered at full screen height.
 
 ## Web dark mode (`ui/content/WebDarkMode.kt`, `engine/Engine.kt`, `ui/content/ContentHost.kt`)
 
@@ -539,7 +539,7 @@ and a **GPU-composited fallback tier** so most sites cost nothing and the rest c
 **Opt-in aggressive sub-mode** (`webDarkModeAggressive`, off by default) closes the one gap the cheap
 tier leaves — class-based (non-inline) CSS background images inverting into negatives — far more
 cheaply than DarkReader dynamic: a bounded (≤4000-element) `getComputedStyle` walk *tags* elements with
-a `url(...)` background (`[data-lumina-dark-bg]`, added to the re-invert selector) plus a rAF-batched
+a `url(...)` background (`[data-tangent-dark-bg]`, added to the re-invert selector) plus a rAF-batched
 `MutationObserver` that tags only newly-added subtrees. It tags once instead of recomputing every color
 on every mutation; gradients are left alone; the observer is disconnected on removal.
 
@@ -549,7 +549,7 @@ for live toggles/tab-swaps. The global trigger is `WebDarkModeTrigger {Off, On, 
 legacy boolean); `Auto` resolves against `isSystemInDarkTheme()` in the UI layer. A per-site override
 `SiteDarkMode {Default, On, Off}` (in `SitePreferences`, aA → Page Settings) resolves over the global
 value, so a site that looks wrong inverted can be excluded (or one force-darkened). The effective
-boolean feeds `ContentHost`'s existing `webDarkModeEnabled` param at both call sites (`LuminaRoot`,
+boolean feeds `ContentHost`'s existing `webDarkModeEnabled` param at both call sites (`TangentRoot`,
 `CustomTabRoot`). Controls: Settings picker (Off/On/Match system) + aggressive sub-toggle, aA quick
 toggle, aA Page-Settings per-site override. Pure script builders are JVM-tested (`WebDarkMode*Test`).
 
@@ -565,9 +565,9 @@ invert for pages that turn out genuinely dark or are media documents, so those n
 either; `getComputedStyle` reports real colors regardless of the CSS filter, so `pageIsDark` still
 works with the filter on. Reusing the Tier-2 class/id means the native FCP injection takes over
 seamlessly (no double-invert); the dynamic tier strips the pre-paint filter first (so a page isn't
-both inverted *and* recolored). Installed **once** at startup (`LuminaBrowserComponents.init`) and
+both inverted *and* recolored). Installed **once** at startup (`TangentBrowserComponents.init`) and
 enabled/disabled via `enable/disableWebExtension` to track the **global** resolved state
-(`LuminaRoot` `LaunchedEffect(webDarkModeActive)`) — the content script matches every page, so it
+(`TangentRoot` `LaunchedEffect(webDarkModeActive)`) — the content script matches every page, so it
 must only run while dark mode is globally on; it costs nothing when off. A per-site-Off page (dark
 mode globally on) still gets the pre-paint invert, so `injectSpacer` strips it per-load with a
 lightweight `removeWebDarkModePrePaint` (gated on `webDarkModeGloballyActive && !webDarkModeEnabled`,

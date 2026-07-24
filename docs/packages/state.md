@@ -7,28 +7,28 @@ Everything reactive that the UI reads. No Compose imports in this package — it
 ### `TabRepository.kt`
 Interface. Five operations (`selectTab`, `selectAdjacent`, `loadUrl`, `addTab`, `removeTab`) plus two observable flows (`tabs`, `selectedTabId`). Implemented by `GeckoTabRepository` in production and `MockTabRepository` for Compose previews.
 
-### `LuminaTab.kt`
-`data class LuminaTab(id, url, title)` — the UI-facing projection. `title` falls back to `compactHost(url)` when the page hasn't set one.
+### `TangentTab.kt`
+`data class TangentTab(id, url, title)` — the UI-facing projection. `title` falls back to `compactHost(url)` when the page hasn't set one.
 
 ### `GeckoTabRepository.kt`
 The real implementation. Owns:
 
-- `tabs: StateFlow<List<LuminaTab>>` — derived from `BrowserState.tabs` via `toLuminaTabs()`.
+- `tabs: StateFlow<List<TangentTab>>` — derived from `BrowserState.tabs` via `toTangentTabs()`.
 - `selectedTabId: StateFlow<String?>` — mirrors `BrowserState.selectedTabId`.
 - `previousSelectedTabId` — tracked manually so `dismissBlankTabAndReturn()` knows where to return to when the user backs out of a freshly-created blank tab.
-- `seedIfEmpty(tabs)` — called once by `LuminaBrowserComponents.init`.
-- `dismissBlankTabAndReturn()` — back-handler hook in `LuminaRoot`. No-op unless the current tab is `about:blank` *and* there's a known previous tab still in the store.
+- `seedIfEmpty(tabs)` — called once by `TangentBrowserComponents.init`.
+- `dismissBlankTabAndReturn()` — back-handler hook in `TangentRoot`. No-op unless the current tab is `about:blank` *and* there's a known previous tab still in the store.
 
 Three top-level utilities live here because everything URL-related goes through them:
 
 - `normalizeUrl(input)` — empty → `about:blank`; explicit scheme → pass through; host-like (`apple.com`, `localhost`, `localhost:3000`) → prepend `https://`; everything else → Google search.
 - `compactHost(url)` — `Uri.host` with `www.` stripped; falls back to the input if parsing yields nothing.
-- `BrowserState.toLuminaTabs()` (private extension) — projection used by the state-flow subscription.
+- `BrowserState.toTangentTabs()` (private extension) — projection used by the state-flow subscription.
 
 ### `MockTabRepository.kt`
 In-memory implementation used by `@Preview` composables. Singleton via `companion object instance`. Useful for testing layout changes to `SafariBar` without spinning up Gecko.
 
-### `LuminaViewModel.kt`
+### `TangentViewModel.kt`
 `AndroidViewModel`. Combines `repo.tabs`, `repo.selectedTabId`, an internal `mode: BarMode` flow, and an internal `editingText: String` flow into a single `BarUiState` exposed as `state: StateFlow<BarUiState>`.
 
 Exposes intent functions for the bar:
@@ -39,7 +39,7 @@ Exposes intent functions for the bar:
 - `dismissBlankTabAndReturn()` — delegates to the repo cast.
 - `onCreateTabFromEdge()` — used by the swipe-past-last-tab gesture; opens `about:blank` and immediately switches to `Editing` mode.
 
-Note: `LuminaRoot` reads `BrowserState` *directly* from the components graph, not through the ViewModel. The ViewModel only powers the bottom bar.
+Note: `TangentRoot` reads `BrowserState` *directly* from the components graph, not through the ViewModel. The ViewModel only powers the bottom bar.
 
 ### `BarUiState.kt`
 `data class BarUiState(displayUrl, tabCount, mode, editingText, compactDisplayUrl, pageUrl)` + `enum BarMode { Expanded, Compact, Editing }`.
@@ -52,14 +52,14 @@ Bitmap LRU (default 16 entries) backed by JPEG files in `cacheDir/tab_snapshots`
 - `get(id, url)` — non-blocking. Memory hit returns synchronously; miss schedules a background disk decode and returns `null`. Negative results are remembered to avoid repeated scheduling.
 - `put(id, bitmap, url)` — stores in memory immediately, writes JPEG (quality 84) on `Dispatchers.IO`, bumps `version` so Compose recomposes.
 - `remove(id, url)` — evicts memory + disk; flagged as a known miss.
-- `version: StateFlow<Int>` — collected by `LuminaRoot` so fresh captures appear during drag without waiting for unrelated state changes.
+- `version: StateFlow<Int>` — collected by `TangentRoot` so fresh captures appear during drag without waiting for unrelated state changes.
 
 Disk keys use the page URL when available (`v2:https://...`) and fall back to `v2:tab:{id}` for URL-less pages. The `v2:` prefix ignores old cache files written before URL-timing was tightened.
 
 `pruneDisk()` is throttled to once every 5 s.
 
 ### `SitePreferencesStore.kt`
-`SharedPreferences`-backed, keyed by host. Returns `SitePreferences(topPaddingFix, zoomFactor)`; `zoomFactor` is clamped to `[0.5, 2.0]`. Emits the changed host on `updates: SharedFlow<String>` so `LuminaRoot` can react to inactive-tab changes too.
+`SharedPreferences`-backed, keyed by host. Returns `SitePreferences(topPaddingFix, zoomFactor)`; `zoomFactor` is clamped to `[0.5, 2.0]`. Emits the changed host on `updates: SharedFlow<String>` so `TangentRoot` can react to inactive-tab changes too.
 
 `hostFromUrl(url)` is a convenience that yields `""` for `about:blank` / empty / non-host URLs — letting callers treat "no host" as "no prefs".
 
@@ -103,12 +103,12 @@ The speed-tuning layer (see the performance-tuning memory):
 An **organizational label** over open tabs, independent of the engine — grouping is *not* cookie
 isolation (see containers below).
 
-- `TabGroups.kt` — `LuminaTabGroup(id, name, color)` + `TabGroupColor` (GRAY / BLUE / CYAN / GREEN /
+- `TabGroups.kt` — `TangentTabGroup(id, name, color)` + `TabGroupColor` (GRAY / BLUE / CYAN / GREEN /
   YELLOW / ORANGE / RED / PINK / PURPLE). State-layer pure (no Compose); the UI maps each color to a
   swatch. Persisted by name; unknown/legacy names fall back to `BLUE`.
-- `TabGroupsRepository.kt` — owns the groups as `StateFlow<List<LuminaTabGroup>>`, with two-part
+- `TabGroupsRepository.kt` — owns the groups as `StateFlow<List<TangentTabGroup>>`, with two-part
   persistence mirroring how tab state is already split: the **registry** (id/name/color) is persisted
-  here to `lumina_tab_groups.json`, while **membership** rides per-tab in `TabPersistence`
+  here to `tangent_tab_groups.json`, while **membership** rides per-tab in `TabPersistence`
   (`PersistedTab.groupId`) because live tab ids are reassigned on restore — `GeckoTabRepository`
   re-links each via `assignRestored`. A tab belongs to at most one group; it drops out automatically
   when closed (the repo observes the store, so no ghost membership). Empty groups are kept — they're
@@ -124,7 +124,7 @@ fully separate from other containers and the default context.
 
 The canonical runtime state lives in `store.state.containers` (`Map<contextId, ContainerState>`,
 driven by `ContainerAction`). Because that map isn't part of the app's own tab persistence, this
-repository also persists the container **registry** to `lumina_containers.json` and re-registers it
+repository also persists the container **registry** to `tangent_containers.json` and re-registers it
 into the store on startup, so containers survive a process restart alongside the tabs that reference
 them (persisted `contextId`). Exposes `containers: StateFlow<List<ContainerState>>` plus
 `createContainer` / `removeContainer` / `containerFor`.
@@ -133,5 +133,5 @@ them (persisted `contextId`). Exposes `containers: StateFlow<List<ContainerState
 
 - New tab operation → add to `TabRepository`, implement in both impls.
 - New URL normalization rule → `normalizeUrl()`. Test against `apple.com`, `localhost:3000`, multi-word search input.
-- New per-site preference → add a field to `SitePreferences`, persist in `SitePreferencesStore`, wire UI in `ui/chrome/AaSheet.kt` and consumers in `ui/LuminaRoot.kt` / `ui/content/ContentHost.kt`.
+- New per-site preference → add a field to `SitePreferences`, persist in `SitePreferencesStore`, wire UI in `ui/chrome/AaSheet.kt` and consumers in `ui/TangentRoot.kt` / `ui/content/ContentHost.kt`.
 - New snapshot capture site → call `cache.put(id, bitmap, url)`; the version flow handles propagation.

@@ -5,13 +5,13 @@ you're editing — they explain *what lives where and how the pieces relate*, no
 reading the code. For the big picture first, read [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for the
 load-bearing invariants, [`AGENTS.md`](../../AGENTS.md).
 
-> The codebase still uses the project's original name, **Lumina**, in its package and class names.
-> The app is now **Expedition Browser**; a full code rename is pending.
+> The codebase still uses the project's original name, **Tangent**, in its package and class names.
+> The app is now **Tangent Browser**; a full code rename is pending.
 
 ## Non-UI layers
 
-- [`top-level.md`](top-level.md) — the two activities, their shared base, `LuminaApplication`, `IntentUrls`.
-- [`engine.md`](engine.md) — `engine/` — the DI root (`LuminaBrowserComponents`) + error-page interceptor.
+- [`top-level.md`](top-level.md) — the two activities, their shared base, `TangentApplication`, `IntentUrls`.
+- [`engine.md`](engine.md) — `engine/` — the DI root (`TangentBrowserComponents`) + error-page interceptor.
 - [`state.md`](state.md) — `state/` — tabs, bar state, snapshot cache, persistence, search, prefs, preloaders.
 - [`addons.md`](addons.md) — `addons/` — Firefox add-on install/manage.
 - [`sync.md`](sync.md) — `sync/` + `sync/zen/` — Firefox Sync, FxA, encrypted logins, Zen Spaces.
@@ -19,7 +19,7 @@ load-bearing invariants, [`AGENTS.md`](../../AGENTS.md).
 
 ## UI
 
-- [`ui-root.md`](ui-root.md) — `ui/` root — `LuminaRoot` and its extracted overlays, state holders, haptics, prompts.
+- [`ui-root.md`](ui-root.md) — `ui/` root — `TangentRoot` and its extracted overlays, state holders, haptics, prompts.
 - [`ui-chrome.md`](ui-chrome.md) — `ui/chrome/` — the SafariBar bottom pill, address sheet, aA sheet.
 - [`ui-content.md`](ui-content.md) — `ui/content/` — the single EngineView host, page JS injection, link/image glances, probes.
 - [`ui-grid.md`](ui-grid.md) — `ui/grid/` — the tab overview (deck / pixel / classic grid).

@@ -1,11 +1,11 @@
 # Self-Hosted FxA Push Bridge — Plan
 
-Run a self-hosted Mozilla **autopush** server in **FCM-bridge mode** so Lumina receives Firefox
+Run a self-hosted Mozilla **autopush** server in **FCM-bridge mode** so Tangent receives Firefox
 Sync "Send tab" pushes **instantly**, using your own Firebase project — with **no configuration in
 Mozilla accounts, Zen, or any sending device.**
 
 > Why this works with zero sender/Mozilla config: FxA stores each device's opaque WebPush endpoint
-> and simply `POST`s to it. Swapping *only Lumina's* endpoint to your server is invisible to FxA and
+> and simply `POST`s to it. Swapping *only Tangent's* endpoint to your server is invisible to FxA and
 > to every other device. See `AGENTS.md` → "Why FxA push doesn't work here" for the background.
 
 ---
@@ -14,18 +14,18 @@ Mozilla accounts, Zen, or any sending device.**
 
 ```
  Zen / Firefox ──sendCommandToDevice──► FxA (Mozilla, unchanged)
-                                             │  WebPush POST to the endpoint Lumina registered
+                                             │  WebPush POST to the endpoint Tangent registered
                                              ▼
                                    YOUR autopush  (autoendpoint, bridge mode)
                                              │  FCM HTTP v1 (your service account)
                                              ▼
-                                        Google FCM ──► Lumina on the phone
+                                        Google FCM ──► Tangent on the phone
 ```
 
 - **FxA / Mozilla accounts:** untouched, still Mozilla-hosted. You keep using real accounts.
 - **autopush (delivery only):** the single thing you run. Bridge mode → Google holds the device
   connections, your box only relays occasional sub-KB pushes. No persistent sockets to phones.
-- **Lumina:** the only client that changes — its `AutoPushFeature` points at your endpoint, so its
+- **Tangent:** the only client that changes — its `AutoPushFeature` points at your endpoint, so its
   subscription endpoint lives on your host.
 
 **Load reality:** hundreds of users = a few thousand tiny pushes/day, single-digit MB/day, sub-MB of
@@ -42,7 +42,7 @@ endpoint + the storage-backend dependency below.
 | **datastore** | autopush's persistence | autopush-rs targets **Bigtable**; see §4 for the homelab decision. |
 | `cloudflared` | public HTTPS ingress | Recommended for homelab: no port-forward, no static IP, free TLS. (Alt: Caddy/Traefik + a port-forward.) |
 
-> `autoconnect` (the WebSocket connection node, for desktop clients) is **not needed** — Lumina is an
+> `autoconnect` (the WebSocket connection node, for desktop clients) is **not needed** — Tangent is an
 > FCM client, so Google is the connection node.
 
 ---
@@ -63,7 +63,7 @@ autopush-rs (current) is built around **Google Bigtable**. Pick one:
 
 1. **Bigtable emulator** (`gcloud beta emulators bigtable`, shipped in the `cloud-sdk` image).
    Simplest to wire up, but **in-memory** — data is lost on restart. Consequence: on restart, stored
-   subscriptions vanish and FxA's saved endpoints go stale until each client re-registers (Lumina
+   subscriptions vanish and FxA's saved endpoints go stale until each client re-registers (Tangent
    re-registers/verifies on app launch, so it self-heals, but pushes in the gap fall back to
    polling). Acceptable for a hobby deployment if you rarely restart.
 2. **Persistent Bigtable-compatible store** — run the emulator with a persisted volume, or a
@@ -102,7 +102,7 @@ services:
       AUTOEND__CRYPTO_KEYS: "${AUTOPUSH_CRYPTO_KEY}"
       # --- FCM bridge: your Firebase service account ---
       AUTOEND__FCM__SERVER_CREDENTIALS: "/run/secrets/fcm-service-account.json"
-      AUTOEND__FCM__PROJECT_ID: "lumina-browser-ede5c"
+      AUTOEND__FCM__PROJECT_ID: "tangent-browser-ede5c"
       # --- datastore: point at the emulator (or your persistent store) ---
       BIGTABLE_EMULATOR_HOST: "bigtable-emulator:8086"
       AUTOEND__DB_DSN: "grpc://bigtable-emulator:8086"   # verify exact form per version
@@ -123,7 +123,7 @@ services:
 
 ---
 
-## 6. Client change in Lumina
+## 6. Client change in Tangent
 
 One line in `FirefoxSyncController.initPush()` — point `AutoPushFeature` at your server instead of
 Mozilla's default (`updates.push.services.mozilla.com`):
@@ -131,7 +131,7 @@ Mozilla's default (`updates.push.services.mozilla.com`):
 ```kotlin
 val push = AutoPushFeature(
     context = application,
-    service = LuminaFirebasePushService(),
+    service = TangentFirebasePushService(),
     config = PushConfig(
         senderId = senderId,
         server = "push.yourdomain.com",   // your autopush host (default was Mozilla's)
@@ -151,14 +151,14 @@ server is ever down (`AGENTS.md` → "Receiving Send tab").
 
 1. **Bring up the stack**, confirm `autoendpoint` is healthy and reachable at
    `https://push.yourdomain.com` through the tunnel.
-2. **Launch Lumina** → its registration `POST /v1/fcm/<app_id>/registration` should hit
+2. **Launch Tangent** → its registration `POST /v1/fcm/<app_id>/registration` should hit
    `autoendpoint` (watch its logs) and return a subscription whose endpoint is on **your** host.
 3. **Confirm FxA accepted it** — the biggest unknown. Check that `currentDevice.subscription` is
-   now non-null with an endpoint on your domain (reuse the temporary `LuminaSendTab` diagnostic that
+   now non-null with an endpoint on your domain (reuse the temporary `TangentSendTab` diagnostic that
    logged `FxA currentDevice sub=…`, or re-add it briefly). *If FxA rejects a non-Mozilla endpoint
    domain, stop here — that kills the approach, and you fall back to polling.*
 4. **Send a tab from Zen** → FxA should `POST` to your endpoint (autoendpoint logs show an incoming
-   WebPush) → FCM relay → Lumina shows the banner/notification within a second or two.
+   WebPush) → FCM relay → Tangent shows the banner/notification within a second or two.
 5. **Kill the container**, send another tab → confirm the **polling fallback** still delivers it
    within ~25 s while foreground (proves graceful degradation).
 

@@ -39,7 +39,7 @@ Posts the system notification for a "Send tab" push. Tapping it launches `MainAc
 vanilla Firefox: a received tab surfaces as a notification the user chooses to open, never silently
 stealing the foreground.
 
-### `LuminaFirebasePushService.kt`
+### `TangentFirebasePushService.kt`
 The FCM entry point for FxA push. The Android system instantiates it for incoming messages and the
 base class forwards each to the installed `PushProcessor` (`AutoPushFeature`). **Inert on a personal
 Firebase project** — see `AGENTS.md` for why; kept isolated so a future self-hosted autopush needs

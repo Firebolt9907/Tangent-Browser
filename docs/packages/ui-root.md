@@ -1,32 +1,32 @@
-# `ui/` (root) — `LuminaRoot` and its extracted pieces
+# `ui/` (root) — `TangentRoot` and its extracted pieces
 
 The `ui/` package root holds the main composable and the files progressively extracted out of it. The
-architecture here is deliberate: `LuminaRoot` is a large stateful gesture orchestrator, and the way it
+architecture here is deliberate: `TangentRoot` is a large stateful gesture orchestrator, and the way it
 stays maintainable is by moving **state into holder objects** and **render blocks into their own
 files**, each of which reads that state without owning gesture logic. If you're adding UI, extract it
-the same way rather than growing `LuminaRoot`.
+the same way rather than growing `TangentRoot`.
 
 Read [`AGENTS.md`](../../AGENTS.md) invariants #1, #4, #5, #7 before touching anything here — the
 gesture/snapshot state splits are load-bearing.
 
 ## The orchestrator
 
-### `LuminaRoot.kt` (~3,000 lines)
+### `TangentRoot.kt` (~3,000 lines)
 The whole main-browser UI and *all* of its gesture orchestration: bar scroll-collapse, horizontal
 tab-switch, swipe-up-to-grid, predictive back, snapshot capture/cover sequencing, new-tab-from-edge,
 pull-to-refresh, and the wiring of every overlay and sheet. It reads `BrowserState` directly from the
-components graph (the `LuminaViewModel` only powers the bar). Most of its bulk is the gesture math and
+components graph (the `TangentViewModel` only powers the bar). Most of its bulk is the gesture math and
 the `remember`/`LaunchedEffect` state machine; the rendered surfaces are delegated to the files below.
 
-### `LuminaRootHelpers.kt` / `LuminaRootTuning.kt`
-`LuminaRootHelpers` holds small non-composable helpers pulled out of the root. `LuminaRootTuning`
+### `TangentRootHelpers.kt` / `TangentRootTuning.kt`
+`TangentRootHelpers` holds small non-composable helpers pulled out of the root. `TangentRootTuning`
 holds the tuning constants (spring stiffnesses, overscroll falloff fractions, thresholds) — the knobs
 you'd tweak to change feel, gathered in one place instead of scattered as magic numbers.
 
 ## State holders (the refactor that made extraction possible)
 
 Each groups a large cluster of the root's closed-over local state into one object whose fields are
-`MutableState` / `Animatable`, so `LuminaRoot` keeps local reactivity while the render blocks that
+`MutableState` / `Animatable`, so `TangentRoot` keeps local reactivity while the render blocks that
 consume the cluster can be extracted without threading two dozen parameters.
 
 - **`SnapshotCoverState.kt`** — the ~24-field tab-switch / predictive-back snapshot + sticky-cover
@@ -37,7 +37,7 @@ consume the cluster can be extracted without threading two dozen parameters.
 
 ## Extracted render blocks (pure, stateless consumers)
 
-Each was lifted verbatim from `LuminaRoot`'s composition tree; each reads a state holder (and, where
+Each was lifted verbatim from `TangentRoot`'s composition tree; each reads a state holder (and, where
 noted, keeps per-frame reads in the layout/draw phase for performance) and owns no gesture logic.
 
 - **`SwitchSnapshotCovers.kt`** — the tab-switch / predictive-back cover stack: sticky-incoming cover,
@@ -56,7 +56,7 @@ noted, keeps per-frame reads in the layout/draw phase for performance) and owns 
   downloads / passwords / settings). Pure chrome, no gesture/snapshot invariants.
 - **`BottomBarLayer.kt`** — the Arc/Zen-style pull-refresh indicator (a thin centre-out line) plus the
   full-width bottom bar layer host.
-- **`LuminaOverlaySheets.kt`** — hosts *all* of the root's modal sheets and floating overlays that are
+- **`TangentOverlaySheets.kt`** — hosts *all* of the root's modal sheets and floating overlays that are
   independent of the tab overview: Settings / History / Bookmarks / Downloads / Passwords / Add-ons /
   Synced-tabs / the aA sheet, plus the site-permission and prompt dialogs, the standalone
   `UtilityWebCard`, the `LinkPeekCard` link glance, and the image context sheet.
@@ -76,19 +76,19 @@ noted, keeps per-frame reads in the layout/draw phase for performance) and owns 
 
 ## Small utilities
 
-- **`LuminaHaptics.kt`** — a vocabulary of *semantic* haptics routed through the raw `Vibrator` (see
+- **`TangentHaptics.kt`** — a vocabulary of *semantic* haptics routed through the raw `Vibrator` (see
   [semantic-haptics memory]; Compose's `HapticFeedback` only exposes sharp taps, so every gesture felt
   identical). Respects the system haptics toggle; needs `VIBRATE`.
 - **`ShareUrl.kt`** — the single system-share-sheet path behind every share affordance; no-ops on
   blank/`about:blank`; adds `NEW_TASK` when the context isn't an Activity.
 - **`FullscreenSystemBars.kt`** — hides/restores the system bars for fullscreen video; shared by
-  `LuminaRoot` and `CustomTabRoot`.
+  `TangentRoot` and `CustomTabRoot`.
 
 ## When to touch this package
 
 - New overlay/surface → add a state holder field (or a new holder) + a new extracted render-block
-  file; wire it from `LuminaRoot`. Don't inline it into the composable.
-- Changing gesture feel → `LuminaRootTuning.kt` constants first.
+  file; wire it from `TangentRoot`. Don't inline it into the composable.
+- Changing gesture feel → `TangentRootTuning.kt` constants first.
 - New engine prompt type → `PromptHandler` (routing) + `PromptDialogs` (UI).
 - Anything touching snapshot covers or grid/horizontal drag → re-read the invariants in `AGENTS.md`;
   these are exactly the places subtle regressions hide.

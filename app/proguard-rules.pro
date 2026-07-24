@@ -20,7 +20,7 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
-# Mozilla Nimbus references optional Glean telemetry classes. Lumina does not
+# Mozilla Nimbus references optional Glean telemetry classes. Tangent does not
 # initialize Glean yet, so these are safe to ignore for local release builds.
 -dontwarn mozilla.telemetry.glean.Glean
 -dontwarn mozilla.telemetry.glean.GleanInternalAPI

@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Resolve the shipping source relative to this tool, so the harness is portable.
-const KT = path.resolve(__dirname, '../../app/src/main/java/com/firebolt9907/luminabrowser/ui/content/PageBottomSpacer.kt');
+const KT = path.resolve(__dirname, '../../app/src/main/java/com/firebolt9907/tangentbrowser/ui/content/PageBottomSpacer.kt');
 
 function buildViewportSpacerScript(topPx, skipHeaderInsets) {
   const src = fs.readFileSync(KT, 'utf8');

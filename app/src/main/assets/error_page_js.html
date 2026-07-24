@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <!--
-  Branded error page for failed navigations, served by LuminaRequestInterceptor via
+  Branded error page for failed navigations, served by TangentRequestInterceptor via
   ErrorPages.createUrlEncodedErrorPage (browser-errorpages). The component loads this file as
   resource://android/assets/error_page_js.html with the localized text passed as query params:
     title, description, button, errorCode  (plus advanced-cert params we intentionally ignore).
-  LuminaRequestInterceptor appends extra detail of its own:
+  TangentRequestInterceptor appends extra detail of its own:
     host / failedUrl / errorName  (the failing site + technical error type), and, on Android 12+,
     accentLight / accentOnLight / accentDark / accentOnDark  (the device's Material You accent; the
     script picks per color scheme).
@@ -220,7 +220,7 @@
       }
       renderDescription(params.get("description"));
 
-      // Follow the device's Material You accent (passed by LuminaRequestInterceptor on Android 12+).
+      // Follow the device's Material You accent (passed by TangentRequestInterceptor on Android 12+).
       // Pick the light/dark variant from the system color scheme; if the params are absent the CSS
       // keeps its built-in blue fallback. Re-picks live if the system theme flips.
       if (window.matchMedia) {

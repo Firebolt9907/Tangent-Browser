@@ -1,4 +1,4 @@
-# Expedition Browser
+# Tangent Browser
 
 An Android web browser with an iOS Safari–style bottom URL/tab pill, powered by Mozilla
 GeckoView. Single-window, Jetpack-Compose-only, no chrome at the top of the screen — pages render
@@ -8,10 +8,10 @@ edge-to-edge under the status bar.
 > runs, but it is not on any app store and the release build is signed with a local debug keystore
 > (not distribution-ready). Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 >
-> **Naming note:** the app is *Expedition Browser*, but the codebase namespace and internal
-> identifiers still use the project's original name, *Lumina* (package
-> `com.firebolt9907.luminabrowser`, classes like `LuminaRoot`, `LuminaApplication`). A full code
-> rename hasn't happened yet — when you see "Lumina" in source paths or symbols, that's Expedition.
+> **Naming note:** the app is *Tangent Browser* throughout — package
+> `com.firebolt9907.tangentbrowser`, classes like `TangentRoot`, `TangentApplication`. It was
+> formerly named *Lumina* and briefly *Expedition*; the `firebolt9907` package segment is the
+> original author handle and is kept.
 
 ## What it does
 
@@ -29,7 +29,7 @@ edge-to-edge under the status bar.
   while GeckoView rebinds its single surface.
 - **Reader mode** — content extraction with a per-site include/strip rules engine.
 - **Custom Tabs** — links opened from other apps land in a separate slim surface
-  (`CustomTabActivity`), not your main tab set; "Open in Expedition" migrates them to a real tab.
+  (`CustomTabActivity`), not your main tab set; "Open in Tangent" migrates them to a real tab.
 - **Downloads, history, bookmarks** with their own Compose sheets.
 - **Passkeys / WebAuthn** via GeckoView's native FIDO2 / Credential Manager integration.
 - **Video fullscreen** and **per-site preferences** (page zoom, opt-in status-bar top-padding fix).
@@ -77,10 +77,10 @@ Notes:
 ## Repo layout
 
 ```
-app/src/main/java/com/firebolt9907/luminabrowser/
-├── LuminaApplication.kt        # Application; owns the components (DI) graph
-├── LuminaBrowserActivity.kt    # Shared activity base (lifecycle, delegates, downloads)
-├── MainActivity.kt             # The browser — hosts LuminaRoot (singleTask, launcher)
+app/src/main/java/com/firebolt9907/tangentbrowser/
+├── TangentApplication.kt        # Application; owns the components (DI) graph
+├── TangentBrowserActivity.kt    # Shared activity base (lifecycle, delegates, downloads)
+├── MainActivity.kt             # The browser — hosts TangentRoot (singleTask, launcher)
 ├── CustomTabActivity.kt        # External VIEW/SEND links — hosts CustomTabRoot (own task)
 ├── IntentUrls.kt               # Shared intent-URL parsing
 ├── engine/                     # GeckoEngine + BrowserStore DI graph
@@ -90,7 +90,7 @@ app/src/main/java/com/firebolt9907/luminabrowser/
 ├── service/                    # Custom Tabs service, keep-alive foreground service
 ├── sync/                       # Firefox Sync, FxA, encrypted logins; sync/zen = Zen Spaces
 └── ui/
-    ├── LuminaRoot.kt           # Main composable — all gesture orchestration
+    ├── TangentRoot.kt           # Main composable — all gesture orchestration
     ├── chrome/                 # SafariBar — Pill / Expanded / Compact / Editing / aA sheet
     ├── content/                # ContentHost — the single EngineView + capture pipeline
     ├── grid/                   # Tab overview (deck / pixel / classic grid)
@@ -120,7 +120,7 @@ gesture, and sync regressions.
 
 ## License
 
-[GPL-3.0](LICENSE). Expedition builds on Mozilla GeckoView and `mozilla-components` (MPL-2.0), which
-remain under their own licenses. You are free to use, study, modify, and redistribute Expedition; if
+[GPL-3.0](LICENSE). Tangent builds on Mozilla GeckoView and `mozilla-components` (MPL-2.0), which
+remain under their own licenses. You are free to use, study, modify, and redistribute Tangent; if
 you distribute a modified version, it must stay open under the GPL.
 ```

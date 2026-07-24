@@ -28,7 +28,7 @@ two app-specific hooks worth knowing:
   platform (not from `MaterialTheme.colorScheme.primary`), so it stays the *true* system color even
   when the in-app primary has been repainted (below). Pre-Android-12 devices fall back to the brand
   primary.
-- **`siteColor` override** — `LuminaBrowserTheme` can repaint the in-app primary toward a page's
+- **`siteColor` override** — `TangentBrowserTheme` can repaint the in-app primary toward a page's
   declared theme color / the user's accent. This powers the "Tint pages to my system color" boost,
   whose draw-time overlay lives in `ui/content/SiteTint.kt`. So the theme is *not* purely static;
   changing color roles here can interact with that override.

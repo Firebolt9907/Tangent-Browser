@@ -9,7 +9,7 @@
 
 ## Goal
 
-When Lumina is opened by an **external intent** (a link from another app: `ACTION_VIEW`,
+When Tangent is opened by an **external intent** (a link from another app: `ACTION_VIEW`,
 or a shared URL via `ACTION_SEND`), the URL should open in an **ephemeral / isolated tab** that:
 
 1. **Attempts reader mode** automatically (opens straight into reader when the page is eligible).
@@ -25,7 +25,7 @@ without polluting the user's real tab set, and keep it only if they choose to.
 ## Current architecture (verified anchors)
 
 - **Intent entry point:** `MainActivity.handleIncomingIntent(intent)`
-  (`app/src/main/java/com/firebolt9907/luminabrowser/MainActivity.kt:126`) →
+  (`app/src/main/java/com/firebolt9907/tangentbrowser/MainActivity.kt:126`) →
   currently `app.components.tabRepository.addTab(url = url, title = "")` (line 129).
   `extractUrl` handles `ACTION_VIEW` (dataString) and `ACTION_SEND` (EXTRA_TEXT → first URL).
   Called from `onCreate` only on fresh start (`savedInstanceState == null`, line 84) and from
@@ -34,7 +34,7 @@ without polluting the user's real tab set, and keep it only if they choose to.
 - **Tab model / persistence:** `state/GeckoTabRepository.kt` wraps mozilla-components `BrowserStore`.
   - `addTab(url, title)` (line 136) and `addPreparedTab(...)` (line 139) create tabs via `TabsUseCases`.
   - `schedulePersist()` (line 97) writes a debounced snapshot of `store.state.tabs`
-    (filtered to non-blank URLs) to disk via `TabPersistence` (`lumina_tabs.json`).
+    (filtered to non-blank URLs) to disk via `TabPersistence` (`tangent_tabs.json`).
     **This is the single place that decides what is "saved."** Excluding a tab id here makes it
     unsaved.
   - `storeSubscription` (line 46) mirrors `store.state` into `_tabs` / `_selectedTabId` StateFlows
@@ -48,13 +48,13 @@ without polluting the user's real tab set, and keep it only if they choose to.
     reader mode" for a freshly opened tab.
   - Reader auto-engages by default on any eligible page unless the host is opted out
     (`SitePreferencesStore.isReaderAutoDisabled`); see the `LaunchedEffect(eligibleReaderTabs)` in
-    `LuminaRoot.kt:422`. So for article pages reader will come up even without an explicit request,
+    `TangentRoot.kt:422`. So for article pages reader will come up even without an explicit request,
     but requesting activation makes the intent case deterministic and covers the pending window.
 
 - **Chrome / tab bar:** `ui/chrome/SafariBar.kt` (`fun SafariBar` line 28) → renders
   `BarExpanded` / `BarPill` / `BarCompact` / `BarEditing`. Reader state is already threaded through as
   `isReaderEligible` / `isReaderActive` (SafariBar params line 47-48; BarExpanded line 59-60). Add the
-  "Open" affordance the same way. **Four `SafariBar(` call sites** in `LuminaRoot.kt` (lines 2786,
+  "Open" affordance the same way. **Four `SafariBar(` call sites** in `TangentRoot.kt` (lines 2786,
   2811, 2834, 2861) — the compact/expanded/editing variants; update the relevant ones.
   - ⚠️ Respect `AGENTS.md` invariants #2, #3, #12: `BarPill` uses `startDragImmediately = false`;
     do NOT gate `BarPill.pointerInput` on any new flag; compact mode is tap-only. Put the "Open"
@@ -62,10 +62,10 @@ without polluting the user's real tab set, and keep it only if they choose to.
     pill's drag machinery.
 
 - **Grid tab list:** `ui/grid/Grid.kt` takes `tabs: List<GridTab>` (line 112). The list is built in
-  `LuminaRoot.kt` around the `GridTab(` construction (line ~2304) from the repo's tab list.
+  `TangentRoot.kt` around the `GridTab(` construction (line ~2304) from the repo's tab list.
 
-- **Selection / new-tab plumbing:** `LuminaViewModel.onOpenNewTab(...)` (line 104),
-  `selectCreatedTab(...)` (line 98); `LuminaRoot.openTabToRight(...)` (line 1001). Use these as
+- **Selection / new-tab plumbing:** `TangentViewModel.onOpenNewTab(...)` (line 104),
+  `selectCreatedTab(...)` (line 98); `TangentRoot.openTabToRight(...)` (line 1001). Use these as
   reference for how a created tab id flows into selection.
 
 - **Firefox Sync:** local open tabs are published to Firefox Sync via the mozilla-components Tabs
@@ -110,7 +110,7 @@ fun promoteTab(id: String) {
 fun discardEphemeralTab(id: String) {
     if (_ephemeralTabIds.value.contains(id)) {
         _ephemeralTabIds.update { it - id }
-        com.firebolt9907.luminabrowser.ui.reader.ReaderManager.instance.clearReaderState(id)
+        com.firebolt9907.tangentbrowser.ui.reader.ReaderManager.instance.clearReaderState(id)
         removeTab(id)
     }
 }
@@ -150,7 +150,7 @@ Confirm ordering so the ephemeral tab is added after restore and ends up selecte
 
 ### 3. "Open" affordance in the chrome bar
 
-- In `LuminaRoot`: collect `val ephemeralTabIds by components.tabRepository.ephemeralTabIds
+- In `TangentRoot`: collect `val ephemeralTabIds by components.tabRepository.ephemeralTabIds
   .collectAsStateWithLifecycle()` and derive
   `val isSelectedTabEphemeral = selectedTabId != null && selectedTabId in ephemeralTabIds`.
 - Thread two new params through `SafariBar` → `BarExpanded`:
@@ -167,7 +167,7 @@ show a one-line hint ("Tap Open to keep this tab"). Flag with the user.
 
 ### 4. Lifecycle / discard rules
 
-Implement in `LuminaRoot` (or the repo) — an ephemeral tab that is never promoted must not linger:
+Implement in `TangentRoot` (or the repo) — an ephemeral tab that is never promoted must not linger:
 
 - **On selection moving away:** if the previously-selected tab was ephemeral and still unpromoted,
   discard it. Watch `selectedTabId` changes; when it changes away from an ephemeral id that is still in
@@ -197,7 +197,7 @@ Concrete changes:
 - `MainActivity.handleIncomingIntent`: routes external intents to `addEphemeralTab` +
   `ReaderManager.requestReaderActivation`.
 - `SafariBar`/`BarExpanded`: new `isEphemeral`/`onOpenTab`; "Open" button rendered when ephemeral.
-- `LuminaRoot`: collects `ephemeralTabIds`, derives `isSelectedTabEphemeral`, wires `promoteTab`,
+- `TangentRoot`: collects `ephemeralTabIds`, derives `isSelectedTabEphemeral`, wires `promoteTab`,
   and discards the prior ephemeral tab on selection-change.
 
 ## Open decisions (confirm with the user before/while implementing)
@@ -242,7 +242,7 @@ Concrete changes:
 ## Manual verification
 
 - `adb shell am start -a android.intent.action.VIEW -d "https://arstechnica.com/<an-article>"
-  -n com.firebolt9907.luminabrowser/.MainActivity` → opens in reader, shows "Open", not persisted.
+  -n com.firebolt9907.tangentbrowser/.MainActivity` → opens in reader, shows "Open", not persisted.
 - Kill/relaunch app without pressing "Open" → tab is gone.
 - Press "Open" → tab persists across relaunch and appears as a normal tab.
 - Fire a second intent while an ephemeral tab is open → previous ephemeral tab is replaced.
@@ -258,5 +258,5 @@ Concrete changes:
 - `state/TabRepository.kt` (interface methods) — verify exact path/name
 - `MainActivity.kt` (intent routing + reader request)
 - `ui/chrome/SafariBar.kt`, `ui/chrome/BarExpanded.kt` (the "Open" button + params)
-- `ui/LuminaRoot.kt` (collect ephemeral state, wire `onOpenTab`, lifecycle discard, optional grid filter)
+- `ui/TangentRoot.kt` (collect ephemeral state, wire `onOpenTab`, lifecycle discard, optional grid filter)
 - (Maybe) `ui/reader/ReaderModeState.kt` — no change expected; reuse `requestReaderActivation`.

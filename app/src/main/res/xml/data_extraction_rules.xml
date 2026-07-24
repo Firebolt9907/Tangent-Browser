@@ -4,29 +4,29 @@
    Everything is backed up/transferred by default; we exclude the credential and Firefox-Sync
    session material from BOTH cloud backup and direct device-to-device transfer so it is never
    copied off the device that generated it:
-     - lumina_logins.db (+ WAL/SHM) — the encrypted PlacesLoginsStorage password database. Its AES
+     - tangent_logins.db (+ WAL/SHM) — the encrypted PlacesLoginsStorage password database. Its AES
        key lives in the AndroidKeyStore (device-bound, not backed up or transferred), so a copied
        database is undecryptable anyway; excluding it avoids shipping credential ciphertext.
      - fxaStateAC.xml — android-components' default SharedPrefAccountStorage file holding the FxA
        account/session state (OAuth + sync keys); excluding it stops a restored/transferred copy
        from carrying an authenticated sync session.
-     - lumina_logins_key.xml — holds the logins DB key sealed under a device-bound AndroidKeyStore
+     - tangent_logins_key.xml — holds the logins DB key sealed under a device-bound AndroidKeyStore
        key. The seal is useless off-device (the wrapping key isn't backed up/transferred), but we
        exclude the credential-key ciphertext anyway, matching the DB exclusion above.
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <exclude domain="database" path="lumina_logins.db" />
-        <exclude domain="database" path="lumina_logins.db-wal" />
-        <exclude domain="database" path="lumina_logins.db-shm" />
+        <exclude domain="database" path="tangent_logins.db" />
+        <exclude domain="database" path="tangent_logins.db-wal" />
+        <exclude domain="database" path="tangent_logins.db-shm" />
         <exclude domain="sharedpref" path="fxaStateAC.xml" />
-        <exclude domain="sharedpref" path="lumina_logins_key.xml" />
+        <exclude domain="sharedpref" path="tangent_logins_key.xml" />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="database" path="lumina_logins.db" />
-        <exclude domain="database" path="lumina_logins.db-wal" />
-        <exclude domain="database" path="lumina_logins.db-shm" />
+        <exclude domain="database" path="tangent_logins.db" />
+        <exclude domain="database" path="tangent_logins.db-wal" />
+        <exclude domain="database" path="tangent_logins.db-shm" />
         <exclude domain="sharedpref" path="fxaStateAC.xml" />
-        <exclude domain="sharedpref" path="lumina_logins_key.xml" />
+        <exclude domain="sharedpref" path="tangent_logins_key.xml" />
     </device-transfer>
 </data-extraction-rules>

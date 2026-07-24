@@ -1,11 +1,11 @@
-# Contributing to Expedition Browser
+# Contributing to Tangent Browser
 
-Thanks for your interest! Expedition is a Compose + GeckoView Android browser. This guide covers how
+Thanks for your interest! Tangent is a Compose + GeckoView Android browser. This guide covers how
 to build it, the conventions to follow, and the invariants you must not break.
 
-> The codebase still uses the project's original name, *Lumina*, in its package namespace
-> (`com.firebolt9907.luminabrowser`) and class names (`LuminaRoot`, `LuminaApplication`, …). Those
-> symbols are Expedition — a full code rename is pending.
+> The codebase still uses the project's original name, *Tangent*, in its package namespace
+> (`com.firebolt9907.tangentbrowser`) and class names (`TangentRoot`, `TangentApplication`, …). Those
+> symbols are Tangent — a full code rename is pending.
 
 ## Getting set up
 
@@ -14,7 +14,7 @@ Requirements: a recent **Android Studio** (or the command-line SDK), **JDK 17+**
 
 ```sh
 git clone <your-fork-url>
-cd LuminaBrowser
+cd TangentBrowser
 ./gradlew :app:installDebug          # build + install the debug APK
 ./gradlew :app:test                  # JVM unit tests
 ```
@@ -41,7 +41,7 @@ line of code looks strange, search `AGENTS.md` and [`IMPLEMENTATION.md`](IMPLEME
   `state/GeckoTabRepository.kt`. Do not add a second normalization path.
 - **New JavaScript injection sites** must respect the `suppressJavascriptLoadCallback` guard in
   `ContentHost`.
-- Prefer small, focused composables. `LuminaRoot.kt` is large and being incrementally decomposed —
+- Prefer small, focused composables. `TangentRoot.kt` is large and being incrementally decomposed —
   new UI should generally be extracted into its own file rather than added inline.
 
 ## Submitting changes

@@ -1,6 +1,6 @@
 # Security Policy
 
-Expedition Browser is a web browser: it handles untrusted content, stores encrypted credentials, and
+Tangent Browser is a web browser: it handles untrusted content, stores encrypted credentials, and
 integrates with Firefox Sync. Security reports are taken seriously.
 
 ## Reporting a vulnerability
@@ -21,7 +21,7 @@ allow reasonable time for a fix before any public disclosure.
 ## Scope and caveats
 
 - **Not distribution-hardened.** Release builds are signed with a local **debug** keystore and
-  minification/shrinking are off. Expedition is not published to any store. Treat self-built APKs
+  minification/shrinking are off. Tangent is not published to any store. Treat self-built APKs
   accordingly.
 - **Credentials** are stored via Mozilla's `PlacesLoginsStorage` (encrypted at rest). Sync data uses
   the Sync 1.5 crypto path; keys are derived from the Firefox account and never committed.

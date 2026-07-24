@@ -1,8 +1,8 @@
 # `engine/` — Components graph
 
-The DI root (`Engine.kt` = `LuminaBrowserComponents`), plus `LuminaRequestInterceptor.kt`.
+The DI root (`Engine.kt` = `TangentBrowserComponents`), plus `TangentRequestInterceptor.kt`.
 
-`LuminaApplication.components` lazily constructs an instance; everything downstream pulls its dependencies from there. Construction order matters and is fixed.
+`TangentApplication.components` lazily constructs an instance; everything downstream pulls its dependencies from there. Construction order matters and is fixed.
 
 ```
 GeckoEngine
@@ -25,7 +25,7 @@ Alongside those:
 
 `scope` is `SupervisorJob() + Dispatchers.Main.immediate` — used by the addon controller for state updates that must reach Compose without a thread bounce.
 
-## `LuminaRequestInterceptor.kt`
+## `TangentRequestInterceptor.kt`
 
 Serves a branded, localized error page for failed navigations (no connection, DNS failure, timeout, bad cert…) instead of GeckoView's raw built-in page — the same approach Fenix uses. The HTML lives in `assets/error_page_js.html`; `ErrorPages.createUrlEncodedErrorPage` fills it with the localized strings `browser-errorpages` ships per `ErrorType`.
 

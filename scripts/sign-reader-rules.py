@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Sign the reader-rules file for Lumina's remote update channel.
+Sign the reader-rules file for Tangent's remote update channel.
 
 Produces exactly what ReaderRules.verifyEd25519 expects:
   - PUBLIC_KEY_B64  = base64 of the raw 32-byte Ed25519 public key  -> paste into ReaderRules.kt
   - reader_rules.json.sig = base64 of the raw 64-byte signature over the exact bytes of
     reader_rules.json -> commit + push alongside reader_rules.json in the rules repo
 
-The PRIVATE key is generated once and kept OUTSIDE any repo (default ~/.config/lumina). Never commit
+The PRIVATE key is generated once and kept OUTSIDE any repo (default ~/.config/tangent). Never commit
 it and never put it in CI — that is the whole point of signing (repo write-access must not be enough
 to forge rules).
 
@@ -15,11 +15,11 @@ Usage:
     python3 scripts/sign-reader-rules.py [RULES_REPO_DIR]
 
     RULES_REPO_DIR   path to your local rules repo clone (the folder containing reader_rules.json).
-                     Defaults to $LUMINA_RULES_REPO, else ../lumina-reader-rules.
+                     Defaults to $TANGENT_RULES_REPO, else ../tangent-reader-rules.
 
 Env overrides:
-    LUMINA_RULES_REPO   default rules repo dir
-    LUMINA_RULES_KEY    private-key file path (default ~/.config/lumina/reader-rules-ed25519.key)
+    TANGENT_RULES_REPO   default rules repo dir
+    TANGENT_RULES_KEY    private-key file path (default ~/.config/tangent/reader-rules-ed25519.key)
 
 Requires: pip install cryptography
 """
@@ -63,8 +63,8 @@ def load_or_create_key(key_path: str) -> Ed25519PrivateKey:
 def main() -> None:
     repo_dir = (
         (sys.argv[1] if len(sys.argv) > 1 else None)
-        or os.environ.get("LUMINA_RULES_REPO")
-        or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lumina-reader-rules")
+        or os.environ.get("TANGENT_RULES_REPO")
+        or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tangent-reader-rules")
     )
     repo_dir = os.path.abspath(repo_dir)
     rules_path = os.path.join(repo_dir, "reader_rules.json")
@@ -74,8 +74,8 @@ def main() -> None:
         sys.exit(f"error: {rules_path} not found (pass the rules repo dir as the first argument).")
 
     key_path = os.environ.get(
-        "LUMINA_RULES_KEY",
-        os.path.join(os.path.expanduser("~"), ".config", "lumina", "reader-rules-ed25519.key"),
+        "TANGENT_RULES_KEY",
+        os.path.join(os.path.expanduser("~"), ".config", "tangent", "reader-rules-ed25519.key"),
     )
     key = load_or_create_key(key_path)
 

@@ -1,6 +1,6 @@
 "use strict";
 /*
- * Lumina reader extractor — runs as an isolated-world content script.
+ * Tangent reader extractor — runs as an isolated-world content script.
  *
  * This is the Safari/Firefox-Reader model: the page's own JavaScript cannot see or override
  * anything here (separate realm), and the extracted article is handed to the app over a native
@@ -8,7 +8,7 @@
  * TechCrunch's anti-adblock, which weaponizes window.prompt) therefore have nothing to intercept
  * or trip on. Full DOM + layout is available (getComputedStyle / getBoundingClientRect are real).
  *
- * Protocol (native app <-> content script), port name "LuminaReader":
+ * Protocol (native app <-> content script), port name "TangentReader":
  *   content -> app : { type: "article", article: {...} }  when an article is found
  *                    { type: "none" }                      when the page isn't readable
  *   app -> content : { action: "extract" }                 re-run extraction on demand
@@ -23,7 +23,7 @@
 (function () {
   var port;
   try {
-    port = browser.runtime.connectNative("LuminaReader");
+    port = browser.runtime.connectNative("TangentReader");
   } catch (e) {
     return;
   }

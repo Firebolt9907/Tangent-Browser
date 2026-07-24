@@ -24,7 +24,7 @@ worker, and swaps the result in — fail-safe on any CSP/worker/WASM/CORS failur
 ```
 
 Compiles the kernel, runs `kernel.test.js` (deterministic synthetic-buffer assertions), and
-regenerates `app/src/main/java/com/firebolt9907/luminabrowser/ui/content/DarkCutoutAssets.kt`
+regenerates `app/src/main/java/com/firebolt9907/tangentbrowser/ui/content/DarkCutoutAssets.kt`
 (base64 wasm + base64 worker + flattened driver). Commit `DarkCutoutAssets.kt` together with the
 sources here — it's the shipped artifact.
 

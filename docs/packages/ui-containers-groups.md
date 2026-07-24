@@ -1,7 +1,7 @@
 # `ui/groups/` + `ui/containers/` — Tab groups and containers UI
 
 The two management sheets over the group/container state layer (see the *Tab groups* and *Containers*
-sections of [`state.md`](state.md)). Both are hosted from `ui/LuminaOverlaySheets.kt` and opened from
+sections of [`state.md`](state.md)). Both are hosted from `ui/TangentOverlaySheets.kt` and opened from
 the tab-overview overflow. They look similar but back two very different things:
 
 - a **tab group** is only an organizational *label* over open tabs;
@@ -30,6 +30,6 @@ container carries that container's identity), unlike the label-only groups sheet
   logic is in `TabGroupsRepository` (`state/`), not here.
 - Container creation / color+icon choices → `ContainersSheet`; the registry persistence and store
   re-registration are in `ContainerRepository`.
-- Both sheets are wired in `ui/LuminaOverlaySheets.kt` and reached from the overflow in
+- Both sheets are wired in `ui/TangentOverlaySheets.kt` and reached from the overflow in
   `ui/GridOverviewControls.kt`.
 - Keep each color→swatch mapping in the UI layer so the `state/` enums stay Compose-free.

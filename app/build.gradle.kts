@@ -9,7 +9,7 @@ plugins {
 // FCM push (instant remote-tab / Send-Tab delivery) is opt-in: the Google Services plugin is only
 // applied when a real google-services.json is present. Without it the app still builds and runs —
 // push stays inactive and FirefoxSyncController falls back to its foreground polling loop. Drop a
-// Firebase config for applicationId "com.firebolt9907.luminabrowser" into app/google-services.json
+// Firebase config for applicationId "com.firebolt9907.tangentbrowser" into app/google-services.json
 // to activate push. See AGENTS.md / IMPLEMENTATION.md.
 val firebaseConfigured = file("google-services.json").exists()
 if (firebaseConfigured) {
@@ -17,11 +17,11 @@ if (firebaseConfigured) {
 }
 
 android {
-    namespace = "com.firebolt9907.luminabrowser"
+    namespace = "com.firebolt9907.tangentbrowser"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.firebolt9907.luminabrowser"
+        applicationId = "com.firebolt9907.tangentbrowser"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
@@ -158,27 +158,27 @@ dependencies {
  * post-release updates; this keeps the shipped baseline current).
  *
  * Point it at your clone via either:
- *   - Gradle property:  -PluminaRulesRepo=/abs/path/to/lumina-reader-rules
- *     (or put `luminaRulesRepo=/abs/path` in ~/.gradle/gradle.properties), or
- *   - Env var:          LUMINA_RULES_REPO=/abs/path/to/lumina-reader-rules
+ *   - Gradle property:  -PtangentRulesRepo=/abs/path/to/tangent-reader-rules
+ *     (or put `tangentRulesRepo=/abs/path` in ~/.gradle/gradle.properties), or
+ *   - Env var:          TANGENT_RULES_REPO=/abs/path/to/tangent-reader-rules
  *
  * When unset (CI, other machines), the task no-ops and the checked-in asset is used — the build never
  * fails for a missing folder or an offline `git pull`. The copy is skipped when contents are identical
  * so routine builds don't churn the tracked asset.
  */
 val syncReaderRules by tasks.registering {
-    group = "lumina"
+    group = "tangent"
     description = "Pull the local reader-rules repo and copy reader_rules.json into assets (compile-time floor)."
     // Resolve these at configuration time into plain local values (String?/File). doLast closes over
     // these locals only — never over Project/script objects — which is what the configuration cache
     // requires (Task.project and script-object references at execution time are disallowed).
-    val configuredRulesRepoPath = (project.findProperty("luminaRulesRepo") as String?)?.takeIf { it.isNotBlank() }
-        ?: System.getenv("LUMINA_RULES_REPO")?.takeIf { it.isNotBlank() }
+    val configuredRulesRepoPath = (project.findProperty("tangentRulesRepo") as String?)?.takeIf { it.isNotBlank() }
+        ?: System.getenv("TANGENT_RULES_REPO")?.takeIf { it.isNotBlank() }
     val bundledRulesAsset = layout.projectDirectory.file("src/main/assets/reader_rules.json").asFile
     doLast {
         val repoPath = configuredRulesRepoPath
         if (repoPath == null) {
-            logger.lifecycle("[reader-rules] luminaRulesRepo/LUMINA_RULES_REPO not set; keeping checked-in asset.")
+            logger.lifecycle("[reader-rules] tangentRulesRepo/TANGENT_RULES_REPO not set; keeping checked-in asset.")
             return@doLast
         }
         val repoDir = File(repoPath)

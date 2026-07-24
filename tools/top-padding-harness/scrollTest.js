@@ -17,7 +17,7 @@ if (!url) { console.error('usage: node scrollTest.js <url> [topPx]'); process.ex
 // flow content that merely scrolled under the bar.
 function pinnedBandProbe(topPx) {
   return `(() => {
-    const band=${topPx}, SPACER='lumina-top-scroll-spacer';
+    const band=${topPx}, SPACER='tangent-top-scroll-spacer';
     /* A genuinely pinned header is a BAR sitting at the top: stuck near top 0 and short enough to
        fit on screen. Exclude full-page sticky top:auto containers (e.g. WaPo main#main-content is a
        25000px sticky element scrolled to top=-972) whose normal flow content near the top is just

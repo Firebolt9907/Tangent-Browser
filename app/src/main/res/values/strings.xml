@@ -1,8 +1,8 @@
 <resources>
-    <string name="app_name">Lumina Browser</string>
+    <string name="app_name">Tangent Browser</string>
     <string name="keep_alive_channel_name">Background activity</string>
-    <string name="keep_alive_channel_description">Keeps Lumina running so your tabs aren\'t closed when memory is low.</string>
-    <string name="keep_alive_notification_title">Lumina is running</string>
+    <string name="keep_alive_channel_description">Keeps Tangent running so your tabs aren\'t closed when memory is low.</string>
+    <string name="keep_alive_notification_title">Tangent is running</string>
     <string name="keep_alive_notification_text">Keeping your tabs ready in the background.</string>
     <string name="received_tab_channel_name">Received tabs</string>
     <string name="received_tab_channel_description">Tabs sent to this device from Firefox on your other devices.</string>

@@ -3,7 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Semantic haptics (LuminaHaptics) drive the Vibrator directly for soft-rumble/tick textures. -->
+    <!-- Semantic haptics (TangentHaptics) drive the Vibrator directly for soft-rumble/tick textures. -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Required by AndroidDownloadManager on API 28 and below to write to shared Downloads. -->
     <uses-permission
@@ -52,7 +52,7 @@
     </queries>
 
     <application
-        android:name=".LuminaApplication"
+        android:name=".TangentApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:enableOnBackInvokedCallback="true"
@@ -61,13 +61,13 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.LuminaBrowser">
+        android:theme="@style/Theme.TangentBrowser">
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:supportsPictureInPicture="true"
-            android:theme="@style/Theme.LuminaBrowser.Starting"
+            android:theme="@style/Theme.TangentBrowser.Starting"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
             android:windowSoftInputMode="adjustNothing">
             <intent-filter>
@@ -81,7 +81,7 @@
                 <action android:name="android.intent.action.WEB_SEARCH" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-            <!-- Text-selection "Search in Lumina" from any app: the selected text is searched. -->
+            <!-- Text-selection "Search in Tangent" from any app: the selected text is searched. -->
             <intent-filter>
                 <action android:name="android.intent.action.PROCESS_TEXT" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -98,17 +98,17 @@
           browser task. Its own (empty) task affinity + documentLaunchMode make each external link a
           fresh document layered directly on the calling app's task, so pressing Back returns to the
           caller with the system's native predictive-back animation. autoRemoveFromRecents keeps the
-          throwaway task out of recents once it finishes. "Open in Lumina" migrates the page into the
+          throwaway task out of recents once it finishes. "Open in Tangent" migrates the page into the
           real browser (MainActivity). See CustomTabActivity.
         -->
         <activity
             android:name=".CustomTabActivity"
             android:exported="true"
-            android:taskAffinity="com.firebolt9907.luminabrowser.customtab"
+            android:taskAffinity="com.firebolt9907.tangentbrowser.customtab"
             android:launchMode="singleTask"
             android:autoRemoveFromRecents="true"
             android:supportsPictureInPicture="true"
-            android:theme="@style/Theme.LuminaBrowser.Starting"
+            android:theme="@style/Theme.TangentBrowser.Starting"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
             android:windowSoftInputMode="adjustNothing">
             <intent-filter android:autoVerify="false">
@@ -152,14 +152,14 @@
         </activity>
 
         <!--
-          Advertises Lumina as a Custom Tabs protocol provider. Callers that speak CCT (e.g. the
+          Advertises Tangent as a Custom Tabs protocol provider. Callers that speak CCT (e.g. the
           Google app / Discover) bind here and then launch article links via CustomTabsIntent
           (session token + enter/exit-animation options bundle) instead of a plain ACTION_VIEW that
           animates nothing. The launched VIEW intent is still handled by CustomTabActivity above.
-          See LuminaCustomTabsService.
+          See TangentCustomTabsService.
         -->
         <service
-            android:name=".service.LuminaCustomTabsService"
+            android:name=".service.TangentCustomTabsService"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.support.customtabs.action.CustomTabsService" />
@@ -173,7 +173,7 @@
           supplied at build time (see FirefoxSyncController.initPush / app/build.gradle.kts).
         -->
         <service
-            android:name=".sync.LuminaFirebasePushService"
+            android:name=".sync.TangentFirebasePushService"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />

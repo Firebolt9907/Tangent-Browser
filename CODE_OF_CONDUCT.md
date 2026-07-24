@@ -2,7 +2,7 @@
 
 ## Our pledge
 
-Everyone who participates in the Expedition Browser project — filing issues, submitting pull
+Everyone who participates in the Tangent Browser project — filing issues, submitting pull
 requests, reviewing, or discussing — is expected to help keep it a welcoming, harassment-free space,
 regardless of experience level, background, identity, or beliefs.
 

@@ -2,10 +2,10 @@
   "manifest_version": 2,
   "browser_specific_settings": {
     "gecko": {
-      "id": "darkmode@lumina.firebolt9907"
+      "id": "darkmode@tangent.firebolt9907"
     }
   },
-  "name": "Lumina Dark Mode Pre-Paint",
+  "name": "Tangent Dark Mode Pre-Paint",
   "description": "Applies web dark mode at document_start so a light page never flashes white before the native dark-mode injection runs. Installed once; enabled only while web dark mode is globally on.",
   "version": "1.0",
   "content_scripts": [

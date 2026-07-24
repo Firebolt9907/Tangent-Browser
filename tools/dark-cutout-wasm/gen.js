@@ -16,7 +16,7 @@ const lineComment = driver.split('\n').find(l => /(^|[^:])\/\//.test(l) && !/htt
 if (lineComment) { console.error('driver.js has a // line comment (not flatten-safe):\n  ' + lineComment.trim()); process.exit(1); }
 const DRIVER_FLAT = driver.replace(/\r?\n/g, ' ').replace(/\s{2,}/g, ' ').trim();
 
-const kt = `package com.firebolt9907.luminabrowser.ui.content
+const kt = `package com.firebolt9907.tangentbrowser.ui.content
 
 /*
  * GENERATED — do not edit by hand. Source: tools/dark-cutout-wasm/{src/lib.rs,worker.js,driver.js}.
@@ -39,7 +39,7 @@ internal object DarkCutoutAssets {
 }
 `;
 
-const outKt = path.resolve(__dirname, '../../app/src/main/java/com/firebolt9907/luminabrowser/ui/content/DarkCutoutAssets.kt');
+const outKt = path.resolve(__dirname, '../../app/src/main/java/com/firebolt9907/tangentbrowser/ui/content/DarkCutoutAssets.kt');
 fs.writeFileSync(outKt, kt);
 console.log('wrote', outKt);
 console.log('  WASM_B64 len =', WASM_B64.length, ' WORKER_B64 len =', WORKER_B64.length, ' DRIVER_JS len =', DRIVER_FLAT.length);

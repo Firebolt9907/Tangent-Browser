@@ -3,7 +3,7 @@ const path = require('path');
 const puppeteer = require('puppeteer-core');
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
-const KT = path.resolve(__dirname, '../../app/src/main/java/com/firebolt9907/luminabrowser/ui/content/WebDarkMode.kt');
+const KT = path.resolve(__dirname, '../../app/src/main/java/com/firebolt9907/tangentbrowser/ui/content/WebDarkMode.kt');
 
 function extractDynamic() {
   const src = fs.readFileSync(KT, 'utf8');
@@ -15,7 +15,7 @@ function extractDynamic() {
   while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
   const indent = Math.min(...lines.filter(l => l.trim()).map(l => l.match(/^\s*/)[0].length));
   tpl = lines.map(l => l.slice(indent)).join('\n');
-  tpl = tpl.replace("${DYN_STYLE_ID}", 'lumina-dyn-style').replace("${DYN_CLASS}", 'lumina-dyn')
+  tpl = tpl.replace("${DYN_STYLE_ID}", 'tangent-dyn-style').replace("${DYN_CLASS}", 'tangent-dyn')
            .replace("${DYN_BASE_BG}", '#1c1c1e').replace("${DYN_SCAN_CAP}", '8000');
   return tpl.replace(/\n/g, ' ').replace(/^javascript:/, '');
 }

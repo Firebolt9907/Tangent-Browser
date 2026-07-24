@@ -1,6 +1,6 @@
 # Top-padding injection harness
 
-A headless-Chrome harness that verifies the **top viewport-spacer JavaScript** Lumina injects on
+A headless-Chrome harness that verifies the **top viewport-spacer JavaScript** Tangent injects on
 every page (`buildViewportSpacerScript` in
 `app/.../ui/content/PageBottomSpacer.kt`, see `AGENTS.md` §11) actually clears the status-bar /
 SafariBar top safe area on real sites — including the subdomains and app-shell layouts that are

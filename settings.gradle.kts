@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Lumina Browser"
+rootProject.name = "Tangent Browser"
 include(":app")

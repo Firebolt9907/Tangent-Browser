@@ -217,16 +217,22 @@ private fun AddCardDialog(
         yearNum != null && yearNum in 2000..2100
 
     val save = {
-        onSave(
-            NewCreditCardFields(
-                billingName = name.trim(),
-                plaintextCardNumber = CreditCardNumber.Plaintext(digits),
-                cardNumberLast4 = digits.takeLast(4),
-                expiryMonth = monthNum!!,
-                expiryYear = yearNum!!,
-                cardType = detectCardType(digits),
-            ),
-        )
+        // Guard rather than !! — the confirm button is gated on canSave (which requires both
+        // non-null), but reading the values defensively keeps a future rewiring from crashing.
+        val expMonth = monthNum
+        val expYear = yearNum
+        if (expMonth != null && expYear != null) {
+            onSave(
+                NewCreditCardFields(
+                    billingName = name.trim(),
+                    plaintextCardNumber = CreditCardNumber.Plaintext(digits),
+                    cardNumberLast4 = digits.takeLast(4),
+                    expiryMonth = expMonth,
+                    expiryYear = expYear,
+                    cardType = detectCardType(digits),
+                ),
+            )
+        }
     }
 
     AlertDialog(

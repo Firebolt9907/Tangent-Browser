@@ -123,7 +123,7 @@ internal fun BarExpanded(
     val onTint = tintColor?.let { if (it.luminance() > 0.5f) Color.Black else Color.White }
     val aAColor = when {
         isReaderActive -> MaterialTheme.colorScheme.primary
-        siteTintActive -> if (isReaderEligible) onTint!! else onTint!!.copy(alpha = 0.6f)
+        siteTintActive && onTint != null -> if (isReaderEligible) onTint else onTint.copy(alpha = 0.6f)
         isReaderEligible -> MaterialTheme.colorScheme.onSurface
         else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
     }

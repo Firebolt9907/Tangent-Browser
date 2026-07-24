@@ -462,7 +462,7 @@ fun CustomTabRoot(
                         }
                     },
             ) {
-                if (session != null) {
+                if (session != null && customTabId != null) {
                     com.firebolt9907.tangentbrowser.ui.content.ContentHost(
                         engine = components.engine,
                         engineSession = session,
@@ -472,7 +472,7 @@ fun CustomTabRoot(
                         },
                         topChromeInsetPx = if (isVideoFullscreen) 0 else statusBarTopPx,
                         bottomChromeInsetPx = if (isVideoFullscreen) 0 else barTotalHeightPx,
-                        tabId = customTabId!!,
+                        tabId = customTabId,
                         pageUrl = url,
                         snapshotCache = components.tabSnapshotCache,
                         sitePermissionController = components.sitePermissionController,

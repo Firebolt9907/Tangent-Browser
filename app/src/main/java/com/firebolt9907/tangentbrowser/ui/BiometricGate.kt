@@ -50,14 +50,15 @@ object BiometricGate {
             BiometricManager.from(context).canAuthenticate(AUTHENTICATORS) ==
             BiometricManager.BIOMETRIC_SUCCESS
 
-        if (!canAuth) {
+        if (activity == null || !canAuth) {
             // No lock screen / no supported authenticator — don't strand the user; fill anyway.
+            // (The explicit null check also lets the compiler smart-cast `activity` below.)
             onSuccess()
             return
         }
 
         val prompt = BiometricPrompt(
-            activity!!,
+            activity,
             ContextCompat.getMainExecutor(context),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {

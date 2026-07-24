@@ -369,7 +369,7 @@ internal fun ChoiceItems(
                     bottom = 4.dp,
                 ),
             )
-            ChoiceItems(choice.children!!.toList(), indicator, onSelect, indent + 1)
+            ChoiceItems(choice.children?.toList().orEmpty(), indicator, onSelect, indent + 1)
         } else {
             Row(
                 modifier = Modifier

@@ -158,9 +158,13 @@
           animates nothing. The launched VIEW intent is still handled by CustomTabActivity above.
           See TangentCustomTabsService.
         -->
+        <!-- A CustomTabsService is bound by *any* app that wants to launch a Custom Tab (that's the
+             whole point of the protocol), so it can't be permission-guarded. tools:ignore documents
+             that the ExportedService warning is intentional here. -->
         <service
             android:name=".service.TangentCustomTabsService"
-            android:exported="true">
+            android:exported="true"
+            tools:ignore="ExportedService">
             <intent-filter>
                 <action android:name="android.support.customtabs.action.CustomTabsService" />
             </intent-filter>

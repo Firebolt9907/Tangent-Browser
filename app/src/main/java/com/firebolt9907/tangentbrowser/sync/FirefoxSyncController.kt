@@ -346,6 +346,11 @@ class FirefoxSyncController(
     }
 
     /** The FCM sender id the Google Services plugin generates, or null when Firebase isn't set up. */
+    // getIdentifier (by-name lookup) is deliberate and load-bearing: a hard R.string.gcm_defaultSenderId
+    // reference would fail to compile in the no-Firebase build (google-services.json is gitignored, so
+    // the resource may not exist). Resolving by name lets the same source compile with or without it.
+    // See AGENTS.md → "Why FxA push is inert". Do NOT switch to R.string.*.
+    @Suppress("DiscouragedApi")
     private fun firebaseSenderId(): String? {
         val resId = application.resources.getIdentifier(
             "gcm_defaultSenderId", "string", application.packageName,

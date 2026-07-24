@@ -29,4 +29,18 @@ internal object CardValidation {
         }
         return sum % 10 == 0
     }
+
+    /**
+     * True if a card's `[expiryMonth]/[expiryYear]` is a plausible, not-yet-expired date relative to
+     * the current [nowYear]/[nowMonth] (both 1-based months, four-digit years). Rejects an out-of-range
+     * month, an expiry strictly before the current month (the card is already dead), and a year absurdly
+     * far out (> [nowYear] + 25) that is almost certainly a typo. The current month itself is still
+     * valid — a card is usable through the last day of its expiry month.
+     */
+    fun isExpiryValid(expiryMonth: Int, expiryYear: Int, nowYear: Int, nowMonth: Int): Boolean {
+        if (expiryMonth !in 1..12) return false
+        if (expiryYear < nowYear || expiryYear > nowYear + 25) return false
+        if (expiryYear == nowYear && expiryMonth < nowMonth) return false
+        return true
+    }
 }

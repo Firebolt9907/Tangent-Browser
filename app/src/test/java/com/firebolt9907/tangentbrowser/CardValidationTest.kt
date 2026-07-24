@@ -30,4 +30,30 @@ class CardValidationTest {
     // All-zeros passes Luhn arithmetically but is guarded by nothing here — documents that Luhn alone
     // is a checksum, not an issuer check (length still applies).
     @Test fun twelveZeros_passesChecksum() = assertTrue(CardValidation.isLuhnValid("000000000000"))
+
+    // --- Expiry (reference "now" = June 2026) ---
+
+    @Test fun expiry_futureYear_valid() =
+        assertTrue(CardValidation.isExpiryValid(1, 2030, nowYear = 2026, nowMonth = 6))
+
+    @Test fun expiry_currentMonth_valid() =
+        assertTrue(CardValidation.isExpiryValid(6, 2026, nowYear = 2026, nowMonth = 6))
+
+    @Test fun expiry_laterMonthThisYear_valid() =
+        assertTrue(CardValidation.isExpiryValid(12, 2026, nowYear = 2026, nowMonth = 6))
+
+    @Test fun expiry_lastMonthThisYear_expired() =
+        assertFalse(CardValidation.isExpiryValid(5, 2026, nowYear = 2026, nowMonth = 6))
+
+    @Test fun expiry_pastYear_expired() =
+        assertFalse(CardValidation.isExpiryValid(12, 2025, nowYear = 2026, nowMonth = 6))
+
+    @Test fun expiry_monthZero_invalid() =
+        assertFalse(CardValidation.isExpiryValid(0, 2030, nowYear = 2026, nowMonth = 6))
+
+    @Test fun expiry_month13_invalid() =
+        assertFalse(CardValidation.isExpiryValid(13, 2030, nowYear = 2026, nowMonth = 6))
+
+    @Test fun expiry_absurdlyFarFuture_invalid() =
+        assertFalse(CardValidation.isExpiryValid(1, 2100, nowYear = 2026, nowMonth = 6))
 }

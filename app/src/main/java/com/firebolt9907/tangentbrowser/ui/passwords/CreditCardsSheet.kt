@@ -209,12 +209,18 @@ private fun AddCardDialog(
     var month by remember { mutableStateOf("") }
     var year by remember { mutableStateOf("") }
 
+    val now = remember { java.util.Calendar.getInstance() }
+    val nowYear = now.get(java.util.Calendar.YEAR)
+    val nowMonth = now.get(java.util.Calendar.MONTH) + 1 // Calendar.MONTH is 0-based
+
     val digits = number.filter { it.isDigit() }
     val monthNum = month.toLongOrNull()
     val yearNum = year.toLongOrNull()
+    // Bound the Longs to sane ranges before toInt() so an over-long typed number can't overflow.
     val canSave = CardValidation.isLuhnValid(digits) &&
         monthNum != null && monthNum in 1..12 &&
-        yearNum != null && yearNum in 2000..2100
+        yearNum != null && yearNum in 2000..(nowYear + 25).toLong() &&
+        CardValidation.isExpiryValid(monthNum.toInt(), yearNum.toInt(), nowYear, nowMonth)
 
     val save = {
         // Guard rather than !! — the confirm button is gated on canSave (which requires both

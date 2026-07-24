@@ -67,6 +67,21 @@ android {
         compose = true
         buildConfig = true
     }
+    lint {
+        // Keep the build honest: lint errors fail the build (so regressions like a bad
+        // Context→Activity cast are caught), but don't fail on the plain warnings.
+        abortOnError = true
+        warningsAsErrors = false
+        checkReleaseBuilds = true
+        // Dependency-freshness nags are pure noise here — versions are pinned deliberately (Gecko /
+        // appservices lockstep), so "a newer version exists" is never actionable in this loop.
+        disable += setOf(
+            "GradleDependency",
+            "NewerVersionAvailable",
+            "AndroidGradlePluginVersion",
+            "UseTomlInstead",
+        )
+    }
     // Skip stripping debug symbols from the ~1 GB of Gecko/appservices native libraries.
     // This is the single slowest packaging step; for local dev installs (debug keystore, no
     // distribution) the larger on-disk APK is irrelevant. Remove for a real size-optimized build.

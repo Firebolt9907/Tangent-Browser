@@ -209,14 +209,13 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
     }
 
     private fun enterPipIfSupported() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            try {
-                val params = PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(16, 9))
-                    .build()
-                enterPictureInPictureMode(params)
-            } catch (_: Exception) { }
-        }
+        // PiP (enterPictureInPictureMode) is available from API 26, which is our minSdk.
+        try {
+            val params = PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(16, 9))
+                .build()
+            enterPictureInPictureMode(params)
+        } catch (_: Exception) { }
     }
 
     private companion object {

@@ -1,6 +1,5 @@
 package com.firebolt9907.tangentbrowser.util
 
-import android.os.Build
 import android.os.StrictMode
 
 /**
@@ -23,7 +22,7 @@ object TangentStrictMode {
                 .detectDiskWrites()
                 .detectNetwork()
                 .detectCustomSlowCalls()
-                .apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) detectResourceMismatches() }
+                .detectResourceMismatches()
                 .penaltyLog()
                 .build(),
         )

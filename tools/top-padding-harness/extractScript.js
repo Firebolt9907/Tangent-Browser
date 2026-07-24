@@ -23,6 +23,9 @@ function buildViewportSpacerScript(topPx, skipHeaderInsets) {
   const indent = Math.min(...lines.filter(l => l.trim()).map(l => l.match(/^\s*/)[0].length));
   tpl = lines.map(l => l.slice(indent)).join('\n');
   // Kotlin interpolations
+  // ${'$'} is Kotlin's escape for a literal $ inside a template (used in regex end-anchors like
+  // /...\)${'$'}/i); collapse it to $ so the harness runs the same regex the app ships.
+  tpl = tpl.replace(/\$\{'\$'\}/g, '$');
   tpl = tpl.replace('${topPx}', String(topPx));
   tpl = tpl.replace('${if (skipHeaderInsets) "true" else "false"}', skipHeaderInsets ? 'true' : 'false');
   return tpl.replace(/\n/g, '');

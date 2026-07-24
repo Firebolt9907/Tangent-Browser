@@ -162,6 +162,20 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `in-flow spacer strip is filled with the color painted below it (iter 50)`() {
+        // A static (in-flow) colored header the spacer merely pushes down would otherwise leave a
+        // transparent gap above it in the status-bar band. The spacer samples the element painted at
+        // its bottom edge (elementFromPoint) and paints itself that element's first opaque bg, so a
+        // colored nav bar reads as continuous to the screen top. Falls back to body/html base color.
+        val s = script()
+        assertTrue("samples the element below the strip", s.contains("elementFromPoint(x,topPx+2)"))
+        assertTrue("computes a fill color for the strip", s.contains("function topBg(sp)"))
+        assertTrue("walks up to the first opaque background", s.contains("function topOpaque(c)"))
+        assertTrue("applies the sampled bg to the spacer", s.contains("var __sbg=topBg(el)"))
+        assertTrue("falls back to the body base color", s.contains("getComputedStyle(document.body).backgroundColor"))
+    }
+
+    @Test
     fun `observer also reacts to hidden and aria-hidden toggles (iter 49)`() {
         // Headers/cookie banners revealed by removing a `hidden`/`aria-hidden` attribute must
         // trigger a re-inset; the attributeFilter has to include those attrs or the mutation is

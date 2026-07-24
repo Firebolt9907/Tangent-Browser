@@ -118,9 +118,26 @@ object ReaderRules {
     fun cached(): String = if (enabled) activeJson else bundledJson
 
     /**
+     * Background variant of [init] + [refreshIfDue] for the app-startup call site. [init] reads the
+     * bundled asset and cached remote file and runs an Ed25519 verification — all disk + CPU that must
+     * not sit on the main thread during cold start (StrictMode flags it, and it delays first frame).
+     * Safe to run off-thread: all state is @Volatile and defaults to an empty ruleset, so a page that
+     * loads in the brief window before this finishes simply gets no site-specific rules (self-corrects
+     * on the next extraction) rather than blocking. Ordered so init publishes [loadedVersion] before
+     * the refresh reads it.
+     */
+    fun initAsync(context: Context, prefs: GlobalPreferencesStore) {
+        val appContext = context.applicationContext
+        scope.launch {
+            init(appContext)
+            refreshIfDue(appContext, prefs)
+        }
+    }
+
+    /**
      * Load the active ruleset. The bundled asset is the floor; a cached remote file is used only if
      * its signature re-verifies here (guarding against on-disk tampering) and its version is at least
-     * the bundled one. Cheap and synchronous; call once at app start before the first page loads.
+     * the bundled one. Does disk I/O + signature verification; prefer [initAsync] off the main thread.
      */
     fun init(context: Context) {
         val bundled = readAsset(context)?.let { parseOrNull(it) }

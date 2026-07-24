@@ -28,8 +28,10 @@ class TangentApplication : Application() {
         // on a background thread (throttled, and only when the toggle is on).
         val readerPrefs = com.firebolt9907.tangentbrowser.state.GlobalPreferencesStore(this)
         com.firebolt9907.tangentbrowser.ui.reader.ReaderRules.setEnabled(readerPrefs.readerSiteRules)
-        com.firebolt9907.tangentbrowser.ui.reader.ReaderRules.init(this)
-        com.firebolt9907.tangentbrowser.ui.reader.ReaderRules.refreshIfDue(this, readerPrefs)
+        // Load + refresh reader rules off the main thread: init reads assets/a cached file and runs an
+        // Ed25519 verify, which shouldn't block cold-start's first frame. Reader state is @Volatile with
+        // safe empty-ruleset defaults, so extraction before this completes just skips site overrides.
+        com.firebolt9907.tangentbrowser.ui.reader.ReaderRules.initAsync(this, readerPrefs)
         ProcessLifecycleOwner.get().lifecycle.addObserver(backgroundKeepAliveObserver)
     }
 

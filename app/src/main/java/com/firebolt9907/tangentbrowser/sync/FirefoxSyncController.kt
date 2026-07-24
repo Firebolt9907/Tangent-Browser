@@ -107,9 +107,21 @@ class FirefoxSyncController(
     private val historyStorage: mozilla.components.browser.storage.sync.PlacesHistoryStorage? = null,
     private val bookmarksStorage: mozilla.components.browser.storage.sync.PlacesBookmarksStorage? = null,
 ) {
+    // No remote crash reporting (personal build), but don't black-hole the sync stack's caught
+    // exceptions — surface them in debug logcat so sync failures are diagnosable during development.
+    // Both callbacks compile out to no-ops in release via TangentLog's BuildConfig.DEBUG gate.
     private val crashReporter = object : CrashReporting {
-        override fun submitCaughtException(throwable: Throwable): Job = Job()
-        override fun recordCrashBreadcrumb(breadcrumb: Breadcrumb) = Unit
+        override fun submitCaughtException(throwable: Throwable): Job {
+            com.firebolt9907.tangentbrowser.util.TangentLog.debug("FxaSync", throwable) {
+                "caught sync exception: ${throwable.message}"
+            }
+            return Job()
+        }
+        override fun recordCrashBreadcrumb(breadcrumb: Breadcrumb) {
+            com.firebolt9907.tangentbrowser.util.TangentLog.debug("FxaSync") {
+                "breadcrumb: ${breadcrumb.message}"
+            }
+        }
     }
 
     private val accountManager = FxaAccountManager(

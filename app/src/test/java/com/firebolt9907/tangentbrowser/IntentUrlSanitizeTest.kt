@@ -49,4 +49,38 @@ class IntentUrlSanitizeTest {
 
     @Test fun null_returnsNull() =
         assertNull(IntentUrls.sanitizeExternalUrl(null))
+
+    // --- Hardening: leading/surrounding whitespace must not smuggle a dangerous scheme past the
+    // boundary. The trim() in sanitizeExternalUrl is what makes these safe; lock it in so a future
+    // refactor that drops the trim is caught here rather than in the field. ---
+
+    @Test fun leadingWhitespace_javascript_blocked() =
+        assertNull(IntentUrls.sanitizeExternalUrl("   javascript:alert(1)"))
+
+    @Test fun leadingTab_javascript_blocked() =
+        assertNull(IntentUrls.sanitizeExternalUrl("\tjavascript:alert(1)"))
+
+    @Test fun leadingNewline_file_blocked() =
+        assertNull(IntentUrls.sanitizeExternalUrl("\nfile:///etc/hosts"))
+
+    @Test fun surroundingWhitespace_https_allowedAndTrimmed() =
+        assertEquals("https://example.com", IntentUrls.sanitizeExternalUrl("  https://example.com  "))
+
+    // Other privileged/local schemes named in the docstring but not yet asserted.
+    @Test fun blobScheme_blocked() =
+        assertNull(IntentUrls.sanitizeExternalUrl("blob:https://example.com/uuid"))
+
+    @Test fun vbscriptScheme_blocked() =
+        assertNull(IntentUrls.sanitizeExternalUrl("vbscript:msgbox(1)"))
+
+    @Test fun mixedCaseDataScheme_blocked() =
+        assertNull(IntentUrls.sanitizeExternalUrl("DaTa:text/html,<script>alert(1)</script>"))
+
+    @Test fun aboutScheme_blocked() =
+        assertNull(IntentUrls.sanitizeExternalUrl("about:config"))
+
+    // A token broken by an interior control char is NOT a valid scheme, so it falls through as
+    // schemeless (becomes an https/search string downstream) — it never loads as javascript.
+    @Test fun interiorTabInScheme_treatedAsSchemeless() =
+        assertEquals("java\tscript:alert(1)", IntentUrls.sanitizeExternalUrl("java\tscript:alert(1)"))
 }

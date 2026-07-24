@@ -134,6 +134,10 @@ object ImageClipboard {
         val text = try {
             val input = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
             awaitOcr(recognizer, input)
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            // The caller (e.g. the image action sheet closing) cancelled us mid-OCR — let the
+            // cancellation propagate rather than masking it as a recognition failure.
+            throw c
         } catch (t: Throwable) {
             return OcrResult.Failed
         } finally {

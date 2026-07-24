@@ -142,6 +142,10 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
         }
     }
 
+    // ComponentActivity.dispatchKeyEvent carries a @RestrictTo(LIBRARY_GROUP_PREFIX); lint flags the
+    // super call, but overriding it (and delegating to super) is the supported way to intercept key
+    // events on an Activity. Suppressed with justification rather than worked around.
+    @Suppress("RestrictedApi")
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         // While a video is fullscreen, hardware volume keys adjust the media stream silently (no
         // system panel) and move the overlay's volume slider instead.

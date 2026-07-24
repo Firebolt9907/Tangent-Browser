@@ -1,10 +1,9 @@
 package com.firebolt9907.tangentbrowser.ui
 
-import android.app.Activity
+import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -17,7 +16,7 @@ import androidx.core.view.WindowInsetsControllerCompat
  */
 @Composable
 fun SyncSystemBarsWithFullscreen(isFullscreen: Boolean) {
-    val window = (LocalContext.current as? Activity)?.window ?: return
+    val window = LocalActivity.current?.window ?: return
     val controller = remember(window) { WindowCompat.getInsetsController(window, window.decorView) }
     LaunchedEffect(isFullscreen) {
         if (isFullscreen) {

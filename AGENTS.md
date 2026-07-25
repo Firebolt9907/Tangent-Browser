@@ -351,10 +351,38 @@ per code. `MainActivity` owns the SMS side (`smsListenStarter` set in onResume, 
 "paste code" fallback banner (`OtpPasteBannerHost`). Do NOT gate receipt on `RECEIVE_SMS`
 (intentionally avoided — Play Store restriction).
 
+### 17. The built-in reader extension asset is GENERATED — never edit it in the Android tree
+
+`app/src/main/assets/extensions/reader/extractor.js` (+ its `manifest.json`) is **build output**, not
+source. A Gradle hook, `buildReaderExtension` in `app/build.gradle.kts`, runs `node extension/build.js
+tangent` and is wired into **every** `merge*Assets` task (`tasks.matching { startsWith("merge") &&
+endsWith("Assets") }.dependsOn(...)`), so it regenerates that file on **every compile**. Any hand-edit
+to the Android-side `extractor.js` is silently overwritten the next build — this is the "a linter keeps
+stripping my changes" symptom.
+
+- **Edit the source, then regenerate.** The real source is `extension/src/extractor.core.js` (pure
+  `tangentExtractArticle` + `tangentExtractSocial`) + `extension/src/glue.tangent.js` (the Port `run()`
+  glue). After changing those, run `cd extension && node build.js tangent` to regenerate the asset (and
+  commit both). `node build.js tangent --check` is the CI drift guard; the SAME `extractor.core.js` also
+  feeds the standalone desktop extension (`build.js standard`). See [[social-reader-mode]] and
+  `extension/README.md`.
+- **Do NOT** point any tooling, agent loop, or edit at `assets/extensions/reader/*` directly. If Node
+  isn't installed the hook warns and keeps the committed copy, so the committed asset must stay in sync
+  with `extension/src` — regenerate before committing.
+
+The **per-site reader rules** are a separate, non-generated asset: `app/src/main/assets/reader_rules.json`
+is hand-editable and is the compile-time floor (invariant: it is what ships unless overridden). The
+`syncReaderRules` hook only overwrites it when `tangentRulesRepo`/`TANGENT_RULES_REPO` points at an
+external rules-repo clone; that property is unset by default, so a normal build **keeps the checked-in
+JSON** (it logs `tangentRulesRepo/TANGENT_RULES_REPO not set; keeping checked-in asset`). Do NOT set that
+env/property in a shared config — it would replace the bundled rules with the external repo's copy on
+every build. Bump `version` on any edit and raise the floor in `ReaderBundledRulesTest`.
+
 The most-violated mistakes are the bolded **do NOT** lines in the invariants above (esp. #1 `render()`
 from `AndroidView.update`, #2 `startDragImmediately = true`, #4 `snapTo` on hot path, #6
 `EngineSession.captureThumbnail`, #11 JS injection without the guard / spacer sizing, #12
-`navigator.credentials` shim or `webauthn_enable_softtoken`).
+`navigator.credentials` shim or `webauthn_enable_softtoken`, #17 editing the generated
+`assets/extensions/reader/extractor.js` instead of `extension/src`).
 
 ## Testing
 

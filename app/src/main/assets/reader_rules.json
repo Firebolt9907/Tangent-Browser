@@ -1,7 +1,7 @@
 {
-  "version": 23,
+  "version": 25,
   "_schema": "Per-site reader overrides interpreted by the fixed extractor (data, not code). Each rule: 'match' = hostname or ['host', ...] (bare domain also matches subdomains; leading '*.' allowed); 'include' = CSS selector(s) for the real article container (first visible match wins, bypasses the heuristic); 'strip' = CSS selector(s) whose subtrees are dropped before extraction. include/strip may be a string or an array. Selectors containing a newline or '//' are rejected at load. include/strip are no-ops when their selectors don't match, so an unverified rule cannot regress other pages — only reshape the named host.",
-  "_examples_note": "Rules validated against live article DOM by the reader-mode agent loop. include selectors are the true article-body container; strip selectors drop in-body ads / related-coverage / bio boxes the generic boilerplate filter misses.",
+  "_examples_note": "Rules validated against live article DOM by the reader-mode agent loop. include selectors are the true article-body container; strip selectors drop in-body ads / related-coverage / bio boxes the generic boilerplate filter misses. Do NOT add strips already covered by the generic BOILERPLATE_SEL in the extractor: word-boundary ad classes (ad/ads/ad-*/ads-*/-ad/-ads/_ad, e.g. .ad, .ad-slot, .ad-unit, .sticky-ad, .*-ad), .taboola/.outbrain, *recirc*, and the substring matchers share/social/related/newsletter/subscribe/subscription/comment/breadcrumb/advert/sponsor/promo/credit/disclaimer/affiliate/category/toolbar, plus the nav/aside/footer/form elements. Only add site strips the generic filter does NOT catch (e.g. .sidebar, *video*, *paywall*, author/byline boxes, data-* / aria-* attribute selectors, CMS-specific classes like .infobox/.navbox/.votecell).",
   "rules": [
     {
       "match": ["theguardian.com"],
@@ -10,7 +10,7 @@
     {
       "match": ["arstechnica.com"],
       "include": ["div.article-content", "section.article-content"],
-      "strip": ["aside", ".ad", ".sidebar", "figure.video"]
+      "strip": [".sidebar", "figure.video"]
     },
     {
       "match": ["bbc.com", "bbc.co.uk"],
@@ -20,27 +20,26 @@
     {
       "match": ["apnews.com"],
       "include": [".RichTextStoryBody"],
-      "strip": [".Enhancement-item", ".Advertisement"]
+      "strip": [".Enhancement-item"]
     },
     {
       "match": ["npr.org"],
       "include": ["#storytext", ".storytext"],
-      "strip": [".bucketwrap.internallink", ".ad-wrap", ".enlarge-options", ".credit-caption"]
+      "strip": [".bucketwrap.internallink", ".enlarge-options"]
     },
     {
       "match": ["cnn.com"],
       "include": [".article__content"],
-      "strip": [".ad-slot", ".related-content", ".video-resource", ".zn-body__read-all"]
+      "strip": [".video-resource", ".zn-body__read-all"]
     },
     {
       "match": ["foxnews.com"],
       "include": [".article-body"],
-      "strip": [".ad-container", ".featured-video", ".author-byline"]
+      "strip": [".featured-video", ".author-byline"]
     },
     {
       "match": ["theverge.com"],
-      "include": [".duet--layout--entry-body"],
-      "strip": [".duet--layout--article-recirc-color-container"]
+      "include": [".duet--layout--entry-body"]
     },
     {
       "match": ["aljazeera.com"],
@@ -49,12 +48,12 @@
     {
       "match": ["techcrunch.com"],
       "include": [".entry-content", ".wp-block-post-content"],
-      "strip": [".wp-block-tc23-ad", ".ad-unit", ".marfeel-experience-inline"]
+      "strip": [".marfeel-experience-inline"]
     },
     {
       "match": ["cnbc.com"],
       "include": [".ArticleBody-articleBody"],
-      "strip": [".RelatedContent", ".InlineVideo"]
+      "strip": [".InlineVideo"]
     },
     {
       "match": ["nbcnews.com"],
@@ -64,22 +63,21 @@
     {
       "match": ["cbsnews.com"],
       "include": [".content__body"],
-      "strip": [".content__body--footer", ".embed--type-ad", ".content__cta"]
+      "strip": [".content__body--footer", ".content__cta"]
     },
     {
       "match": ["wired.com"],
       "include": [".article__body", ".body__container"],
-      "strip": [".article-body__footer", ".consumer-marketing-unit", ".ad"]
+      "strip": [".article-body__footer", ".consumer-marketing-unit"]
     },
     {
       "match": ["vox.com"],
-      "include": [".duet--layout--entry-body"],
-      "strip": [".duet--layout--article-recirc-color-container"]
+      "include": [".duet--layout--entry-body"]
     },
     {
       "match": ["businessinsider.com"],
       "include": [".post-body-content"],
-      "strip": [".inline-backup-paywall", ".premium-cta", ".ad"]
+      "strip": [".inline-backup-paywall", ".premium-cta"]
     },
     {
       "match": ["forbes.com"],
@@ -93,8 +91,7 @@
     },
     {
       "match": ["nypost.com"],
-      "include": [".single__content"],
-      "strip": [".newsletter-module", ".related-content", ".wp-block-nyp-ad"]
+      "include": [".single__content"]
     },
     {
       "match": ["theatlantic.com"],
@@ -103,18 +100,16 @@
     },
     {
       "match": ["newsweek.com"],
-      "include": [".meteredContent", "[class*=\"articleBody\"]"],
-      "strip": [".newsletter-signup", ".related-articles", ".ad-unit"]
+      "include": [".meteredContent", "[class*=\"articleBody\"]"]
     },
     {
       "match": ["chicagotribune.com"],
-      "include": [".article-body"],
-      "strip": [".related-content", ".newsletter-signup", ".taboola", ".ad"]
+      "include": [".article-body"]
     },
     {
       "match": ["washingtonpost.com"],
       "include": [".grid-body", ".meteredContent"],
-      "strip": [".type-subscribe-cta", "[data-qa=\"article-body-ad\"]", "[data-qa=\"sc-newsletter-signup-body\"]"]
+      "strip": ["[data-qa=\"article-body-ad\"]", "[data-qa=\"sc-newsletter-signup-body\"]"]
     },
     {
       "match": ["reuters.com"],
@@ -124,87 +119,82 @@
     {
       "match": ["gizmodo.com"],
       "include": [".entry-content"],
-      "strip": [".ad", ".commerce-widget", ".related-stories", ".js_ad-dynamic"]
+      "strip": [".commerce-widget"]
     },
     {
       "match": ["propublica.org"],
-      "include": [".article-body", ".entry-content"],
-      "strip": [".ad", ".related-content", ".newsletter-signup", ".sticky-newsletter"]
+      "include": [".article-body", ".entry-content"]
     },
     {
       "match": ["thehill.com"],
       "include": [".article__text"],
-      "strip": [".instaread-player", ".ad", ".rollmenu", ".newsletter-signup"]
+      "strip": [".instaread-player", ".rollmenu"]
     },
     {
       "match": ["thedailybeast.com"],
-      "include": [".b-article-body"],
-      "strip": [".b-newsletter", ".ad", ".b-related"]
+      "include": [".b-article-body"]
     },
     {
       "match": ["semafor.com"],
-      "include": [".article-content"],
-      "strip": [".ad", ".newsletter", ".related"]
+      "include": [".article-content"]
     },
     {
       "match": ["variety.com", "rollingstone.com"],
       "include": [".a-content"],
-      "strip": [".a-content-ignore", ".pmc-paywall", ".pmc-related-link"]
+      "strip": [".a-content-ignore", ".pmc-paywall"]
     },
     {
       "match": ["newyorker.com"],
       "include": [".article__body", ".body__container"],
-      "strip": [".consumer-marketing-unit", ".paywall-bar", ".ad"]
+      "strip": [".consumer-marketing-unit", ".paywall-bar"]
     },
     {
       "match": ["scientificamerican.com"],
-      "include": ["[class*=\"article__body\"]"],
-      "strip": [".ad", ".article__hero-credits"]
+      "include": ["[class*=\"article__body\"]"]
     },
     {
       "match": ["salon.com"],
-      "include": [".article__content"],
-      "strip": [".ad", ".sticky-ad", ".related-articles"]
+      "include": [".article__content"]
     },
     {
       "match": ["substack.com"],
       "include": [".available-content", ".body.markup"],
-      "strip": [".subscription-widget-wrap", ".subscribe-widget", ".button-wrapper", ".paywall-jump"]
+      "strip": [".button-wrapper", ".paywall-jump"]
     },
     {
       "match": ["github.blog"],
       "include": [".post__content"],
-      "strip": [".post-tags", ".author-bio", ".newsletter-content", ".post__navigation"]
+      "strip": [".post-tags", ".author-bio", ".post__navigation"]
     },
     {
       "match": ["dev.to"],
       "include": ["#article-body", ".crayons-article__body"],
-      "strip": [".crayons-article__actions", ".article-actions", ".ltag__user", ".crayons-comment", ".comment-actions"]
+      "strip": [".crayons-article__actions", ".article-actions", ".ltag__user"]
     },
     {
       "match": ["developer.mozilla.org"],
       "include": [".main-page-content", "main#content"],
-      "strip": [".breadcrumbs-bar", ".baseline-indicator", ".article-footer", ".content-feedback", ".metadata", ".language-menu", ".on-github", ".sidebar"]
+      "strip": [".baseline-indicator", ".article-footer", ".content-feedback", ".metadata", ".language-menu", ".on-github", ".sidebar"]
     },
     {
       "match": ["stackoverflow.com", "stackexchange.com", "superuser.com", "serverfault.com", "askubuntu.com", "mathoverflow.net"],
       "include": ["#mainbar"],
-      "strip": [".votecell", ".js-vote-count", ".post-menu", ".js-post-menu", ".post-signature", ".user-info", ".comments", ".js-comments-container", ".post-notice", ".js-post-notice", "#post-form", ".answer-form", ".js-add-link", ".js-share-link", ".bottom-notice", "#answers-header", ".js-saves", ".js-follow-post", ".s-sidebarwidget"]
+      "strip": [".votecell", ".js-vote-count", ".post-menu", ".js-post-menu", ".post-signature", ".user-info", ".post-notice", ".js-post-notice", "#post-form", ".answer-form", ".js-add-link", ".bottom-notice", "#answers-header", ".js-saves", ".js-follow-post", ".s-sidebarwidget"]
     },
     {
       "match": ["docs.python.org"],
       "include": ["[role=\"main\"]", ".body"],
-      "strip": [".headerlink", ".sphinxsidebar", ".related", ".admonition-title"]
+      "strip": [".headerlink", ".sphinxsidebar", ".admonition-title"]
     },
     {
       "match": ["readthedocs.io"],
       "include": ["[role=\"main\"]", ".document", ".rst-content", ".body"],
-      "strip": [".headerlink", ".wy-nav-side", ".rst-footer-buttons", ".rst-versions", ".wy-breadcrumbs", ".ethical-rtd", ".admonition-title"]
+      "strip": [".headerlink", ".wy-nav-side", ".rst-footer-buttons", ".rst-versions", ".ethical-rtd", ".admonition-title"]
     },
     {
       "match": ["gitbook.com", "gitbook.io"],
       "include": ["main"],
-      "strip": ["nav[aria-label=\"Breadcrumb\"]", "[data-testid=\"page.footer\"]", ".page-footer"]
+      "strip": ["[data-testid=\"page.footer\"]", ".page-footer"]
     },
     {
       "match": ["fandom.com"],
@@ -215,6 +205,11 @@
       "match": ["wikipedia.org"],
       "include": [".mw-parser-output"],
       "strip": [".infobox", ".navbox", ".reflist", ".references", ".mw-references-wrap", ".hatnote", ".navigation-not-searchable", ".sistersitebox", ".noprint", ".mw-editsection", ".shortdescription", ".toc", "#toc", ".sidebar", ".metadata", ".ambox", ".gallery", ".catlinks", "table.vertical-navbox", ".portal", ".refbegin", ".mw-empty-elt", ".reference"]
+    },
+    {
+      "match": ["nature.com", "springer.com", "biomedcentral.com", "springeropen.com"],
+      "include": [".c-article-body", ".c-article-main-column", ".main-content"],
+      "strip": [".c-article-author-information", ".c-bibliographic-information", ".c-article-references", ".c-article-further-reading", ".c-article-associated-content", ".c-article-recommendations", ".c-article-metrics-bar", ".c-article-share-box", ".c-article-social-list", ".c-pdf-download", ".c-nature-box", ".c-article-supplementary", ".app-article-access", ".c-article-editorial-summary", ".c-article-rightslink", ".c-article-section__figure-description"]
     }
   ]
 }

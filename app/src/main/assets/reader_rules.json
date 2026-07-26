@@ -1,5 +1,5 @@
 {
-  "version": 67,
+  "version": 68,
   "_schema": "Per-site reader overrides interpreted by the fixed extractor (data, not code). Each rule: 'match' = hostname or ['host', ...] (bare domain also matches subdomains; leading '*.' allowed); 'include' = CSS selector(s) for the real article container (first visible match wins, bypasses the heuristic); 'strip' = CSS selector(s) whose subtrees are dropped before extraction. include/strip may be a string or an array. Selectors containing a newline or '//' are rejected at load. include/strip are no-ops when their selectors don't match, so an unverified rule cannot regress other pages — only reshape the named host.",
   "_examples_note": "Rules validated against live article DOM by the reader-mode agent loop. include selectors are the true article-body container; strip selectors drop in-body ads / related-coverage / bio boxes the generic boilerplate filter misses. Do NOT add strips already covered by the generic BOILERPLATE_SEL in the extractor: word-boundary ad classes (ad/ads/ad-*/ads-*/-ad/-ads/_ad, e.g. .ad, .ad-slot, .ad-unit, .sticky-ad, .*-ad), .taboola/.outbrain, *recirc*, and the substring matchers share/social/related/newsletter/subscribe/subscription/comment/breadcrumb/advert/sponsor/promo/credit/disclaimer/affiliate/category/toolbar, plus the nav/aside/footer/form elements. Only add site strips the generic filter does NOT catch (e.g. .sidebar, *video*, *paywall*, author/byline boxes, data-* / aria-* attribute selectors, CMS-specific classes like .infobox/.navbox/.votecell).",
   "rules": [
@@ -330,6 +330,31 @@
       "match": ["pcworld.com", "macworld.com", "computerworld.com", "infoworld.com", "networkworld.com", "cio.com", "techhive.com", "csoonline.com"],
       "include": [".article__main", ".entry-content"],
       "strip": [".foundry-mobile-ads", ".foundry-ad", ".hellobar", ".miso-summary-box", ".cta", ".imageCredit"]
+    },
+    {
+      "match": ["quantamagazine.org"],
+      "include": ["#postBody"],
+      "strip": [".post__sidebar", ".related-content", ".newsletter-signup", ".comments-section"]
+    },
+    {
+      "match": ["theintercept.com", "motherjones.com", "reason.com"],
+      "include": [".entry-content"],
+      "strip": [".donation-callout", ".inline-donate", ".post-tags", ".wp-block-buttons"]
+    },
+    {
+      "match": ["thenation.com"],
+      "include": [".tnpaywallcontent"],
+      "strip": [".article-footer", ".support-cta", ".tags-list"]
+    },
+    {
+      "match": ["404media.co", "restofworld.org"],
+      "include": [".post__content", ".post-content"],
+      "strip": [".post-footer", ".subscribe-form", ".article-tags"]
+    },
+    {
+      "match": ["nautil.us"],
+      "include": ["[class*=\"PostContent_content\"]"],
+      "strip": ["[class*=\"Paywall\"]", "[class*=\"Newsletter\"]", "[class*=\"RelatedPosts\"]"]
     },
     {
       "match": ["sfgate.com"],

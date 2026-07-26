@@ -107,6 +107,11 @@ FEEDS = {
     "sfgate.com": "https://www.sfgate.com/rss/feed/Bay-Area-News-429.php",
     "seattletimes.com": "https://www.seattletimes.com/feed/",
     "boston.com": "https://www.boston.com/feed/",
+    "quantamagazine.org": "https://www.quantamagazine.org/feed/",
+    "theintercept.com": "https://theintercept.com/feed/?rss",
+    "thenation.com": "https://www.thenation.com/feed/?post_type=article",
+    "404media.co": "https://www.404media.co/rss/",
+    "nautil.us": "https://nautil.us/feed/",
 }
 
 # Hosts with no feed but a stable evergreen article/doc URL.

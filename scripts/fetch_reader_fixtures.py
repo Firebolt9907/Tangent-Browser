@@ -135,6 +135,9 @@ FEEDS = {
     "vice.com": "https://www.vice.com/en/feed/",
     "outsideonline.com": "https://www.outsideonline.com/feed/",
     "huffpost.com": "https://www.huffpost.com/section/us-news/feed",
+    "mirror.co.uk": "https://www.mirror.co.uk/news/?service=rss",
+    "express.co.uk": "https://www.express.co.uk/posts/rss/78/news",
+    "thesun.co.uk": "https://www.thesun.co.uk/feed/",
 }
 
 # Hosts with no feed but a stable evergreen article/doc URL.

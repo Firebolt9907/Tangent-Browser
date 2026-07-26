@@ -270,7 +270,7 @@ def wayback_article_urls(prefix):
         return []
 
 
-def wayback_fetch(url, out):
+def wayback_fetch(url, out, index_check=False):
     """Last-resort channel for publishers that bot-wall every live request.
 
     The CDX API gives the newest 200 snapshot; the `id_` replay endpoint returns the ORIGINAL bytes
@@ -283,7 +283,7 @@ def wayback_fetch(url, out):
     stamps = re.findall(r'"(\d{14})"', cdx)
     for ts in reversed(stamps):
         curl(f"https://web.archive.org/web/{ts}id_/{url}", out, extra=("--compressed",))
-        ok, why = looks_like_article(out)
+        ok, why = looks_like_article(out, index_check=index_check)
         if ok:
             return True, f"via Wayback {ts[:8]}: {why}"
     return False, "no usable Wayback snapshot"
@@ -318,7 +318,7 @@ def article_urls_from_feed(feed_xml):
     return good + deprioritised
 
 
-def looks_like_article(path):
+def looks_like_article(path, index_check=False):
     try:
         raw = open(path, encoding="utf-8", errors="replace").read()
     except OSError:
@@ -335,9 +335,15 @@ def looks_like_article(path):
     # Section/category indexes pass the paragraph test — their teaser copy is real prose — and then
     # MISS against a rule that is perfectly correct for articles (hit on japantoday, investing.com,
     # 9news). Publishers label the page type in Open Graph, so use it when it is present.
-    og = re.search(r"""<meta[^>]+property=["']og:type["'][^>]+content=["']([^"']+)""", raw, re.I)
-    if og and og.group(1).strip().lower() in ("website", "object", "profile"):
-        return False, f"og:type={og.group(1).strip()} (index/section page, not an article)"
+    # NOTE: only applied to link-discovery channels. Plenty of legitimate reference pages declare
+    # og:type=website — docs.python.org, kubernetes.io, vitejs.dev, Stack Overflow and Wikipedia all
+    # do — so using this as a blanket gate throws away good fixtures. Feed and DIRECT urls already
+    # point at a specific document; it is scraped and CDX-discovered urls that can land on a section
+    # index (investing.com/news, japantoday/category/...).
+    if index_check:
+        og = re.search(r"""<meta[^>]+property=["']og:type["'][^>]+content=["']([^"']+)""", raw, re.I)
+        if og and og.group(1).strip().lower() in ("website", "object", "profile"):
+            return False, f"og:type={og.group(1).strip()} (index/section page, not an article)"
     return True, f"{len(raw)}B, {long_p} long <p>"
 
 
@@ -433,20 +439,21 @@ def fetch_one(host, outdir):
     tmp = path + ".part"
     why = "no candidate fetched"
     for url in candidates:
+        discovered = host in WAYBACK_PREFIX or host in SCRAPE
         if host in WAYBACK_PREFIX:
             # These hosts wall every live request; the candidate URLs came from the archive, so go
             # straight to the archive rather than paying for a wall response first.
-            ok, why = wayback_fetch(url, tmp)
+            ok, why = wayback_fetch(url, tmp, index_check=discovered)
         else:
             curl(url, tmp)
-            ok, why = looks_like_article(tmp)
+            ok, why = looks_like_article(tmp, index_check=discovered)
         if ok:
             os.replace(tmp, path)
             return True, why
         # Try the next feed item: the newest post is often a live blog or a video.
     # Every live fetch failed. Several publishers (fandom, britannica, investopedia, biorxiv) serve a
     # wall to curl but are archived intact, so fall back to Wayback before giving up.
-    ok, wb_why = wayback_fetch(candidates[0], tmp)
+    ok, wb_why = wayback_fetch(candidates[0], tmp, index_check=discovered)
     if ok:
         os.replace(tmp, path)
         return True, wb_why

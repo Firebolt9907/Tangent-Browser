@@ -69,15 +69,21 @@ def fixture_for(host, fixtures_dir):
 
 
 def pick_include(soup, rule):
-    """Mirror the extractor: first include selector whose match has real text wins."""
+    """Mirror findArticleElement() in extension/src/extractor.core.js, exactly.
+
+    The extractor does `document.querySelector(sel)` per include selector and accepts the result if
+    it is visible and has ANY non-empty text. So it takes the FIRST match in document order — it does
+    not look at later matches, and it does not require the match to be substantial. A verifier that
+    scans for the first *big* match is more forgiving than the app and will pass rules whose real
+    on-device behaviour is a near-empty reader (a 150-char decoy node earlier in the DOM).
+    """
     for sel in as_list(rule.get("include")):
         try:
-            matches = soup.select(sel)
+            cand = soup.select_one(sel)
         except Exception:
-            matches = []
-        for cand in matches:
-            if len(cand.get_text(strip=True)) > 200:
-                return cand
+            continue  # extractor try/catches a bad selector and moves to the next one
+        if cand is not None and cand.get_text(strip=True):
+            return cand
     return None
 
 

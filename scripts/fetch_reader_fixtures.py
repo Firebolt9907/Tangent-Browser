@@ -288,6 +288,9 @@ SCRAPE = {
     "lonelyplanet.com": "https://www.lonelyplanet.com/articles",
     "entrepreneur.com": "https://www.entrepreneur.com/latest",
     "japantoday.com": "https://japantoday.com/category/national",
+    "morningstar.com": "https://www.morningstar.com/news",
+    "geeksforgeeks.org": "https://www.geeksforgeeks.org/python-programming-language/",
+    "everydayhealth.com": "https://www.everydayhealth.com/news/",
 }
 
 

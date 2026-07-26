@@ -140,6 +140,7 @@ FEEDS = {
     "thesun.co.uk": "https://www.thesun.co.uk/feed/",
     "nationalpost.com": "https://nationalpost.com/feed/",
     "rte.ie": "https://www.rte.ie/feeds/rss/?index=/news/",
+    "sbs.com.au": "https://www.sbs.com.au/news/feed",
     "theglobeandmail.com": "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/canada/",
 }
 

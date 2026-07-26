@@ -269,6 +269,48 @@ def looks_like_article(path):
 
 MAX_CANDIDATES = 4
 
+# Hosts whose advertised feed is dead or serves HTML: scrape an index page for article links instead.
+# Value is the index URL to scrape; links are filtered by article_urls_from_page().
+SCRAPE = {
+    "gulfnews.com": "https://gulfnews.com/world",
+    "alarabiya.net": "https://english.alarabiya.net/News/middle-east",
+    "eluniversal.com.mx": "https://www.eluniversal.com.mx/nacion/",
+    "nzherald.co.nz": "https://www.nzherald.co.nz/nz/",
+    "usatoday.com": "https://www.usatoday.com/news/nation/",
+    "metro.co.uk": "https://metro.co.uk/news/",
+}
+
+
+def article_urls_from_page(html, host):
+    """Pull plausible article permalinks out of an index page.
+
+    Publishers vary far too much for a per-host regex to be worth maintaining, so this uses the two
+    signals that hold nearly everywhere: the link stays on the host, and its final path segment looks
+    like a headline slug (long, hyphenated) or the path carries a date. Anything matching the
+    live/video pattern is deprioritised exactly as with feeds.
+    """
+    good, deprioritised = [], []
+    seen = set()
+    for href in re.findall(r'href="([^"#?]+)"', html):
+        if href.startswith("//"):
+            href = "https:" + href
+        elif href.startswith("/"):
+            href = f"https://{host.lstrip('.')}{href}"
+        elif not href.startswith("http"):
+            continue
+        if host not in href or href in seen:
+            continue
+        seen.add(href)
+        path = href.split("://", 1)[-1].split("/", 1)[-1].rstrip("/")
+        if not path:
+            continue
+        slug = path.rsplit("/", 1)[-1]
+        dated = re.search(r"/(19|20)\d{2}/", href) or re.search(r"-\d{6,}$", slug)
+        if not (dated or (len(slug) >= 25 and slug.count("-") >= 3)):
+            continue
+        (deprioritised if NON_ARTICLE_URL.search(href) else good).append(href)
+    return good + deprioritised
+
 
 def fetch_one(host, outdir):
     if host == "dev.to":
@@ -281,6 +323,10 @@ def fetch_one(host, outdir):
         candidates = article_urls_from_feed(curl(FEEDS[host]))[:MAX_CANDIDATES]
         if not candidates:
             return False, "feed exposed no article <item> link"
+    elif host in SCRAPE:
+        candidates = article_urls_from_page(curl(SCRAPE[host]), host)[:MAX_CANDIDATES]
+        if not candidates:
+            return False, f"index page exposed no article links ({SCRAPE[host]})"
     else:
         url = DIRECT.get(host)
         if not url:
@@ -308,6 +354,9 @@ def main():
         print("feed-backed hosts:")
         for h in sorted(FEEDS):
             print(f"  {h}")
+        print("scraped-index hosts:")
+        for h in sorted(SCRAPE):
+            print(f"  {h}")
         print("direct-URL hosts:")
         for h in sorted(DIRECT):
             print(f"  {h}")
@@ -319,7 +368,7 @@ def main():
         sys.exit(__doc__.strip().splitlines()[0] + "\n\nusage: fetch_reader_fixtures.py <dir> [host ...]")
     outdir, hosts = args[0], args[1:]
     os.makedirs(outdir, exist_ok=True)
-    targets = hosts or sorted(set(FEEDS) | set(DIRECT))
+    targets = hosts or sorted(set(FEEDS) | set(DIRECT) | set(SCRAPE))
 
     ok_n = skip_n = 0
     for host in targets:

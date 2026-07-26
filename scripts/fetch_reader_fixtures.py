@@ -144,6 +144,8 @@ FEEDS = {
     "tasteofhome.com": "https://www.tasteofhome.com/feed/",
     "carscoops.com": "https://www.carscoops.com/feed/",
     "unherd.com": "https://unherd.com/feed/",
+    "usmagazine.com": "https://www.usmagazine.com/feed/",
+    "tmz.com": "https://www.tmz.com/rss.xml",
     "newrepublic.com": "https://newrepublic.com/rss.xml",
     "theweek.com": "https://theweek.com/feeds/all",
     "dailywire.com": "https://www.dailywire.com/feeds/rss.xml",

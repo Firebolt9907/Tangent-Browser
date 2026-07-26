@@ -138,6 +138,9 @@ FEEDS = {
     "mirror.co.uk": "https://www.mirror.co.uk/news/?service=rss",
     "express.co.uk": "https://www.express.co.uk/posts/rss/78/news",
     "thesun.co.uk": "https://www.thesun.co.uk/feed/",
+    "nationalpost.com": "https://nationalpost.com/feed/",
+    "rte.ie": "https://www.rte.ie/feeds/rss/?index=/news/",
+    "theglobeandmail.com": "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/canada/",
 }
 
 # Hosts with no feed but a stable evergreen article/doc URL.

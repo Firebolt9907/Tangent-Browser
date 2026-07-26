@@ -112,6 +112,13 @@ FEEDS = {
     "thenation.com": "https://www.thenation.com/feed/?post_type=article",
     "404media.co": "https://www.404media.co/rss/",
     "nautil.us": "https://nautil.us/feed/",
+    "blog.cloudflare.com": "https://blog.cloudflare.com/rss/",
+    "engineering.fb.com": "https://engineering.fb.com/feed/",
+    "stripe.com": "https://stripe.com/blog/feed.rss",
+    "aws.amazon.com": "https://aws.amazon.com/blogs/aws/feed/",
+    "dropbox.tech": "https://dropbox.tech/feed",
+    "engineering.atspotify.com": "https://engineering.atspotify.com/feed/",
+    "martinfowler.com": "https://martinfowler.com/feed.atom",
 }
 
 # Hosts with no feed but a stable evergreen article/doc URL.

@@ -379,6 +379,7 @@ SCRAPE = {
     "nzherald.co.nz": "https://www.nzherald.co.nz/nz/",
     "usatoday.com": "https://www.usatoday.com/news/nation/",
     "kqed.org": "https://www.kqed.org/news",
+    "westword.com": "https://www.westword.com/news",
     "laist.com": "https://laist.com/news",
     "bobvila.com": "https://www.bobvila.com/articles",
     "thisoldhouse.com": "https://www.thisoldhouse.com/how-to",

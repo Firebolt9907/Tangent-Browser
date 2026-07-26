@@ -131,6 +131,10 @@ FEEDS = {
     "voanews.com": "https://www.voanews.com/api/zq$omekvi_",
     "thediplomat.com": "https://thediplomat.com/feed/",
     "scotusblog.com": "https://www.scotusblog.com/feed/",
+    "buzzfeed.com": "https://www.buzzfeed.com/index.xml",
+    "vice.com": "https://www.vice.com/en/feed/",
+    "outsideonline.com": "https://www.outsideonline.com/feed/",
+    "huffpost.com": "https://www.huffpost.com/section/us-news/feed",
 }
 
 # Hosts with no feed but a stable evergreen article/doc URL.

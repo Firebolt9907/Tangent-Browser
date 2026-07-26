@@ -143,6 +143,8 @@ FEEDS = {
     "nationalpost.com": "https://nationalpost.com/feed/",
     "rte.ie": "https://www.rte.ie/feeds/rss/?index=/news/",
     "sbs.com.au": "https://www.sbs.com.au/news/feed",
+    "koreaherald.com": "https://www.koreaherald.com/rss/newsAll",
+    "chinadaily.com.cn": "https://www.chinadaily.com.cn/rss/china_rss.xml",
     "theglobeandmail.com": "https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/canada/",
 }
 

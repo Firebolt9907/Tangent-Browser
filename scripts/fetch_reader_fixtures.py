@@ -125,6 +125,9 @@ FEEDS = {
     "thepointsguy.com": "https://thepointsguy.com/feed/",
     "smittenkitchen.com": "https://smittenkitchen.com/feed/",
     "kingarthurbaking.com": "https://www.kingarthurbaking.com/blog/feed",
+    "sciencenews.org": "https://www.sciencenews.org/feed",
+    "eos.org": "https://eos.org/feed",
+    "sifted.eu": "https://sifted.eu/feed",
 }
 
 # Hosts with no feed but a stable evergreen article/doc URL.

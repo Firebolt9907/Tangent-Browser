@@ -167,9 +167,9 @@ FEEDS = {
 # Hosts with no feed but a stable evergreen article/doc URL.
 DIRECT = {
     "developer.mozilla.org": "https://developer.mozilla.org/en-US/docs/Web/CSS/flex",
-    "fandom.com": "https://harrypotter.fandom.com/wiki/Hogwarts",
+    "fandom.com": "https://starwars.fandom.com/wiki/Luke_Skywalker",
     "nature.com": "https://www.nature.com/articles/d41586-025-02264-9",
-    "biorxiv.org": "https://www.biorxiv.org/content/10.1101/2023.01.01.522000v1.full",
+    "biorxiv.org": "https://www.biorxiv.org/content/10.1101/2020.03.11.987222v1.full",
     "britannica.com": "https://www.britannica.com/animal/dog",
     "investopedia.com": "https://www.investopedia.com/terms/i/inflation.asp",
     "developer.android.com": "https://developer.android.com/guide/components/activities/intro-activities",
@@ -236,12 +236,31 @@ BLOCKED = {
 MIN_LONG_P = 3
 
 
-def curl(url, out=None, ua=MOBILE_UA):
-    cmd = ["curl", "-sSL", "-A", ua, "--max-time", "30", url]
+def curl(url, out=None, ua=MOBILE_UA, extra=()):
+    cmd = ["curl", "-sSL", "-A", ua, "--max-time", "45", *extra, url]
     if out:
         cmd += ["-o", out]
     res = subprocess.run(cmd, capture_output=True)
     return res.stdout.decode("utf-8", "replace") if not out else ""
+
+
+def wayback_fetch(url, out):
+    """Last-resort channel for publishers that bot-wall every live request.
+
+    The CDX API gives the newest 200 snapshot; the `id_` replay endpoint returns the ORIGINAL bytes
+    (no Wayback toolbar injection, real class names preserved), which is what makes the snapshot
+    usable as a selector fixture. Those bytes are served gzipped, hence --compressed: without it you
+    get binary garbage that parses as an empty document, which looks exactly like a bot wall.
+    """
+    cdx = curl("https://web.archive.org/cdx/search/cdx?url=" + url
+               + "&output=json&limit=-3&filter=statuscode:200")
+    stamps = re.findall(r'"(\d{14})"', cdx)
+    for ts in reversed(stamps):
+        curl(f"https://web.archive.org/web/{ts}id_/{url}", out, extra=("--compressed",))
+        ok, why = looks_like_article(out)
+        if ok:
+            return True, f"via Wayback {ts[:8]}: {why}"
+    return False, "no usable Wayback snapshot"
 
 
 # Live blogs, video pages and photo galleries are real URLs with real bytes, but their body is a
@@ -383,6 +402,12 @@ def fetch_one(host, outdir):
             os.replace(tmp, path)
             return True, why
         # Try the next feed item: the newest post is often a live blog or a video.
+    # Every live fetch failed. Several publishers (fandom, britannica, investopedia, biorxiv) serve a
+    # wall to curl but are archived intact, so fall back to Wayback before giving up.
+    ok, wb_why = wayback_fetch(candidates[0], tmp)
+    if ok:
+        os.replace(tmp, path)
+        return True, wb_why
     if os.path.exists(tmp):
         os.remove(tmp)
     return False, f"{why} <- {candidates[-1][:60]}"

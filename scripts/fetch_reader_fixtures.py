@@ -380,6 +380,7 @@ SCRAPE = {
     "usatoday.com": "https://www.usatoday.com/news/nation/",
     "kqed.org": "https://www.kqed.org/news",
     "westword.com": "https://www.westword.com/news",
+    "si.com": "https://www.si.com/",
     "laist.com": "https://laist.com/news",
     "bobvila.com": "https://www.bobvila.com/articles",
     "thisoldhouse.com": "https://www.thisoldhouse.com/how-to",

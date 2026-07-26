@@ -196,6 +196,9 @@ DIRECT = {
     "gov.uk": "https://www.gov.uk/vehicle-tax",
     "frontiersin.org": ("https://www.frontiersin.org/journals/psychology/articles/"
                         "10.3389/fpsyg.2023.1145278/full"),
+    "thepennyhoarder.com": "https://www.thepennyhoarder.com/save-money/how-to-save-money/",
+    "gobankingrates.com": ("https://www.gobankingrates.com/saving-money/savings-advice/"
+                           "how-to-save-money/"),
     "bankrate.com": "https://www.bankrate.com/banking/savings/what-is-a-savings-account/",
     "stackoverflow.com": ("https://stackoverflow.com/questions/11227809/"
                           "why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array"),

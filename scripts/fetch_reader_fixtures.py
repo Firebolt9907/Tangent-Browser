@@ -146,6 +146,8 @@ FEEDS = {
     "unherd.com": "https://unherd.com/feed/",
     "usmagazine.com": "https://www.usmagazine.com/feed/",
     "thehackernews.com": "https://feeds.feedburner.com/TheHackersNews",
+    "wbur.org": "https://www.wbur.org/feed",
+    "news.harvard.edu": "https://news.harvard.edu/gazette/feed/",
     "sdtimes.com": "https://sdtimes.com/feed/",
     "helpnetsecurity.com": "https://www.helpnetsecurity.com/feed/",
     "tmz.com": "https://www.tmz.com/rss.xml",

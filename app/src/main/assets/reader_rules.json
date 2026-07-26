@@ -1,5 +1,5 @@
 {
-  "version": 45,
+  "version": 46,
   "_schema": "Per-site reader overrides interpreted by the fixed extractor (data, not code). Each rule: 'match' = hostname or ['host', ...] (bare domain also matches subdomains; leading '*.' allowed); 'include' = CSS selector(s) for the real article container (first visible match wins, bypasses the heuristic); 'strip' = CSS selector(s) whose subtrees are dropped before extraction. include/strip may be a string or an array. Selectors containing a newline or '//' are rejected at load. include/strip are no-ops when their selectors don't match, so an unverified rule cannot regress other pages — only reshape the named host.",
   "_examples_note": "Rules validated against live article DOM by the reader-mode agent loop. include selectors are the true article-body container; strip selectors drop in-body ads / related-coverage / bio boxes the generic boilerplate filter misses. Do NOT add strips already covered by the generic BOILERPLATE_SEL in the extractor: word-boundary ad classes (ad/ads/ad-*/ads-*/-ad/-ads/_ad, e.g. .ad, .ad-slot, .ad-unit, .sticky-ad, .*-ad), .taboola/.outbrain, *recirc*, and the substring matchers share/social/related/newsletter/subscribe/subscription/comment/breadcrumb/advert/sponsor/promo/credit/disclaimer/affiliate/category/toolbar, plus the nav/aside/footer/form elements. Only add site strips the generic filter does NOT catch (e.g. .sidebar, *video*, *paywall*, author/byline boxes, data-* / aria-* attribute selectors, CMS-specific classes like .infobox/.navbox/.votecell).",
   "rules": [
@@ -312,7 +312,7 @@
       "strip": [".recurrent-blocks", ".recurrent-author-widgets", ".recurrent-tag-list", ".content-widget", ".revcontent-container", ".card-post"]
     },
     {
-      "match": ["kotaku.com", "theroot.com"],
+      "match": ["kotaku.com", "theroot.com", "theonion.com"],
       "include": [".entry-content"],
       "strip": [".post-bottom", ".related-posts", ".wp-block-post-author", ".wp-block-tag-cloud"]
     },
@@ -325,6 +325,11 @@
       "match": ["avclub.com"],
       "include": [".copy.entry"],
       "strip": ["#revcontent-hidden", ".inline-newsletter", ".js_related", ".ad-zone"]
+    },
+    {
+      "match": ["pcworld.com", "macworld.com", "computerworld.com", "infoworld.com", "networkworld.com", "cio.com", "techhive.com", "csoonline.com"],
+      "include": [".article__main", ".entry-content"],
+      "strip": [".foundry-mobile-ads", ".foundry-ad", ".hellobar", ".miso-summary-box", ".cta", ".imageCredit"]
     }
   ]
 }

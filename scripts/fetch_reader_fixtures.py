@@ -128,6 +128,9 @@ FEEDS = {
     "sciencenews.org": "https://www.sciencenews.org/feed",
     "eos.org": "https://eos.org/feed",
     "sifted.eu": "https://sifted.eu/feed",
+    "voanews.com": "https://www.voanews.com/api/zq$omekvi_",
+    "thediplomat.com": "https://thediplomat.com/feed/",
+    "scotusblog.com": "https://www.scotusblog.com/feed/",
 }
 
 # Hosts with no feed but a stable evergreen article/doc URL.
@@ -148,6 +151,7 @@ DIRECT = {
     "gov.uk": "https://www.gov.uk/vehicle-tax",
     "frontiersin.org": ("https://www.frontiersin.org/journals/psychology/articles/"
                         "10.3389/fpsyg.2023.1145278/full"),
+    "pewresearch.org": "https://www.pewresearch.org/short-reads/2026/07/07/divorced-americans-are-more-likely-than-others-to-be-religiously-unaffiliated/",
     "bankrate.com": "https://www.bankrate.com/banking/savings/what-is-a-savings-account/",
     "stackoverflow.com": ("https://stackoverflow.com/questions/11227809/"
                           "why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array"),

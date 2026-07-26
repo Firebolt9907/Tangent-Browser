@@ -122,6 +122,9 @@ FEEDS = {
     "cnet.com": "https://www.cnet.com/rss/news/",
     "apartmenttherapy.com": "https://www.apartmenttherapy.com/main.rss",
     "mentalfloss.com": "https://www.mentalfloss.com/rss.xml",
+    "thepointsguy.com": "https://thepointsguy.com/feed/",
+    "smittenkitchen.com": "https://smittenkitchen.com/feed/",
+    "kingarthurbaking.com": "https://www.kingarthurbaking.com/blog/feed",
 }
 
 # Hosts with no feed but a stable evergreen article/doc URL.

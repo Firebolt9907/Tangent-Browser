@@ -34,6 +34,22 @@ MOBILE_UA = ("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
 # host -> RSS/Atom feed. The host key must equal the rule's match[0].
 FEEDS = {
     "apnews.com": "https://feedx.net/rss/ap.xml",
+    "theguardian.com": "https://www.theguardian.com/world/rss",
+    "bbc.com": "https://feeds.bbci.co.uk/news/rss.xml",
+    "cnn.com": "http://rss.cnn.com/rss/cnn_topstories.rss",
+    "theverge.com": "https://www.theverge.com/rss/index.xml",
+    "nbcnews.com": "https://feeds.nbcnews.com/nbcnews/public/news",
+    "vox.com": "https://www.vox.com/rss/index.xml",
+    "forbes.com": "https://www.forbes.com/innovation/feed2/",
+    "nypost.com": "https://nypost.com/feed/",
+    "theatlantic.com": "https://www.theatlantic.com/feed/all/",
+    "newsweek.com": "https://www.newsweek.com/rss",
+    "chicagotribune.com": "https://www.chicagotribune.com/feed/",
+    "thedailybeast.com": "https://www.thedailybeast.com/arc/outboundfeeds/rss/",
+    "semafor.com": "https://www.semafor.com/rss.xml",
+    "scientificamerican.com": "https://www.scientificamerican.com/platform/syndication/rss/",
+    "cosmopolitan.com": "https://www.cosmopolitan.com/rss/all.xml/",
+    "japantimes.co.jp": "https://www.japantimes.co.jp/feed/",
     "npr.org": "https://feeds.npr.org/1001/rss.xml",
     "foxnews.com": "https://moxie.foxnews.com/google-publisher/latest.xml",
     "cbsnews.com": "https://www.cbsnews.com/latest/rss/main",
@@ -151,6 +167,13 @@ FEEDS = {
 # Hosts with no feed but a stable evergreen article/doc URL.
 DIRECT = {
     "developer.mozilla.org": "https://developer.mozilla.org/en-US/docs/Web/CSS/flex",
+    "fandom.com": "https://harrypotter.fandom.com/wiki/Hogwarts",
+    "nature.com": "https://www.nature.com/articles/d41586-025-02264-9",
+    "biorxiv.org": "https://www.biorxiv.org/content/10.1101/2023.01.01.522000v1.full",
+    "britannica.com": "https://www.britannica.com/animal/dog",
+    "investopedia.com": "https://www.investopedia.com/terms/i/inflation.asp",
+    "developer.android.com": "https://developer.android.com/guide/components/activities/intro-activities",
+    "webmd.com": "https://www.webmd.com/diet/health-benefits-green-tea",
     "docs.python.org": "https://docs.python.org/3/tutorial/introduction.html",
     "readthedocs.io": "https://requests.readthedocs.io/en/latest/user/quickstart/",
     "gitbook.com": "https://docs.gitbook.com/getting-started/quickstart",
@@ -223,8 +246,8 @@ def curl(url, out=None, ua=MOBILE_UA):
 
 # Live blogs, video pages and photo galleries are real URLs with real bytes, but their body is a
 # feed of updates or a player — an include that is correct for articles legitimately MISSes on them.
-NON_ARTICLE_URL = re.compile(r"/(video|videos|live|liveblog|live-blog|gallery|podcast|watch)(/|$)"
-                             r"|-live(-|$)|/live-updates", re.I)
+NON_ARTICLE_URL = re.compile(r"/(video|videos|gallery|podcast|watch)(/|$)"
+                             r"|/live[a-z-]*(/|$)|-live(-|$)", re.I)
 
 
 def article_urls_from_feed(feed_xml):

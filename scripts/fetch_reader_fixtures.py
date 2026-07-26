@@ -131,6 +131,7 @@ FEEDS = {
     "voanews.com": "https://www.voanews.com/api/zq$omekvi_",
     "thediplomat.com": "https://thediplomat.com/feed/",
     "scotusblog.com": "https://www.scotusblog.com/feed/",
+    "pewresearch.org": "https://www.pewresearch.org/feed/",
     "buzzfeed.com": "https://www.buzzfeed.com/index.xml",
     "vice.com": "https://www.vice.com/en/feed/",
     "outsideonline.com": "https://www.outsideonline.com/feed/",
@@ -138,6 +139,7 @@ FEEDS = {
     "mirror.co.uk": "https://www.mirror.co.uk/news/?service=rss",
     "express.co.uk": "https://www.express.co.uk/posts/rss/78/news",
     "thesun.co.uk": "https://www.thesun.co.uk/feed/",
+    "wordpress.com": "https://wordpress.com/blog/feed/",
     "nationalpost.com": "https://nationalpost.com/feed/",
     "rte.ie": "https://www.rte.ie/feeds/rss/?index=/news/",
     "sbs.com.au": "https://www.sbs.com.au/news/feed",
@@ -162,7 +164,6 @@ DIRECT = {
     "gov.uk": "https://www.gov.uk/vehicle-tax",
     "frontiersin.org": ("https://www.frontiersin.org/journals/psychology/articles/"
                         "10.3389/fpsyg.2023.1145278/full"),
-    "pewresearch.org": "https://www.pewresearch.org/short-reads/2026/07/07/divorced-americans-are-more-likely-than-others-to-be-religiously-unaffiliated/",
     "bankrate.com": "https://www.bankrate.com/banking/savings/what-is-a-savings-account/",
     "stackoverflow.com": ("https://stackoverflow.com/questions/11227809/"
                           "why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array"),
@@ -181,7 +182,6 @@ DIRECT = {
     # Telegraph pages are user-created and vanish; their own API doc page is stable and is rendered
     # with the same `.tl_article_content` template as any post.
     "telegra.ph": "https://telegra.ph/api",
-    "wordpress.com": "https://wordpress.com/blog/",
     "dev.to": None,  # resolved at runtime via the API, see fetch_one
 }
 
@@ -219,12 +219,20 @@ def curl(url, out=None, ua=MOBILE_UA):
     return res.stdout.decode("utf-8", "replace") if not out else ""
 
 
-def article_url_from_feed(feed_xml, host):
-    """Pick a real article link out of a feed.
+# Live blogs, video pages and photo galleries are real URLs with real bytes, but their body is a
+# feed of updates or a player — an include that is correct for articles legitimately MISSes on them.
+NON_ARTICLE_URL = re.compile(r"/(video|videos|live|liveblog|live-blog|gallery|podcast|watch)(/|$)"
+                             r"|-live(-|$)|/live-updates", re.I)
+
+
+def article_urls_from_feed(feed_xml):
+    """Yield candidate article links from a feed, best first.
 
     Deliberately NOT "the first <link>": in most feeds that is the channel link (an index page).
-    Only <item>/<entry> bodies are considered, and the URL must have some path depth.
+    Only <item>/<entry> bodies are considered, live/video URLs are pushed to the back, and several
+    candidates are returned because a publisher's newest item is often a live blog.
     """
+    good, deprioritised = [], []
     for item in re.findall(r"<(?:item|entry)[^>]*>(.*?)</(?:item|entry)>", feed_xml, re.S):
         m = (re.search(r"<link>\s*(?:<!\[CDATA\[)?\s*(https?://[^\]\s<]+)", item)
              or re.search(r'<link[^>]*href="(https?://[^"]+)"', item))
@@ -234,9 +242,10 @@ def article_url_from_feed(feed_xml, host):
         # Depth >= 4 means there is at least one path segment past the host, which is enough to
         # exclude the bare channel link. Requiring more drops legitimately flat permalinks
         # (kotaku.com/<slug>, <blog>.bearblog.dev/<slug>).
-        if len(url.rstrip("/").split("/")) >= 4 and "/feed" not in url and not url.endswith(".xml"):
-            return url
-    return None
+        if len(url.rstrip("/").split("/")) < 4 or "/feed" in url or url.endswith(".xml"):
+            continue
+        (deprioritised if NON_ARTICLE_URL.search(url) else good).append(url)
+    return good + deprioritised
 
 
 def looks_like_article(path):
@@ -256,32 +265,39 @@ def looks_like_article(path):
     return True, f"{len(raw)}B, {long_p} long <p>"
 
 
+MAX_CANDIDATES = 4
+
+
 def fetch_one(host, outdir):
-    url = None
     if host == "dev.to":
         import json
         try:
-            url = json.loads(curl("https://dev.to/api/articles?per_page=1"))[0]["url"]
+            candidates = [json.loads(curl("https://dev.to/api/articles?per_page=1"))[0]["url"]]
         except Exception:
             return False, "dev.to API returned nothing"
     elif host in FEEDS:
-        url = article_url_from_feed(curl(FEEDS[host]), host)
-        if not url:
+        candidates = article_urls_from_feed(curl(FEEDS[host]))[:MAX_CANDIDATES]
+        if not candidates:
             return False, "feed exposed no article <item> link"
     else:
         url = DIRECT.get(host)
         if not url:
             return False, "no feed or direct URL configured"
+        candidates = [url]
 
     path = os.path.join(outdir, f"{host}.html")
     tmp = path + ".part"
-    curl(url, tmp)
-    ok, why = looks_like_article(tmp)
-    if not ok:
+    why = "no candidate fetched"
+    for url in candidates:
+        curl(url, tmp)
+        ok, why = looks_like_article(tmp)
+        if ok:
+            os.replace(tmp, path)
+            return True, why
+        # Try the next feed item: the newest post is often a live blog or a video.
+    if os.path.exists(tmp):
         os.remove(tmp)
-        return False, f"{why} <- {url[:60]}"
-    os.replace(tmp, path)
-    return True, why
+    return False, f"{why} <- {candidates[-1][:60]}"
 
 
 def main():

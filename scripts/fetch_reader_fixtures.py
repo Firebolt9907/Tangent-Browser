@@ -43,8 +43,6 @@ FEEDS = {
     "forbes.com": "https://www.forbes.com/innovation/feed2/",
     "nypost.com": "https://nypost.com/feed/",
     "theatlantic.com": "https://www.theatlantic.com/feed/all/",
-    "newsweek.com": "https://www.newsweek.com/rss",
-    "chicagotribune.com": "https://www.chicagotribune.com/feed/",
     "thedailybeast.com": "https://www.thedailybeast.com/arc/outboundfeeds/rss/",
     "semafor.com": "https://www.semafor.com/rss.xml",
     "scientificamerican.com": "https://www.scientificamerican.com/platform/syndication/rss/",
@@ -223,6 +221,9 @@ BLOCKED = {
         "MediaNews/Alden/Tribune/McClatchy feeds return 0 bytes to mobile and Googlebot",
     "axios.com/politico.com/france24.com": "sub-6KB walls even from feed URLs",
     "learn.microsoft.com/developer.apple.com": "body hydrates client-side for every UA",
+    "nytimes.com/reuters.com/newsweek.com": 
+        "no live channel AND CDX prefix queries on these domains return 403 'this type of CDX "
+        "query requires authorization' or time out, so even the archive cannot enumerate them",
     "mdpi.com/bmj.com/cell.com/jamanetwork.com/pnas.org/science.org":
         "publisher CDNs answer curl with a ~5KB challenge page; frontiersin, PLOS and PMC are the "
         "open-access journals that do work",
@@ -248,6 +249,8 @@ def curl(url, out=None, ua=MOBILE_UA, extra=()):
 # index): ask Wayback's CDX index for archived article URLs matching a path prefix instead.
 WAYBACK_PREFIX = {
     "politico.com": "politico.com/news/2026*",
+    "usatoday.com": "usatoday.com/story/news/*",
+    "chicagotribune.com": "chicagotribune.com/2026/*",
 }
 
 

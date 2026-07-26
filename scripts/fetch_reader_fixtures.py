@@ -244,6 +244,24 @@ def curl(url, out=None, ua=MOBILE_UA, extra=()):
     return res.stdout.decode("utf-8", "replace") if not out else ""
 
 
+# Hosts that answer nothing live and whose article URLs cannot be discovered (no feed, JS-rendered
+# index): ask Wayback's CDX index for archived article URLs matching a path prefix instead.
+WAYBACK_PREFIX = {
+    "politico.com": "politico.com/news/2026*",
+}
+
+
+def wayback_article_urls(prefix):
+    """Ask CDX which article URLs under this prefix are archived (newest first, deduped)."""
+    q = ("https://web.archive.org/cdx/search/cdx?url=" + prefix
+         + "&output=json&limit=8&filter=statuscode:200&collapse=urlkey&from=2026")
+    try:
+        import json
+        return [row[2] for row in json.loads(curl(q))[1:]]
+    except Exception:
+        return []
+
+
 def wayback_fetch(url, out):
     """Last-resort channel for publishers that bot-wall every live request.
 
@@ -382,6 +400,10 @@ def fetch_one(host, outdir):
         candidates = article_urls_from_feed(curl(FEEDS[host]))[:MAX_CANDIDATES]
         if not candidates:
             return False, "feed exposed no article <item> link"
+    elif host in WAYBACK_PREFIX:
+        candidates = wayback_article_urls(WAYBACK_PREFIX[host])[:MAX_CANDIDATES]
+        if not candidates:
+            return False, f"CDX returned no snapshots for {WAYBACK_PREFIX[host]}"
     elif host in SCRAPE:
         candidates = article_urls_from_page(curl(SCRAPE[host]), host)[:MAX_CANDIDATES]
         if not candidates:
@@ -396,8 +418,13 @@ def fetch_one(host, outdir):
     tmp = path + ".part"
     why = "no candidate fetched"
     for url in candidates:
-        curl(url, tmp)
-        ok, why = looks_like_article(tmp)
+        if host in WAYBACK_PREFIX:
+            # These hosts wall every live request; the candidate URLs came from the archive, so go
+            # straight to the archive rather than paying for a wall response first.
+            ok, why = wayback_fetch(url, tmp)
+        else:
+            curl(url, tmp)
+            ok, why = looks_like_article(tmp)
         if ok:
             os.replace(tmp, path)
             return True, why
@@ -433,7 +460,7 @@ def main():
         sys.exit(__doc__.strip().splitlines()[0] + "\n\nusage: fetch_reader_fixtures.py <dir> [host ...]")
     outdir, hosts = args[0], args[1:]
     os.makedirs(outdir, exist_ok=True)
-    targets = hosts or sorted(set(FEEDS) | set(DIRECT) | set(SCRAPE))
+    targets = hosts or sorted(set(FEEDS) | set(DIRECT) | set(SCRAPE) | set(WAYBACK_PREFIX))
 
     ok_n = skip_n = 0
     for host in targets:

@@ -130,6 +130,8 @@ DIRECT = {
     "un.org": "https://www.un.org/en/climatechange/what-is-climate-change",
     "nasa.gov": "https://www.nasa.gov/news-release/nasa-sets-coverage-for-agencys-spacex-crew-11-launch-docking/",
     "gov.uk": "https://www.gov.uk/vehicle-tax",
+    "frontiersin.org": ("https://www.frontiersin.org/journals/psychology/articles/"
+                        "10.3389/fpsyg.2023.1145278/full"),
     "bankrate.com": "https://www.bankrate.com/banking/savings/what-is-a-savings-account/",
     "stackoverflow.com": ("https://stackoverflow.com/questions/11227809/"
                           "why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array"),
@@ -165,6 +167,9 @@ BLOCKED = {
         "MediaNews/Alden/Tribune/McClatchy feeds return 0 bytes to mobile and Googlebot",
     "axios.com/politico.com/france24.com": "sub-6KB walls even from feed URLs",
     "learn.microsoft.com/developer.apple.com": "body hydrates client-side for every UA",
+    "mdpi.com/bmj.com/cell.com/jamanetwork.com/pnas.org/science.org":
+        "publisher CDNs answer curl with a ~5KB challenge page; frontiersin, PLOS and PMC are the "
+        "open-access journals that do work",
 }
 
 

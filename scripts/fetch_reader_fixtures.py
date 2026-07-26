@@ -140,6 +140,8 @@ FEEDS = {
     "smittenkitchen.com": "https://smittenkitchen.com/feed/",
     "kingarthurbaking.com": "https://www.kingarthurbaking.com/blog/feed",
     "sciencenews.org": "https://www.sciencenews.org/feed",
+    "retaildive.com": "https://www.retaildive.com/feeds/news/",
+    "liliputing.com": "https://liliputing.com/feed/",
     "eos.org": "https://eos.org/feed",
     "sifted.eu": "https://sifted.eu/feed",
     "voanews.com": "https://www.voanews.com/api/zq$omekvi_",

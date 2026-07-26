@@ -332,6 +332,12 @@ def looks_like_article(path):
     # a lean page (telegra.ph is ~7KB) is fine, an 8KB page with no paragraphs is a wall.
     if long_p < MIN_LONG_P:
         return False, f"only {long_p} long <p> in {len(raw)}B (wall or client-rendered)"
+    # Section/category indexes pass the paragraph test — their teaser copy is real prose — and then
+    # MISS against a rule that is perfectly correct for articles (hit on japantoday, investing.com,
+    # 9news). Publishers label the page type in Open Graph, so use it when it is present.
+    og = re.search(r"""<meta[^>]+property=["']og:type["'][^>]+content=["']([^"']+)""", raw, re.I)
+    if og and og.group(1).strip().lower() in ("website", "object", "profile"):
+        return False, f"og:type={og.group(1).strip()} (index/section page, not an article)"
     return True, f"{len(raw)}B, {long_p} long <p>"
 
 
@@ -345,7 +351,8 @@ SCRAPE = {
     "eluniversal.com.mx": "https://www.eluniversal.com.mx/nacion/",
     "nzherald.co.nz": "https://www.nzherald.co.nz/nz/",
     "usatoday.com": "https://www.usatoday.com/news/nation/",
-    "metro.co.uk": "https://metro.co.uk/news/",
+    "bobvila.com": "https://www.bobvila.com/articles",
+    "thisoldhouse.com": "https://www.thisoldhouse.com/how-to",
     "news.com.au": "https://www.news.com.au/national",
     "taipeitimes.com": "https://www.taipeitimes.com/News/taiwan",
     "thenationalnews.com": "https://www.thenationalnews.com/news/",

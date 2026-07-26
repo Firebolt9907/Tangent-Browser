@@ -119,6 +119,9 @@ FEEDS = {
     "dropbox.tech": "https://dropbox.tech/feed",
     "engineering.atspotify.com": "https://engineering.atspotify.com/feed/",
     "martinfowler.com": "https://martinfowler.com/feed.atom",
+    "cnet.com": "https://www.cnet.com/rss/news/",
+    "apartmenttherapy.com": "https://www.apartmenttherapy.com/main.rss",
+    "mentalfloss.com": "https://www.mentalfloss.com/rss.xml",
 }
 
 # Hosts with no feed but a stable evergreen article/doc URL.

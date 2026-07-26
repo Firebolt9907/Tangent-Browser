@@ -278,6 +278,16 @@ SCRAPE = {
     "nzherald.co.nz": "https://www.nzherald.co.nz/nz/",
     "usatoday.com": "https://www.usatoday.com/news/nation/",
     "metro.co.uk": "https://metro.co.uk/news/",
+    "news.com.au": "https://www.news.com.au/national",
+    "taipeitimes.com": "https://www.taipeitimes.com/News/taiwan",
+    "thenationalnews.com": "https://www.thenationalnews.com/news/",
+    "infobae.com": "https://www.infobae.com/economia/",
+    "theringer.com": "https://www.theringer.com/nba",
+    "autoblog.com": "https://www.autoblog.com/news/",
+    "brookings.edu": "https://www.brookings.edu/articles/",
+    "lonelyplanet.com": "https://www.lonelyplanet.com/articles",
+    "entrepreneur.com": "https://www.entrepreneur.com/latest",
+    "japantoday.com": "https://japantoday.com/category/national",
 }
 
 
@@ -305,6 +315,10 @@ def article_urls_from_page(html, host):
         if not path:
             continue
         slug = path.rsplit("/", 1)[-1]
+        # A hashed font/asset filename can look exactly like a headline slug (infobae served
+        # "roboto-v30-latin-regular.woff2" as the best "article" link), so exclude asset extensions.
+        if re.search(r"\.(woff2?|css|js|png|jpe?g|gif|svg|webp|ico|pdf|mp4|zip)$", slug, re.I):
+            continue
         dated = re.search(r"/(19|20)\d{2}/", href) or re.search(r"-\d{6,}$", slug)
         if not (dated or (len(slug) >= 25 and slug.count("-") >= 3)):
             continue

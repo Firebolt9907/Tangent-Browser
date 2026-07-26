@@ -142,6 +142,8 @@ FEEDS = {
     "sciencenews.org": "https://www.sciencenews.org/feed",
     "retaildive.com": "https://www.retaildive.com/feeds/news/",
     "tasteofhome.com": "https://www.tasteofhome.com/feed/",
+    "carscoops.com": "https://www.carscoops.com/feed/",
+    "appleinsider.com": "https://appleinsider.com/rss/news/",
     "liliputing.com": "https://liliputing.com/feed/",
     "eos.org": "https://eos.org/feed",
     "sifted.eu": "https://sifted.eu/feed",

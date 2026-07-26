@@ -376,6 +376,8 @@ SCRAPE = {
     "eluniversal.com.mx": "https://www.eluniversal.com.mx/nacion/",
     "nzherald.co.nz": "https://www.nzherald.co.nz/nz/",
     "usatoday.com": "https://www.usatoday.com/news/nation/",
+    "kqed.org": "https://www.kqed.org/news",
+    "laist.com": "https://laist.com/news",
     "bobvila.com": "https://www.bobvila.com/articles",
     "thisoldhouse.com": "https://www.thisoldhouse.com/how-to",
     "news.com.au": "https://www.news.com.au/national",

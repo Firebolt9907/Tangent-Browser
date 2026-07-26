@@ -1,5 +1,5 @@
 {
-  "version": 50,
+  "version": 51,
   "_schema": "Per-site reader overrides interpreted by the fixed extractor (data, not code). Each rule: 'match' = hostname or ['host', ...] (bare domain also matches subdomains; leading '*.' allowed); 'include' = CSS selector(s) for the real article container (first visible match wins, bypasses the heuristic); 'strip' = CSS selector(s) whose subtrees are dropped before extraction. include/strip may be a string or an array. Selectors containing a newline or '//' are rejected at load. include/strip are no-ops when their selectors don't match, so an unverified rule cannot regress other pages — only reshape the named host.",
   "_examples_note": "Rules validated against live article DOM by the reader-mode agent loop. include selectors are the true article-body container; strip selectors drop in-body ads / related-coverage / bio boxes the generic boilerplate filter misses. Do NOT add strips already covered by the generic BOILERPLATE_SEL in the extractor: word-boundary ad classes (ad/ads/ad-*/ads-*/-ad/-ads/_ad, e.g. .ad, .ad-slot, .ad-unit, .sticky-ad, .*-ad), .taboola/.outbrain, *recirc*, and the substring matchers share/social/related/newsletter/subscribe/subscription/comment/breadcrumb/advert/sponsor/promo/credit/disclaimer/affiliate/category/toolbar, plus the nav/aside/footer/form elements. Only add site strips the generic filter does NOT catch (e.g. .sidebar, *video*, *paywall*, author/byline boxes, data-* / aria-* attribute selectors, CMS-specific classes like .infobox/.navbox/.votecell).",
   "rules": [
@@ -330,6 +330,31 @@
       "match": ["pcworld.com", "macworld.com", "computerworld.com", "infoworld.com", "networkworld.com", "cio.com", "techhive.com", "csoonline.com"],
       "include": [".article__main", ".entry-content"],
       "strip": [".foundry-mobile-ads", ".foundry-ad", ".hellobar", ".miso-summary-box", ".cta", ".imageCredit"]
+    },
+    {
+      "match": ["ign.com"],
+      "include": [".article-content"],
+      "strip": [".commerce-container", ".article-page-buttons", ".widget-container"]
+    },
+    {
+      "match": ["irishtimes.com"],
+      "include": [".b-it-article-body"],
+      "strip": [".c-ad-slot", ".b-it-article-body__inline-signup", ".c-newsletter-signup"]
+    },
+    {
+      "match": ["spiegel.de"],
+      "include": ["[data-article-el=\"body\"]"],
+      "strip": ["[data-area=\"paywall\"]", "[data-area=\"podcast\"]", "[data-area=\"recommendations\"]"]
+    },
+    {
+      "match": ["elpais.com"],
+      "include": [".a_c"],
+      "strip": [".a_ex", ".a_b_pr", ".x_pt"]
+    },
+    {
+      "match": ["globalnews.ca"],
+      "include": [".l-article__text"],
+      "strip": [".c-ad", ".c-videoPlayer", ".c-signup"]
     },
     {
       "match": ["abc.net.au"],

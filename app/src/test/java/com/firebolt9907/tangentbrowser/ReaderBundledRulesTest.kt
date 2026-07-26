@@ -47,7 +47,7 @@ class ReaderBundledRulesTest {
         // future edit that forgets the bump (or lowers it) trips here. Update the floor when you
         // intentionally raise the shipped version.
         val version = JSONObject(readBundled()).optInt("version", 0)
-        assertTrue("version regressed below the known floor (54): $version", version >= 54)
+        assertTrue("version regressed below the known floor (55): $version", version >= 55)
     }
 
     @Test

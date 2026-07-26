@@ -249,6 +249,8 @@ def curl(url, out=None, ua=MOBILE_UA, extra=()):
 # index): ask Wayback's CDX index for archived article URLs matching a path prefix instead.
 WAYBACK_PREFIX = {
     "politico.com": "politico.com/news/2026*",
+    "gamespot.com": "gamespot.com/articles/*",
+    "gamespot.com": "gamespot.com/articles/*",
     "medicalnewstoday.com": "medicalnewstoday.com/articles/*",
     "metro.co.uk": "metro.co.uk/2026/*",
     "dawn.com": "dawn.com/news/2*",

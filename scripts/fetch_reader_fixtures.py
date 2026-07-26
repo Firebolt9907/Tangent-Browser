@@ -104,6 +104,9 @@ FEEDS = {
     "krebsonsecurity.com": "https://krebsonsecurity.com/feed/",
     "bleepingcomputer.com": "https://www.bleepingcomputer.com/feed/",
     "ign.com": "https://feeds.ign.com/ign/all",
+    "sfgate.com": "https://www.sfgate.com/rss/feed/Bay-Area-News-429.php",
+    "seattletimes.com": "https://www.seattletimes.com/feed/",
+    "boston.com": "https://www.boston.com/feed/",
 }
 
 # Hosts with no feed but a stable evergreen article/doc URL.

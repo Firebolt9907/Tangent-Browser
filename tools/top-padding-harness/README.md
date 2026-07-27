@@ -36,8 +36,11 @@ node debug.js https://gemini.google.com 48       # dump positioned elements near
 node spaTest.js https://x.com 48                 # invariant #11: spacer self-heals across SPA nav
 node scrollTest.js https://medium.com 48         # scroll-activated sticky headers get inset
 node anchorTest.js https://en.wikipedia.org/wiki/CSS '#History'   # scroll-padding-top anchor jump
+node gapTest.js https://www.reddit.com 48        # over-padding: content shifted by ~topPx, no double gap
+node overflowTest.js https://web.telegram.org 48 # app shell / bottom UI pushed off the bottom
 ./fixtures.sh                                    # offline adversarial header fixtures (no network)
 ./anchors.sh                                     # offline scroll-padding-top anchor-jump fixtures
+./shells.sh                                      # offline viewport-locked app-shell fixtures
 ```
 
 ### Offline fixtures
@@ -49,7 +52,7 @@ a sticky header with absolutely-positioned content, a nested-scroll (non-body) s
 negative-`top` header. Each fixture puts real content in the band; a PASS means the injection
 cleared it. Fast and stable — good as a first gate before the live sweeps.
 
-### The three probes
+### The probes
 
 - **`run.js`** — initial page load. Fails if readable content/icons paint in the `[0, topPx)` band
   after injection. `verify.sh` sweeps `sites.txt` with this one.
@@ -68,6 +71,17 @@ cleared it. Fast and stable — good as a first gate before the live sweeps.
   by a pinned fixed/sticky header** (occlusion check via `elementFromPoint` at the target's top
   edge), not merely `top >= topPx`. The injected script sets `scroll-padding-top` and raises it to
   the bottom of any wide top-pinned nav bar (see `PageBottomSpacer` invariants).
+
+- **`gapTest.js`** — the *opposite* of `run.js`: over-padding. Matches the same content elements
+  before and after injection (by intrinsic identity — text/src/id, not an index path, so SPA
+  re-renders still match) and checks the median shift is ~`topPx`. A much larger median, or a
+  cluster of elements shifted >1.5x `topPx`, means two inset mechanisms stacked on one subtree.
+- **`overflowTest.js`** — bottom clipping. A viewport-height-locked app shell (`height:100vh`, or
+  `100%` of a locked `html`/`body`) does not shrink when pushed down, so its bottom `topPx` pixels —
+  the bottom nav / player / composer — leave the screen. FAIL only when the document is
+  scroll-locked (`overflow:hidden`), where that strip is unreachable forever; in a scrollable
+  document the same overflow is just a longer page (reported as `PASS ⚠️`). `./shells.sh` runs the
+  offline `fixtures/appshell.html` cases.
 
 ## Known limitation — scroll-dependent headers with a custom smooth-scroll
 

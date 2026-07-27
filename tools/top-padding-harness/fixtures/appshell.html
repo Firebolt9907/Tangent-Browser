@@ -1,0 +1,53 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+  html,body{margin:0;font-family:sans-serif}
+  .shell{display:flex;flex-direction:column}
+  .hdr{height:56px;background:#fff;border-bottom:1px solid #ccc;display:flex;align-items:center;gap:12px;padding:0 12px;box-sizing:border-box}
+  .logo{width:28px;height:28px;background:#e00;border-radius:6px}
+  .body{flex:1;overflow:auto;padding:12px}
+  .btm{height:64px;background:#123;color:#fff;display:flex;align-items:center;justify-content:space-around}
+</style></head><body>
+<!--
+  Viewport-locked APP SHELL fixtures for overflowTest.js. Unlike headers.html (which tests band
+  clearance), these test the OPPOSITE hazard: a shell whose height is locked to the viewport does
+  not shrink when the top inset pushes it down, so its in-flow bottom bar (nav/player/composer)
+  is shoved off the bottom of the screen where the user can never reach it.
+  Toggle with ?case=NAME.
+-->
+<script>
+function shell(heightCss){
+  const s=document.createElement('div');s.className='shell';s.id='shell';s.style.height=heightCss;
+  s.innerHTML='<div class="hdr"><div class="logo"></div><span>App header</span></div>'
+    +'<div class="body"><h1>Scrolling region</h1>'+'<p>content line</p>'.repeat(60)+'</div>'
+    +'<div class="btm" id="btm"><span>Home</span><span>Search</span><span>Library</span></div>';
+  document.body.appendChild(s);
+}
+const cases = {
+  // 1. height:100vh — the classic. vh units do NOT shrink when an ancestor gains padding.
+  vhShell(){ shell('100vh'); },
+  // 2. height:100dvh — same hazard, modern unit.
+  dvhShell(){ shell('100dvh'); },
+  // 3. height:100% on a html/body{height:100%} chain — CONTROL: percentage resolves against the
+  //    padded body's CONTENT box, so it shrinks by topPx on its own and nothing is lost.
+  pctShell(){ document.documentElement.style.height='100%'; document.body.style.height='100%'; shell('100%'); },
+  // 4. position:fixed;inset:0 shell — CONTROL: viewport-anchored, unaffected by in-flow padding
+  //    (but its own top content then sits under the status bar; the band probe covers that).
+  fixedShell(){ shell('100vh'); const s=document.getElementById('shell'); s.style.cssText+=';position:fixed;left:0;top:0;right:0;height:auto;bottom:0'; },
+  // 5. min-height:100vh with a flex-grow body — the shell can grow, so the bottom bar is still
+  //    reachable by scrolling. CONTROL for "not every vh shell is a defect".
+  minVhShell(){ shell('auto'); document.getElementById('shell').style.minHeight='100vh'; },
+  // 6. The real hazard: scroll-LOCKED document (html/body overflow:hidden) + 100vh shell. Whatever
+  //    leaves the bottom of the viewport can never be scrolled back into view.
+  lockedVhShell(){ lock(); shell('100vh'); },
+  // 7. Same, locked on <body> only (some apps lock only the body).
+  lockedBodyVhShell(){ document.body.style.overflow='hidden'; shell('100vh'); },
+  // 8. Locked document whose shell is height:100% of a height:100% html/body chain.
+  lockedPctShell(){ lock(); document.documentElement.style.height='100%'; document.body.style.height='100%'; shell('100%'); },
+  // 9. Locked document, shell already has its own padding-top — the inset must ADD to it, not
+  //    replace it, and must not ratchet across repeated passes.
+  lockedPaddedShell(){ lock(); shell('100vh'); document.getElementById('shell').style.paddingTop='20px'; },
+};
+function lock(){ document.documentElement.style.overflow='hidden'; document.body.style.overflow='hidden'; }
+const c=new URLSearchParams(location.search).get('case');
+if(c && cases[c]) cases[c](); else document.body.insertAdjacentHTML('beforeend','<p>?case='+Object.keys(cases).join('|')+'</p>');
+</script>
+</body></html>

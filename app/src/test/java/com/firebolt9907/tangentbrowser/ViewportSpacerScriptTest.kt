@@ -255,25 +255,67 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
-    fun `absolutely-positioned content inside a chosen fixed header is still band-shifted (apple_com)`() {
-        // apple.com's `nav#globalnav` is position:fixed with ALL its content (globalnav-content +
-        // the Apple/search/bag icons) position:absolute anchored at top:0. applyFixed's padding-top
-        // never moves absolutely-positioned descendants, so the icons sat under the status bar.
-        // bandShift can move them, but the old top-intruder filter let the chosen header (nav) —
-        // itself an intruder that is never shifted — shield its descendants from bandShift. The
-        // fix: a chosen header (or a wrapper containing one) must NOT act as a shielding container.
+    fun `a full-cover absolute child of a chosen fixed header is padded, not band-shifted (apple_com)`() {
+        // apple.com's `nav#globalnav` is position:fixed and its whole visible bar is a
+        // position:absolute inset:0 child (.globalnav-content) that holds BOTH the translucent
+        // background AND the Apple/search/bag icons. Padding the nav stretches that child so its
+        // background fills the reserved strip, but the icons are laid out from the child's own top
+        // and stay under the status bar. Band-shifting the child (the old fix) moved the icons but,
+        // because padding had already stretched the child to nav-height + topPx, translating it
+        // another topPx dragged the translucent bar topPx below the nav, washing out the page
+        // content underneath — the "apple.com bleed". The correct fix mirrors the header's padding
+        // onto the full-cover child (padCover): its content shifts into the safe area while its
+        // background keeps covering the strip, and the child is marked so the intruder pass does
+        // NOT also band-shift it.
         val s = script()
         assertTrue(
-            "chosen-ness is factored out so headers don't shield their padding-immune children",
-            s.contains("function isChosenEl("),
+            "full-cover inset:0 absolute children of a padded header get the same padding-top",
+            s.contains("function padCover(el)") && s.contains("padCover(el);el.dataset.tangentSafeTopApplied='true'"),
         )
+        assertTrue(
+            "only inset:0 (top:0 && bottom:0) fixed-height cover layers qualify",
+            s.contains("kcs.top==='0px'&&kcs.bottom==='0px'&&kcs.height!=='auto'"),
+        )
+        assertTrue(
+            "a padded cover child is marked so it is not double-offset by bandShift",
+            s.contains("k.dataset.tangentCoverPadded='true'") &&
+                s.contains("if(it.el.dataset&&it.el.dataset.tangentCoverPadded==='true')return false"),
+        )
+        assertTrue(
+            "the cover mark is cleared on collapse so a later pass can re-pad",
+            s.contains("el.dataset.tangentCoverPadded='false'"),
+        )
+        // The pattern isn't apple-specific: every code path that RESERVES the strip by padding the
+        // element (applyFixed for pinned headers, applyOverlay for full-screen app-shell overlays)
+        // runs padCover, so any site whose padded container hides its content in a full-cover
+        // absolute child is handled. applySticky is intentionally excluded — it shifts `top` instead
+        // of padding, so the header's content moves with it and there is nothing to mirror.
+        assertTrue(
+            "both padding paths (fixed header + full-screen overlay) run padCover",
+            s.contains("padCover(el);el.dataset.tangentSafeTopApplied='true'"),
+        )
+        // A standalone intruder (NOT inside any chosen header) is only shielded by a NON-chosen
+        // containing intruder — that clause is unchanged.
         assertTrue(
             "an intruder is only shielded by a NON-chosen containing intruder",
             s.contains("o.el.contains(it.el)&&!isChosenEl(o.el)"),
         )
+    }
+
+    @Test
+    fun `an absolute descendant of a chosen header is never band-shifted on top of its padding (support_google_com)`() {
+        // support.google.com's fixed #gb header contains the breadcrumb title in a position:absolute
+        // box (.gb_Ae) whose containing block is an in-flow (position:relative) wrapper INSIDE the
+        // header. applyFixed's padding-top already shifts that wrapper down by topPx, carrying the
+        // absolute breadcrumb with it. The intruder pass then ALSO matched the breadcrumb (absolute,
+        // near the top) and band-shifted it a second topPx, so it slid a full header-height below
+        // where it belonged and collided with the "Help Center / Community" tab bar. A chosen header
+        // owns its whole subtree (padding + padCover already place it), so the intruder pass must
+        // skip anything a chosen header CONTAINS — not only its ancestors/wrappers.
+        val s = script()
         assertTrue(
-            "a chosen header itself (or a wrapper of one) is never band-shifted",
-            s.contains("chosenEls.some(function(h){return h===it.el||it.el.contains(h)})"),
+            "a chosen header shields its own descendants from a second (band-shift) offset",
+            s.contains("chosenEls.some(function(h){return h===it.el||it.el.contains(h)||h.contains(it.el)})"),
         )
     }
 
@@ -391,6 +433,38 @@ class ViewportSpacerScriptTest {
         assertTrue(
             "ensureStyle never drops scroll-padding below the latched value (anti-flicker)",
             s.contains("var eff=Math.max(floor,window.__tangentSptApplied||0)"),
+        )
+    }
+
+    @Test
+    fun `a viewport-locked app shell is padded in place, not pushed off the bottom (iter 51)`() {
+        // An app shell locked to the viewport height (height:100vh/100dvh, or 100% of a locked
+        // html/body chain) does not shrink when the in-flow spacer pushes it down — its bottom
+        // topPx pixels leave the screen with the bottom nav / player / composer, and in a
+        // scroll-locked document (html or body overflow:hidden, the app-shell norm) they can never
+        // be scrolled back. In that shape we pad the SHELL itself with border-box instead.
+        val s = script()
+        assertTrue(
+            "only applies to scroll-locked documents",
+            s.contains("if(hs.overflowY!=='hidden'&&bs.overflowY!=='hidden')return null"),
+        )
+        assertTrue(
+            "matches a wide top child whose outer OR content height equals the viewport",
+            s.contains("Math.abs(r.height-vh)<=4||Math.abs(inner-vh)<=4"),
+        )
+        assertTrue(
+            "pads with border-box so the shell keeps its viewport height",
+            s.contains("k.style.setProperty('box-sizing','border-box','important')"),
+        )
+        assertTrue(
+            "the inset ADDS to the shell's own padding from a saved base (no ratcheting)",
+            s.contains("k.dataset.tangentShellBasePad=px(kcs.paddingTop)") &&
+                s.contains("var tgt=(px(k.dataset.tangentShellBasePad)+topPx)+'px'"),
+        )
+        assertTrue(
+            "the in-flow spacer is suppressed on this path, and a previous shell is restored",
+            s.contains("padShell(shell);window.__tangentShellEl=shell;el.style.cssText='display:none!important;';return") &&
+                s.contains("unpadShell(window.__tangentShellEl)"),
         )
     }
 }

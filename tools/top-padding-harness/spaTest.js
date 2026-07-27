@@ -101,7 +101,15 @@ function bandProbeSrc(topPx) {
       const style = document.getElementById('tangent-viewport-scroll-style');
       const sc = style && /scroll-padding-top/.test(style.textContent);
       return { spacer: !!sp, spacerInBody: sp ? sp.parentElement === (document.body||document.documentElement) : false,
-               spacerFirst: sp ? (sp.parentElement && sp.parentElement.firstElementChild === sp) : false, scrollStyle: !!sc };
+               spacerFirst: sp ? (sp.parentElement && sp.parentElement.firstElementChild === sp) : false, scrollStyle: !!sc,
+               /* Which mechanism is actually applying the inset right now. The spacer div always
+                  EXISTS (it is just display:none on the host-padding / app-shell paths), so its mere
+                  presence proves nothing on those pages — check the effective inset instead. */
+               spacerH: sp ? Math.round(sp.getBoundingClientRect().height) : -1,
+               spacerShown: sp ? getComputedStyle(sp).display !== 'none' : false,
+               bodyPad: parseFloat(getComputedStyle(document.body).paddingTop) || 0,
+               shellPad: window.__tangentShellEl && window.__tangentShellEl.isConnected
+                 ? parseFloat(getComputedStyle(window.__tangentShellEl).paddingTop) || 0 : -1 };
     });
     const bandAfterNav = await page.evaluate(bandProbeSrc(topPx));
 
@@ -110,9 +118,13 @@ function bandProbeSrc(topPx) {
     console.log(`navigation: ${nav.kind} -> ${nav.to.replace(startUrl,'(same)')}`);
     console.log(`spacer div present after nav: ${spacerAlive.spacer}  (in body: ${spacerAlive.spacerInBody}, first-child: ${spacerAlive.spacerFirst})`);
     console.log(`scroll-padding-top style present: ${spacerAlive.scrollStyle}`);
+    const mech = spacerAlive.shellPad >= topPx - 2 ? 'shell'
+      : spacerAlive.bodyPad >= topPx - 2 ? 'hostpad'
+      : (spacerAlive.spacerShown && spacerAlive.spacerH >= topPx - 2) ? 'spacer' : 'none';
+    console.log(`effective inset mechanism after nav: ${mech}`);
     console.log(`band after nav (${bandAfterNav.length}):`);
     bandAfterNav.forEach(e => console.log(`    ${e.tag}${e.id?'#'+e.id:''} top=${e.top} "${e.text}"`));
-    const ok = spacerAlive.spacer && spacerAlive.scrollStyle && bandAfterNav.length === 0;
-    console.log(`\nRESULT: ${ok ? 'PASS ✅ inset self-healed across SPA nav' : 'FAIL ❌ ' + (!spacerAlive.spacer ? 'spacer lost; ' : '') + (!spacerAlive.scrollStyle ? 'scroll-padding lost; ' : '') + (bandAfterNav.length ? bandAfterNav.length+' content in band' : '')}`);
+    const ok = spacerAlive.spacer && spacerAlive.scrollStyle && mech !== 'none' && bandAfterNav.length === 0;
+    console.log(`\nRESULT: ${ok ? `PASS ✅ inset self-healed across SPA nav (${mech})` : 'FAIL ❌ ' + (!spacerAlive.spacer ? 'spacer lost; ' : '') + (!spacerAlive.scrollStyle ? 'scroll-padding lost; ' : '') + (mech === 'none' ? 'no effective inset applied; ' : '') + (bandAfterNav.length ? bandAfterNav.length+' content in band' : '')}`);
   } finally { await browser.close(); }
 })();

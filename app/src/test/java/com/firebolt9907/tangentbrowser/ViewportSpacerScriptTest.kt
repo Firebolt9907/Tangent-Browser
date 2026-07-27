@@ -489,6 +489,14 @@ class ViewportSpacerScriptTest {
             s.contains("var prev=window.__tangentShellEl;if(prev&&prev.isConnected&&host.contains(prev))") &&
                 s.contains("if(pr.width>=window.innerWidth*0.8&&pr.top<=topPx+2&&pr.height>=vh-4)return prev"),
         )
+        // ...but only as a FALLBACK, after the scan. Short-circuiting on the remembered shell made
+        // x.com's SPA route change keep insetting the OLD shell while the new route's header sat in
+        // the band. A fresh match must always win.
+        assertTrue(
+            "the remembered shell is consulted only after the scan finds nothing",
+            s.indexOf("Math.abs(r.height-vh)<=4||Math.abs(inner-vh)<=4") <
+                s.indexOf("var prev=window.__tangentShellEl"),
+        )
         assertTrue(
             "a shell that is itself the scroll container gets its own scroll-padding-top",
             s.contains("if(scs.overflowY==='auto'||scs.overflowY==='scroll')") &&

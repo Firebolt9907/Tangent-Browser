@@ -59,6 +59,10 @@ const cases = {
   //     device emulation resizes the layout viewport instead, so this fixture is the only way to
   //     reproduce the shape here. Used by resizeTest.js.
   lockedStaticHeightShell(){ lock(); shell(window.innerHeight + 'px'); },
+  // 13. SPA route change that REPLACES the shell (x.com swaps its whole app subtree on nav). The
+  //     newly mounted shell must get the inset; remembering the old one must never win over a fresh
+  //     match, or the new route's header sits in the band.
+  lockedShellSwap(){ lock(); shell('100vh'); setTimeout(() => { const old = document.getElementById('shell'); old.remove(); shell('100vh'); document.getElementById('shell').setAttribute('data-gen','2'); }, 1500); },
 };
 function lock(){ document.documentElement.style.overflow='hidden'; document.body.style.overflow='hidden'; }
 const c=new URLSearchParams(location.search).get('case');

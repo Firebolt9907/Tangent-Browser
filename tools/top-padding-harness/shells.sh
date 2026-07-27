@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 TOPPX="${1:-48}"
 F="file://$(pwd)/fixtures/appshell.html"
-CASES=(vhShell dvhShell pctShell fixedShell minVhShell lockedVhShell lockedBodyVhShell lockedPctShell lockedPaddedShell lockedNestedVh lockedContentsWrapper lockedStaticHeightShell)
+CASES=(vhShell dvhShell pctShell fixedShell minVhShell lockedVhShell lockedBodyVhShell lockedPctShell lockedPaddedShell lockedNestedVh lockedContentsWrapper lockedStaticHeightShell lockedShellSwap)
 pass=0; fail=0; failed=()
 for c in "${CASES[@]}"; do
   out="$(node overflowTest.js "$F?case=$c" "$TOPPX" 2>/dev/null | grep -E 'RESULT' || echo 'RESULT: ERROR')"

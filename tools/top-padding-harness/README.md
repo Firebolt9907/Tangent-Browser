@@ -38,6 +38,7 @@ node scrollTest.js https://medium.com 48         # scroll-activated sticky heade
 node anchorTest.js https://en.wikipedia.org/wiki/CSS '#History'   # scroll-padding-top anchor jump
 node gapTest.js https://www.reddit.com 48        # over-padding: content shifted by ~topPx, no double gap
 node overflowTest.js https://web.telegram.org 48 # app shell / bottom UI pushed off the bottom
+node resizeTest.js https://web.telegram.org/k/ 48 # inset survives a keyboard-sized viewport shrink
 ./fixtures.sh                                    # offline adversarial header fixtures (no network)
 ./anchors.sh                                     # offline scroll-padding-top anchor-jump fixtures
 ./shells.sh                                      # offline viewport-locked app-shell fixtures
@@ -82,6 +83,15 @@ cleared it. Fast and stable — good as a first gate before the live sweeps.
   scroll-locked (`overflow:hidden`), where that strip is unreachable forever; in a scrollable
   document the same overflow is just a longer page (reported as `PASS ⚠️`). `./shells.sh` runs the
   offline `fixtures/appshell.html` cases.
+
+- **`resizeTest.js`** — viewport changes. A phone's viewport height moves constantly (soft
+  keyboard, collapsing chrome, rotation), and any inset decision made by comparing an element
+  against `window.innerHeight` can stop matching. Injects, shrinks the viewport by a keyboard's
+  worth, forces a pass, restores, and fails if the inset was lost **or if the mechanism swapped**
+  (shell padding falling back to the in-flow spacer re-introduces bottom clipping and thrashes
+  layout on every keyboard toggle). Note Chrome emulation resizes the *layout* viewport, so
+  `100vh` shrinks with it — the `lockedStaticHeightShell` fixture reproduces the real phone shape,
+  where `vh` keeps referring to the large viewport.
 
 ## Known limitation — scroll-dependent headers with a custom smooth-scroll
 

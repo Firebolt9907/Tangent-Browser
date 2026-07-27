@@ -53,6 +53,12 @@ const cases = {
   //     #auth-flow-root). The wrapper has no box, so padding IT would do nothing — the scan has to
   //     look through it at the real shell.
   lockedContentsWrapper(){ lock(); const w=document.createElement('div'); w.id='wrap'; w.style.display='contents'; document.body.appendChild(w); const s=document.createElement('div'); s.className='shell'; s.id='shell'; s.style.height='100vh'; s.innerHTML='<div class="hdr"><div class="logo"></div><span>App header</span></div><div class="body"><h1>Wrapped</h1>'+'<p>content line</p>'.repeat(60)+'</div><div class="btm" id="btm"><span>Home</span><span>Search</span><span>Library</span></div>'; w.appendChild(s); },
+  // 12. Locked shell whose height is a fixed pixel value equal to the *large* viewport. This is how
+  //     `height:100vh` behaves on a real phone when the soft keyboard opens: `vh` keeps referring to
+  //     the large viewport, so the shell stays tall while `window.innerHeight` shrinks. Chrome's
+  //     device emulation resizes the layout viewport instead, so this fixture is the only way to
+  //     reproduce the shape here. Used by resizeTest.js.
+  lockedStaticHeightShell(){ lock(); shell(window.innerHeight + 'px'); },
 };
 function lock(){ document.documentElement.style.overflow='hidden'; document.body.style.overflow='hidden'; }
 const c=new URLSearchParams(location.search).get('case');

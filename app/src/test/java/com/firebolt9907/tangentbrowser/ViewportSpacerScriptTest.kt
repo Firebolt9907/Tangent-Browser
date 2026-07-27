@@ -480,5 +480,19 @@ class ViewportSpacerScriptTest {
                 s.contains("window.__tangentShellCapped") &&
                 s.contains("function uncapNested()"),
         )
+        // The soft keyboard shrinks window.innerHeight but not the large-viewport `vh` unit, so a
+        // shell that is still exactly 100vh tall stops matching h ~= innerHeight. Without a sticky
+        // re-match the inset is torn off mid-typing and swaps to the in-flow spacer, which brings
+        // the bottom clipping back.
+        assertTrue(
+            "an already-chosen shell is kept while it stays in flow, wide and at least viewport-tall",
+            s.contains("var prev=window.__tangentShellEl;if(prev&&prev.isConnected&&host.contains(prev))") &&
+                s.contains("if(pr.width>=window.innerWidth*0.8&&pr.top<=topPx+2&&pr.height>=vh-4)return prev"),
+        )
+        assertTrue(
+            "a shell that is itself the scroll container gets its own scroll-padding-top",
+            s.contains("if(scs.overflowY==='auto'||scs.overflowY==='scroll')") &&
+                s.contains("k.style.setProperty('scroll-padding-top',(window.__tangentSptEffPx||topPx)+'px','important')"),
+        )
     }
 }

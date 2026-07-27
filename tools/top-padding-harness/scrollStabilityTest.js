@@ -50,7 +50,23 @@ const MARK = `(() => {
     /* ...and it has to be the thing actually painted there, not a hidden node under an overlay. */
     const sx = Math.min(Math.max(Math.round(r.left + r.width/2), 2), window.innerWidth - 2);
     const sy = Math.min(Math.max(Math.round((r.top + r.bottom)/2), 2), window.innerHeight - 2);
-    const hit = document.elementFromPoint(sx, sy);
+    let hit = document.elementFromPoint(sx, sy);
+    /* Look through an INVISIBLE overlay (transparent full-screen scrim / drag layer): it hit-tests
+       first but paints nothing, so the flow content beneath it is still what the reader sees. */
+    let guard = 0;
+    while (hit && guard++ < 4 && hit !== el && !el.contains(hit)) {
+      const hc = getComputedStyle(hit);
+      const hr = hit.getBoundingClientRect();
+      const invisible = (hc.backgroundColor === 'rgba(0, 0, 0, 0)' || hc.backgroundColor === 'transparent') && hc.backgroundImage === 'none';
+      const covering = hr.height >= window.innerHeight * 0.8 && hr.width >= window.innerWidth * 0.8;
+      if (!(invisible && covering)) break;
+      const prev = hit.style.pointerEvents;
+      hit.style.pointerEvents = 'none';
+      const next = document.elementFromPoint(sx, sy);
+      hit.style.pointerEvents = prev;
+      if (!next || next === hit) break;
+      hit = next;
+    }
     if (!hit || !(hit === el || el.contains(hit))) return;
     const d = Math.abs((r.top + r.bottom) / 2 - mid);
     if (d < bestD) { bestD = d; best = el; }
@@ -85,8 +101,11 @@ const READ = `(() => {
 
     // At scroll-top a +topPx shift IS the inset doing its job, not a jump — only a page that is
     // actually scrolled can exhibit the defect. (medium.com's landing page never scrolls here.)
-    const atTop = await page.evaluate('Math.round(window.scrollY) < 8');
-    if (atTop) { console.log(`\n=== ${url} ===\nRESULT: N/A ⚠️  page did not scroll (nothing to hold steady)`); return; }
+    // Needs MORE than topPx of scroll above: with only a few pixels of scroll (imdb's bot-check wall
+    // stops at scrollY=8) there is nothing for the browser — or for us — to compensate with, and the
+    // content moving down by topPx is simply the inset doing its job.
+    const shallow = await page.evaluate(`Math.round(window.scrollY) < ${topPx} + 20`);
+    if (shallow) { console.log(`\n=== ${url} ===\nRESULT: N/A ⚠️  page barely scrolled (nothing to hold steady)`); return; }
     const mark = await page.evaluate(MARK);
     if (!mark) { console.log(`\n=== ${url} ===\nRESULT: N/A ⚠️  no stable reference element mid-viewport`); return; }
     const before = await page.evaluate(READ);

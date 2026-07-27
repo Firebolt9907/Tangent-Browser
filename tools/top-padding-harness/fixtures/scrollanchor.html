@@ -17,5 +17,17 @@ let html = '';
 for (let i = 0; i < 200; i++) html += '<p id="p' + i + '">Paragraph ' + i + ' — readable body copy for the scroll-stability reference.</p>';
 d.innerHTML = html;
 if (c === 'none') d.querySelectorAll('p').forEach(p => { p.style.overflowAnchor = 'none'; });
+/* ?case=overlay: anchor-less page PLUS a transparent full-screen fixed overlay (app scrims, sticky
+   ad frames, drag layers). elementFromPoint at the middle of the viewport returns the OVERLAY, so a
+   compensator that samples one point and bails on a fixed hit would silently skip compensation. */
+if (c === 'overlay') {
+  document.documentElement.style.overflowAnchor = 'none';
+  document.body.style.overflowAnchor = 'none';
+  d.querySelectorAll('p').forEach(p => { p.style.overflowAnchor = 'none'; });
+  const o = document.createElement('div');
+  o.id = 'scrim';
+  o.style.cssText = 'position:fixed;left:0;top:0;right:0;bottom:0;background:transparent;z-index:5';
+  document.body.appendChild(o);
+}
 </script>
 </body></html>

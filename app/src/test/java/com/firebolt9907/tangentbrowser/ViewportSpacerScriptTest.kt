@@ -160,7 +160,18 @@ class ViewportSpacerScriptTest {
         )
         assertTrue(
             "the reference must be flow content, not something inside a fixed/sticky container",
-            s.contains("if(pcs.position==='fixed'||pcs.position==='sticky'){hit=null;break}"),
+            s.contains("if(c==='fixed'||c==='sticky'){bad=true;break}"),
+        )
+        // elementFromPoint returns a transparent full-screen scrim / drag layer even though it paints
+        // nothing, which would cost us the compensation entirely. Walk the whole hit stack instead,
+        // and sample three points so one overlay or gap can't defeat it.
+        assertTrue(
+            "walks the full hit stack, not just the topmost element",
+            s.contains("document.elementsFromPoint?document.elementsFromPoint(x,y)"),
+        )
+        assertTrue(
+            "falls back across three sample points",
+            s.contains("flowRefAt(Math.floor(w/2),Math.floor(h/2))||flowRefAt(Math.floor(w/2),Math.floor(h/3))||flowRefAt(Math.floor(w/4),Math.floor(h*2/3))"),
         )
         assertTrue(
             "compensates by the measured delta, bounded so it can never run away",

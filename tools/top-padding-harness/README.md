@@ -104,6 +104,14 @@ cleared it. Fast and stable — good as a first gate before the live sweeps.
   practice most live SPA routes re-render *inside* the already-inset layout and never put anything
   in the band, so this reports N/A a lot; the discriminating cases are `latencyTest.js`'s fixtures.
 
+- **`scrollStabilityTest.js`** — the reader's-eye view. Every other probe injects at scroll-top, but
+  ContentHost injects again on load-complete and the observer re-runs whenever the DOM changes, so
+  the inset can land while someone is scrolled down reading. Scrolls with real wheel events, marks a
+  flow element mid-viewport (content inside fixed/sticky containers is skipped — that is *supposed*
+  to move when we inset the container), injects, forces four more passes, and fails if the reference
+  moved. `fixtures/scrollanchor.html?case=none` is the case that matters: pages that opt out of
+  scroll anchoring get no help from the browser.
+
 ## Known limitation — scroll-dependent headers with a custom smooth-scroll
 
 Sites whose top header **grows taller when scrolled** (e.g. investopedia.com: a 96px header that

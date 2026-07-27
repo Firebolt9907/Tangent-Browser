@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+  body{margin:0;font-family:sans-serif}
+  p{margin:0 0 18px;padding:0 12px}
+</style></head><body>
+<!--
+  SCROLL-ANCHORING fixture for scrollStabilityTest.js. Browsers normally compensate when content is
+  inserted above the current scroll position (scroll anchoring), which hides the top spacer's effect
+  on an already-scrolled reader. Pages that opt out with `overflow-anchor:none` — common in apps and
+  infinite feeds — get no such help. ?case=none opts out; ?case=auto is the control.
+-->
+<div id="content"></div>
+<script>
+const c = new URLSearchParams(location.search).get('case') || 'auto';
+if (c === 'none') { document.documentElement.style.overflowAnchor = 'none'; document.body.style.overflowAnchor = 'none'; }
+const d = document.getElementById('content');
+let html = '';
+for (let i = 0; i < 200; i++) html += '<p id="p' + i + '">Paragraph ' + i + ' — readable body copy for the scroll-stability reference.</p>';
+d.innerHTML = html;
+if (c === 'none') d.querySelectorAll('p').forEach(p => { p.style.overflowAnchor = 'none'; });
+</script>
+</body></html>

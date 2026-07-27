@@ -142,6 +142,33 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `applying the inset while scrolled does not jump the page (iter 53)`() {
+        // Inserting the spacer above the current scroll position moves everything below it down by
+        // topPx. Scroll anchoring normally hides that, but pages that opt out (overflow-anchor:none —
+        // app feeds, virtualized lists) get no compensation and an already-scrolled reader sees the
+        // page jump a status bar's worth. We measure a real FLOW element across the change (fixed /
+        // sticky ancestors are skipped: those are supposed to move when we inset them) and scroll by
+        // exactly the distance it moved — a no-op when the browser already compensated.
+        val s = script()
+        assertTrue(
+            "the spacer application is wrapped in the compensator",
+            s.contains("withScrollComp(function(){spacer(topId,top)})"),
+        )
+        assertTrue(
+            "no-op at scroll-top",
+            s.contains("var y0=window.scrollY;if(y0<=0){fn();return}"),
+        )
+        assertTrue(
+            "the reference must be flow content, not something inside a fixed/sticky container",
+            s.contains("if(pcs.position==='fixed'||pcs.position==='sticky'){hit=null;break}"),
+        )
+        assertTrue(
+            "compensates by the measured delta, bounded so it can never run away",
+            s.contains("if(Math.abs(dy)>1&&Math.abs(dy)<=topPx*2+8)window.scrollBy(0,dy)"),
+        )
+    }
+
+    @Test
     fun `the cooldown is bypassed when something NEW paints in the band (iter 52)`() {
         // The relaxed 2000ms cooldown bounds the cost of the full-document walk, but it also let a
         // header mounted by an SPA route change sit UNDER the status bar for ~1.5s. The walk now

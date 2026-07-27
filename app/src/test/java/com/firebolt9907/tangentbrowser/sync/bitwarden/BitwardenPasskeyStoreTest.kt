@@ -45,18 +45,14 @@ class BitwardenPasskeyStoreTest {
         val userKey = randomUserKey()
         val store = BitwardenPasskeyStore(accountStore = null, userKeyProvider = { userKey })
 
-        // 1. Mint a passkey (module 1) — reuse a GUID's bytes as the credential id so the vault's
-        //    stored GUID string round-trips to the same RP-facing bytes.
+        // 1. Mint a passkey (module 1) using a GUID's .NET-endian bytes as the credential id — the
+        //    same thing the production provider does via BitwardenPasskeyStore.guidToCredentialIdBytes.
         val guid = java.util.UUID.randomUUID()
-        val hi = guid.mostSignificantBits; val lo = guid.leastSignificantBits
-        val big = java.nio.ByteBuffer.allocate(16).putLong(hi).putLong(lo).array()
-        val credIdBytes = byteArrayOf(
-            big[3], big[2], big[1], big[0], big[5], big[4], big[7], big[6],
-            big[8], big[9], big[10], big[11], big[12], big[13], big[14], big[15],
-        )
+        val credIdBytes = BitwardenPasskeyStore.guidToCredentialIdBytes(guid)
         val reg = WebAuthnAuthenticator.makeCredential(rpId, credentialId = credIdBytes)
 
-        // 2. Persist as a Bitwarden cipher, but force the stored credentialId GUID to match ours.
+        // 2. Persist as a Bitwarden cipher. encodeNewCipher now stores the GUID whose bytes ARE
+        //    credIdBytes (no manual overwrite needed), so the parse recovers the same RP-facing bytes.
         val cipher = store.encodeNewCipher(
             BitwardenPasskeyStore.NewPasskey(
                 rpId = rpId,
@@ -69,14 +65,6 @@ class BitwardenPasskeyStoreTest {
             ),
             userKey,
         )
-        // encodeNewCipher mints its own GUID for credentialId; overwrite it with ours so the parse
-        // recovers the same RP-facing bytes (in production the controller mints the GUID up front).
-        val fido = cipher.getJSONObject("login").getJSONArray("fido2Credentials").getJSONObject(0)
-        val cipherKeyWrapped = cipher.getString("key")
-        val cipherKey = BitwardenCrypto.SymmetricKey.fromBytes(
-            BitwardenCrypto.decryptToBytes(cipherKeyWrapped, userKey),
-        )
-        fido.put("credentialId", BitwardenCrypto.encryptToString(guid.toString(), cipherKey))
         cipher.put("id", "cipher-1") // a synced cipher carries a server id (the create body doesn't)
 
         // 3. Read it back through the pure parse path.

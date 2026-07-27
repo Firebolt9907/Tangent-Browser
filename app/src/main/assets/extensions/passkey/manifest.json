@@ -1,0 +1,24 @@
+{
+  "manifest_version": 2,
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "passkey@tangent.firebolt9907"
+    }
+  },
+  "name": "Tangent Passkey Bridge",
+  "description": "Routes WebAuthn navigator.credentials calls to the user's Bitwarden vault over native messaging, from an isolated content script that the page cannot observe or intercept.",
+  "version": "1.0",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["passkey.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "permissions": [
+    "geckoViewAddons",
+    "nativeMessaging",
+    "nativeMessagingFromContent"
+  ]
+}

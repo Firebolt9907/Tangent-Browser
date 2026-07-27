@@ -50,6 +50,8 @@ object WebAuthnAuthenticator {
         val attestationObject: ByteArray,
         val privateKeyPkcs8: ByteArray,
         val publicKeyCose: ByteArray,
+        /** The raw authenticatorData embedded in [attestationObject], exposed for `getAuthenticatorData()`. */
+        val authenticatorData: ByteArray,
     )
 
     /** Result of an authentication (`navigator.credentials.get`). */
@@ -86,7 +88,7 @@ object WebAuthnAuthenticator {
             textKey("attStmt"); beginMap(0)
             textKey("authData"); bytes(authData)
         }
-        return MakeCredentialResult(credId, attestationObject, pair.private.encoded, cose)
+        return MakeCredentialResult(credId, attestationObject, pair.private.encoded, cose, authData)
     }
 
     /**

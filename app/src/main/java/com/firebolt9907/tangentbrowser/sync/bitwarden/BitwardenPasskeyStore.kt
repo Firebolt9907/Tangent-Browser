@@ -131,7 +131,7 @@ class BitwardenPasskeyStore(
         fun e(v: String) = BitwardenCrypto.encryptToString(v, cipherKey)
 
         val fido2 = JSONObject()
-            .put("credentialId", e(UUID.randomUUID().toString()))
+            .put("credentialId", e(credentialIdToStored(passkey.credentialIdBytes)))
             .put("keyType", e("public-key"))
             .put("keyAlgorithm", e("ECDSA"))
             .put("keyCurve", e("P-256"))
@@ -144,9 +144,9 @@ class BitwardenPasskeyStore(
             .put("userName", passkey.userName?.let { e(it) } ?: JSONObject.NULL)
             .put("userDisplayName", passkey.userDisplayName?.let { e(it) } ?: JSONObject.NULL)
             .put("creationDate", java.time.Instant.now().toString())
-        // NOTE: credentialId above stores a GUID string; the RP-facing 16 bytes are derived from it
-        // by credentialIdBytes(), so [passkey.credentialIdBytes] must be that GUID's bytes — the
-        // caller mints the GUID and passes its bytes as the credential id (see BitwardenController).
+        // credentialId is stored as the GUID string whose .NET-endian bytes ARE passkey.credentialIdBytes
+        // (credentialIdToStored is the exact inverse of credentialIdBytes), so a later get() — from us or
+        // any Bitwarden client — recovers the same RP-facing 16 bytes. Non-GUID ids fall back to base64url.
         val loginObj = JSONObject()
             .put("username", passkey.userName?.let { e(it) } ?: JSONObject.NULL)
             .put("password", JSONObject.NULL)
@@ -183,16 +183,25 @@ class BitwardenPasskeyStore(
     private fun credentialIdBytes(stored: String): ByteArray {
         val uuid = runCatching { UUID.fromString(stored.trim()) }.getOrNull()
             ?: return decodeB64(stored)
-        val hi = uuid.mostSignificantBits
-        val lo = uuid.leastSignificantBits
-        val big = ByteBuffer.allocate(16).putLong(hi).putLong(lo).array()
-        // Convert big-endian UUID bytes to .NET mixed-endian: reverse the first 4, next 2, next 2.
-        return byteArrayOf(
-            big[3], big[2], big[1], big[0],
-            big[5], big[4],
-            big[7], big[6],
-            big[8], big[9], big[10], big[11], big[12], big[13], big[14], big[15],
+        return guidToCredentialIdBytes(uuid)
+    }
+
+    /**
+     * The GUID string to persist for [credIdBytes] — the exact inverse of [credentialIdBytes]. 16-byte
+     * ids are re-assembled into their .NET GUID string (reversing the mixed-endian byte order); any
+     * other length is stored as base64url (the parse path decodes it back).
+     */
+    private fun credentialIdToStored(credIdBytes: ByteArray): String {
+        if (credIdBytes.size != 16) return b64Url(credIdBytes)
+        val n = credIdBytes
+        val big = byteArrayOf(
+            n[3], n[2], n[1], n[0],
+            n[5], n[4],
+            n[7], n[6],
+            n[8], n[9], n[10], n[11], n[12], n[13], n[14], n[15],
         )
+        val bb = ByteBuffer.wrap(big)
+        return UUID(bb.long, bb.long).toString()
     }
 
     private fun decodeB64(s: String): ByteArray {
@@ -204,5 +213,23 @@ class BitwardenPasskeyStore(
 
     companion object {
         fun b64Url(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+
+        /**
+         * The RP-facing 16 credential-id bytes for a GUID: .NET's `Guid.ToByteArray()` (first three
+         * groups little-endian). The provider mints a fresh GUID and uses this for both the page's
+         * credential id and (via [credentialIdToStored]) the vault's stored string.
+         */
+        fun guidToCredentialIdBytes(uuid: UUID): ByteArray {
+            val big = ByteBuffer.allocate(16)
+                .putLong(uuid.mostSignificantBits)
+                .putLong(uuid.leastSignificantBits)
+                .array()
+            return byteArrayOf(
+                big[3], big[2], big[1], big[0],
+                big[5], big[4],
+                big[7], big[6],
+                big[8], big[9], big[10], big[11], big[12], big[13], big[14], big[15],
+            )
+        }
     }
 }

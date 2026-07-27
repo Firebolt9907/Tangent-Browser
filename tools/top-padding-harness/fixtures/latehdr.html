@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+  body{margin:0;font-family:sans-serif}
+  .tall{height:2500px;padding-top:120px}
+  .bar{display:flex;align-items:center;gap:12px;padding:0 12px;box-sizing:border-box}
+  .logo{width:28px;height:28px;background:#e00;border-radius:6px}
+</style></head><body>
+<!--
+  LATENCY fixture for latencyTest.js. The page sits idle long enough for the injected script's
+  adaptive cooldown to relax (500ms -> 2000ms once the chosen header set has been stable for 3
+  passes). Then `window.__mountRoute()` simulates an SPA route change: a pushState plus a freshly
+  mounted fixed header with real content in the status-bar band. The probe measures how long the
+  header stays under the status bar before the script insets it.
+-->
+<div class="tall" id="content"><h1>Idle page</h1><p>No header yet.</p></div>
+<script>
+window.__mountRoute = function () {
+  history.pushState({}, '', location.pathname + '?route=2');
+  const h = document.createElement('header');
+  h.className = 'bar';
+  h.id = 'lateHeader';
+  h.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc;z-index:9';
+  h.innerHTML = '<div class="logo"></div><span>Route 2 header</span><button>Menu</button>';
+  document.body.appendChild(h);
+};
+/* A no-pushState variant: some SPAs swap the view without touching history at all. */
+window.__mountRouteNoNav = function () {
+  const h = document.createElement('header');
+  h.className = 'bar';
+  h.id = 'lateHeader';
+  h.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc;z-index:9';
+  h.innerHTML = '<div class="logo"></div><span>Silent route header</span><button>Menu</button>';
+  document.body.appendChild(h);
+};
+</script>
+</body></html>

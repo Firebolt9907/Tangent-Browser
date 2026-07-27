@@ -39,6 +39,7 @@ node anchorTest.js https://en.wikipedia.org/wiki/CSS '#History'   # scroll-paddi
 node gapTest.js https://www.reddit.com 48        # over-padding: content shifted by ~topPx, no double gap
 node overflowTest.js https://web.telegram.org 48 # app shell / bottom UI pushed off the bottom
 node resizeTest.js https://web.telegram.org/k/ 48 # inset survives a keyboard-sized viewport shrink
+node latencyTest.js 48                           # how LONG a late-mounted header sits in the band
 ./fixtures.sh                                    # offline adversarial header fixtures (no network)
 ./anchors.sh                                     # offline scroll-padding-top anchor-jump fixtures
 ./shells.sh                                      # offline viewport-locked app-shell fixtures
@@ -92,6 +93,12 @@ cleared it. Fast and stable — good as a first gate before the live sweeps.
   layout on every keyboard toggle). Note Chrome emulation resizes the *layout* viewport, so
   `100vh` shrinks with it — the `lockedStaticHeightShell` fixture reproduces the real phone shape,
   where `vh` keeps referring to the large viewport.
+
+- **`latencyTest.js`** — how *long*, not whether. Every other probe snapshots after a generous
+  settle, so none of them can see a header sitting under the status bar for a second after an SPA
+  route change. This one idles the page until the walk's adaptive cooldown has relaxed, mounts a
+  header (`fixtures/latehdr.html`, with and without a `pushState`), and polls until it is inset.
+  Budget: 900ms.
 
 ## Known limitation — scroll-dependent headers with a custom smooth-scroll
 

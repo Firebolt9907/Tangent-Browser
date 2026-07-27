@@ -142,6 +142,30 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `the cooldown is bypassed when something NEW paints in the band (iter 52)`() {
+        // The relaxed 2000ms cooldown bounds the cost of the full-document walk, but it also let a
+        // header mounted by an SPA route change sit UNDER the status bar for ~1.5s. The walk now
+        // runs immediately when the top-painted element at three sample points across the strip
+        // differs from the previous sample — a correctly inset header samples the same element every
+        // pass (no bypass), a newly mounted one does not. Rate-limited so a page animating under the
+        // bar can't turn this into a per-frame walk.
+        val s = script()
+        assertTrue(
+            "the cooldown early-return is gated on the band being unchanged",
+            s.contains("if(since<cd&&!bandChanged(now)){"),
+        )
+        assertTrue(
+            "samples the top-painted element across the strip, ignoring our own spacer",
+            s.contains("var e=document.elementFromPoint(xs[i],y);out.push((e&&e.id===topId)?null:(e||null))"),
+        )
+        assertTrue(
+            "bypass is rate-limited and remembers the last sample",
+            s.contains("if(now-(window.__tangentLastBypassMs||0)<300)return false") &&
+                s.contains("window.__tangentBandSamples=s"),
+        )
+    }
+
+    @Test
     fun `self-heal flag is reset in a finally so one bad header can't disable the observer (iter 18)`() {
         val s = script()
         assertTrue(s.contains("finally{"))

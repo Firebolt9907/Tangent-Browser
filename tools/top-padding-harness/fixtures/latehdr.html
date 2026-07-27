@@ -31,5 +31,27 @@ window.__mountRouteNoNav = function () {
   h.innerHTML = '<div class="logo"></div><span>Silent route header</span><button>Menu</button>';
   document.body.appendChild(h);
 };
+/* Same late mount, but the page is a scroll-LOCKED viewport app shell — the inset there is applied
+   by padding the shell, not by the in-flow spacer, so the cooldown bypass has to work on that path
+   too. Selected with ?case=shell. */
+if (new URLSearchParams(location.search).get('case') === 'shell') {
+  document.documentElement.style.overflow = 'hidden';
+  document.body.style.overflow = 'hidden';
+  document.getElementById('content').remove();
+  const s = document.createElement('div');
+  s.id = 'appshell';
+  s.style.cssText = 'height:100vh;display:flex;flex-direction:column';
+  s.innerHTML = '<div style="flex:1;overflow:auto;padding:12px">app content</div>';
+  document.body.appendChild(s);
+}
+/* A late STICKY header (sticky headers take applySticky, not applyFixed). ?case=sticky */
+window.__mountSticky = function () {
+  const h = document.createElement('header');
+  h.className = 'bar';
+  h.id = 'lateHeader';
+  h.style.cssText = 'position:sticky;top:0;height:56px;background:#fff;border-bottom:1px solid #ccc';
+  h.innerHTML = '<div class="logo"></div><span>Late sticky header</span>';
+  document.body.insertBefore(h, document.body.firstChild);
+};
 </script>
 </body></html>

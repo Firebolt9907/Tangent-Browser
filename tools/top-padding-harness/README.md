@@ -98,7 +98,11 @@ cleared it. Fast and stable — good as a first gate before the live sweeps.
   settle, so none of them can see a header sitting under the status bar for a second after an SPA
   route change. This one idles the page until the walk's adaptive cooldown has relaxed, mounts a
   header (`fixtures/latehdr.html`, with and without a `pushState`), and polls until it is inset.
-  Budget: 900ms.
+  Budget: 900ms. Variants: `--no-nav` (route swap with no `pushState`), `--sticky` (sticky rather
+  than fixed header), `--shell` (scroll-locked app shell, i.e. the shell-padding inset path).
+- **`liveLatency.js`** — the same timing question against a real site's own route change. In
+  practice most live SPA routes re-render *inside* the already-inset layout and never put anything
+  in the band, so this reports N/A a lot; the discriminating cases are `latencyTest.js`'s fixtures.
 
 ## Known limitation — scroll-dependent headers with a custom smooth-scroll
 

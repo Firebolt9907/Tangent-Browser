@@ -16,7 +16,11 @@ const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Conte
 const topPx = parseInt(process.argv[2] || '48', 10);
 const idleMs = parseInt(process.argv[3] || '8000', 10);
 const noNav = process.argv.includes('--no-nav');
-const url = `file://${__dirname}/fixtures/latehdr.html`;
+// ?case=shell puts the page on the app-shell inset path; --sticky mounts a sticky header instead of
+// a fixed one. Both exercise the bypass through a different inset mechanism.
+const shellCase = process.argv.includes('--shell');
+const sticky = process.argv.includes('--sticky');
+const url = `file://${__dirname}/fixtures/latehdr.html${shellCase ? '?case=shell' : ''}`;
 const BUDGET_MS = 900;
 
 (async () => {
@@ -34,7 +38,8 @@ const BUDGET_MS = 900;
     await new Promise(r => setTimeout(r, idleMs));
     const cooldown = await page.evaluate('window.__tangentCooldownMs || 500');
 
-    const mounted = await page.evaluate(`(() => { window.${noNav ? '__mountRouteNoNav' : '__mountRoute'}(); return performance.now(); })()`);
+    const fn = sticky ? '__mountSticky' : noNav ? '__mountRouteNoNav' : '__mountRoute';
+    const mounted = await page.evaluate(`(() => { window.${fn}(); return performance.now(); })()`);
     let delay = -1;
     for (let i = 0; i < 120; i++) {
       const done = await page.evaluate(`(() => {
@@ -51,7 +56,7 @@ const BUDGET_MS = 900;
       await new Promise(r => setTimeout(r, 50));
     }
 
-    console.log(`\n=== inset latency  topPx=${topPx}  idle=${idleMs}ms  nav=${!noNav} ===`);
+    console.log(`\n=== inset latency  topPx=${topPx}  idle=${idleMs}ms  nav=${!noNav}  ${shellCase ? 'app-shell' : 'normal'}${sticky ? ' sticky' : ''} ===`);
     console.log(`cooldown at mount time: ${cooldown}ms`);
     console.log(`header inset after: ${delay < 0 ? 'NEVER (>6s)' : delay + 'ms'}`);
     console.log(`\nRESULT: ${delay >= 0 && delay <= BUDGET_MS ? `PASS ✅ inset within ${BUDGET_MS}ms budget` : `FAIL ❌ ${delay < 0 ? 'never inset' : delay + 'ms > ' + BUDGET_MS + 'ms budget'}`}`);

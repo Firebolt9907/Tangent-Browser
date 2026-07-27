@@ -463,8 +463,22 @@ class ViewportSpacerScriptTest {
         )
         assertTrue(
             "the in-flow spacer is suppressed on this path, and a previous shell is restored",
-            s.contains("padShell(shell);window.__tangentShellEl=shell;el.style.cssText='display:none!important;';return") &&
+            s.contains("padShell(shell);capNested(shell);window.__tangentShellEl=shell;el.style.cssText='display:none!important;';return") &&
                 s.contains("unpadShell(window.__tangentShellEl)"),
+        )
+        // `vh` always means the FULL viewport — nothing in the page can redefine it — so a shell
+        // that nests another viewport-locked layer (web.telegram.org) needs the inner one CAPPED,
+        // and a `display:contents` wrapper (telegram K's #auth-flow-root) has no box to pad, so the
+        // scan has to look through it at the real shell.
+        assertTrue(
+            "the scan looks through display:contents wrappers",
+            s.contains("if(kcs.display==='contents'){for(i=0;i<k.children.length&&i<20;i++)q.push(k.children[i]);continue}"),
+        )
+        assertTrue(
+            "nested viewport-locked layers are capped to the remaining height, restorably",
+            s.contains("k.style.setProperty('max-height','calc(100vh - '+topPx+'px)','important')") &&
+                s.contains("window.__tangentShellCapped") &&
+                s.contains("function uncapNested()"),
         )
     }
 }

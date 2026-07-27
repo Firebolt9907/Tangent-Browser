@@ -45,6 +45,14 @@ const cases = {
   // 9. Locked document, shell already has its own padding-top — the inset must ADD to it, not
   //    replace it, and must not ratchet across repeated passes.
   lockedPaddedShell(){ lock(); shell('100vh'); document.getElementById('shell').style.paddingTop='20px'; },
+  // 10. Locked document whose shell contains ANOTHER viewport-locked layer (web.telegram.org nests
+  //     two). vh always means the full viewport, so padding the outer shell leaves the inner one
+  //     100vh tall inside a shorter box — it has to be capped, not just pushed.
+  lockedNestedVh(){ lock(); const s=document.createElement('div'); s.id='outer'; s.style.cssText='height:100vh;overflow:hidden'; document.body.appendChild(s); const i=document.createElement('div'); i.className='shell'; i.id='shell'; i.style.cssText='height:100vh'; i.innerHTML='<div class="hdr"><div class="logo"></div><span>App header</span></div><div class="body"><h1>Inner</h1>'+'<p>content line</p>'.repeat(60)+'</div><div class="btm" id="btm"><span>Home</span><span>Search</span><span>Library</span></div>'; s.appendChild(i); },
+  // 11. Locked document whose shell sits inside a `display:contents` wrapper (telegram K's
+  //     #auth-flow-root). The wrapper has no box, so padding IT would do nothing — the scan has to
+  //     look through it at the real shell.
+  lockedContentsWrapper(){ lock(); const w=document.createElement('div'); w.id='wrap'; w.style.display='contents'; document.body.appendChild(w); const s=document.createElement('div'); s.className='shell'; s.id='shell'; s.style.height='100vh'; s.innerHTML='<div class="hdr"><div class="logo"></div><span>App header</span></div><div class="body"><h1>Wrapped</h1>'+'<p>content line</p>'.repeat(60)+'</div><div class="btm" id="btm"><span>Home</span><span>Search</span><span>Library</span></div>'; w.appendChild(s); },
 };
 function lock(){ document.documentElement.style.overflow='hidden'; document.body.style.overflow='hidden'; }
 const c=new URLSearchParams(location.search).get('case');

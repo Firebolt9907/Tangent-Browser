@@ -38,8 +38,10 @@ function probeSrc(topPx) {
         shells.push({ tag: el.tagName.toLowerCase(), id: el.id||'', cls: (el.className&&el.className.toString?el.className.toString():'').slice(0,30),
                       top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) });
       }
-      /* bottom-pinned UI (nav/player/composer) that must stay reachable */
-      if ((cs.position === 'fixed' || cs.position === 'sticky') && r.height > 24 && r.height < vh * 0.4 && r.bottom > vh * 0.5) {
+      /* Bottom-pinned UI (nav/player/composer) that must stay reachable. It has to be ON SCREEN
+         and anchored near the bottom right now — a sticky section heading sitting 2000px down the
+         document (spiegel.de has 29 of them) is ordinary flow content, not bottom UI. */
+      if ((cs.position === 'fixed' || cs.position === 'sticky') && r.height > 24 && r.height < vh * 0.4 && r.top < vh && r.bottom > vh * 0.5) {
         bottomUi.push({ tag: el.tagName.toLowerCase(), id: el.id||'', cls: (el.className&&el.className.toString?el.className.toString():'').slice(0,30),
                         top: Math.round(r.top), bottom: Math.round(r.bottom), text: (el.textContent||'').trim().replace(/\\s+/g,' ').slice(0,24) });
       }
@@ -78,17 +80,23 @@ function probeSrc(topPx) {
     before.shells.forEach(s => console.log(`    shell ${s.tag}${s.id?'#'+s.id:''}.${s.cls} top=${s.top} h=${s.h}`));
     before.bottomUi.forEach(b => console.log(`    bottomUi ${b.tag}${b.id?'#'+b.id:''}.${b.cls} top=${b.top} bottom=${b.bottom} "${b.text}"`));
 
+    // Only count what WE broke: an element already hanging off the bottom before injection (airbnb's
+    // bottom nav sits at 850-975 on its own in headless Chrome) is the site's own doing.
+    const wasOff = new Set(before.bottomUi.filter(b => b.bottom > before.vh + 4).map(b => b.tag + '|' + b.cls + '|' + b.text));
     // A shell that kept its full-viewport height but now starts at topPx overflows the bottom.
     const pushed = after.shells.filter(s => s.top >= topPx - 2 && s.bottom > after.vh + 4);
-    // Bottom UI whose bottom edge left the viewport entirely.
-    const lost = after.bottomUi.filter(b => b.bottom > after.vh + 4);
+    // Bottom UI whose bottom edge left the viewport entirely because of the injection.
+    const lost = after.bottomUi.filter(b => b.bottom > after.vh + 4 && !wasOff.has(b.tag + '|' + b.cls + '|' + b.text));
     console.log(`AFTER : vh=${after.vh} locked=${after.locked} scrollable=${after.scrollable} shells=${after.shells.length} bottomUi=${after.bottomUi.length}`);
     after.shells.forEach(s => console.log(`    shell ${s.tag}${s.id?'#'+s.id:''}.${s.cls} top=${s.top} bottom=${s.bottom} h=${s.h}${s.bottom > after.vh + 4 ? '  ⟵ OVERFLOWS' : ''}`));
     after.bottomUi.forEach(b => console.log(`    bottomUi ${b.tag}${b.id?'#'+b.id:''}.${b.cls} top=${b.top} bottom=${b.bottom} "${b.text}"${b.bottom > after.vh + 4 ? '  ⟵ OFF-SCREEN' : ''}`));
 
     // Overflow in a SCROLL-LOCKED document is unrecoverable (the strip can never be scrolled to) —
     // that is the defect. In a scrollable document the same overflow is merely a longer page.
-    const severe = (pushed.length || lost.length) && (after.locked || after.scrollable < topPx - 4);
+    // `locked` alone is not enough: a page can set html{overflow:hidden} and still scroll a child
+    // scroller (airbnb reports locked=true with 2354px of scroll). Require the strip to be truly
+    // unreachable — nothing left to scroll.
+    const severe = (pushed.length || lost.length) && after.scrollable < topPx - 4;
     console.log(`\nRESULT: ${!(pushed.length || lost.length)
       ? 'PASS ✅ nothing pushed off the bottom'
       : severe

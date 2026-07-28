@@ -11,7 +11,10 @@ import android.view.animation.LinearInterpolator
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalView
 import androidx.core.animation.doOnEnd
 
@@ -34,14 +37,19 @@ class ImeSheetController(private val view: View) {
 
     private var controller: WindowInsetsAnimationController? = null
     private var requesting = false
+    private var activeState = mutableStateOf(false)
     private var cancellationSignal: CancellationSignal? = null
     private var settleAnimator: ValueAnimator? = null
     /** Drag delta (px, positive = up) that arrived before [controller] was ready. */
     private var pendingUp = 0f
     private var onReadyCallback: (() -> Unit)? = null
+    private var pendingFinishShow: Boolean? = null
+    private var pendingFinishOnEnd: (() -> Unit)? = null
 
     val isReady: Boolean get() = controller != null
-    val isActive: Boolean get() = controller != null || requesting
+    val isActive: Boolean get() = activeState.value
+
+    private var lastFraction: Float = 1f
 
     /**
      * Ask the platform for control of the IME animation. [onReady] fires once control is granted
@@ -54,8 +62,11 @@ class ImeSheetController(private val view: View) {
         settleAnimator?.cancel()
         settleAnimator = null
         requesting = true
+        activeState.value = true
         onReadyCallback = onReady
         pendingUp = 0f
+        pendingFinishShow = null
+        pendingFinishOnEnd = null
         cancellationSignal = CancellationSignal()
         view.windowInsetsController?.controlWindowInsetsAnimation(
             WindowInsets.Type.ime(),
@@ -70,6 +81,13 @@ class ImeSheetController(private val view: View) {
                     if (pendingUp != 0f) {
                         insetByUp(pendingUp)
                         pendingUp = 0f
+                    }
+                    val finishShow = pendingFinishShow
+                    val finishOnEnd = pendingFinishOnEnd
+                    pendingFinishShow = null
+                    pendingFinishOnEnd = null
+                    if (finishShow != null) {
+                        animateToFinish(finishShow, finishOnEnd ?: {})
                     }
                 }
 
@@ -120,12 +138,18 @@ class ImeSheetController(private val view: View) {
     /** Current shown-fraction in [0,1]: 1 = keyboard fully up (sheet open), 0 = fully hidden. */
     @RequiresApi(Build.VERSION_CODES.R)
     fun currentFraction(): Float {
-        val c = controller ?: return 1f
-        return fractionOf(
-            c.currentInsets.bottom.toFloat(),
-            c.hiddenStateInsets.bottom,
-            c.shownStateInsets.bottom,
-        )
+        val c = controller
+        if (c != null) {
+            val frac = fractionOf(
+                c.currentInsets.bottom.toFloat(),
+                c.hiddenStateInsets.bottom,
+                c.shownStateInsets.bottom,
+            )
+            lastFraction = frac
+            return frac
+        }
+        val rootInsets = view.rootWindowInsets?.getInsets(WindowInsets.Type.ime())?.bottom ?: 0
+        return if (rootInsets > 0) 1f else 0f
     }
 
     /**
@@ -134,7 +158,15 @@ class ImeSheetController(private val view: View) {
      */
     @RequiresApi(Build.VERSION_CODES.R)
     fun animateToFinish(show: Boolean, onEnd: () -> Unit) {
-        val c = controller ?: run { onEnd(); return }
+        val c = controller ?: run {
+            if (requesting) {
+                pendingFinishShow = show
+                pendingFinishOnEnd = onEnd
+            } else {
+                onEnd()
+            }
+            return
+        }
         val shown = c.shownStateInsets.bottom
         val hidden = c.hiddenStateInsets.bottom
         val start = c.currentInsets.bottom
@@ -177,9 +209,12 @@ class ImeSheetController(private val view: View) {
     private fun reset() {
         controller = null
         requesting = false
+        activeState.value = false
         pendingUp = 0f
         onReadyCallback = null
         cancellationSignal = null
+        pendingFinishShow = null
+        pendingFinishOnEnd = null
     }
 
     private fun fractionOf(value: Float, hidden: Int, shown: Int): Float {

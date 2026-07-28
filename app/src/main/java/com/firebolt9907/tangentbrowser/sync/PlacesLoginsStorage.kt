@@ -159,6 +159,25 @@ class PlacesLoginsStorage(
         nativeStorage.add(entry.toAppservicesEntry()).toConceptLogin()
     }
 
+    override suspend fun count(): Long = withContext(Dispatchers.IO) {
+        nativeStorage.count()
+    }
+
+    // Bulk import path (MC 148+). Appservices reports per-row outcomes as a BulkResultEntry
+    // sum type; the concept-storage contract wants a Kotlin Result per row, in the same order.
+    override suspend fun addMany(entries: List<LoginEntry>): List<Result<Login>> =
+        withContext(Dispatchers.IO) {
+            nativeStorage.addMany(entries.map { it.toAppservicesEntry() }).map { result ->
+                when (result) {
+                    is mozilla.appservices.logins.BulkResultEntry.Success ->
+                        Result.success(result.login.toConceptLogin())
+
+                    is mozilla.appservices.logins.BulkResultEntry.Error ->
+                        Result.failure(IllegalStateException(result.message))
+                }
+            }
+        }
+
     override suspend fun update(id: String, entry: LoginEntry): Login = withContext(Dispatchers.IO) {
         nativeStorage.update(id, entry.toAppservicesEntry()).toConceptLogin()
     }

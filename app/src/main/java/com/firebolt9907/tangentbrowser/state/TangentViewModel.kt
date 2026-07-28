@@ -106,8 +106,14 @@ class TangentViewModel(
     fun closeChildTabAndReturnToParent(): Boolean =
         (repo as? GeckoTabRepository)?.closeChildTabAndReturnToParent() ?: false
 
-    fun onCreateTabFromEdge(selectTab: Boolean = true): String {
-        val id = repo.addTab(url = "about:blank", title = "New Tab")
+    fun onCreateTabFromEdge(selectTab: Boolean = true, groupId: String? = null): String {
+        val gecko = repo as? GeckoTabRepository
+        val id = if (groupId != null && gecko != null) {
+            // Keep the tab in the active Space and inherit that Space's default container.
+            gecko.addTabInGroup(url = "about:blank", groupId = groupId, selectTab = true)
+        } else {
+            repo.addTab(url = "about:blank", title = "New Tab")
+        }
         if (selectTab) {
             repo.selectTab(id)
             editingText.value = ""
@@ -128,12 +134,15 @@ class TangentViewModel(
         engineSession: EngineSession? = null,
         editBlankTab: Boolean = false,
         selectTab: Boolean = true,
+        // Space (tab group) to keep the tab in; it also inherits that Space's default container.
+        groupId: String? = null,
     ): String {
         val id = (repo as? GeckoTabRepository)?.addPreparedTab(
             url = url,
             title = title,
             engineSession = engineSession,
             selectTab = selectTab,
+            groupId = groupId,
         ) ?: repo.addTab(url = url, title = title)
         if (selectTab) repo.selectTab(id)
         if (selectTab && editBlankTab) {

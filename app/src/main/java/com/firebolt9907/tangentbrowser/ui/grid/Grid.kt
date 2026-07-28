@@ -5,6 +5,7 @@ import android.os.Build
 import android.view.RoundedCorner
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -156,6 +157,9 @@ fun TabGridOverlay(
     themeColorProvider: (String) -> Color? = { null },
     /** Resolves a tab's favicon (ContentState.icon) for the caption; null → no icon shown. */
     iconProvider: (String) -> Bitmap? = { null },
+    /** Resolves a tab's container swatch (the cookie-jar it's isolated to); null → Personal/default,
+     * drawn with no ring so ordinary tabs stay unadorned. */
+    containerColorProvider: (String) -> Color? = { null },
     /** Which overview layout to render. Selects the per-card slot function ([deckSlot]/[pixelSlot])
      * and the horizontal drag/scroll step; the gesture core stays layout-agnostic. */
     tabViewMode: TabViewMode = TabViewMode.DECK,
@@ -381,6 +385,7 @@ fun TabGridOverlay(
     val snapshotProviderHolder = rememberUpdatedState(snapshotProvider)
     val themeColorProviderHolder = rememberUpdatedState(themeColorProvider)
     val iconProviderHolder = rememberUpdatedState(iconProvider)
+    val containerColorProviderHolder = rememberUpdatedState(containerColorProvider)
     val onTabSelectedHolder = rememberUpdatedState(onTabSelected)
     val onCloseTabHolder = rememberUpdatedState(onCloseTab)
     val progressFwd: () -> Float = remember { { progressHolder.value() } }
@@ -395,6 +400,8 @@ fun TabGridOverlay(
     val snapshotProviderFwd: (String) -> Bitmap? = remember { { id -> snapshotProviderHolder.value(id) } }
     val themeColorProviderFwd: (String) -> Color? = remember { { id -> themeColorProviderHolder.value(id) } }
     val iconProviderFwd: (String) -> Bitmap? = remember { { id -> iconProviderHolder.value(id) } }
+    val containerColorProviderFwd: (String) -> Color? =
+        remember { { id -> containerColorProviderHolder.value(id) } }
     val onTabSelectedFwd: (String) -> Unit = remember { { id -> onTabSelectedHolder.value(id) } }
     val onCloseTabFwd: (String) -> Unit = remember { { id -> onCloseTabHolder.value(id) } }
     val cellsClickableFwd: () -> Boolean = remember { { progressHolder.value() > 0.5f } }
@@ -581,6 +588,7 @@ fun TabGridOverlay(
                             GridCellChrome(
                                 tab = tab,
                                 icon = iconProviderFwd(tab.id),
+                                containerColor = containerColorProviderFwd(tab.id),
                                 // Compose the text for the near-centre cards so it can cross-fade;
                                 // the actual alpha tracks distance-to-centre in the draw phase.
                                 textCandidate = p >= -1 && p <= 1,
@@ -1091,6 +1099,7 @@ internal fun ArchiveThumbnailBadge(modifier: Modifier = Modifier) {
 private fun GridCellChrome(
     tab: GridTab,
     icon: Bitmap?,
+    containerColor: Color?,
     textCandidate: Boolean,
     containerW: Float,
     progress: () -> Float,
@@ -1135,7 +1144,7 @@ private fun GridCellChrome(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (!tab.url.isBlankTabUrl()) {
-                FaviconTile(iconBitmap, host, size = 30.dp)
+                FaviconTile(iconBitmap, host, size = 30.dp, ringColor = containerColor)
             }
             if (textCandidate) {
                 Column(
@@ -1175,38 +1184,51 @@ private fun GridCellChrome(
  * since [ContentState.icon] is null for tabs that never loaded a favicon this session.
  */
 @Composable
-private fun FaviconTile(icon: ImageBitmap?, host: String, size: Dp) {
+private fun FaviconTile(icon: ImageBitmap?, host: String, size: Dp, ringColor: Color? = null) {
     val shape = RoundedCornerShape(6.dp)
-    if (icon != null) {
-        Image(
-            bitmap = icon,
-            contentDescription = null,
-            modifier = Modifier
-                .size(size)
-                .clip(shape),
-        )
+    // When the tab is isolated in a container, draw a coloured ring around the favicon (with an inner
+    // gap) so the overview shows which container each tab uses; Personal/default tabs pass null and
+    // stay unadorned. The ring occupies the outer 2dp so the favicon itself shrinks slightly.
+    val tileModifier = if (ringColor != null) {
+        Modifier
+            .size(size)
+            .border(2.dp, ringColor, shape)
+            .padding(3.dp)
     } else {
-        val initial = remember(host) {
-            host.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "•"
-        }
-        val tileColor = remember(host) {
-            if (host.isEmpty()) Color(0xFF7E7E7E)
-            else Color.hsl((abs(host.hashCode()) % 360).toFloat(), 0.45f, 0.55f)
-        }
-        Box(
-            modifier = Modifier
-                .size(size)
-                .clip(shape)
-                .background(tileColor),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = initial,
-                color = if (tileColor.luminance() > 0.5f) Color.Black else Color.White,
-                fontSize = (size.value * 0.52f).sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
+        Modifier.size(size)
+    }
+    Box(modifier = tileModifier, contentAlignment = Alignment.Center) {
+        if (icon != null) {
+            Image(
+                bitmap = icon,
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(shape),
             )
+        } else {
+            val initial = remember(host) {
+                host.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "•"
+            }
+            val tileColor = remember(host) {
+                if (host.isEmpty()) Color(0xFF7E7E7E)
+                else Color.hsl((abs(host.hashCode()) % 360).toFloat(), 0.45f, 0.55f)
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(shape)
+                    .background(tileColor),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = initial,
+                    color = if (tileColor.luminance() > 0.5f) Color.Black else Color.White,
+                    fontSize = (size.value * if (ringColor != null) 0.4f else 0.52f).sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }

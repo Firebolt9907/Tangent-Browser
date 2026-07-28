@@ -15,7 +15,7 @@ import android.util.Log
  * smuggles its result back through a native `window.prompt(message, payload)` taken from a throwaway
  * same-origin iframe (a pristine realm the page can't have patched). The wrapping
  * `ReaderPromptDelegate` intercepts `tangent-themecolor` and calls [onPayload] with the tab id it was
- * constructed for plus the `"<computed-color>|<url>"` payload.
+ * constructed for plus the `"<themeColor>|<bgColor>|<url>"` payload.
  *
  * The script honours the meta tag's `media` attribute (e.g. a separate dark-mode theme-color) via
  * `matchMedia`, and re-samples when the color scheme changes, so the tint tracks the page — again
@@ -29,18 +29,36 @@ object ThemeColorProbe {
     /**
      * Sink for extracted colors, registered by `TangentRoot` while it is composed. Global (like the
      * video / link-rect bridges) because only one browser activity is ever foreground at a time.
-     * `color` is an opaque ARGB int, or `null` when the page declares no usable theme color.
+     *
+     * - `themeColor` is the page's declared `<meta name="theme-color">` as an opaque ARGB int, or
+     *   `null` when the page declares none. Drives the exposed top-strip fill and the "match website
+     *   theme color" chrome accent.
+     * - `bgColor` is the *actual* rendered background color sampled from the element behind the status
+     *   bar (top-center of the viewport), or `null` when it could not be resolved. Drives the
+     *   status-bar icon light/dark choice so it tracks the real content even on sites that declare no
+     *   theme color, and re-fires on scroll so a colored header scrolling away flips the icons.
      */
     @Volatile
-    var listener: ((tabId: String, url: String, color: Int?) -> Unit)? = null
+    var listener: ((tabId: String, url: String, themeColor: Int?, bgColor: Int?) -> Unit)? = null
 
-    /** Called by the prompt delegate with the raw `"<color>|<url>"` payload for [tabId]. */
+    /** Called by the prompt delegate with the raw `"<themeColor>|<bgColor>|<url>"` payload for [tabId]. */
     fun onPayload(tabId: String, payload: String) {
         val cb = listener ?: return
-        val sep = payload.indexOf('|')
-        val colorStr = if (sep >= 0) payload.substring(0, sep) else payload
-        val url = if (sep >= 0) payload.substring(sep + 1) else ""
-        cb(tabId, url, parseColor(colorStr))
+        val first = payload.indexOf('|')
+        if (first < 0) {
+            cb(tabId, "", parseColor(payload), null)
+            return
+        }
+        val second = payload.indexOf('|', first + 1)
+        if (second < 0) {
+            // Legacy single-color payload: treat the tail as the URL, no background sample.
+            cb(tabId, payload.substring(first + 1), parseColor(payload.substring(0, first)), null)
+            return
+        }
+        val themeStr = payload.substring(0, first)
+        val bgStr = payload.substring(first + 1, second)
+        val url = payload.substring(second + 1)
+        cb(tabId, url, parseColor(themeStr), parseColor(bgStr))
     }
 
     /** Parses the JS computed color (`rgb(r, g, b)` / `rgba(r, g, b, a)`) to an opaque ARGB int. */
@@ -69,9 +87,12 @@ object ThemeColorProbe {
     /**
      * Builds the `javascript:` probe. Flattened to one line before injection — use only `/* */`
      * comments. Reads the applicable `<meta name="theme-color">` (honouring its `media` query),
-     * resolves it to a computed color via a throwaway element, and posts `"<color>|<url>"` back over
-     * the prompt bridge. Re-samples once on the next color-scheme change so a dark/light switch
-     * re-tints without a reload.
+     * resolves it to a computed color via a throwaway element, AND samples the actual rendered
+     * background color of the element behind the status bar (top-center of the viewport), then posts
+     * `"<themeColor>|<bgColor>|<url>"` back over the prompt bridge. The background sample lets the
+     * status-bar icons track real content even on sites that declare no theme color. Re-samples once
+     * on the next color-scheme change so a dark/light switch re-tints without a reload; no scroll
+     * listener (intentionally one-shot per load — the icons match the page's base background).
      */
     fun buildScript(): String {
         return """
@@ -111,11 +132,11 @@ object ThemeColorProbe {
                     }
                     return chosen;
                 }
-                function resolve() {
+                function themeColor() {
                     var meta = pickMeta();
                     var raw = meta ? (meta.getAttribute('content') || '') : '';
                     raw = raw.trim();
-                    if (!raw) { tangentBridge('${BridgeGuard.tag(BRIDGE_MESSAGE)}', 'none|' + location.href); return; }
+                    if (!raw) return 'none';
                     var probe = document.createElement('span');
                     probe.style.cssText = 'display:none!important;color:transparent;';
                     probe.style.color = raw;
@@ -123,8 +144,46 @@ object ThemeColorProbe {
                     var computed = '';
                     try { computed = window.getComputedStyle(probe).color || ''; } catch (e) {}
                     if (probe.parentNode) { try { probe.parentNode.removeChild(probe); } catch (e2) {} }
-                    if (!computed) computed = 'none';
-                    tangentBridge('${BridgeGuard.tag(BRIDGE_MESSAGE)}', computed + '|' + location.href);
+                    return computed || 'none';
+                }
+                function isOpaqueBg(c) {
+                    /* Reject transparent / near-transparent backgrounds so the walk keeps climbing to
+                       the element that actually paints the pixels behind the status bar. */
+                    if (!c) return false;
+                    if (c === 'transparent') return false;
+                    var m = c.match(/rgba?\(([^)]+)\)/);
+                    if (!m) return false;
+                    var p = m[1].split(',');
+                    if (p.length >= 4 && parseFloat(p[3]) <= 0.05) return false;
+                    return true;
+                }
+                function bgColor() {
+                    /* Sample the element painted just under the status bar (top-center of the visual
+                       viewport), walking up the ancestor chain past transparent backgrounds. Falls
+                       back to body/html, then white. Mirrors how Safari tints its bar to the content. */
+                    var el = null;
+                    try { el = document.elementFromPoint(Math.floor(window.innerWidth / 2), 4); } catch (e) {}
+                    var node = el;
+                    while (node && node.nodeType === 1) {
+                        var c = '';
+                        try { c = window.getComputedStyle(node).backgroundColor || ''; } catch (e2) {}
+                        if (isOpaqueBg(c)) return c;
+                        node = node.parentElement;
+                    }
+                    var candidates = [document.body, document.documentElement];
+                    for (var i = 0; i < candidates.length; i++) {
+                        if (!candidates[i]) continue;
+                        var cc = '';
+                        try { cc = window.getComputedStyle(candidates[i]).backgroundColor || ''; } catch (e3) {}
+                        if (isOpaqueBg(cc)) return cc;
+                    }
+                    return 'rgb(255, 255, 255)';
+                }
+                function resolve() {
+                    var theme = 'none', bg = 'none';
+                    try { theme = themeColor(); } catch (e) {}
+                    try { bg = bgColor(); } catch (e2) {}
+                    tangentBridge('${BridgeGuard.tag(BRIDGE_MESSAGE)}', theme + '|' + bg + '|' + location.href);
                 }
                 try { resolve(); } catch (e) {}
                 /* Re-sample once when the color scheme flips so a dark/light theme-color swaps in

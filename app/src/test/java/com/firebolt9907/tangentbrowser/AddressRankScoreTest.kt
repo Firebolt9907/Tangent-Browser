@@ -3,8 +3,10 @@ package com.firebolt9907.tangentbrowser
 import com.firebolt9907.tangentbrowser.state.AddressSuggestion
 import com.firebolt9907.tangentbrowser.state.AddressSuggestionKind
 import com.firebolt9907.tangentbrowser.state.OpenTabRef
+import com.firebolt9907.tangentbrowser.state.RemoteTabRef
 import com.firebolt9907.tangentbrowser.state.canonicalUrlKey
 import com.firebolt9907.tangentbrowser.state.openTabSuggestions
+import com.firebolt9907.tangentbrowser.state.syncedTabSuggestions
 import com.firebolt9907.tangentbrowser.state.rankScore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -95,5 +97,31 @@ class AddressRankScoreTest {
             OpenTabRef("2", "http://www.apple.com", "Apple"),
         )
         assertEquals(1, openTabSuggestions("apple", tabs, currentTabId = null).size)
+    }
+
+    @Test
+    fun `synced tab match carries the device name and no tabId`() {
+        val tabs = listOf(
+            RemoteTabRef("https://apple.com/", "Apple", "Rishu's MacBook"),
+            RemoteTabRef("https://github.com/", "GitHub", "Rishu's MacBook"),
+        )
+        val matches = syncedTabSuggestions("apple", tabs)
+        assertEquals(1, matches.size)
+        val match = matches.first()
+        assertEquals(AddressSuggestionKind.SyncedTab, match.kind)
+        assertEquals("Rishu's MacBook", match.detail)
+        assertEquals("https://apple.com/", match.url)
+        // A remote tab lives on another device — committing it navigates, so there is no local tabId.
+        assertEquals(null, match.tabId)
+    }
+
+    @Test
+    fun `synced tab match excludes blank pages and dedups the same page`() {
+        val tabs = listOf(
+            RemoteTabRef("https://apple.com/", "Apple", "Laptop"),
+            RemoteTabRef("http://www.apple.com", "Apple", "Phone"),
+            RemoteTabRef("about:blank", "New Tab", "Laptop"),
+        )
+        assertEquals(1, syncedTabSuggestions("apple", tabs).size)
     }
 }

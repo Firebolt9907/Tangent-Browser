@@ -443,10 +443,19 @@ private fun GroupOverflow(
                 onClick = { open = false; onDelete() },
             )
         }
-        // Default-container chooser: "None" plus each container, with a check on the current choice.
+        // Default-container chooser: the Personal (default) jar plus each container, with a check on
+        // the current choice.
         DropdownMenu(expanded = containerOpen, onDismissRequest = { containerOpen = false }) {
             DropdownMenuItem(
-                text = { Text("None") },
+                text = { Text(com.firebolt9907.tangentbrowser.ui.containers.DefaultContainerName) },
+                leadingIcon = {
+                    Box(
+                        Modifier
+                            .size(12.dp)
+                            .clip(CircleShape)
+                            .background(com.firebolt9907.tangentbrowser.ui.containers.DefaultContainerSwatch),
+                    )
+                },
                 trailingIcon = if (currentDefaultContextId == null) {
                     { Icon(Icons.Default.Check, contentDescription = "Selected") }
                 } else null,

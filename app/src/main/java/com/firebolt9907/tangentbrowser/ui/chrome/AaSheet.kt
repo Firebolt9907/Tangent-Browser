@@ -11,6 +11,15 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
+import com.firebolt9907.tangentbrowser.ui.iconFor
+import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
+import com.firebolt9907.tangentbrowser.permissions.ManagedPermission
+import com.firebolt9907.tangentbrowser.permissions.SitePermissionController
+import mozilla.components.browser.state.state.ContainerState
+import com.firebolt9907.tangentbrowser.ui.containers.swatch
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Workspaces
+import androidx.compose.material.icons.filled.Lock
 import com.firebolt9907.tangentbrowser.ui.reader.PageSpeaker
 import kotlinx.coroutines.launch
 import mozilla.appservices.places.BookmarkRoot
@@ -25,6 +34,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -110,6 +121,8 @@ import com.firebolt9907.tangentbrowser.addons.AddonController
 import com.firebolt9907.tangentbrowser.addons.InstalledAddon
 import com.firebolt9907.tangentbrowser.state.BarMode
 import com.firebolt9907.tangentbrowser.state.BarUiState
+import com.firebolt9907.tangentbrowser.state.TangentTabGroup
+import com.firebolt9907.tangentbrowser.ui.groups.swatch
 import com.firebolt9907.tangentbrowser.state.GlobalPreferencesStore
 import com.firebolt9907.tangentbrowser.state.compactHost
 import com.firebolt9907.tangentbrowser.state.hostFromUrl
@@ -154,6 +167,18 @@ fun AaSheet(
     bookmarksStorage: BookmarksStorage? = null,
     pageIcon: android.graphics.Bitmap? = null,
     showBottomToolbar: Boolean = false,
+    // Site content-permission review/edit (camera/mic/location/…) for the current origin.
+    sitePermissionController: SitePermissionController? = null,
+    // Container (cookie-jar) switching for the current tab. [containers] is the registry; [currentContextId]
+    // is the tab's current jar (null = default); [onReopenInContainer] recreates the tab in the chosen jar.
+    containers: List<ContainerState> = emptyList(),
+    currentContextId: String? = null,
+    onReopenInContainer: (contextId: String?) -> Unit = {},
+    // Spaces (tab groups) the current tab can be moved between. [currentSpaceId] is the tab's group
+    // (null = Personal); [onMoveToSpace] re-homes the tab (null → Personal).
+    spaces: List<TangentTabGroup> = emptyList(),
+    currentSpaceId: String? = null,
+    onMoveToSpace: (groupId: String?) -> Unit = {},
 ) {
     // Always open fully expanded (no partially-expanded detent). Otherwise the sheet's own drag
     // gesture competes with the inner list's scroll: the first up-drag gets consumed to expand the
@@ -262,6 +287,12 @@ fun AaSheet(
                     onToggleSiteTrackingProtection = onToggleSiteTrackingProtection,
                     onBack = { pane = AaPane.Page },
                 )
+                AaPane.Permissions -> SitePermissionsPaneContent(
+                    host = host,
+                    pageUrl = pageUrl,
+                    controller = sitePermissionController,
+                    onBack = { pane = AaPane.Page },
+                )
                 AaPane.Page -> PageTabContent(
                     host = host,
                     store = store,
@@ -280,14 +311,25 @@ fun AaSheet(
                     addonCount = addonState.addons.size,
                     onOpenAddons = { pane = AaPane.Addons },
                     onOpenPageSettings = { pane = AaPane.Settings },
+                    onOpenPermissions = { pane = AaPane.Permissions }
+                        .takeIf { sitePermissionController != null },
+                    containers = containers,
+                    currentContextId = currentContextId,
+                    onReopenInContainer = onReopenInContainer,
+                    spaces = spaces,
+                    currentSpaceId = currentSpaceId,
+                    onMoveToSpace = onMoveToSpace,
                 )
             }
         }
     }
 }
 
-/** The three panes the aA sheet swaps between; sub-panes slide in over the Page view. */
-private enum class AaPane { Page, Addons, Settings }
+/** UI name for the default Space (a tab in no group), mirroring the switcher's "Personal" chip. */
+private const val DefaultSpaceName = "Personal"
+
+/** The panes the aA sheet swaps between; sub-panes slide in over the Page view. */
+private enum class AaPane { Page, Addons, Settings, Permissions }
 
 /** One tile in the quick-action row: an icon chip over a short label. */
 internal data class QuickAction(
@@ -316,6 +358,13 @@ private fun PageTabContent(
     addonCount: Int = 0,
     onOpenAddons: () -> Unit = {},
     onOpenPageSettings: () -> Unit = {},
+    onOpenPermissions: (() -> Unit)? = null,
+    containers: List<ContainerState> = emptyList(),
+    currentContextId: String? = null,
+    onReopenInContainer: (contextId: String?) -> Unit = {},
+    spaces: List<TangentTabGroup> = emptyList(),
+    currentSpaceId: String? = null,
+    onMoveToSpace: (groupId: String?) -> Unit = {},
 ) {
     val context = LocalContext.current
     val haptics = rememberTangentHaptics()
@@ -332,6 +381,8 @@ private fun PageTabContent(
         mutableStateOf(globalPrefsStore.preferredBrowserPackage)
     }
     var showBrowserPicker by remember { mutableStateOf(false) }
+    var showContainerPicker by remember { mutableStateOf(false) }
+    var showSpacePicker by remember { mutableStateOf(false) }
 
     // Zoom is the only site pref the Page view writes; read-modify-write so it never clobbers the
     // top-padding / desktop-mode fields the Page Settings pane owns.
@@ -469,6 +520,86 @@ private fun PageTabContent(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { haptics.softClick(); showBrowserPicker = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showContainerPicker) {
+        fun choose(contextId: String?) {
+            showContainerPicker = false
+            if (contextId != currentContextId) {
+                onReopenInContainer(contextId)
+                onDismiss()
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { showContainerPicker = false },
+            icon = { Icon(Icons.Outlined.Shield, contentDescription = null) },
+            title = { Text("Open tab in container") },
+            text = {
+                Column {
+                    Text(
+                        text = "Reopens this tab in the chosen container's cookie jar. In-page state is lost; the page reloads.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                    ContainerPickerRow(
+                        label = com.firebolt9907.tangentbrowser.ui.containers.DefaultContainerName,
+                        color = com.firebolt9907.tangentbrowser.ui.containers.DefaultContainerSwatch,
+                        selected = currentContextId == null,
+                        onClick = { haptics.select(); choose(null) },
+                    )
+                    containers.forEach { container ->
+                        ContainerPickerRow(
+                            label = container.name.ifBlank { "Container" },
+                            color = container.color.swatch(),
+                            selected = currentContextId == container.contextId,
+                            onClick = { haptics.select(); choose(container.contextId) },
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { haptics.softClick(); showContainerPicker = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showSpacePicker) {
+        fun choose(groupId: String?) {
+            showSpacePicker = false
+            if (groupId != currentSpaceId) {
+                onMoveToSpace(groupId)
+                onDismiss()
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { showSpacePicker = false },
+            icon = { Icon(Icons.Outlined.Workspaces, contentDescription = null) },
+            title = { Text("Move tab to Space") },
+            text = {
+                Column {
+                    ContainerPickerRow(
+                        label = DefaultSpaceName,
+                        color = null,
+                        selected = currentSpaceId == null,
+                        onClick = { haptics.select(); choose(null) },
+                    )
+                    spaces.forEach { space ->
+                        ContainerPickerRow(
+                            label = space.name.ifBlank { "Space" },
+                            color = space.color.swatch(),
+                            selected = currentSpaceId == space.id,
+                            onClick = { haptics.select(); choose(space.id) },
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { haptics.softClick(); showSpacePicker = false }) { Text("Cancel") }
             },
         )
     }
@@ -845,10 +976,45 @@ private fun PageTabContent(
             }
         }
 
-        // ---------- 6. Sub-views: Page Settings + Add-ons (each slides in over the Page) ----------
+        // ---------- 6. Sub-views: Container · Site permissions · Page Settings · Add-ons ----------
         Spacer(Modifier.height(8.dp))
         HorizontalDivider()
         Spacer(Modifier.height(4.dp))
+
+        // Container (cookie jar) for this tab. Tapping opens a picker; choosing a different jar
+        // reopens the tab in it (see reopenTabInContainer). The current container is shown as a
+        // trailing value with its color swatch.
+        AaNavRow(
+            icon = Icons.Outlined.Shield,
+            label = "Container",
+            value = com.firebolt9907.tangentbrowser.ui.containers.containerNameFor(currentContextId, containers),
+            valueColor = com.firebolt9907.tangentbrowser.ui.containers.containerSwatchFor(currentContextId, containers),
+            onClick = { showContainerPicker = true },
+        )
+
+        // Move the current tab to another Space (tab group), or back to Personal. Hidden when there
+        // are no Spaces to move between.
+        if (spaces.isNotEmpty()) {
+            AaNavRow(
+                icon = Icons.Outlined.Workspaces,
+                label = "Move to Space",
+                value = spaces.firstOrNull { it.id == currentSpaceId }?.name?.ifBlank { "Space" }
+                    ?: DefaultSpaceName,
+                valueColor = spaces.firstOrNull { it.id == currentSpaceId }?.color?.swatch(),
+                onClick = { showSpacePicker = true },
+            )
+        }
+
+        // Site permissions (camera/mic/location/notifications/…) for the current origin. Hidden when
+        // there's no controller or no real origin to scope decisions to.
+        if (onOpenPermissions != null && host.isNotEmpty()) {
+            AaNavRow(
+                icon = Icons.Default.Lock,
+                label = "Site permissions",
+                onClick = onOpenPermissions,
+            )
+        }
+
         AaNavRow(
             icon = Icons.Default.Tune,
             label = "Page Settings",
@@ -863,12 +1029,17 @@ private fun PageTabContent(
     }
 }
 
-/** A tappable "opens a sub-view" row: leading icon, label, optional count badge, trailing chevron. */
+/**
+ * A tappable "opens a sub-view" row: leading icon, label, an optional count [badge] or a trailing
+ * [value] (with an optional [valueColor] swatch dot, e.g. the current container), and a chevron.
+ */
 @Composable
 private fun AaNavRow(
     icon: ImageVector,
     label: String,
     badge: String? = null,
+    value: String? = null,
+    valueColor: Color? = null,
     onClick: () -> Unit,
 ) {
     val haptics = rememberTangentHaptics()
@@ -891,12 +1062,198 @@ private fun AaNavRow(
                 )
                 Spacer(Modifier.width(6.dp))
             }
+            if (value != null) {
+                if (valueColor != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(valueColor),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 140.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp),
             )
+        }
+    }
+}
+
+/** One choice in the container picker: a color swatch (or hollow ring for "none"), name, and check. */
+@Composable
+private fun ContainerPickerRow(
+    label: String,
+    color: Color?,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(14.dp)
+                .clip(CircleShape)
+                .background(color ?: MaterialTheme.colorScheme.surfaceVariant)
+                .then(
+                    if (color == null) {
+                        Modifier.border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                    } else {
+                        Modifier
+                    },
+                ),
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(text = label, modifier = Modifier.weight(1f))
+        if (selected) {
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = "Current",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The Site Permissions sub-view: a tri-state (Ask / Allow / Block) control per managed permission for
+ * the current origin, backed by [SitePermissionController]'s remembered decisions. Slides in over the
+ * Page view with a Back affordance. "Ask" clears the stored decision so the site prompts again.
+ */
+@Composable
+private fun SitePermissionsPaneContent(
+    host: String,
+    pageUrl: String,
+    controller: SitePermissionController?,
+    onBack: () -> Unit,
+) {
+    val haptics = rememberTangentHaptics()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp)
+            .padding(top = 4.dp, bottom = 28.dp),
+    ) {
+        SheetHeader(
+            title = "Site permissions",
+            leadingIcon = {
+                IconButton(onClick = { haptics.softClick(); onBack() }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            },
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = host.ifEmpty { "This site" },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(16.dp))
+
+        if (controller == null) {
+            Text(
+                text = "Permissions are unavailable here.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            return@Column
+        }
+
+        ManagedPermission.entries.forEach { permission ->
+            var decision by remember(pageUrl, permission) {
+                mutableStateOf(controller.managedDecisionFor(pageUrl, permission))
+            }
+            PermissionTriStateRow(
+                icon = iconFor(permission),
+                label = permission.label,
+                description = permission.description,
+                decision = decision,
+                onSelect = { next ->
+                    if (next != decision) {
+                        decision = next
+                        controller.setManagedDecision(pageUrl, permission, next)
+                        haptics.select()
+                    }
+                },
+            )
+            Spacer(Modifier.height(14.dp))
+        }
+    }
+}
+
+/** A managed-permission row: icon + label/description, with an Ask/Allow/Block segmented selector. */
+@Composable
+private fun PermissionTriStateRow(
+    icon: ImageVector,
+    label: String,
+    description: String,
+    decision: Boolean?,
+    onSelect: (Boolean?) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    // Three-segment selector: Ask (null) · Allow (true) · Block (false).
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .padding(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        val options = listOf<Pair<String, Boolean?>>("Ask" to null, "Allow" to true, "Block" to false)
+        options.forEach { (segLabel, segValue) ->
+            val selected = decision == segValue
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                    .clickable { onSelect(segValue) }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = segLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
         }
     }
 }

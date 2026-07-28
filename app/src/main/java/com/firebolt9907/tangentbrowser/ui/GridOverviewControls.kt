@@ -342,9 +342,10 @@ internal fun ColumnScope.GridOverviewControls(
                         },
                     )
                     HorizontalDivider()
-                    // Tab organization: label groups (no isolation) + containers (cookie isolation).
+                    // Tab organization: manage Spaces (named tab sets, switchable from the strip
+                    // above) + containers (cookie isolation).
                     DropdownMenuItem(
-                        text = { Text("Tab Groups") },
+                        text = { Text("Manage Spaces") },
                         leadingIcon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
                         onClick = { overflowOpen = false; onShowTabGroups() },
                     )

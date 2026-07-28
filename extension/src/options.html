@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tangent Reader — Settings</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: #1c1b1a; background: #ffffff; margin: 0; padding: 22px 24px; max-width: 560px;
+    }
+    h1 { font-size: 17px; margin: 0 0 4px; }
+    .sub { color: #6b6864; margin: 0 0 20px; }
+    .row {
+      display: flex; gap: 12px; align-items: flex-start;
+      padding: 14px 16px; border: 1px solid #e6e2db; border-radius: 12px; background: #faf8f4;
+    }
+    .row input { margin-top: 2px; width: 16px; height: 16px; flex: none; }
+    .row label { font-weight: 600; cursor: pointer; }
+    .hint { color: #6b6864; margin: 6px 0 0; font-weight: 400; }
+    @media (prefers-color-scheme: dark) {
+      body { color: #e7e5e2; background: #17181a; }
+      .sub, .hint { color: #a3a09b; }
+      .row { border-color: #2c2e31; background: #202225; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Tangent Reader</h1>
+  <p class="sub">Click the toolbar button on any page to toggle the reader view.</p>
+  <div class="row">
+    <input type="checkbox" id="autoOpen">
+    <div>
+      <label for="autoOpen">Automatically open Reader when a page is readable</label>
+      <p class="hint">
+        Opens the reader by itself on articles it recognizes, as each page finishes loading. You can
+        still dismiss it, and it won't reopen for that page. Requires access to website data.
+      </p>
+    </div>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

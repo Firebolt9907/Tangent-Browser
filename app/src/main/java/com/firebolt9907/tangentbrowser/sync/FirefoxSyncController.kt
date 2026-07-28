@@ -703,6 +703,7 @@ class FirefoxSyncController(
                     mozilla.components.concept.sync.DeviceCommandOutgoing.SendTab(
                         title.ifBlank { url },
                         url,
+                        mozilla.components.concept.sync.TabPrivacy.Normal,
                     ),
                 )
             }.onSuccess { sent ->

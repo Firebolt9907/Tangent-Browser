@@ -67,6 +67,26 @@ import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
 import mozilla.components.browser.state.state.ContainerState
 
+/**
+ * UI name for the implicit default cookie jar (`contextId == null`). The default jar is not a real
+ * [ContainerState], but everywhere the user picks or sees a container we present it as a first-class
+ * entry named "Personal" (its swatch is [DefaultContainerSwatch]) instead of "No container"/"None".
+ */
+const val DefaultContainerName = "Personal"
+
+/** Neutral swatch for the "Personal" default container (`contextId == null`). */
+val DefaultContainerSwatch = Color(0xFF64748B)
+
+/** Display name for a tab/group's container: a real container's name, else "Personal" for null. */
+fun containerNameFor(contextId: String?, containers: List<ContainerState>): String =
+    contextId?.let { id -> containers.firstOrNull { it.contextId == id }?.name?.ifBlank { "Container" } }
+        ?: DefaultContainerName
+
+/** Display swatch for a tab/group's container: a real container's colour, else the Personal swatch. */
+fun containerSwatchFor(contextId: String?, containers: List<ContainerState>): Color =
+    contextId?.let { id -> containers.firstOrNull { it.contextId == id }?.color?.swatch() }
+        ?: DefaultContainerSwatch
+
 /** Firefox container colours mapped to concrete swatches. */
 fun ContainerState.Color.swatch(): Color = when (this) {
     ContainerState.Color.BLUE -> Color(0xFF3B82F6)

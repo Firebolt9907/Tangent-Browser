@@ -79,6 +79,13 @@ object ReaderExtractor {
                 try {
                     if ((document.documentURI || '').indexOf('resource:' + '/' + '/' + 'android/assets/error_page_js.html') === 0) return;
                 } catch (e) {}
+                /* Social hosts (Reddit/X/Mastodon/Bluesky) are handled by the dedicated SocialExtractor;
+                   the prose heuristic produces junk on their SPA shells, so bow out here so the two
+                   never race a competing article onto the same tab. Host-only (covers feeds too). */
+                try {
+                    var __sh = (location.hostname || '').replace(/^www\./, '').toLowerCase();
+                    if (__sh === 'reddit.com' || __sh.indexOf('.reddit.com') >= 0 || __sh === 'twitter.com' || __sh.indexOf('.twitter.com') >= 0 || __sh === 'x.com' || __sh.indexOf('.x.com') >= 0 || __sh === 'bsky.app' || __sh.indexOf('.bsky.app') >= 0 || __sh.indexOf('mastodon') >= 0 || __sh.indexOf('mstdn') >= 0) return;
+                } catch (e) {}
                 function tangentExtract() {
                 /* Hand the extracted article back to the app WITHOUT touching the page's own
                    window.prompt. Some sites (e.g. TechCrunch's anti-adblock) override window.prompt
@@ -428,6 +435,14 @@ object ReaderExtractor {
                     if (!s) return true;
                     if (s.display === 'none' || s.visibility === 'hidden' || s.visibility === 'collapse') return false;
                     if (parseFloat(s.opacity || '1') === 0) return false;
+                    /* A `display:contents` element generates NO box of its own — its
+                       getBoundingClientRect is 0x0 even though its children render normally (common
+                       in React / styled-components / Next.js wrappers). Treat it as visible so the
+                       subtree walk descends into it; the real leaves inside still get their own box
+                       checked below. Without this, walk()'s container branch prunes the whole
+                       subtree on the wrapper's zero size and the article body is lost (e.g. The
+                       Independent nests two such wrappers above its body). */
+                    if (s.display === 'contents') return true;
                     const r = el.getBoundingClientRect();
                     if (r.width <= 1 || r.height <= 1) return false;
                     return true;
@@ -435,7 +450,7 @@ object ReaderExtractor {
                 /* Share bars, breadcrumbs, related-links, newsletter/subscribe, comments, ads,
                    sponsor/affiliate widgets, image credits and category chips are all boilerplate
                    even when they live inside the article container. */
-                const BOILERPLATE_SEL = 'nav, aside, footer, form, [role="navigation"], [role="complementary"], [role="banner"], [role="contentinfo"], [class*="share" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="social" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="related" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="newsletter" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="subscribe" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="comment" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="breadcrumb" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="advert" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="sponsor" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="promo" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="credit" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="disclaimer" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="affiliate" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="hawk" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="category" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="toolbar" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="adthrive" i], [class*="adsbygoogle" i], [class*="mv-ad-box" i], [class*="dfp-ad" i], [id*="google_ads" i]';
+                const BOILERPLATE_SEL = 'nav, aside, footer, form, [role="navigation"], [role="complementary"], [role="banner"], [role="contentinfo"], [class*="share" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="social" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="related" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="newsletter" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="subscribe" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="comment" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="breadcrumb" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="advert" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="sponsor" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="promo" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="credit" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="disclaimer" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="affiliate" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="hawk" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="category" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="toolbar" i]:not([class*="has-" i]):not([class*="with-" i]), [class~="ad" i], [class~="ads" i], [class^="ad-" i], [class*=" ad-" i], [class^="ads-" i], [class*=" ads-" i], [class^="ad_" i], [class*=" ad_" i], [class$="-ad" i], [class*="-ad " i], [class$="-ads" i], [class*="-ads " i], [class*="-ad-" i], [class*="_ad-" i], [class$="_ad" i], [class*="_ad " i], [class*="taboola" i], [id*="taboola" i], [class*="outbrain" i], [id*="outbrain" i], [class*="recirc" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="subscription" i]:not([class*="has-" i]):not([class*="with-" i]), [class*="adthrive" i], [class*="adsbygoogle" i], [class*="mv-ad-box" i], [class*="dfp-ad" i], [id*="google_ads" i]';
                 function isBoilerplate(el) {
                     if (!el || el.nodeType !== 1) return false;
                     /* Only inner wrappers count as boilerplate: walk up to (but not including) the
@@ -594,6 +609,35 @@ object ReaderExtractor {
                     for (let sr of __stripRoots) { if (sr === el || sr.contains(el)) return true; }
                     return false;
                 }
+                /* MediaWiki collapsibles (Wikipedia/Fandom): on a mobile UA, MobileFrontend collapses
+                   every section below the lead — its body is a `.mf-collapsible-content` div with the
+                   `hidden` attribute + CSS height:0, so the walk drops the 0-height container before
+                   recursing into its (visibly-overflowing) paragraphs. jquery.makeCollapsible hides
+                   desktop data tables / infobox lists the same way (display:none / aria-hidden).
+                   Force-expand before extraction (removing `hidden` alone restores height), gated on
+                   the .mw-parser-output marker so non-wiki pages are untouched; stripped containers
+                   (navbox/infobox/reflist) stay stripped after expansion. Mirror of the content-script
+                   extractor.js. */
+                function tangentExpandCollapsibles() {
+                    try {
+                        if (!document.querySelector('.mw-parser-output')) return;
+                        const nodes = document.querySelectorAll('.mf-collapsible-content, .collapsible-block, .mw-collapsible, .mw-collapsible-content, .NavFrame, .NavContent, .collapsible-list, .mw-collapsible tbody, .mw-collapsible tr, .mw-collapsible td, .mw-collapsible th');
+                        for (let el of nodes) {
+                            if (el.classList) el.classList.remove('mw-collapsed');
+                            if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') el.removeAttribute('aria-hidden');
+                            if (el.hasAttribute && el.hasAttribute('hidden')) el.removeAttribute('hidden');
+                            const st = el.style;
+                            if (st) {
+                                if (st.display === 'none') st.display = '';
+                                if (st.visibility === 'hidden') st.visibility = '';
+                                if (st.height === '0px' || st.height === '0') st.height = '';
+                                if (st.maxHeight && st.maxHeight !== 'none') st.maxHeight = '';
+                                if (st.overflow === 'hidden') st.overflow = '';
+                            }
+                        }
+                    } catch (e) {}
+                }
+                tangentExpandCollapsibles();
                 const articleEl = findArticleElement();
                 if (!articleEl) return;
                 const paragraphs = articleEl.querySelectorAll('p');
@@ -854,6 +898,13 @@ object ReaderExtractor {
                     }
                     window.__tangentReaderBest = { url: tangentUrl, len: tangentMeasure };
                     tangentBridge("tangent-reader", JSON.stringify(articleData));
+                } else if (!window.__tangentReaderNoneSent) {
+                    /* No article on this page. Signal it ONCE (empty payload) so a manual reader
+                       request gets feedback via the no-port bridge fallback; the app parses this as
+                       "unavailable" and shows the banner only if an activation is pending. Guarded so
+                       the re-extract observer doesn't spam prompt() on every tick for non-articles. */
+                    window.__tangentReaderNoneSent = true;
+                    tangentBridge("tangent-reader", "");
                 }
                 }
                 tangentExtract();
@@ -963,9 +1014,12 @@ object ReaderExtractor {
                         val article = parseArticleJson(defaultValue)
                         if (article != null) {
                             ReaderManager.instance.setReaderEligible(tabId, article)
+                        } else {
+                            ReaderManager.instance.reportReaderUnavailable(tabId)
                         }
                     } catch (e: Exception) {
                         Log.w("ReaderExtractor", "Failed to parse reader article JSON", e)
+                        ReaderManager.instance.reportReaderUnavailable(tabId)
                     }
                 }
                 return GeckoResult.fromValue(prompt.confirm("ok"))
@@ -1088,11 +1142,45 @@ object ReaderExtractor {
             oldDelegate?.onSharePrompt(session, prompt)
     }
 
+    /** Link spans of a social block, reusing the paragraph `spans` shape (`[{text,href}]`). */
+    private fun parseLinkSpans(spansJson: JSONArray?): List<ReaderLinkSpan> {
+        if (spansJson == null) return emptyList()
+        return ArrayList<ReaderLinkSpan>(spansJson.length()).apply {
+            for (s in 0 until spansJson.length()) {
+                val spanObj = spansJson.optJSONObject(s) ?: continue
+                val spanText = spanObj.optString("text", "")
+                val href = spanObj.optString("href", "")
+                if (spanText.isNotEmpty() && href.isNotEmpty() && href != "null") add(ReaderLinkSpan(spanText, href))
+            }
+        }
+    }
+
+    /** Inline images of a social block (`[{src,w,h}]`) → [ReaderMedia]. */
+    private fun parseMedia(mediaJson: JSONArray?): List<ReaderMedia> {
+        if (mediaJson == null) return emptyList()
+        return ArrayList<ReaderMedia>(mediaJson.length()).apply {
+            for (m in 0 until mediaJson.length()) {
+                val obj = mediaJson.optJSONObject(m) ?: continue
+                val src = obj.optString("src")
+                if (src.isEmpty()) continue
+                add(
+                    ReaderMedia(
+                        src,
+                        obj.optInt("w", 0).takeIf { it > 0 },
+                        obj.optInt("h", 0).takeIf { it > 0 },
+                        obj.optBoolean("gif", false),
+                    )
+                )
+            }
+        }
+    }
+
     internal fun parseArticleJson(jsonStr: String): ReaderArticle? {
         val root = JSONObject(jsonStr)
         val title = root.optString("title", "")
         val byline = root.optString("byline").takeIf { it.isNotEmpty() && it != "null" }
         val sourceUrl = root.optString("url").takeIf { it.isNotEmpty() && it != "null" }
+        val isSocial = root.optString("mode") == "social"
         val blocksJson = root.optJSONArray("blocks") ?: return null
 
         val blocks = ArrayList<ReaderBlock>()
@@ -1188,8 +1276,39 @@ object ReaderExtractor {
                         blocks.add(ReaderBlock.Figure(src, caption, equation, width, height))
                     }
                 }
+                "social_post" -> {
+                    blocks.add(
+                        ReaderBlock.SocialPost(
+                            author = obj.optString("author"),
+                            handle = obj.optString("handle").takeIf { it.isNotEmpty() && it != "null" },
+                            avatarUrl = obj.optString("avatar").takeIf { it.isNotEmpty() && it != "null" },
+                            timestamp = obj.optString("timestamp").takeIf { it.isNotEmpty() && it != "null" },
+                            meta = obj.optString("meta").takeIf { it.isNotEmpty() && it != "null" },
+                            title = obj.optString("title").takeIf { it.isNotEmpty() && it != "null" },
+                            text = obj.optString("text"),
+                            links = parseLinkSpans(obj.optJSONArray("spans")),
+                            media = parseMedia(obj.optJSONArray("media")),
+                        )
+                    )
+                }
+                "social_comment" -> {
+                    blocks.add(
+                        ReaderBlock.SocialComment(
+                            author = obj.optString("author"),
+                            handle = obj.optString("handle").takeIf { it.isNotEmpty() && it != "null" },
+                            avatarUrl = obj.optString("avatar").takeIf { it.isNotEmpty() && it != "null" },
+                            timestamp = obj.optString("timestamp").takeIf { it.isNotEmpty() && it != "null" },
+                            meta = obj.optString("meta").takeIf { it.isNotEmpty() && it != "null" },
+                            text = obj.optString("text"),
+                            links = parseLinkSpans(obj.optJSONArray("spans")),
+                            media = parseMedia(obj.optJSONArray("media")),
+                            depth = obj.optInt("depth", 0),
+                            isOp = obj.optBoolean("op", false),
+                        )
+                    )
+                }
             }
         }
-        return ReaderArticle(title, byline, blocks, sourceUrl)
+        return ReaderArticle(title, byline, blocks, sourceUrl, isSocial = isSocial)
     }
 }

@@ -88,7 +88,11 @@ class TangentBrowserComponents(application: Application) {
     // launch us through CustomTabsIntent (session token + enter-animation options bundle + first-
     // class custom-tab treatment) instead of a plain ACTION_VIEW that carries no animation.
     val customTabsServiceStore = CustomTabsServiceStore()
-    val downloadsUseCases = DownloadsUseCases(store, application)
+    // File-system side of downloads (naming, opening, dedup). MC 148+ takes this as an explicit
+    // collaborator instead of a Context, and the same instance is handed to DownloadsFeature.
+    val downloadFileUtils: mozilla.components.support.utils.DownloadFileUtils =
+        mozilla.components.support.utils.DefaultDownloadFileUtils(application)
+    val downloadsUseCases = DownloadsUseCases(store, downloadFileUtils)
     val tabPersistence = com.firebolt9907.tangentbrowser.state.TabPersistence(application)
     // Organizational tab groups (Chrome/Arc-style labels over open tabs). Constructed before the tab
     // repository so membership can be re-linked as tabs are restored. Not cookie isolation — that is
@@ -121,7 +125,26 @@ class TangentBrowserComponents(application: Application) {
     val tabSnapshotCache = TabSnapshotCache(application.filesDir)
     val sitePreferencesStore = SitePreferencesStore(application)
     val addonController = AddonController(engine, scope)
-    val loginsStorage = PlacesLoginsStorage(application)
+    // The Firefox Sync / local logins store. Kept as the raw PlacesLoginsStorage because it must
+    // remain the SyncableStore the FxA sync stack registers for SyncEngine.Passwords (Bitwarden is
+    // not a sync15 engine).
+    val placesLoginsStorage = PlacesLoginsStorage(application)
+    // Bitwarden vault as a second login source (native integration; the Bitwarden WebExtension can't
+    // autofill in a GeckoView embedding). See sync/bitwarden/.
+    val bitwardenAccountStore =
+        com.firebolt9907.tangentbrowser.sync.bitwarden.BitwardenAccountStore(application)
+    val bitwardenController =
+        com.firebolt9907.tangentbrowser.sync.bitwarden.BitwardenController(
+            bitwardenAccountStore,
+            scope,
+            mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient(),
+        )
+    // The single seam every credential consumer (autofill delegate, doorhangers, Passwords sheet,
+    // proactive fill) reads from — Places ∪ Bitwarden, de-duped.
+    val loginsStorage = com.firebolt9907.tangentbrowser.sync.MergedLoginsStorage(
+        placesLoginsStorage,
+        bitwardenController,
+    ) { globalPreferencesStore.bitwardenSaveTargetIsBitwarden }
     // Credit-card (and address) autofill storage. Card numbers are encrypted at rest with a key
     // AutofillCrypto keeps in the hardware-backed SecureAbove22Preferences (the store refuses to
     // persist a plaintext card number), and sync to the account rides the same sync15 E2E path as
@@ -143,7 +166,7 @@ class TangentBrowserComponents(application: Application) {
         application,
         store,
         scope,
-        loginsStorage,
+        placesLoginsStorage,
         creditCardsStorage,
         historyStorage,
         bookmarksStorage,
@@ -366,7 +389,9 @@ class TangentBrowserComponents(application: Application) {
         mozilla.components.browser.engine.gecko.autofill.GeckoAutocompleteStorageDelegate(
             mozilla.components.service.sync.autofill.GeckoCreditCardsAddressesStorageDelegate(
                 lazy { creditCardsStorage },
-                scope,
+                // MC 148+ takes a dispatcher here rather than a scope; storage work is blocking
+                // SQLite + decryption, so keep it off the main thread.
+                Dispatchers.IO,
                 mozilla.components.service.sync.autofill.DefaultCreditCardValidationDelegate(
                     lazy { creditCardsStorage },
                 ),
@@ -401,6 +426,26 @@ class TangentBrowserComponents(application: Application) {
             initialEnabled = globalPreferencesStore.webDarkModeTrigger ==
                 com.firebolt9907.tangentbrowser.state.WebDarkModeTrigger.On,
         )
+        // Install the built-in reader-extractor content script. It returns the extracted article over
+        // a native-messaging Port (not window.prompt), so reader mode works even on pages served with
+        // a CSP sandbox that blocks modals (e.g. TechCrunch). The javascript: prompt path remains the
+        // fallback. See ReaderExtension / ui/reader/extractor.js.
+        com.firebolt9907.tangentbrowser.ui.reader.ReaderExtension.install(engine)
+        // Bitwarden-backed passkeys: only when the user picked that mode (softtoken off — see
+        // writeGeckoConfig). The content script overrides navigator.credentials and routes ceremonies
+        // to the vault; the UI (picker + biometric) is driven by PasskeyUiController via PasskeyUiHost.
+        // Not installed in Off/Softtoken so those paths are untouched. See sync/webauthn, invariant #12.
+        if (globalPreferencesStore.passkeyMode == com.firebolt9907.tangentbrowser.state.PasskeyMode.Bitwarden) {
+            com.firebolt9907.tangentbrowser.sync.webauthn.PasskeyExtension.initialize(
+                scope,
+                com.firebolt9907.tangentbrowser.sync.bitwarden.BitwardenPasskeyProvider(
+                    controller = bitwardenController,
+                    chooseCredential = { com.firebolt9907.tangentbrowser.ui.PasskeyUiController.pick(it) },
+                    confirmUser = { com.firebolt9907.tangentbrowser.ui.PasskeyUiController.requestVerify(it) },
+                ),
+            )
+            com.firebolt9907.tangentbrowser.sync.webauthn.PasskeyExtension.install(engine)
+        }
     }
 
     companion object {
@@ -450,12 +495,12 @@ private fun buildRuntime(application: Application, prefs: GlobalPreferencesStore
         .aboutConfigEnabled(false)
         .apply { writeGeckoConfig(application, prefs)?.let { configFilePath(it) } }
         .build()
-    // WebAuthn/passkeys normally need no pref overrides: Gecko's Android defaults already route
-    // requests to the platform FIDO2/Credential Manager path (Google Password Manager) with
-    // resident-key support enabled. Forcing `webauthn_enable_softtoken` on would silently service
-    // requests with Gecko's virtual test authenticator instead of showing the system passkey UI.
-    // NOTE: WebAuthn is currently disabled outright via `security.webauth.webauthn: false` in
-    // writeGeckoConfig() — a TEMPORARY measure until Tangent is on the GPM trusted-browser allowlist.
+    // WebAuthn/passkeys: the platform FIDO2/Credential Manager path needs Tangent on the trusted-
+    // browser allowlist, which we're not on, so it's unavailable. writeGeckoConfig() therefore gates
+    // WebAuthn on the passkeyMode pref (Off/Softtoken/Bitwarden): OFF disables the API (clean password
+    // fallback), Softtoken routes to Gecko's internal softtoken authenticator, Bitwarden enables the API
+    // with softtoken off so the passkey-bridge content script services ceremonies from the vault. Both
+    // active modes are the deliberate, pref-gated exception to AGENTS.md invariant #12.
     return GeckoRuntime.create(application, settings)
 }
 
@@ -499,6 +544,23 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
     val serviceWorkers = prefs.serviceWorkersEnabled
     val webRtcHideIp = prefs.webRtcIpsHidden
     val sendBeacon = prefs.sendBeaconEnabled
+    // Passkeys: three-way (invariant #12). Softtoken → Gecko's internal authenticator; Bitwarden →
+    // WebAuthn API on but softtoken OFF, so the passkey-bridge content script's navigator.credentials
+    // override is the sole authenticator (native fallback is intentionally inert); Off → API disabled.
+    // Continuation lines carry an explicit 10-space indent to match surrounding YAML keys (the outer
+    // string is .trimIndent()ed, which then shifts everything to the 2-space nesting level).
+    val webauthnPrefs = when (prefs.passkeyMode) {
+        com.firebolt9907.tangentbrowser.state.PasskeyMode.Softtoken ->
+            "security.webauth.webauthn: true\n" +
+                "          security.webauth.webauthn_enable_softtoken: true\n" +
+                "          security.webauth.webauthn_enable_android_fido2: false"
+        com.firebolt9907.tangentbrowser.state.PasskeyMode.Bitwarden ->
+            "security.webauth.webauthn: true\n" +
+                "          security.webauth.webauthn_enable_softtoken: false\n" +
+                "          security.webauth.webauthn_enable_android_fido2: false"
+        com.firebolt9907.tangentbrowser.state.PasskeyMode.Off ->
+            "security.webauth.webauthn: false"
+    }
     val file = java.io.File(application.filesDir, "geckoview-config.yaml")
     file.writeText(
         """
@@ -764,15 +826,14 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           extensions.formautofill.addresses.enabled: true
           extensions.formautofill.addresses.supported: "on"
           dom.forms.autocomplete.formautofill: true
-          # --- TEMPORARY: passkeys/WebAuthn disabled ---
-          # Tangent isn't on Google Password Manager's trusted-browser allowlist yet, so the platform
-          # FIDO2 path rejects our cert and passkey flows fail. Disable the WebAuthn API entirely so
-          # sites fall back to passwords instead of offering a broken passkey prompt. This turns OFF
-          # the whole API (isUserVerifyingPlatformAuthenticatorAvailable() → false) — it is NOT the
-          # `webauthn_enable_softtoken` override that AGENTS.md invariant #12 forbids (that would
-          # silently service requests with Gecko's virtual test authenticator). Re-enable by removing
-          # this pref once we're on the GPM allowlist.
-          security.webauth.webauthn: false
+          # --- Passkeys / WebAuthn (see GlobalPreferencesStore.passkeyMode) ---
+          # Tangent isn't on the platform trusted-browser allowlist, so the FIDO2/Credential Manager
+          # path rejects our cert. Three modes, chosen by the passkeyMode pref:
+          #  * Softtoken → WebAuthn serviced by Gecko's INTERNAL softtoken (no allowlist).
+          #  * Bitwarden → WebAuthn on, softtoken OFF; the passkey-bridge content script's
+          #                navigator.credentials override services ceremonies from the Bitwarden vault.
+          #  * Off       → WebAuthn API disabled entirely so sites cleanly fall back to passwords.
+          $webauthnPrefs
           # --- Security: enforce TLS 1.2 minimum ---
           # Block TLS 1.0/1.1 (known-vulnerable); all modern sites support TLS 1.2+. (3 = TLS 1.2.)
           security.tls.version.min: 3

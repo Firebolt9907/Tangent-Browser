@@ -1,0 +1,20 @@
+[
+  {
+    "type": "text",
+    "label": "Zen Space Color Sync",
+    "size": "18px",
+    "margin": "16px 0 6px 0"
+  },
+  {
+    "type": "text",
+    "label": "Exposes the active space's accent as --zen-space-color on every page. The Tangent Reader extension tints its links and sheet edge to match.",
+    "size": "12px",
+    "margin": "0 0 16px 0"
+  },
+  {
+    "type": "checkbox",
+    "property": "extensions.zen-space-color.enabled",
+    "label": "Sync space colour into pages",
+    "defaultValue": true
+  }
+]

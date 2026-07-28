@@ -10,7 +10,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import com.firebolt9907.tangentbrowser.sync.PlacesLoginsStorage
 import com.firebolt9907.tangentbrowser.ui.content.LoginFieldProbe
 import com.firebolt9907.tangentbrowser.ui.content.loadJavascriptUrl
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.storage.Login
+import mozilla.components.concept.storage.LoginsStorage
 
 /**
  * Proactive login autofill: shows the saved-password picker **before** the user taps a login field,
@@ -38,7 +38,7 @@ import mozilla.components.concept.storage.Login
 @Composable
 internal fun ProactiveLoginAutofill(
     engineSession: EngineSession?,
-    loginsStorage: PlacesLoginsStorage,
+    loginsStorage: LoginsStorage,
     // Mirrors the "Login Autofill" setting — when off we never probe-offer (same as PromptHandler).
     enabled: Boolean,
     // Mirrors "Require biometrics" — gate selection behind BiometricGate when true.

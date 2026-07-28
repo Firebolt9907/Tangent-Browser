@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -60,13 +61,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.ui.components.EmptyState
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
-import com.firebolt9907.tangentbrowser.sync.PlacesLoginsStorage
+import com.firebolt9907.tangentbrowser.sync.bitwarden.BitwardenController
+import com.firebolt9907.tangentbrowser.ui.bitwarden.BitwardenConnectSection
 import kotlinx.coroutines.launch
+import mozilla.components.concept.storage.LoginsStorage
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PasswordsSheet(
-    loginsStorage: PlacesLoginsStorage,
+    loginsStorage: LoginsStorage,
+    bitwardenController: BitwardenController,
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -87,8 +91,11 @@ fun PasswordsSheet(
     // Re-read storage and project to metadata. The `List<Login>` from list() is not retained past
     // this map, so its decrypted passwords don't linger.
     suspend fun reload(): List<LoginMeta> =
-        runCatching { loginsStorage.list().map { LoginMeta(it.guid, it.origin, it.username, it.password.length) } }
-            .getOrDefault(emptyList())
+        runCatching {
+            loginsStorage.list().map {
+                LoginMeta(it.guid, it.origin, it.username, it.password.length, it.guid.startsWith("bw:"))
+            }
+        }.getOrDefault(emptyList())
 
     LaunchedEffect(Unit) {
         // Guard against storage/decryption errors so a read failure shows an empty list rather
@@ -101,6 +108,14 @@ fun PasswordsSheet(
         SheetHeader(
             title = "Passwords",
             leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        // Bitwarden as a second login source. Connecting/syncing refreshes the merged list below.
+        BitwardenConnectSection(
+            controller = bitwardenController,
+            onVaultChanged = { scope.launch { entries = reload() } },
         )
 
         Spacer(Modifier.height(12.dp))
@@ -230,6 +245,7 @@ private data class LoginMeta(
     val origin: String,
     val username: String,
     val passwordLength: Int,
+    val isBitwarden: Boolean = false,
 )
 
 @Composable
@@ -247,13 +263,24 @@ private fun PasswordRow(
     ListItem(
         leadingContent = { Favicon(meta.origin) },
         headlineContent = {
-            Text(
-                text = meta.origin.takeLastWhile { it != '/' }
-                    .ifEmpty { meta.origin }
-                    .removePrefix("www."),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = meta.origin.takeLastWhile { it != '/' }
+                        .ifEmpty { meta.origin }
+                        .removePrefix("www."),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (meta.isBitwarden) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "Bitwarden",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
         },
         supportingContent = {
             Column {

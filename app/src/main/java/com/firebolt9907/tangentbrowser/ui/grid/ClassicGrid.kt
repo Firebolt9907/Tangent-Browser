@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -145,6 +146,8 @@ fun ClassicTabGridOverlay(
     /** Resolves a tab's declared theme color (`<meta name="theme-color">`) for the top-padding
      * strip drawn on padded-site cards; null → fall back to the primary color. */
     themeColorProvider: (String) -> Color? = { null },
+    /** Resolves a tab's container swatch; null → Personal/default (no dot shown). */
+    containerColorProvider: (String) -> Color? = { null },
     /**
      * Measured height (px) of the floating bottom controls — nav-bar inset + toolbar + the handoff
      * banner when shown. The last row's bottom clearance is derived from this so it tracks button vs
@@ -238,6 +241,7 @@ fun ClassicTabGridOverlay(
     val dragOffsetHolder = rememberUpdatedState(dragOffsetPx)
     val snapshotProviderHolder = rememberUpdatedState(snapshotProvider)
     val themeColorProviderHolder = rememberUpdatedState(themeColorProvider)
+    val containerColorProviderHolder = rememberUpdatedState(containerColorProvider)
     val onTabSelectedHolder = rememberUpdatedState(onTabSelected)
     val onCloseTabHolder = rememberUpdatedState(onCloseTab)
     val progressFwd: () -> Float = remember { { progressHolder.value() } }
@@ -246,6 +250,8 @@ fun ClassicTabGridOverlay(
     val dragOffsetFwd: () -> Float = remember { { dragOffsetHolder.value() } }
     val snapshotProviderFwd: (String) -> Bitmap? = remember { { id -> snapshotProviderHolder.value(id) } }
     val themeColorProviderFwd: (String) -> Color? = remember { { id -> themeColorProviderHolder.value(id) } }
+    val containerColorProviderFwd: (String) -> Color? =
+        remember { { id -> containerColorProviderHolder.value(id) } }
     val onTabSelectedFwd: (String) -> Unit = remember { { id -> onTabSelectedHolder.value(id) } }
     val onCloseTabFwd: (String) -> Unit = remember { { id -> onCloseTabHolder.value(id) } }
     // Cells become tappable once the grid is mostly open. Checked at click time rather than via a
@@ -474,6 +480,7 @@ fun ClassicTabGridOverlay(
                                     showClose = tabs.size > 1,
                                     containerW = containerW,
                                     gridCornerPx = gridCornerPx,
+                                    containerColor = containerColorProviderFwd(tab.id),
                                     progress = progressFwd,
                                     cellsClickable = cellsClickableFwd,
                                     swipeOffsets = swipeOffsets,
@@ -947,6 +954,7 @@ private fun GridCellChrome(
     showClose: Boolean,
     containerW: Float,
     gridCornerPx: Float,
+    containerColor: Color?,
     progress: () -> Float,
     cellsClickable: () -> Boolean,
     swipeOffsets: SnapshotStateMap<String, Float>,
@@ -997,14 +1005,29 @@ private fun GridCellChrome(
                 .width(cellWidthDp),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = host,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // A container dot precedes the host so the classic grid also shows which container each
+            // tab uses; Personal/default (null) tabs show no dot.
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (containerColor != null) {
+                    Box(
+                        Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(containerColor),
+                    )
+                }
+                Text(
+                    text = host,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 

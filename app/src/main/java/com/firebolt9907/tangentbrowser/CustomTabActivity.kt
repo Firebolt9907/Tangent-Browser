@@ -8,6 +8,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.firebolt9907.tangentbrowser.ui.customtab.CustomTabRoot
 import com.firebolt9907.tangentbrowser.ui.reader.ReaderManager
+import mozilla.components.browser.state.selector.findCustomTab
+import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.browser.state.state.CustomTabConfig
 import mozilla.components.feature.customtabs.createCustomTabConfigFromIntent
 import mozilla.components.feature.customtabs.isCustomTabIntent
@@ -35,6 +37,11 @@ class CustomTabActivity : TangentBrowserActivity() {
 
     /** Set when the tab is migrated into the main browser so [cleanUp] won't delete the migrated tab. */
     private var migratedAway = false
+
+    // Expose the custom-tab session's page URL to the Assist framework (a custom tab is not the
+    // selected *normal* tab). See TangentBrowserActivity.onProvideAssistContent.
+    override fun currentUrlForAssist(state: BrowserState): String? =
+        customTabId?.let { state.findCustomTab(it)?.content?.url }
 
     /**
      * The close animation [finish] plays, resolved per launch by [resolveCloseAnimation], or null

@@ -1,12 +1,16 @@
 package com.firebolt9907.tangentbrowser.ui.chrome
 
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -14,12 +18,11 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,8 +35,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -128,18 +133,17 @@ internal fun BarEditing(
         }
     }
 
-    // Cancel lives OUTSIDE the input capsule (iOS-Safari style) so it reads unambiguously as
-    // "leave editing", while the in-capsule Clear (✕) reads as "empty the field". Keeping them in
-    // separate containers — rather than side-by-side inside one pill — is the clear distinction.
-    Row(
+    // The input capsule spans the full bar width. Cancel is NOT here — it floats over the
+    // suggestions sheet (AddressSheet), bottom-right, so the list can show to its left rather than a
+    // dedicated Cancel row eating horizontal space. The in-capsule Clear (✕) still means "empty the
+    // field" (distinct from the sheet's Cancel = "leave editing").
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Surface(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(28.dp),
             // A distinctly lighter fill than the address sheet (`surface`) behind it, so the input
             // reads as its own raised pill floating above the suggestions rather than blending in.
@@ -148,10 +152,34 @@ internal fun BarEditing(
             shadowElevation = 8.dp,
         ) {
             Row(
-                modifier = Modifier.padding(start = 8.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+                // Force the capsule's height here rather than on the field: the field carries the
+                // shared-element modifier whose morphing bounds override its own min-height, so the
+                // pill height must be pinned on this container instead.
+                modifier = Modifier
+                    .heightIn(min = 56.dp)
+                    .padding(start = 8.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                OutlinedTextField(
+                val interactionSource = remember { MutableInteractionSource() }
+                // Borderless + transparent fill so the field reads as one pill with the Surface
+                // behind it (iOS-style), rather than an outlined box nested inside a rounded card.
+                val fieldColors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedBorderColor = Color.Transparent,
+                    disabledBorderColor = Color.Transparent,
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    disabledContainerColor = Color.Transparent,
+                )
+                // NB: this is a BasicTextField wrapped in the OutlinedTextField decoration (not
+                // `OutlinedTextField` itself) purely so we can control `contentPadding`. The stock
+                // OutlinedTextField hard-codes a 16.dp horizontal inset, and dragging the caret into
+                // that trailing inset never reaches the scroll viewport's edge — so Android's
+                // horizontal auto-scroll never fires (the same failure mode a `trailingIcon` causes,
+                // which is why the Clear button is a Row sibling below, not a decoration). Shrinking
+                // `end` to 4.dp lets the text viewport run to the field's own right edge, so a caret
+                // drag there scrolls the content like every other Android text field.
+                BasicTextField(
                     value = fieldValue,
                     onValueChange = { value ->
                         // Derive the user-typed text from the edit. Typing over the selected
@@ -185,14 +213,19 @@ internal fun BarEditing(
                             if (controlsEnabled) {
                                 detectTapGestures(onTap = { selectAllText() })
                             }
-                        },
+                        }
+                        // The stock OutlinedTextField enforces a 56.dp min height as its INNERMOST
+                        // modifier; the raw BasicTextField + DecorationBox does not. Must come last
+                        // (after the shared-element modifier, whose morphing bounds would otherwise
+                        // squash the capsule to the short URL-label height it animates from).
+                        .defaultMinSize(minHeight = OutlinedTextFieldDefaults.MinHeight),
                     singleLine = true,
-                    placeholder = { Text("Search or enter address") },
-                    // NB: the Clear button is deliberately a Row sibling, NOT `trailingIcon`. As a
-                    // decoration it eats the field's right inset, and dragging the caret into that
-                    // inset never reaches the text viewport's edge — so horizontal auto-scroll never
-                    // fires. As a sibling the text viewport runs to the field's own right edge and a
-                    // caret drag there scrolls the content.
+                    textStyle = LocalTextStyle.current.merge(
+                        MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Uri,
                         autoCorrectEnabled = false,
@@ -200,17 +233,25 @@ internal fun BarEditing(
                         imeAction = ImeAction.Go,
                     ),
                     keyboardActions = KeyboardActions(onGo = { onEditingSubmit() }),
-                    shape = RoundedCornerShape(24.dp),
-                    // Borderless + transparent fill so the field reads as one pill with the Surface
-                    // behind it (iOS-style), rather than an outlined box nested inside a rounded card.
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent,
-                        disabledBorderColor = Color.Transparent,
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        disabledContainerColor = Color.Transparent,
-                    ),
+                    interactionSource = interactionSource,
+                    decorationBox = { innerTextField ->
+                        OutlinedTextFieldDefaults.DecorationBox(
+                            value = fieldValue.text,
+                            innerTextField = innerTextField,
+                            enabled = controlsEnabled,
+                            singleLine = true,
+                            visualTransformation = VisualTransformation.None,
+                            interactionSource = interactionSource,
+                            placeholder = { Text("Search or enter address") },
+                            colors = fieldColors,
+                            // Trim the trailing inset so the caret can reach the viewport edge and
+                            // auto-scroll (see note above); keep the leading inset for breathing room.
+                            contentPadding = OutlinedTextFieldDefaults.contentPadding(
+                                start = 12.dp,
+                                end = 4.dp,
+                            ),
+                        )
+                    },
                 )
                 if (fieldValue.text.isNotEmpty()) {
                     IconButton(
@@ -249,7 +290,6 @@ internal fun BarEditing(
                 }
             }
         }
-        TextButton(onClick = { haptics?.softClick(); onEditingCancel() }, enabled = controlsEnabled) { Text("Cancel") }
     }
 }
 

@@ -1,0 +1,18 @@
+{
+  "id": "zen-space-color-sync",
+  "name": "Zen Space Color Sync",
+  "author": "Tangent",
+  "description": "Pushes the active space's accent colour into web pages as the --zen-space-color CSS variable, so in-page UI (like the Tangent Reader overlay) can theme itself to match your browser chrome.",
+  "homepage": "https://github.com/firebolt9907/TangentBrowser",
+  "version": "1.0",
+  "js": true,
+  "scripts": {
+    "zen-space-color-bridge.uc.mjs": {
+      "name": "Zen Space Color Bridge",
+      "description": "Mirrors --zen-primary-color into the content document per active space.",
+      "include": ["chrome://browser/content/browser.xhtml"]
+    }
+  },
+  "tags": ["Javascript"],
+  "fork": ["zen"]
+}

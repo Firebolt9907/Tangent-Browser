@@ -259,16 +259,24 @@ class GeckoTabRepository(
         // Container (cookie-store) to open the tab in; null = the default context. GeckoView isolates
         // the tab's cookies/storage to this contextId for the life of the tab.
         contextId: String? = null,
-    ): String =
-        tabsUseCases.addTab.invoke(
+        // Space (tab group) to place the tab in; null = ungrouped (Personal). When set, the tab both
+        // joins the group AND inherits the group's default container (unless [contextId] overrides it),
+        // so a tab opened while browsing inside a Space stays in that Space and its cookie jar.
+        groupId: String? = null,
+    ): String {
+        val resolvedContext = contextId ?: tabGroups?.defaultContainerFor(groupId)
+        val id = tabsUseCases.addTab.invoke(
             url = normalizeUrl(url, searchEngine()),
             selectTab = selectTab,
             parentId = parentId,
             title = title,
             engineSession = engineSession,
-            contextId = contextId,
+            contextId = resolvedContext,
             source = SessionState.Source.Internal.NewTab,
         )
+        if (groupId != null) tabGroups?.addTabToGroup(id, groupId)
+        return id
+    }
 
     /**
      * Open a new tab inside the container identified by [contextId] (a cookie-store id from
@@ -289,17 +297,46 @@ class GeckoTabRepository(
      * configured default container ([TabGroupsRepository.defaultContainerFor]) when one is set, so a
      * group like "Work" can transparently open its tabs in the Work container. Returns the new tab id.
      */
-    fun addTabInGroup(url: String, groupId: String, title: String = "New Tab"): String {
+    fun addTabInGroup(url: String, groupId: String, title: String = "New Tab", selectTab: Boolean = true): String {
         val contextId = tabGroups?.defaultContainerFor(groupId)
         val id = tabsUseCases.addTab.invoke(
             url = normalizeUrl(url, searchEngine()),
-            selectTab = true,
+            selectTab = selectTab,
             title = title,
             contextId = contextId,
             source = SessionState.Source.Internal.NewTab,
         )
         tabGroups?.addTabToGroup(id, groupId)
         return id
+    }
+
+    /**
+     * Re-open tab [tabId] in the container identified by [contextId] (null = the default context),
+     * returning the new tab's id (or [tabId] unchanged if it no longer exists).
+     *
+     * GeckoView fixes a session's `contextId` — and therefore its cookie/storage isolation — at tab
+     * creation; it cannot be changed on a live tab. So "switching the container" recreates the tab: a
+     * fresh session is opened at the same URL in the target container, inherits the original's Space
+     * (group) membership, is selected, and the original is closed. The URL is preserved; in-page state
+     * (scroll position, unsubmitted form input) is not — the only possible tradeoff when the cookie jar
+     * changes. No-op returning [tabId] if the tab already sits in [contextId].
+     */
+    fun reopenTabInContainer(tabId: String, contextId: String?): String {
+        val tab = store.state.tabs.firstOrNull { it.id == tabId } ?: return tabId
+        if (tab.contextId == contextId) return tabId
+        val groupId = tabGroups?.groupIdForTab(tabId)
+        val newId = tabsUseCases.addTab.invoke(
+            url = tab.content.url,
+            selectTab = true,
+            title = tab.content.title,
+            contextId = contextId,
+            source = SessionState.Source.Internal.NewTab,
+        )
+        if (groupId != null) tabGroups.addTabToGroup(newId, groupId)
+        // Remove the original directly (not via removeTab) so this replacement doesn't land on the
+        // "Reopen Closed Tab" stack as a phantom closed tab.
+        tabsUseCases.removeTab.invoke(tabId)
+        return newId
     }
 
     override fun removeTab(id: String) {

@@ -1,0 +1,12 @@
+{
+  "name": "tangent-reader-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tangent reader-mode extractor as a standalone Firefox extension and the app's built-in extension, from one shared source.",
+  "scripts": {
+    "build:standard": "node build.js standard",
+    "build:tangent": "node build.js tangent",
+    "check:tangent": "node build.js tangent --check",
+    "test": "node test-render.js"
+  }
+}

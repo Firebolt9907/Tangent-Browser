@@ -174,6 +174,18 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getString("tabViewMode", null)
         set(value) { prefs.edit { putString("tabViewMode", value) } }
 
+    // The currently-active local Space (a TangentTabGroup id) whose tabs the tab switcher shows;
+    // null = the default "Personal" space (tabs in no group). Persisted so the app reopens into the
+    // same space. A stale id (space deleted) is treated as Personal by the UI. Distinct from the
+    // synced read-only Zen spaces above.
+    var activeSpaceId: String?
+        get() = prefs.getString("activeSpaceId", null)
+        set(value) {
+            prefs.edit {
+                if (value == null) remove("activeSpaceId") else putString("activeSpaceId", value)
+            }
+        }
+
     // Last parsed Zen workspaces snapshot (spaces + their synced tabs), serialized by
     // ZenWorkspacesStorage. Cached so synced spaces render instantly on cold start, before any
     // Firefox Sync round-trip completes. null = nothing synced yet.
@@ -287,12 +299,48 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("loginAutofillEnabled", true)
         set(value) { prefs.edit { putBoolean("loginAutofillEnabled", value) } }
 
+    // When a Bitwarden account is connected, whether newly saved logins (from the save doorhanger)
+    // are written to the Bitwarden vault (true, default) or the local/Firefox store (false). Has no
+    // effect until Bitwarden is connected and unlocked — MergedLoginsStorage falls back to the local
+    // store otherwise.
+    var bitwardenSaveTargetIsBitwarden: Boolean
+        get() = prefs.getBoolean("bitwardenSaveTargetIsBitwarden", true)
+        set(value) { prefs.edit { putBoolean("bitwardenSaveTargetIsBitwarden", value) } }
+
     // When true, filling a saved login requires biometric/device-credential confirmation. Default
     // on (secure). Flipping this off in Settings is itself gated behind BiometricGate so an attacker
     // with an unlocked-but-glanced-at phone can't quietly disable the protection.
     var biometricAutofillEnabled: Boolean
         get() = prefs.getBoolean("biometricAutofillEnabled", true)
         set(value) { prefs.edit { putBoolean("biometricAutofillEnabled", value) } }
+
+    // System (OS-level) autofill via the Android Autofill Framework. When on, the web-content
+    // EngineView is exposed to the device's autofill service — the OFFICIAL Bitwarden/1Password/etc.
+    // app — so it can fill web forms directly (no in-app crypto, always current with the vendor).
+    // Coexists with the built-in login client: both can be active ("keep both"). When off, the
+    // content subtree is excluded from the framework so only the in-browser doorhangers appear.
+    // Read in ContentHost to set the EngineView's importantForAutofill. Default on.
+    var systemAutofillEnabled: Boolean
+        get() = prefs.getBoolean("systemAutofillEnabled", true)
+        set(value) { prefs.edit { putBoolean("systemAutofillEnabled", value) } }
+
+    // Passkeys / WebAuthn provider. Tangent isn't on the platform trusted-browser allowlist, so the
+    // normal FIDO2/Credential Manager path is rejected — hence a three-way choice (AGENTS.md invariant
+    // #12), NOT two independent toggles (the softtoken and Bitwarden paths are mutually exclusive):
+    //   Off       — WebAuthn API disabled (clean password fallback).
+    //   Softtoken — WebAuthn re-enabled and serviced by Gecko's INTERNAL softtoken authenticator (no
+    //               allowlist; spec-correct assertions, but keys live in the Gecko profile, no biometric).
+    //   Bitwarden — WebAuthn enabled with softtoken OFF; the passkey-bridge content script overrides
+    //               navigator.credentials and services ceremonies from the Bitwarden vault (sync/webauthn,
+    //               sync/bitwarden), with a real biometric gate. Keys live in (and sync via) the vault.
+    // Read in writeGeckoConfig + init (Engine.kt); Gecko reads the config once at startup, so a change
+    // needs a restart. Migrates the old boolean `builtInPasskeysEnabled` (true→Softtoken, false→Off).
+    var passkeyMode: PasskeyMode
+        get() {
+            prefs.getString("passkeyMode", null)?.let { return PasskeyMode.fromName(it) }
+            return if (prefs.getBoolean("builtInPasskeysEnabled", true)) PasskeyMode.Softtoken else PasskeyMode.Off
+        }
+        set(value) { prefs.edit { putString("passkeyMode", value.name) } }
 
     var creditCardAutofillEnabled: Boolean
         get() = prefs.getBoolean("creditCardAutofillEnabled", true)
@@ -438,6 +486,17 @@ class GlobalPreferencesStore(context: Context) {
  * known (the Compose UI layer). Note Tier 1 (Gecko `preferredColorScheme`) handles [Auto] for free by
  * staying on `System` — only Tier 2 (the injected filter) needs this resolved boolean.
  */
+/** Passkey/WebAuthn provider. See [GlobalPreferencesStore.passkeyMode]. */
+enum class PasskeyMode(val label: String) {
+    Off("Off"),
+    Softtoken("Built-in"),
+    Bitwarden("Bitwarden");
+
+    companion object {
+        fun fromName(name: String?): PasskeyMode = entries.firstOrNull { it.name == name } ?: Off
+    }
+}
+
 enum class WebDarkModeTrigger(val label: String) {
     Off("Off"),
     On("On"),

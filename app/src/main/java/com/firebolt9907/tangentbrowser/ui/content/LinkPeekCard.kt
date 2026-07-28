@@ -11,14 +11,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.outlined.Shield
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import com.firebolt9907.tangentbrowser.ui.containers.swatch
 import mozilla.components.browser.state.state.ContainerState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -26,6 +22,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,6 +35,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -66,6 +65,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -77,6 +77,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.roundToInt
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.EngineView
 import mozilla.components.concept.engine.HitResult
@@ -252,10 +253,14 @@ fun LinkPeekCard(
     // is *committed*. Cancelling springs the preview back to rest. `back`: 0 = rest, 1 = full pull.
     val back = remember(url) { Animatable(0f) }
     var backEdgeSign by remember(url) { mutableStateOf(1f) }
+    // Raw finger Y (px) of the in-flight back swipe, so the card can follow the finger vertically like
+    // an M3 predictive-back surface. -1 = no swipe active (park the vertical follow at centre).
+    var backTouchYpx by remember(url) { mutableStateOf(-1f) }
     PredictiveBackHandler(enabled = !dismissing) { progress ->
         try {
             progress.collect { event ->
                 backEdgeSign = if (event.swipeEdge == BackEventCompat.EDGE_LEFT) 1f else -1f
+                backTouchYpx = event.touchY
                 back.snapTo(event.progress.coerceIn(0f, 1f))
             }
             // Committed. Run the finish in the card's OWN scope, not this handler's coroutine:
@@ -282,8 +287,9 @@ fun LinkPeekCard(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            // Scrim fades in with the morph.
-            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f * morph.value))
+            // Scrim fades in with the morph, and eases back off as a predictive-back drag pulls the
+            // card away — so the background reappears progressively, signalling the pending dismiss.
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f * morph.value * (1f - 0.35f * back.value)))
             // Tap outside the card dismisses; no ripple on the scrim itself.
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -297,11 +303,27 @@ fun LinkPeekCard(
         val fullW = constraints.maxWidth.toFloat()
         val fullH = constraints.maxHeight.toFloat()
 
-        // Destination: the full centred card (matches the previous 0.92 × 0.72 sizing).
+        // The preview card and the iOS-style vertical action menu are laid out as one vertically
+        // centred group:  [ preview card ] — gap — [ menu ].  The card is the morph target; the menu
+        // is a separate surface below it (see PeekActionsMenu) that scales + fades in from nothing.
         val targetW = fullW * 0.92f
-        val targetH = fullH * 0.85f
         val targetLeft = (fullW - targetW) / 2f
-        val targetTop = (fullH - targetH) / 2f
+
+        val gapPx = with(density) { 12.dp.toPx() }
+        val menuRowPx = with(density) { 52.dp.toPx() }
+        // Rows: Open, Open in New Tab, one per container, Copy, (Download), Share.
+        val menuRowCount = 2 + containers.size + 1 + (if (onDownload != null) 1 else 0) + 1
+        val availH = fullH * 0.92f
+        val menuHpx = (menuRowPx * menuRowCount).coerceAtMost(availH * 0.5f)
+        val menuW = targetW
+        val menuLeft = (fullW - menuW) / 2f
+
+        // The card gets whatever height the menu + gap leave inside the 92%-tall group, then the whole
+        // group is centred on screen. `targetTop`/`targetH` still drive the morph math below.
+        val targetH = (availH - gapPx - menuHpx).coerceAtLeast(fullH * 0.3f)
+        val groupTop = (fullH - (targetH + gapPx + menuHpx)) / 2f
+        val targetTop = groupTop
+        val menuTop = targetTop + targetH + gapPx
 
         // Source: the pressed link's measured rect when the probe resolved it, else a tiny
         // fingertip-sized chip centred on the finger. The fallback is deliberately small (smaller
@@ -346,11 +368,21 @@ fun LinkPeekCard(
         // memory static glance (no bitmap, no live view) just fades out as before.
         val exitToBitmap = dismissing && elementBitmap != null
 
-        // Predictive-back preview: scale the whole card down and push it away from the swiped edge.
-        // Pure graphicsLayer, so the peek EngineView is never resized (that was the source of lag).
+        // Predictive-back preview (M3 style): the whole card scales down, drifts away from the swiped
+        // edge, and follows the finger vertically. Pure graphicsLayer, so the peek EngineView is never
+        // resized (that was the source of lag).
         val backProgress = back.value
-        val backScale = lerp(1f, 0.78f, backProgress)
-        val backShiftPx = with(density) { 64.dp.toPx() } * backProgress * backEdgeSign
+        // Rubber-band response: a decelerate curve moves the card a lot early in the drag then eases to
+        // a soft limit, so the surface feels attached to the finger with diminishing pull — the M3
+        // predictive-back feel, rather than a flat linear slide.
+        val backEased = 1f - (1f - backProgress) * (1f - backProgress)
+        // Gentle 8% shrink (M3 caps surface scale-down near 90%); the old 0.78 read as too collapsed.
+        val backScale = lerp(1f, 0.90f, backEased)
+        val backShiftPx = with(density) { 40.dp.toPx() } * backEased * backEdgeSign
+        // Vertical follow: pull the card toward the finger's Y, a fraction of its offset from centre,
+        // capped so it never leaves the screen. Parks at centre when no swipe is active.
+        val backPivotFrac = if (backTouchYpx >= 0f) ((backTouchYpx / fullH) - 0.5f).coerceIn(-0.5f, 0.5f) else 0f
+        val backShiftYPx = with(density) { 36.dp.toPx() } * backEased * backPivotFrac * 2f
 
         // Exit dissolve: while the reverse morph is shrinking the card back into the link, fade the
         // whole card out — but only over the last ~40% of the collapse (full opacity until then).
@@ -361,12 +393,14 @@ fun LinkPeekCard(
 
         Box(
             modifier = Modifier
-                .align(Alignment.Center)
+                .align(Alignment.TopStart)
+                .offset { IntOffset(targetLeft.roundToInt(), targetTop.roundToInt()) }
                 .size(with(density) { targetW.toDp() }, with(density) { targetH.toDp() })
                 .graphicsLayer {
                     scaleX = backScale
                     scaleY = backScale
                     translationX = backShiftPx
+                    translationY = backShiftYPx
                     alpha = exitAlpha
                 },
         ) {
@@ -485,85 +519,153 @@ fun LinkPeekCard(
                         )
                     }
                 }
-
-                // ---- Actions ----
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceAround,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    PeekAction(Icons.AutoMirrored.Filled.OpenInNew, "Open") { onOpenHere(url) }
-                    PeekAction(Icons.Default.Add, "New tab") { onOpenNewTab(url) }
-                    if (containers.isNotEmpty()) {
-                        PeekContainerAction(
-                            containers = containers,
-                            onPick = { contextId -> onOpenInContainer(url, contextId) },
-                        )
-                    }
-                    PeekAction(Icons.Default.ContentCopy, "Copy") { onCopy(url) }
-                    onDownload?.let { PeekAction(Icons.Default.Download, "Download") { it(url) } }
-                    PeekAction(Icons.Default.Share, "Share") { onShare(url) }
-                }
             }
             }
         }
+        }
+
+        // ---- iOS-style vertical action menu: a separate surface below the card ----
+        // Appears "from nothing" once the card has mostly grown (p ≥ 0.55) and reverses on dismiss.
+        // A single spring drives the whole entrance so it reads as one gesture: the menu slides down a
+        // few dp out from under the card while scaling up from its top edge with a soft overshoot pop,
+        // and the contents fade in fast so it's opaque well before it settles — exactly like the iOS
+        // long-press context menu unfurling below the preview. Exit is a quick eased collapse.
+        val menuVisible = !dismissing && p >= 0.55f
+        val menuAnim = remember(url) { Animatable(0f) }
+        LaunchedEffect(menuVisible) {
+            if (menuVisible) {
+                menuAnim.animateTo(1f, spring(dampingRatio = 0.68f, stiffness = 420f))
+            } else {
+                menuAnim.animateTo(0f, tween(150, easing = PeekExitEasing))
+            }
+        }
+        val mp = menuAnim.value
+        // Slide-down emergence: starts tucked ~14dp up behind the card, settles flush below it.
+        val menuRevealPx = with(density) { 14.dp.toPx() }
+        if (mp > 0.001f) {
+            PeekActionsMenu(
+                url = url,
+                containers = containers,
+                onDownload = onDownload,
+                onOpenHere = onOpenHere,
+                onOpenNewTab = onOpenNewTab,
+                onCopy = onCopy,
+                onShare = onShare,
+                onOpenInContainer = onOpenInContainer,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset { IntOffset(menuLeft.roundToInt(), menuTop.roundToInt()) }
+                    .width(with(density) { menuW.toDp() })
+                    // Grows out of its own top edge, tracking the card's predictive-back shift/scale.
+                    // `mp` can spring past 1, so scale gets a subtle pop for free; alpha and the slide
+                    // are clamped so only the scale overshoots.
+                    .graphicsLayer {
+                        val clamped = mp.coerceIn(0f, 1f)
+                        transformOrigin = TransformOrigin(0.5f, 0f)
+                        val menuScale = 0.9f + 0.1f * mp
+                        scaleX = menuScale * backScale
+                        scaleY = menuScale * backScale
+                        translationX = backShiftPx
+                        // Slide-in reveal, plus the card's vertical finger-follow so the pair moves as
+                        // one unit during a predictive-back drag.
+                        translationY = -menuRevealPx * (1f - clamped) + backShiftYPx
+                        alpha = (mp / 0.5f).coerceIn(0f, 1f) * (1f - 0.4f * backEased)
+                    },
+            )
         }
     }
 }
 
 /**
- * The peek "Container" action: opens a small menu of containers so the link can be opened in a
- * separate profile (isolated cookies/storage). Anchored to the action tile.
+ * The iOS-style vertical action menu shown as a separate popover below the peek card. Each action is
+ * a full-width row (label left, icon/swatch trailing) separated by hairline dividers. Opening in a
+ * container is expressed as one row per container (labelled "Open in <name>" with its colour swatch)
+ * rather than a nested submenu, which reads more naturally in a vertical list.
  */
 @Composable
-private fun PeekContainerAction(
+private fun PeekActionsMenu(
+    url: String,
     containers: List<ContainerState>,
-    onPick: (contextId: String) -> Unit,
+    onDownload: ((String) -> Unit)?,
+    onOpenHere: (String) -> Unit,
+    onOpenNewTab: (String) -> Unit,
+    onCopy: (String) -> Unit,
+    onShare: (String) -> Unit,
+    onOpenInContainer: (url: String, contextId: String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        PeekAction(Icons.Outlined.Shield, "Container") { open = true }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp,
+        shadowElevation = 16.dp,
+    ) {
+        Column {
+            PeekMenuRow("Open", onClick = { onOpenHere(url) }) { PeekMenuIcon(Icons.AutoMirrored.Filled.OpenInNew) }
+            PeekMenuDivider()
+            PeekMenuRow("Open in New Tab", onClick = { onOpenNewTab(url) }) { PeekMenuIcon(Icons.Default.Add) }
             containers.forEach { c ->
-                DropdownMenuItem(
-                    text = { Text(c.name.ifBlank { "Container" }) },
-                    leadingIcon = {
-                        Box(
-                            Modifier
-                                .size(12.dp)
-                                .clip(CircleShape)
-                                .background(c.color.swatch()),
-                        )
-                    },
-                    onClick = { open = false; onPick(c.contextId) },
-                )
+                PeekMenuDivider()
+                PeekMenuRow("Open in ${c.name.ifBlank { "Container" }}", onClick = { onOpenInContainer(url, c.contextId) }) {
+                    Box(
+                        Modifier
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(c.color.swatch()),
+                    )
+                }
             }
+            PeekMenuDivider()
+            PeekMenuRow("Copy Link", onClick = { onCopy(url) }) { PeekMenuIcon(Icons.Default.ContentCopy) }
+            if (onDownload != null) {
+                PeekMenuDivider()
+                PeekMenuRow("Download", onClick = { onDownload(url) }) { PeekMenuIcon(Icons.Default.Download) }
+            }
+            PeekMenuDivider()
+            PeekMenuRow("Share", onClick = { onShare(url) }) { PeekMenuIcon(Icons.Default.Share) }
         }
     }
 }
 
 @Composable
-private fun PeekAction(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Column(
+private fun PeekMenuIcon(icon: ImageVector) {
+    Icon(
+        imageVector = icon,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.size(20.dp),
+    )
+}
+
+@Composable
+private fun PeekMenuRow(
+    label: String,
+    onClick: () -> Unit,
+    trailing: @Composable () -> Unit,
+) {
+    Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(22.dp),
-        )
-        Spacer(Modifier.size(4.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
+        Spacer(Modifier.width(12.dp))
+        trailing()
     }
+}
+
+@Composable
+private fun PeekMenuDivider() {
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 }

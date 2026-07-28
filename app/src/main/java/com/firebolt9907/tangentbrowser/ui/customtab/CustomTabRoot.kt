@@ -68,7 +68,9 @@ import androidx.compose.ui.Modifier
 import com.firebolt9907.tangentbrowser.ui.PromptHandler
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -86,8 +88,11 @@ import com.firebolt9907.tangentbrowser.TangentApplication
 import com.firebolt9907.tangentbrowser.state.compactHost
 import com.firebolt9907.tangentbrowser.state.hostFromUrl
 import com.firebolt9907.tangentbrowser.ui.content.LinkPeekCard
+import com.firebolt9907.tangentbrowser.ui.content.LinkRectProbe
 import com.firebolt9907.tangentbrowser.ui.content.PeekEngineHolder
 import com.firebolt9907.tangentbrowser.ui.content.linkUrlFromHitResult
+import com.firebolt9907.tangentbrowser.ui.content.loadJavascriptUrl
+import com.firebolt9907.tangentbrowser.ui.cropBitmapToRect
 import com.firebolt9907.tangentbrowser.ui.shape.SquircleShape
 import com.firebolt9907.tangentbrowser.ui.reader.ReaderManager
 import com.firebolt9907.tangentbrowser.ui.reader.hydrateAppearanceFromPrefs
@@ -196,11 +201,15 @@ fun CustomTabRoot(
     val article = customTabId?.let { tabArticles[it] }
 
     // ---- Link glance (peek) ----
-    // Long-pressing a link opens the same Safari/Arc-style floating preview the main browser uses.
-    // Simpler than TangentRoot's version: no element-pixel morph (we start from a fingertip chip via
-    // [peekOrigin]) so we don't need the snapshot-capture / LinkRectProbe plumbing — just a live
-    // preview on a bounded reused session ([PeekEngineHolder]).
+    // Long-pressing a link opens the same Safari/Arc-style floating preview the main browser uses,
+    // including the shared-element morph: the card grows out of the pressed link's captured pixels.
+    // Uses the same snapshot-capture + LinkRectProbe plumbing as TangentRoot (both surfaces share
+    // ContentHost, which registers the prompt delegate that routes LinkRectProbe back here) plus a
+    // live preview on a bounded reused session ([PeekEngineHolder]).
     val clipboard = LocalClipboardManager.current
+    // Measured size of the content surface, used to scale the peek crop rect. Declared here (ahead of
+    // the ContentHost that writes it) so the peek crop effect below can read it.
+    var contentSize by remember { mutableStateOf(IntSize.Zero) }
     val hitResult = customTab?.content?.hitResult
     var peekUrl by remember { mutableStateOf<String?>(null) }
     var peekOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -208,6 +217,14 @@ fun CustomTabRoot(
     val peekEngine = remember { PeekEngineHolder(components.engine) }
     var peekSession by remember { mutableStateOf<EngineSession?>(null) }
     var peekView by remember { mutableStateOf<EngineView?>(null) }
+    // The pressed link's measured rect (LinkRectProbe) and captured element pixels for the morph.
+    // [peekCaptureBitmap] is the full-screen capture; the crop effect below trims it to the rect and
+    // immediately drops the large full bitmap.
+    var peekSourceRect by remember { mutableStateOf<Rect?>(null) }
+    var peekCaptureBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var peekElementBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    // Bumped to ask ContentHost to capture exactly what's on screen right now (invariant #6 path).
+    var currentSnapshotRequestId by remember { mutableIntStateOf(0) }
 
     fun deviceLowOnMemory(): Boolean {
         val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE)
@@ -219,7 +236,11 @@ fun CustomTabRoot(
 
     LaunchedEffect(hitResult) {
         val link = linkUrlFromHitResult(hitResult) ?: return@LaunchedEffect
-        peekOrigin = lastPressPos
+        val origin = lastPressPos
+        peekOrigin = origin
+        peekSourceRect = null
+        peekCaptureBitmap = null
+        peekElementBitmap = null
         if (deviceLowOnMemory()) {
             peekSession = null
             peekView = null
@@ -231,6 +252,22 @@ fun CustomTabRoot(
         }
         peekUrl = link
         customTabId?.let { components.store.dispatch(ContentAction.ConsumeHitResultAction(it)) }
+        // Grab the current on-screen pixels of the page (routed back via onCurrentSnapshotCaptured)
+        // and ask the page for the pressed link's rect so the card can morph out of the element.
+        currentSnapshotRequestId += 1
+        LinkRectProbe.pending = { rect -> peekSourceRect = rect }
+        session?.loadJavascriptUrl(LinkRectProbe.buildScript(link, origin.x, origin.y))
+    }
+    // Crop the full capture to the element rect once both arrive, then drop the ~10 MB full bitmap.
+    LaunchedEffect(peekCaptureBitmap, peekSourceRect, contentSize) {
+        val full = peekCaptureBitmap
+        val rect = peekSourceRect
+        if (full != null && rect != null && contentSize.width > 0 && contentSize.height > 0) {
+            peekElementBitmap = cropBitmapToRect(
+                full, rect, contentSize.width.toFloat(), contentSize.height.toFloat()
+            )
+            peekCaptureBitmap = null
+        }
     }
     // Free the reused peek session once the glance is gone (deferred by keying on peekUrl so the
     // card's AndroidView has already detached the view — same rule as TangentRoot).
@@ -238,6 +275,8 @@ fun CustomTabRoot(
         if (peekUrl == null) {
             peekSession = null
             peekView = null
+            peekElementBitmap = null
+            peekCaptureBitmap = null
             peekEngine.release()
         }
     }
@@ -302,7 +341,6 @@ fun CustomTabRoot(
         }
     }
 
-    var contentSize by remember { mutableStateOf(IntSize.Zero) }
     val statusBarTopPx = WindowInsets.statusBars.getTop(density)
     val barHeightDp = 52.dp
     val barHeightPx = with(density) { barHeightDp.roundToPx() }
@@ -319,11 +357,12 @@ fun CustomTabRoot(
     var closeSwipeDir by remember { mutableFloatStateOf(1f) } // +1 left-edge swipe, -1 right-edge
     var closeTouchDy by remember { mutableFloatStateOf(0f) }
 
-    // Bottom-bar auto-hide: 0 fully shown, 1 fully hidden (translated off the bottom of the screen).
-    // Scrolling the page down past a small slop hides it; scrolling up reveals it. Same idea as the
-    // main browser's reader-pill auto-hide. [barTotalHeightPx] is the measured bar height including
-    // its navigation-bar padding, so a value of 1 slides it completely out of view.
-    val barHidden = remember { Animatable(0f) }
+    // Bottom-bar scroll linking: how many pixels the bar is currently pushed off the bottom edge
+    // (0 = fully shown, [barTotalHeightPx] = fully hidden). This tracks the page scroll 1:1 rather
+    // than springing between two states — scrolling the page down slides the bar off by the same
+    // amount, scrolling up brings it straight back, so it stays glued to the finger.
+    // [barTotalHeightPx] is the measured bar height including its navigation-bar padding.
+    var barHiddenPx by remember { mutableFloatStateOf(0f) }
     var barTotalHeightPx by remember { mutableIntStateOf(barHeightPx) }
     // The top origin ribbon is a transient launch banner: 1 = shown, 0 = gone. It auto-dismisses a
     // few seconds after launch (see below) and on the first downward scroll, since it overlays the
@@ -349,22 +388,13 @@ fun CustomTabRoot(
     fun onPageScrollDelta(delta: Float) {
         // Any decisive downward scroll also retires the launch ribbon early.
         if (delta > barHideSlopPx) dismissRibbon()
-        val target = when {
-            delta > barHideSlopPx -> 1f
-            delta < -barHideSlopPx -> 0f
-            else -> return
-        }
-        if (barHidden.targetValue == target) return
-        scope.launch {
-            barHidden.animateTo(
-                targetValue = target,
-                animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
-            )
-        }
+        // Scroll-linked: push the bar off by exactly the scrolled distance (down hides, up reveals),
+        // clamped to its own height so it never over- or under-shoots.
+        barHiddenPx = (barHiddenPx + delta).coerceIn(0f, barTotalHeightPx.toFloat())
     }
     // Always reveal the bar when the reader overlay opens or closes so it never gets stuck hidden.
     LaunchedEffect(readerActive) {
-        barHidden.snapTo(0f)
+        barHiddenPx = 0f
     }
 
     TangentBrowserTheme {
@@ -491,6 +521,16 @@ fun CustomTabRoot(
                         webDarkModeGloballyActive = components.globalPreferencesStore.webDarkModeTrigger
                             .resolve(isSystemInDarkTheme()),
                         onPageScrollDelta = ::onPageScrollDelta,
+                        // Drive the engine's vertical clipping from the bar's slide-off progress so the
+                        // strip the pill vacates becomes LIVE, interactive web surface (not a stale
+                        // clipped band). The pill hides completely, so the collapsed floor is 0 — the
+                        // engine reclaims the whole reserve. Read as a lambda: per-frame clip updates
+                        // via snapshotFlow, no ContentHost recomposition (invariant #10).
+                        barCollapseProgress = {
+                            if (barTotalHeightPx > 0) (barHiddenPx / barTotalHeightPx).coerceIn(0f, 1f)
+                            else 0f
+                        },
+                        collapsedBottomReservePx = 0,
                         onFullScreenChange = { enabled ->
                             isVideoFullscreen = enabled
                             onFullScreenChanged(enabled)
@@ -502,6 +542,12 @@ fun CustomTabRoot(
                         // The system PredictiveBackHandler above owns the back gesture here, so the
                         // ContentHost's own edge-drag predictive back stays off.
                         canStartPredictiveBack = false,
+                        // Link-peek element capture: the bump above triggers this one-shot capture of
+                        // the live page, cropped to the pressed link's rect for the morph.
+                        currentSnapshotRequestId = currentSnapshotRequestId,
+                        onCurrentSnapshotCaptured = { capturedTabId, bitmap ->
+                            if (capturedTabId == customTabId) peekCaptureBitmap = bitmap
+                        },
                     )
                 }
 
@@ -527,6 +573,9 @@ fun CustomTabRoot(
                     addressAutofillEnabled = components.globalPreferencesStore.addressAutofillEnabled,
                 )
 
+                // Bitwarden-backed passkey picker + biometric gate (inert unless a ceremony is running).
+                com.firebolt9907.tangentbrowser.ui.PasskeyUiHost()
+
                 if (shouldShowUi) {
                     AnimatedVisibility(
                         visible = readerActive && article != null,
@@ -544,7 +593,7 @@ fun CustomTabRoot(
                                 topPadding = with(density) { statusBarTopPx.toDp() },
                                 bottomPadding = with(density) { barTotalHeightPx.toDp() },
                                 // Hide the bottom taskbar on scroll-down (reveal on scroll-up), same as
-                                // the web page — reader scroll deltas drive the same barHidden animation.
+                                // the web page — reader scroll deltas drive the same scroll-linked bar offset.
                                 onScrollDelta = ::onPageScrollDelta,
                                 onLinkClick = { href ->
                                     readerManager.openReaderLink(context, customTabId, session, href)
@@ -596,7 +645,7 @@ fun CustomTabRoot(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .onSizeChanged { if (it.height > 0) barTotalHeightPx = it.height }
-                            .graphicsLayer { translationY = barHidden.value * barTotalHeightPx },
+                            .graphicsLayer { translationY = barHiddenPx },
                     )
                 }
 
@@ -640,8 +689,8 @@ fun CustomTabRoot(
                             peekSession = peekSession,
                             peekView = peekView,
                             origin = peekOrigin,
-                            sourceRect = null,
-                            elementBitmap = null,
+                            sourceRect = peekSourceRect,
+                            elementBitmap = peekElementBitmap?.asImageBitmap(),
                             onOpenHere = { u ->
                                 customTabId?.let {
                                     components.sessionUseCases.loadUrl.invoke(u, sessionId = it)

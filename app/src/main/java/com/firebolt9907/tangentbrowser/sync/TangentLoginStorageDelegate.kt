@@ -8,6 +8,7 @@ import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.Login
 import mozilla.components.concept.storage.LoginEntry
 import mozilla.components.concept.storage.LoginStorageDelegate
+import mozilla.components.concept.storage.LoginsStorage
 
 /**
  * Bridges GeckoView's login autofill to our [PlacesLoginsStorage]. An instance is attached to the
@@ -24,7 +25,7 @@ import mozilla.components.concept.storage.LoginStorageDelegate
  * fire-and-forget writes are dispatched on [scope] and the fetch returns a [Deferred] Gecko awaits.
  */
 class TangentLoginStorageDelegate(
-    private val storage: PlacesLoginsStorage,
+    private val storage: LoginsStorage,
     private val scope: CoroutineScope,
 ) : LoginStorageDelegate {
 

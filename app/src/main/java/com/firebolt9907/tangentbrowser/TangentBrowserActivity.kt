@@ -1,10 +1,12 @@
 package com.firebolt9907.tangentbrowser
 
 import android.app.PictureInPictureParams
+import android.app.assist.AssistContent
 import android.content.Intent
 import android.content.IntentSender
 import android.content.res.Configuration
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.util.Rational
 import androidx.activity.SystemBarStyle
@@ -16,6 +18,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.fragment.app.FragmentActivity
+import mozilla.components.browser.state.selector.selectedTab
+import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.concept.engine.activity.ActivityDelegate
 import mozilla.components.feature.downloads.DownloadsFeature
 import mozilla.components.feature.downloads.manager.AndroidDownloadManager
@@ -48,7 +52,12 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
             applicationContext = applicationContext,
             store = app.components.store,
             useCases = app.components.downloadsUseCases,
-            downloadManager = AndroidDownloadManager(applicationContext, app.components.store),
+            downloadFileUtils = app.components.downloadFileUtils,
+            downloadManager = AndroidDownloadManager(
+                applicationContext,
+                app.components.store,
+                app.components.downloadFileUtils,
+            ),
             onNeedToRequestPermissions = { permissions ->
                 requestPermissions(permissions, REQUEST_CODE_DOWNLOAD_PERMISSIONS)
             },
@@ -109,6 +118,30 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
             }
         }
     }
+
+    /**
+     * Hands the foreground page's URL to the system via the Assist framework. This is what surfaces
+     * the current web address to Android's contextual features reachable from the app switcher /
+     * overview — the "share this page" / screenshot-edit sheet and Google Assistant — without
+     * touching the recents card's app name (the same mechanism Chrome uses).
+     *
+     * [currentUrlForAssist] selects the right session per activity (the selected normal tab for
+     * [MainActivity], the custom-tab session for [CustomTabActivity]).
+     */
+    override fun onProvideAssistContent(outContent: AssistContent) {
+        super.onProvideAssistContent(outContent)
+        val url = currentUrlForAssist(app.components.store.state)
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?: return
+        runCatching { outContent.webUri = Uri.parse(url) }
+    }
+
+    /**
+     * The URL of the page this activity is showing, for the Assist framework. Defaults to the
+     * selected normal tab; [CustomTabActivity] overrides to point at its custom-tab session.
+     */
+    protected open fun currentUrlForAssist(state: BrowserState): String? =
+        state.selectedTab?.content?.url
 
     override fun onStart() {
         super.onStart()

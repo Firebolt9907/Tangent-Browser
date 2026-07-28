@@ -125,6 +125,16 @@ object PageSpeaker {
                 is ReaderBlock.Image -> Unit
                 // Speak a figure's caption (charts/diagrams/equations have no readable text otherwise).
                 is ReaderBlock.Figure -> block.caption?.let { parts.add(it) }
+                // Social thread: read the author, then the post/comment body.
+                is ReaderBlock.SocialPost -> {
+                    parts.add(block.author)
+                    block.title?.let { parts.add(it) }
+                    if (block.text.isNotBlank()) parts.add(block.text)
+                }
+                is ReaderBlock.SocialComment -> {
+                    parts.add(block.author)
+                    if (block.text.isNotBlank()) parts.add(block.text)
+                }
             }
         }
         // TextToSpeech silently drops utterances longer than getMaxSpeechInputLength (~4000 chars),

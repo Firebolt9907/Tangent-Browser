@@ -48,6 +48,7 @@ import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.unit.em
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.delay
 import androidx.compose.ui.platform.LocalContext
@@ -58,6 +59,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -76,6 +78,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.pager.HorizontalPager
@@ -96,6 +101,12 @@ fun ReaderView(
     /** Reports vertical scroll deltas (px): positive = scrolling down. Drives the pill auto-hide. */
     onScrollDelta: (Float) -> Unit = {},
     /**
+     * Fires when scrolling comes to rest (finger lifted and any fling finished). The host uses it to
+     * settle the scroll-linked auto-hide pill to fully hidden or fully shown so it never rests
+     * half-off the edge.
+     */
+    onScrollSettle: () -> Unit = {},
+    /**
      * Reports a rendered bitmap of the reader surface. The host stores it as this tab's thumbnail so
      * the tab grid and the tab-switch carousel show the reader content instead of the (invisible)
      * underlying web page, whose engine capture would be blank / stale while reader mode is on.
@@ -103,12 +114,17 @@ fun ReaderView(
     onSnapshot: (android.graphics.Bitmap) -> Unit = {},
     onLinkClick: (String) -> Unit = {},
     /**
-     * Long-press on an in-article link → Safari/Arc-style "peek" glance. Reports the link href plus
-     * the press point in **window** coordinates (so the host's morph can grow the card out of the
-     * touch point). Fires only when the press lands on a link; long-pressing plain prose still starts
-     * text selection as before.
+     * Long-press on an in-article link → Safari/Arc-style "peek" glance. Reports:
+     *  - the link href,
+     *  - the press point in **window** coordinates,
+     *  - the pressed link's bounding rect in window coordinates (or null if it couldn't be measured),
+     *  - a freshly captured bitmap of the whole reader surface (or null on failure), in window px so
+     *    the host can crop it to the rect above for the shared-element morph.
+     * Reader content is a Compose surface, not a live GeckoView, so — unlike the web path — the pixels
+     * come from the reader's own graphics layer rather than `EngineView.captureThumbnail`. Fires only
+     * when the press lands on a link; long-pressing plain prose still starts text selection as before.
      */
-    onLinkLongPress: (String, Offset) -> Unit = { _, _ -> },
+    onLinkLongPress: (href: String, origin: Offset, sourceRect: Rect?, bitmap: android.graphics.Bitmap?) -> Unit = { _, _, _, _ -> },
 ) {
     val backgroundColor = when (theme) {
         ReaderTheme.System -> MaterialTheme.colorScheme.surface
@@ -175,6 +191,28 @@ fun ReaderView(
             .components { add(SvgDecoder.Factory()) }
             .build()
     }
+    // A GIF-capable loader for social media images so animated GIFs actually animate (the singleton
+    // photo loader has no GIF decoder). Also decodes ordinary photos, so it's used for all social media.
+    val gifImageLoader = remember(svgContext) {
+        ImageLoader.Builder(svgContext)
+            .components {
+                if (android.os.Build.VERSION.SDK_INT >= 28) add(coil.decode.ImageDecoderDecoder.Factory())
+                else add(coil.decode.GifDecoder.Factory())
+            }
+            .build()
+    }
+    // Respect the system "remove animations" accessibility toggle (animator duration scale 0) — the
+    // Compose analogue of the desktop reader's `prefers-reduced-motion` guard. When off, the staggered
+    // entrance reveal is skipped and elements render fully visible.
+    val revealEnabled = remember(svgContext) {
+        runCatching {
+            android.provider.Settings.Global.getFloat(
+                svgContext.contentResolver,
+                android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f,
+            ) > 0f
+        }.getOrDefault(true)
+    }
     // On a dark reader theme, math renders (black glyphs on transparent) would be invisible; invert
     // them to white. Charts/diagrams keep their real colors (meaningful) and instead sit on a light
     // card. Derived from the actual background luminance so it's right for System/White/Sepia/Dark.
@@ -206,6 +244,17 @@ fun ReaderView(
         snapshotFlow { scrollState.value }.collect { value ->
             onScrollDelta((value - last).toFloat())
             last = value
+        }
+    }
+
+    // Signal scroll-rest (finger lifted and any fling settled) so the host can snap the scroll-linked
+    // pill to a fully hidden/shown edge. isScrollInProgress covers both the drag and its fling, so we
+    // fire only on the true→false transition — the actual moment motion stops.
+    LaunchedEffect(scrollState) {
+        var wasScrolling = false
+        snapshotFlow { scrollState.isScrollInProgress }.collect { inProgress ->
+            if (wasScrolling && !inProgress) onScrollSettle()
+            wasScrolling = inProgress
         }
     }
 
@@ -266,7 +315,10 @@ fun ReaderView(
         withFrameNanos {}
         withFrameNanos {}
         runCatching { onSnapshot(captureLayer.toImageBitmap().asAndroidBitmap()) }
-        delay(800)
+        // The definitive thumbnail must be sampled after the staggered entrance reveal has settled,
+        // otherwise it captures the article mid-fade. Cover the longest possible reveal (max delay +
+        // duration) when animating; fall back to the async-image settle window otherwise.
+        delay(if (revealEnabled) (ReaderRevealDelayMaxMs + ReaderRevealDurationMs + 80).toLong() else 800)
         runCatching { onSnapshot(captureLayer.toImageBitmap().asAndroidBitmap()) }
         captureArmed = false
     }
@@ -344,18 +396,21 @@ fun ReaderView(
                 .padding(horizontal = 24.dp)
                 .padding(top = statusBarTop + 16.dp, bottom = navBarBottom + 40.dp)
         ) {
-            // Title
-            Text(
-                text = article.title,
-                fontSize = (28.sp * scale),
-                lineHeight = (36.sp * scale),
-                fontWeight = FontWeight.Bold,
-                fontFamily = fontFamily,
-                color = textColor,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp)
-            )
+            // Title (omitted for social threads whose platform has no post title — e.g. tweets).
+            if (article.title.isNotBlank()) {
+                Text(
+                    text = article.title,
+                    fontSize = (28.sp * scale),
+                    lineHeight = (36.sp * scale),
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = fontFamily,
+                    color = textColor,
+                    modifier = Modifier
+                        .readerReveal(0, article, revealEnabled)
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                )
+            }
 
             // Author card — visually distinct from article body (Safari-parity).
             val readMinutes = remember(article) { estimateReadMinutes(article) }
@@ -363,6 +418,7 @@ fun ReaderView(
             if (article.byline != null || sourceHost != null) {
                 Column(
                     modifier = Modifier
+                        .readerReveal(1, article, revealEnabled)
                         .fillMaxWidth()
                         .padding(bottom = 24.dp)
                 ) {
@@ -418,8 +474,14 @@ fun ReaderView(
                 groupBlocksForRendering(article.blocks)
             }
 
-            // Article Content
-            groupedBlocks.forEach { block ->
+            // Article Content — each top-level block reveals in with a staggered fade + slide-up,
+            // continuing the sequence started by the title (0) and author card (1).
+            groupedBlocks.forEachIndexed { blockIndex, block ->
+              Box(
+                  modifier = Modifier
+                      .fillMaxWidth()
+                      .readerReveal(blockIndex + 2, article, revealEnabled)
+              ) {
                 when (block) {
                     is ReaderBlock.Paragraph -> {
                         // Inline math: each MATH_SENTINEL in block.text maps, in order, to a rendered
@@ -559,9 +621,37 @@ fun ReaderView(
                                                     val link = annotatedString
                                                         .getStringAnnotations("url", offset, offset)
                                                         .firstOrNull() ?: return@detectTapGestures
-                                                    val windowPos = paragraphCoords
-                                                        ?.localToWindow(pos) ?: pos
-                                                    onLinkLongPress(link.item, windowPos)
+                                                    val coords = paragraphCoords
+                                                    val windowPos = coords?.localToWindow(pos) ?: pos
+                                                    // The link's bounding rect in window px, from the
+                                                    // text layout's glyph run for the link's char
+                                                    // range — the morph source rect (parity with the
+                                                    // web LinkRectProbe path).
+                                                    val sourceRect = coords?.let { c ->
+                                                        runCatching {
+                                                            val b = layout
+                                                                .getPathForRange(link.start, link.end)
+                                                                .getBounds()
+                                                            val tl = c.localToWindow(
+                                                                Offset(b.left, b.top)
+                                                            )
+                                                            Rect(tl.x, tl.y, tl.x + b.width, tl.y + b.height)
+                                                        }.getOrNull()
+                                                    }
+                                                    // Capture the reader surface's pixels for the
+                                                    // morph. The layer only records while armed, so
+                                                    // arm it, let two frames paint through it, sample,
+                                                    // then disarm to keep the scroll path layer-free.
+                                                    captureScope.launch {
+                                                        captureArmed = true
+                                                        withFrameNanos {}
+                                                        withFrameNanos {}
+                                                        val bmp = runCatching {
+                                                            captureLayer.toImageBitmap().asAndroidBitmap()
+                                                        }.getOrNull()
+                                                        captureArmed = false
+                                                        onLinkLongPress(link.item, windowPos, sourceRect, bmp)
+                                                    }
                                                 },
                                             )
                                         }
@@ -877,6 +967,60 @@ fun ReaderView(
                             }
                         }
                     }
+                    is ReaderBlock.SocialPost -> {
+                        ReaderSocialCard(
+                            author = block.author,
+                            handle = block.handle,
+                            avatarUrl = block.avatarUrl,
+                            meta = block.meta,
+                            timestamp = block.timestamp,
+                            title = block.title,
+                            text = block.text,
+                            links = block.links,
+                            media = block.media,
+                            depth = 0,
+                            isOp = false,
+                            isPost = true,
+                            scale = scale,
+                            fontFamily = fontFamily,
+                            textColor = textColor,
+                            mutedTextColor = mutedTextColor,
+                            borderColor = borderColor,
+                            linkColor = linkColor,
+                            cardColor = codeBackgroundColor,
+                            sourceUrl = article.sourceUrl,
+                            gifImageLoader = gifImageLoader,
+                            onLinkClick = onLinkClick,
+                            onImageClick = { zoomedImage = it },
+                        )
+                    }
+                    is ReaderBlock.SocialComment -> {
+                        ReaderSocialCard(
+                            author = block.author,
+                            handle = block.handle,
+                            avatarUrl = block.avatarUrl,
+                            meta = block.meta,
+                            timestamp = block.timestamp,
+                            title = null,
+                            text = block.text,
+                            links = block.links,
+                            media = block.media,
+                            depth = block.depth,
+                            isOp = block.isOp,
+                            isPost = false,
+                            scale = scale,
+                            fontFamily = fontFamily,
+                            textColor = textColor,
+                            mutedTextColor = mutedTextColor,
+                            borderColor = borderColor,
+                            linkColor = linkColor,
+                            cardColor = codeBackgroundColor,
+                            sourceUrl = article.sourceUrl,
+                            gifImageLoader = gifImageLoader,
+                            onLinkClick = onLinkClick,
+                            onImageClick = { zoomedImage = it },
+                        )
+                    }
                     is CarouselBlock -> {
                         val images = block.images
                         val pagerState = rememberPagerState(pageCount = { images.size })
@@ -1013,6 +1157,7 @@ fun ReaderView(
                         }
                     }
                 }
+              }
             }
 
             // Site attribution footer — "Article provided by [favicon] TechCrunch".
@@ -1122,7 +1267,394 @@ fun ReaderView(
     }
 }
 
+// Entrance-reveal tuning (mirrors the desktop extension's staggered fade + slide-up in reader.css).
+private const val ReaderRevealStaggerMs = 100     // per-element delay step
+private const val ReaderRevealDelayMaxMs = 500    // cap the start delay so it never drags
+private const val ReaderRevealDurationMs = 480    // fade/slide duration per element
+private const val ReaderRevealMaxIndex = 24       // past this (well off-screen) skip animating
+private val ReaderRevealShift = 16.dp             // how far each element slides up into place
+
+/**
+ * A one-shot entrance reveal for a top-level reader element: fade in while sliding up, staggered by
+ * [index] so the article assembles top-to-bottom. Plays once per [articleKey] (keyed remember), is a
+ * draw-phase `graphicsLayer` so it never triggers relayout while scrolling, and is a no-op when
+ * [enabled] is false (reduced-motion) or the element is far enough down to be off-screen at start.
+ */
+@Composable
+private fun Modifier.readerReveal(index: Int, articleKey: Any?, enabled: Boolean): Modifier {
+    if (!enabled || index > ReaderRevealMaxIndex) return this
+    val progress = remember(articleKey, index) { Animatable(0f) }
+    LaunchedEffect(articleKey, index) {
+        delay((index.toLong() * ReaderRevealStaggerMs).coerceAtMost(ReaderRevealDelayMaxMs.toLong()))
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = ReaderRevealDurationMs, easing = LinearOutSlowInEasing),
+        )
+    }
+    return graphicsLayer {
+        alpha = progress.value
+        translationY = (1f - progress.value) * ReaderRevealShift.toPx()
+    }
+}
+
 private data class CarouselBlock(val images: List<ReaderBlock.Image>)
+
+/**
+ * Renders one social-thread entry — the root [ReaderBlock.SocialPost] or a [ReaderBlock.SocialComment]
+ * reply. The look is modelled on **Apollo for Reddit**: the post is a prominent card (avatar, author,
+ * title, body, media, stats pill); comments are a dense, card-less list whose nesting is shown by
+ * Apollo's signature stack of coloured "threadline" rails down the left ([commentRailColors]), with a
+ * compact `author · score · time` metadata line and the OP tinted in the accent colour.
+ */
+@Composable
+private fun ReaderSocialCard(
+    author: String,
+    handle: String?,
+    avatarUrl: String?,
+    meta: String?,
+    timestamp: String?,
+    title: String?,
+    text: String,
+    links: List<ReaderLinkSpan>,
+    media: List<ReaderMedia>,
+    depth: Int,
+    isOp: Boolean,
+    isPost: Boolean,
+    scale: Float,
+    fontFamily: FontFamily,
+    textColor: Color,
+    mutedTextColor: Color,
+    borderColor: Color,
+    linkColor: Color,
+    cardColor: Color,
+    sourceUrl: String?,
+    gifImageLoader: ImageLoader,
+    onLinkClick: (String) -> Unit,
+    onImageClick: (String) -> Unit,
+) {
+    if (isPost) {
+        SocialPostCard(
+            author, handle, avatarUrl, meta, timestamp, title, text, links, media,
+            scale, fontFamily, textColor, mutedTextColor, linkColor, cardColor, sourceUrl,
+            gifImageLoader, onLinkClick, onImageClick,
+        )
+    } else {
+        ApolloComment(
+            author, meta, timestamp, text, links, media, depth, isOp,
+            scale, fontFamily, textColor, mutedTextColor, borderColor, linkColor, sourceUrl,
+            gifImageLoader, onLinkClick, onImageClick,
+        )
+    }
+}
+
+/** Body prose (paragraph text) with tappable links, shared by the post card and comments. */
+@Composable
+private fun SocialBodyText(
+    text: String,
+    links: List<ReaderLinkSpan>,
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    lineHeight: androidx.compose.ui.unit.TextUnit,
+    color: Color,
+    linkColor: Color,
+    fontFamily: FontFamily,
+    onLinkClick: (String) -> Unit,
+) {
+    if (links.isEmpty()) {
+        Text(text = text, fontSize = fontSize, lineHeight = lineHeight, fontFamily = fontFamily, color = color)
+        return
+    }
+    val annotated = remember(text, links) {
+        buildAnnotatedString {
+            var idx = 0
+            for (link in links) {
+                val at = text.indexOf(link.text, idx)
+                if (at == -1) continue
+                if (at > idx) append(text.substring(idx, at))
+                val start = length
+                append(link.text)
+                addStringAnnotation("url", link.href, start, length)
+                addStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline), start, length)
+                idx = at + link.text.length
+            }
+            if (idx < text.length) append(text.substring(idx))
+        }
+    }
+    val layout = remember(annotated) { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    Text(
+        text = annotated,
+        onTextLayout = { layout.value = it },
+        fontSize = fontSize,
+        lineHeight = lineHeight,
+        fontFamily = fontFamily,
+        color = color,
+        modifier = Modifier.pointerInput(annotated) {
+            detectTapGestures(onTap = { pos ->
+                val l = layout.value ?: return@detectTapGestures
+                val off = l.getOffsetForPosition(pos)
+                annotated.getStringAnnotations("url", off, off).firstOrNull()?.let { onLinkClick(it.item) }
+            })
+        },
+    )
+}
+
+@Composable
+private fun SocialMedia(
+    media: List<ReaderMedia>,
+    sourceUrl: String?,
+    gifImageLoader: ImageLoader,
+    onImageClick: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    media.forEach { m ->
+        Spacer(Modifier.height(10.dp))
+        val ratio = if (m.width != null && m.height != null && m.width > 0 && m.height > 0)
+            m.width.toFloat() / m.height.toFloat() else null
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .let { if (ratio != null) it.aspectRatio(ratio) else it }
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onImageClick(m.src) },
+        ) {
+            AsyncImage(
+                model = readerImageRequest(context, m.src, sourceUrl),
+                imageLoader = gifImageLoader,
+                contentDescription = null,
+                contentScale = ContentScale.FillWidth,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            // Apollo-style GIF badge.
+            if (m.gif) {
+                Text(
+                    text = "GIF",
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+        }
+    }
+}
+
+/** The root post — a prominent Apollo-style card. */
+@Composable
+private fun SocialPostCard(
+    author: String,
+    handle: String?,
+    avatarUrl: String?,
+    meta: String?,
+    timestamp: String?,
+    title: String?,
+    text: String,
+    links: List<ReaderLinkSpan>,
+    media: List<ReaderMedia>,
+    scale: Float,
+    fontFamily: FontFamily,
+    textColor: Color,
+    mutedTextColor: Color,
+    linkColor: Color,
+    cardColor: Color,
+    sourceUrl: String?,
+    gifImageLoader: ImageLoader,
+    onLinkClick: (String) -> Unit,
+    onImageClick: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 18.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(cardColor)
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(avatarColorFor(author)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (avatarUrl != null) {
+                    AsyncImage(
+                        model = readerImageRequest(context, avatarUrl, sourceUrl),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Text(
+                        text = author.trim().firstOrNull()?.uppercase() ?: "?",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = (18.sp * scale),
+                        fontFamily = fontFamily,
+                    )
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = author,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = (16.sp * scale),
+                    fontFamily = fontFamily,
+                    color = textColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val sub = listOfNotNull(handle, formatSocialTimestamp(timestamp)).joinToString("  ·  ")
+                if (sub.isNotEmpty()) {
+                    Text(
+                        text = sub,
+                        fontSize = (12.sp * scale),
+                        fontFamily = fontFamily,
+                        color = mutedTextColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        if (!title.isNullOrBlank()) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = title,
+                fontWeight = FontWeight.Bold,
+                fontSize = (21.sp * scale),
+                lineHeight = (27.sp * scale),
+                fontFamily = fontFamily,
+                color = textColor,
+            )
+        }
+        if (text.isNotBlank()) {
+            Spacer(Modifier.height(if (!title.isNullOrBlank()) 8.dp else 10.dp))
+            SocialBodyText(text, links, 17.sp * scale, 26.sp * scale, textColor, linkColor, fontFamily, onLinkClick)
+        }
+        SocialMedia(media, sourceUrl, gifImageLoader, onImageClick)
+        if (!meta.isNullOrBlank()) {
+            Spacer(Modifier.height(14.dp))
+            // Apollo's rounded stats pill (score / comments) under the post.
+            Text(
+                text = meta,
+                fontSize = (12.5.sp * scale),
+                fontWeight = FontWeight.Medium,
+                fontFamily = fontFamily,
+                color = mutedTextColor,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(cardColor.copy(alpha = 0.6f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+/** A reply, Apollo-style: coloured nesting rails + a dense metadata line + body. No card, no avatar. */
+@Composable
+private fun ApolloComment(
+    author: String,
+    meta: String?,
+    timestamp: String?,
+    text: String,
+    links: List<ReaderLinkSpan>,
+    media: List<ReaderMedia>,
+    depth: Int,
+    isOp: Boolean,
+    scale: Float,
+    fontFamily: FontFamily,
+    textColor: Color,
+    mutedTextColor: Color,
+    borderColor: Color,
+    linkColor: Color,
+    sourceUrl: String?,
+    gifImageLoader: ImageLoader,
+    onLinkClick: (String) -> Unit,
+    onImageClick: (String) -> Unit,
+) {
+    val levels = depth.coerceIn(0, 8)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // A hairline above each top-level comment separates threads (and the post from the comments).
+        if (depth == 0) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(borderColor)
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
+                .padding(top = 10.dp, bottom = 10.dp)
+        ) {
+            // Apollo threadlines: one coloured vertical rail per ancestor level.
+            for (level in 0 until levels) {
+                Box(
+                    modifier = Modifier
+                        .padding(end = 10.dp)
+                        .width(2.dp)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(commentRailColors[level % commentRailColors.size])
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                // Metadata line: author (accent when OP) · score · time.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = author,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = (13.sp * scale),
+                        fontFamily = fontFamily,
+                        color = if (isOp) linkColor else textColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (isOp) {
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            text = "OP",
+                            fontSize = (9.sp * scale),
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = fontFamily,
+                            color = linkColor,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(linkColor.copy(alpha = 0.15f))
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                        )
+                    }
+                    val metaLine = listOfNotNull(meta, formatSocialTimestamp(timestamp)).joinToString("  ·  ")
+                    if (metaLine.isNotEmpty()) {
+                        Text(
+                            text = "  ·  $metaLine",
+                            fontSize = (12.sp * scale),
+                            fontFamily = fontFamily,
+                            color = mutedTextColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (text.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    SocialBodyText(text, links, 15.sp * scale, 22.sp * scale, textColor, linkColor, fontFamily, onLinkClick)
+                }
+                SocialMedia(media, sourceUrl, gifImageLoader, onImageClick)
+            }
+        }
+    }
+}
 
 private fun groupBlocksForRendering(blocks: List<ReaderBlock>): List<Any> {
     val result = mutableListOf<Any>()

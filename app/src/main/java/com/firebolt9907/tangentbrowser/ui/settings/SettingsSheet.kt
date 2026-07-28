@@ -91,6 +91,9 @@ fun SettingsSheet(
     var fontSizeFactor by remember { mutableStateOf(globalPrefsStore.fontSizeFactor) }
     var loginAutofillEnabled by remember { mutableStateOf(globalPrefsStore.loginAutofillEnabled) }
     var biometricAutofillEnabled by remember { mutableStateOf(globalPrefsStore.biometricAutofillEnabled) }
+    var bitwardenSaveTargetIsBitwarden by remember { mutableStateOf(globalPrefsStore.bitwardenSaveTargetIsBitwarden) }
+    var systemAutofillEnabled by remember { mutableStateOf(globalPrefsStore.systemAutofillEnabled) }
+    var passkeyMode by remember { mutableStateOf(globalPrefsStore.passkeyMode) }
     var creditCardAutofillEnabled by remember { mutableStateOf(globalPrefsStore.creditCardAutofillEnabled) }
     var addressAutofillEnabled by remember { mutableStateOf(globalPrefsStore.addressAutofillEnabled) }
     var formFieldMemoryEnabled by remember { mutableStateOf(globalPrefsStore.formFieldMemoryEnabled) }
@@ -337,7 +340,51 @@ fun SettingsSheet(
                         )
                     },
                 )
+                SheetRowDivider()
+                SettingsToggle(
+                    title = "Save New Logins to Bitwarden",
+                    subtitle = "When a Bitwarden account is connected, save newly captured passwords " +
+                        "to your vault instead of this device",
+                    checked = bitwardenSaveTargetIsBitwarden,
+                    onCheckedChange = {
+                        bitwardenSaveTargetIsBitwarden = it
+                        globalPrefsStore.bitwardenSaveTargetIsBitwarden = it
+                        onSettingChanged()
+                    },
+                )
             }
+            SheetRowDivider()
+            SettingsToggle(
+                title = "Fill With Other Apps",
+                subtitle = "Let a device password manager (Bitwarden, 1Password…) fill web forms " +
+                    "through Android's autofill service. Works alongside the built-in login vault.",
+                checked = systemAutofillEnabled,
+                onCheckedChange = {
+                    systemAutofillEnabled = it
+                    globalPrefsStore.systemAutofillEnabled = it
+                    onSettingChanged()
+                },
+            )
+            if (systemAutofillEnabled) {
+                SheetRowDivider()
+                SystemAutofillServiceRow()
+            }
+            SheetRowDivider()
+            SettingsPicker(
+                title = "Passkeys (Experimental)",
+                subtitle = "Tangent can't use the system passkey providers. Built-in stores keys in the " +
+                    "browser only (no fingerprint prompt); Bitwarden stores and syncs them in your " +
+                    "connected vault, gated by a fingerprint. Restart to apply.",
+                selectedLabel = passkeyMode.label,
+                options = com.firebolt9907.tangentbrowser.state.PasskeyMode.entries.map { mode ->
+                    mode.label to {
+                        passkeyMode = mode
+                        globalPrefsStore.passkeyMode = mode
+                        onSettingChanged()
+                    }
+                },
+                haptics = haptics,
+            )
             SheetRowDivider()
             SettingsToggle(
                 title = "Payment Method Autofill",
@@ -1321,6 +1368,86 @@ private fun launchDefaultBrowserRequest(
         launcher.launch(android.content.Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
     }.onFailure {
         Toast.makeText(context, "Open Settings to change your default browser", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/**
+ * Status + shortcut for the OS-level autofill service (the "Fill With Other Apps" path). Shows
+ * whether a device autofill service is currently active and offers a jump to the system picker so
+ * the user can select their password-manager app (e.g. the official Bitwarden app). GeckoView feeds
+ * the Android Autofill Framework automatically once a service is selected — no in-app credentials.
+ */
+@Composable
+private fun SystemAutofillServiceRow() {
+    val context = LocalContext.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    // isEnabled() = a device autofill service is selected and usable here (any provider). Distinct
+    // from hasEnabledAutofillServices(), which is true only when *we* are the service.
+    fun serviceActive(): Boolean = runCatching {
+        context.getSystemService(android.view.autofill.AutofillManager::class.java)
+            ?.isEnabled == true
+    }.getOrDefault(false)
+
+    var active by remember { mutableStateOf(serviceActive()) }
+    val launcher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    ) { active = serviceActive() }
+
+    // Re-check on resume: the user picks the service in system settings and returns.
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) active = serviceActive()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { launchAutofillServicePicker(context, launcher) }
+            .padding(vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Autofill Service",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = if (active) "A device autofill service is active. Tap to change."
+                else "No autofill service selected. Tap to choose your password manager.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (active) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.error,
+            )
+        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(14.dp),
+        )
+    }
+}
+
+/** Open the system autofill-service picker, falling back to general Settings on odd OEM builds. */
+private fun launchAutofillServicePicker(
+    context: android.content.Context,
+    launcher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>,
+) {
+    runCatching {
+        launcher.launch(android.content.Intent(android.provider.Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE))
+    }.onSuccess { return }
+    runCatching {
+        launcher.launch(android.content.Intent(android.provider.Settings.ACTION_SETTINGS))
+    }.onFailure {
+        Toast.makeText(
+            context,
+            "Open Settings → Passwords & accounts → Autofill service to choose your password manager",
+            Toast.LENGTH_LONG,
+        ).show()
     }
 }
 

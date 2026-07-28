@@ -92,6 +92,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.produceState
@@ -151,6 +152,7 @@ import com.firebolt9907.tangentbrowser.ui.grid.DeckTravelFrac
 import com.firebolt9907.tangentbrowser.ui.grid.deckDragScale
 import com.firebolt9907.tangentbrowser.ui.grid.GridTab
 import mozilla.components.browser.icons.IconRequest
+import com.firebolt9907.tangentbrowser.ui.containers.swatch
 import com.firebolt9907.tangentbrowser.ui.grid.ClassicTabGridOverlay
 import com.firebolt9907.tangentbrowser.ui.grid.TabGridOverlay
 import com.firebolt9907.tangentbrowser.ui.grid.TabViewMode
@@ -193,7 +195,37 @@ fun TangentRoot(
     // on every tab content update (URL change, loading state, title change) — only when the
     // selected tab changes or tabs are added/removed/reordered.
     val selectedTabIdFromStore by components.selectedTabId.collectAsStateWithLifecycle()
-    val tabsList by components.tabsList.collectAsStateWithLifecycle()
+    // The full open-tab set from the store. `tabsList` below narrows it to the active Space so the tab
+    // switcher AND horizontal pill tab-switching (both read `tabsList`) only ever see the current
+    // space's tabs. See the Spaces block just below.
+    val allTabs by components.tabsList.collectAsStateWithLifecycle()
+
+    // ---- Spaces (local, per-space tab sets — the evolution of Tab Groups) ----
+    // Each Space is a TangentTabGroup; the default "Personal" space (activeSpaceId == null) holds tabs
+    // that belong to no group. The switcher strip at the bottom of the tab overview changes
+    // activeSpaceId; while browsing (grid closed) activeSpaceId follows whatever tab is selected so the
+    // visible space always contains the current tab (see the follow-effect after gridEngaged).
+    val spaceGroups by components.tabGroupsRepository.groups.collectAsStateWithLifecycle()
+    val gridContainers by components.containerRepository.containers.collectAsStateWithLifecycle()
+    var activeSpaceId by rememberSaveable {
+        mutableStateOf(components.globalPreferencesStore.activeSpaceId)
+    }
+    // A deleted space falls back to Personal.
+    val effectiveSpaceId = activeSpaceId?.takeIf { id -> spaceGroups.any { it.id == id } }
+    // Latest active Space, readable from deferred callback lambdas (addon/window.open handlers
+    // registered in a LaunchedEffect) without capturing a stale value — new tabs opened while
+    // browsing inside a Space must stay in it and inherit its default container.
+    val currentSpaceId = rememberUpdatedState(effectiveSpaceId)
+    val tabsList = remember(allTabs, effectiveSpaceId, spaceGroups) {
+        if (effectiveSpaceId == null) {
+            val grouped = spaceGroups.flatMapTo(HashSet()) { it.tabIds }
+            allTabs.filter { it.id !in grouped }
+        } else {
+            val ids = spaceGroups.firstOrNull { it.id == effectiveSpaceId }?.tabIds?.toHashSet()
+                ?: emptySet()
+            allTabs.filter { it.id in ids }
+        }
+    }
     val addonsState by components.addonController.state.collectAsStateWithLifecycle()
     val firefoxSyncState by components.firefoxSyncController.state.collectAsStateWithLifecycle()
 
@@ -208,6 +240,8 @@ fun TangentRoot(
     val readerTheme by readerManager.theme.collectAsStateWithLifecycle()
     val readerFontSize by readerManager.fontSize.collectAsStateWithLifecycle()
     val readerFontName by readerManager.fontName.collectAsStateWithLifecycle()
+    // Raised when a *manual* reader activation finds no article (see ReaderManager.reportReaderUnavailable).
+    val readerUnavailableTab by readerManager.readerUnavailableTab.collectAsStateWithLifecycle()
 
     // Reader appearance lives in the (Context-less) ReaderManager singleton, so bridge it to disk
     // here: load the persisted values into the manager once, then mirror later changes back to the
@@ -479,10 +513,16 @@ fun TangentRoot(
                 url = url,
                 engineSession = adopted,
                 selectTab = foreground,
+                groupId = currentSpaceId.value,
             )
         } else {
             // No live preview existed (low-memory static glance): fall back to a normal fresh load.
-            viewModel.onOpenNewTab(url = url, title = "", selectTab = foreground)
+            viewModel.onOpenNewTab(
+                url = url,
+                title = "",
+                selectTab = foreground,
+                groupId = currentSpaceId.value,
+            )
         }
         pendingPeekAdoption = null
     }
@@ -537,6 +577,25 @@ fun TangentRoot(
     // (no Android 12+ paste toast) — see ClipboardChangeWatcher.
     var otpPasteVisible by remember { mutableStateOf(false) }
     var otpFieldPresent by remember { mutableStateOf(false) }
+
+    // "Reader mode unavailable" banner — shown only when a manual reader activation on the FOREGROUND
+    // tab comes up empty. Consume the manager signal immediately so it can re-fire on a later attempt.
+    var readerUnavailableVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(readerUnavailableTab, selectedTabId) {
+        val tab = readerUnavailableTab ?: return@LaunchedEffect
+        if (tab == selectedTabId) readerUnavailableVisible = true
+        readerManager.clearReaderUnavailable(tab)
+    }
+    LaunchedEffect(readerUnavailableVisible) {
+        if (readerUnavailableVisible) {
+            kotlinx.coroutines.delay(6000L)
+            readerUnavailableVisible = false
+        }
+    }
+    // A fresh manual toggle that succeeds (reader opens) should retire any lingering banner.
+    LaunchedEffect(isReaderActiveOnSelectedTab) {
+        if (isReaderActiveOnSelectedTab) readerUnavailableVisible = false
+    }
     val clipWatcher = remember {
         com.firebolt9907.tangentbrowser.ui.content.ClipboardChangeWatcher(appContext)
     }
@@ -767,8 +826,13 @@ fun TangentRoot(
     // recomposing the bar or the engine host. See BarPill.PillMorph.
     val barCollapseProgressProvider = remember { { barCollapseProgress } }
     // Reader-mode pill auto-hide: 0 = pill shown, 1 = pill fully translated off the bottom edge.
-    // Driven by reader scroll direction (separate from the web-page compact collapse above).
-    val readerBarHidden = remember { Animatable(0f) }
+    // Scroll-linked — the value tracks the reader scroll offset 1:1 (like the web-page
+    // barCollapsePx path), so the pill slides off as you read down and back on as you read up,
+    // proportional to distance travelled. Written directly on the scroll hot-path, read only in
+    // the pill's layout/draw phase, so scrolling doesn't recompose the bar.
+    var readerBarHidden by remember { mutableFloatStateOf(0f) }
+    // Tracks the settle animation launched on scroll-end so a new drag can pre-empt it.
+    var readerBarSettleJob by remember { mutableStateOf<Job?>(null) }
     // Boolean gate for whether the pull-refresh line is shown. Derived so the per-frame
     // pullRefreshDistancePx updates (during a pull) flip this only at the 0↔>0 boundary instead of
     // recomposing TangentRoot on every drag frame; the live magnitude is passed to PullRefreshLine as
@@ -991,7 +1055,8 @@ fun TangentRoot(
     LaunchedEffect(pendingShortcut) {
         when (pendingShortcut) {
             com.firebolt9907.tangentbrowser.state.AppShortcutSignals.Action.NewTab -> {
-                val newTabId = viewModel.onCreateTabFromEdge(selectTab = false)
+                val newTabId =
+                    viewModel.onCreateTabFromEdge(selectTab = false, groupId = currentSpaceId.value)
                 stagePendingGeckoSelection(tabId = newTabId, createdTab = true, editBlankTab = true)
                 commitPendingGeckoSelection()
             }
@@ -1129,6 +1194,21 @@ fun TangentRoot(
                 gridProgressState.value > 0f
         }
     }
+
+    // While browsing (grid closed), the active Space follows the selected tab so the switcher always
+    // opens onto the space that contains the current tab — even when a tab is selected outside the
+    // grid (a received/handoff tab, an "open in new tab" link, a synced-tab open). While the grid is
+    // engaged the user drives activeSpaceId directly via the switcher strip, so we don't fight them.
+    LaunchedEffect(selectedTabIdFromStore, spaceGroups, gridEngaged) {
+        if (gridEngaged) return@LaunchedEffect
+        val groupId = selectedTabIdFromStore
+            ?.let { components.tabGroupsRepository.groupIdForTab(it) }
+        if (groupId != activeSpaceId) {
+            activeSpaceId = groupId
+            components.globalPreferencesStore.activeSpaceId = groupId
+        }
+    }
+
     // Real favicons for the tab-overview captions, loaded (memory + disk cached) via BrowserIcons
     // while the overview is engaged. Keyed by URL so a navigation refreshes it; null is cached too
     // to avoid refetch storms, and the UI falls back to a letter tile. Feeds the iconProvider below.
@@ -1194,14 +1274,21 @@ fun TangentRoot(
     // across pages of the same site — matching how the top-padding preference itself is scoped. A
     // missing entry means the site declared no theme color, so consumers fall back to the primary.
     val themeColorsByHost = remember { mutableStateMapOf<String, Color>() }
+    // The real background color sampled from behind the status bar (top of the viewport), keyed by
+    // host. Distinct from themeColorsByHost — this is the actual rendered content color, used only to
+    // keep the status-bar icons legible on sites that declare no theme color; it must NOT feed the
+    // strip fill or the chrome accent (which want the *declared* theme color, not a page's white body).
+    val pageTopBgByHost = remember { mutableStateMapOf<String, Color>() }
     DisposableEffect(Unit) {
-        ThemeColorProbe.listener = { _, url, colorInt ->
+        ThemeColorProbe.listener = { _, url, themeInt, bgInt ->
             val host = siteHostFromUrl(url)
             if (host.isNotEmpty()) {
                 // The probe fires on Gecko's thread; marshal the state write back to main.
                 scope.launch {
-                    if (colorInt != null) themeColorsByHost[host] = Color(colorInt)
+                    if (themeInt != null) themeColorsByHost[host] = Color(themeInt)
                     else themeColorsByHost.remove(host)
+                    if (bgInt != null) pageTopBgByHost[host] = Color(bgInt)
+                    else pageTopBgByHost.remove(host)
                 }
             }
         }
@@ -1290,9 +1377,17 @@ fun TangentRoot(
     } else {
         primaryColor
     }
-    // Keep the status-bar icons legible over whatever fills the strip: dark icons on a light tint,
-    // light icons on a dark one. When the strip is not active, restore the system-theme default.
+    // Keep the status-bar icons legible over whatever sits behind them: dark icons on a light
+    // backdrop, light icons on a dark one.
+    //  - When the top strip is painting its own color, match that (icons sit over the painted strip).
+    //  - Otherwise the status bar is transparent over live page content, so match the real background
+    //    color sampled from behind it (ThemeColorProbe.bgColor). Android does NOT auto-tint the bar to
+    //    content, so without this the icons would just follow the OS theme and vanish on, e.g., a white
+    //    page in dark mode.
+    //  - Fall back to the system theme only when nothing was sampled (blank/new-tab page, probe not
+    //    yet returned).
     val systemDarkTheme = isSystemInDarkTheme()
+    val sampledTopBgColor: Color? = if (currentHost.isNotEmpty()) pageTopBgByHost[currentHost] else null
     val view = LocalView.current
     val statusBarController = remember(view) {
         var ctx: android.content.Context? = view.context
@@ -1303,12 +1398,12 @@ fun TangentRoot(
             WindowCompat.getInsetsController(window, view)
         }
     }
-    LaunchedEffect(statusBarController, topStripColorActive, topStripColor, systemDarkTheme) {
+    LaunchedEffect(statusBarController, topStripColorActive, topStripColor, sampledTopBgColor, systemDarkTheme) {
         val controller = statusBarController ?: return@LaunchedEffect
-        controller.isAppearanceLightStatusBars = if (topStripColorActive) {
-            topStripColor.luminance() > 0.5f
-        } else {
-            !systemDarkTheme
+        controller.isAppearanceLightStatusBars = when {
+            topStripColorActive -> topStripColor.luminance() > 0.5f
+            sampledTopBgColor != null -> sampledTopBgColor.luminance() > 0.5f
+            else -> !systemDarkTheme
         }
     }
     // Resolves a tab's theme-color strip fill for the tab switcher: the site's sampled theme color,
@@ -1523,23 +1618,39 @@ fun TangentRoot(
     // Reader-mode pill auto-hide. Scrolling the article down past a small slop hides the pill fully;
     // scrolling up reveals it again. A spring keeps it from snapping on tiny jitter.
     fun handleReaderScrollDelta(delta: Float) {
-        val target = when {
-            delta > ReaderBarHideSlopPx -> 1f
-            delta < -ReaderBarHideSlopPx -> 0f
-            else -> return
-        }
-        if (readerBarHidden.targetValue == target) return
-        scope.launch {
-            readerBarHidden.animateTo(
+        if (delta == 0f) return
+        // A fresh scroll delta pre-empts any in-flight settle so the pill tracks the finger again.
+        readerBarSettleJob?.cancel()
+        readerBarSettleJob = null
+        // The full hide travel is the pill's measured bottom region plus a margin so it clears the
+        // screen (mirrors pillReaderHideOffsetPx below). Map the px delta into that 0..1 range and
+        // accumulate, clamped — positive delta (reading down) hides, negative (reading up) reveals.
+        val hideDistancePx = bottomChromeInsetPx + with(density) { 48.dp.toPx() }
+        if (hideDistancePx <= 0f) return
+        readerBarHidden = (readerBarHidden + delta / hideDistancePx).coerceIn(0f, 1f)
+    }
+
+    // On finger-lift / fling-end the pill settles to whichever edge it's closest to, so it never
+    // rests half-hidden. Animates the plain float directly (no Animatable) to keep the drag
+    // hot-path above allocation-free.
+    fun settleReaderBar() {
+        val target = if (readerBarHidden >= 0.5f) 1f else 0f
+        if (readerBarHidden == target) return
+        readerBarSettleJob?.cancel()
+        readerBarSettleJob = scope.launch {
+            animate(
+                initialValue = readerBarHidden,
                 targetValue = target,
                 animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
-            )
+            ) { value, _ -> readerBarHidden = value }
         }
     }
 
     // Always reveal the pill when entering or leaving reader mode (or switching tabs in reader).
     LaunchedEffect(isReaderActiveOnSelectedTab, selectedTabId) {
-        readerBarHidden.snapTo(0f)
+        readerBarSettleJob?.cancel()
+        readerBarSettleJob = null
+        readerBarHidden = 0f
     }
 
     val onPrimaryUrlTap: () -> Unit = {
@@ -1652,7 +1763,8 @@ fun TangentRoot(
             if (shouldCreateTab) {
                 incomingBitmap = null
                 isNewTab = true
-                pinnedIncomingTabId = viewModel.onCreateTabFromEdge(selectTab = false)
+                pinnedIncomingTabId =
+                    viewModel.onCreateTabFromEdge(selectTab = false, groupId = effectiveSpaceId)
             } else {
                 val incomingTabId = if (direction == -1) {
                     previousTabId
@@ -1748,6 +1860,7 @@ fun TangentRoot(
                 title = title,
                 engineSession = preparedEngineSession,
                 editBlankTab = editBlankTab,
+                groupId = currentSpaceId.value,
             )
             onStarted()
             return id
@@ -1760,6 +1873,7 @@ fun TangentRoot(
             engineSession = preparedEngineSession,
             editBlankTab = editBlankTab,
             selectTab = false,
+            groupId = currentSpaceId.value,
         )
         pendingActiveBarState = visualBarStateForUrl(
             url = url,
@@ -2234,9 +2348,11 @@ fun TangentRoot(
             dragCommitted = false
             offsetX = 0f
         }
-        if (pendingActiveBarState?.blankNewTabPreview != true) {
-            pendingActiveBarState = null
-        }
+        // NB: pendingActiveBarState is deliberately NOT cleared here. actualSelectedTabId (collected
+        // straight from the store) flips a frame or more before viewModel.state re-derives BarUiState
+        // for the new tab. Clearing on this signal would drop the bridge state while `state` still
+        // holds the OUTGOING tab's domain, flashing the wrong URL in the pill during rapid successive
+        // swipes. The dedicated effect below clears it only once `state` has actually caught up.
         predictiveBackAnimationJob?.cancel()
         predictiveBackAnimationJob = null
         resetPredictiveBackGesture()
@@ -2246,6 +2362,21 @@ fun TangentRoot(
         scrollVelocitySampleCount = 0
         expandUrlBar()
         resetPullRefresh()
+    }
+
+    // Clear the tab-switch bridge state (pendingActiveBarState) only once the real derived bar
+    // `state` has caught up to the tab we switched to — i.e. the store's selection has settled
+    // (visualSelectedTabId back to null) AND viewModel.state's pageUrl matches the now-selected
+    // tab's live URL. Clearing any earlier reveals a `state` still describing the outgoing tab,
+    // which is the "wrong domain on successive swipes" flash. Blank new-tab previews are exempt —
+    // they are torn down by the editing-mode effect, not by state catch-up.
+    LaunchedEffect(state.pageUrl, actualSelectedContent?.url, visualSelectedTabId, pendingActiveBarState) {
+        val pending = pendingActiveBarState ?: return@LaunchedEffect
+        if (pending.blankNewTabPreview) return@LaunchedEffect
+        if (visualSelectedTabId != null) return@LaunchedEffect
+        if (state.pageUrl == actualSelectedContent?.url.orEmpty()) {
+            pendingActiveBarState = null
+        }
     }
 
     LaunchedEffect(selectedTabId, selectedContent?.url) {
@@ -2298,6 +2429,7 @@ fun TangentRoot(
                     engineSession = engineSession,
                     editBlankTab = false,
                     selectTab = false,
+                    groupId = currentSpaceId.value,
                 )
             }
         }
@@ -2882,6 +3014,7 @@ fun TangentRoot(
                         topPadding = with(density) { topChromeInsetPx.toDp() },
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                         onScrollDelta = { delta -> handleReaderScrollDelta(delta) },
+                        onScrollSettle = { settleReaderBar() },
                         onSnapshot = { bitmap ->
                             selectedTabId?.let { id ->
                                 if (readerManager.isReaderActive(id)) readerTabSnapshots[id] = bitmap
@@ -2890,17 +3023,21 @@ fun TangentRoot(
                         onLinkClick = { href ->
                             readerManager.openReaderLink(context, selectedTabId, selectedEngineSession, href)
                         },
-                        onLinkLongPress = { href, origin ->
+                        onLinkLongPress = { href, origin, srcRect, bmp ->
                             // Peek out of a long-pressed reader link. Only http(s) targets are
                             // peekable (LinkPeekCard requires them); other schemes fall through to a
-                            // tap. No source rect / element bitmap here — reader content isn't a live
-                            // GeckoView, so the card morphs from a chip at the touch point.
+                            // tap. Reader content isn't a live GeckoView, so the morph pixels come
+                            // from the reader's own captured surface (bmp), cropped to the link's rect.
                             val low = href.trim().lowercase()
                             if (low.startsWith("http://") || low.startsWith("https://")) {
                                 peekOrigin = origin
-                                peekSourceRect = null
+                                peekSourceRect = srcRect
                                 peekCaptureBitmap = null
-                                peekElementBitmap = null
+                                peekElementBitmap = if (bmp != null && srcRect != null) {
+                                    cropBitmapToRect(
+                                        bmp, srcRect, bmp.width.toFloat(), bmp.height.toFloat()
+                                    )
+                                } else null
                                 preparePeekEngine()
                                 peekUrl = href
                                 tangentHaptics.longPress()
@@ -3047,7 +3184,11 @@ fun TangentRoot(
                         )
                         closeGrid(animateBack = true) {
                             gridNewTabSelected = false
-                            val newTabId = viewModel.onCreateTabFromEdge(selectTab = false)
+                            // Keep the new tab inside the active Space (otherwise it lands in Personal
+                            // and vanishes from the switcher it was created in) and inherit that Space's
+                            // default container.
+                            val newTabId =
+                                viewModel.onCreateTabFromEdge(selectTab = false, groupId = effectiveSpaceId)
                             stickyIncomingTabId = newTabId
                             stagePendingGeckoSelection(tabId = newTabId, createdTab = true, editBlankTab = true)
                             commitPendingGeckoSelection()
@@ -3088,6 +3229,14 @@ fun TangentRoot(
                             commitPendingGeckoSelection()
                         }
                     }
+                    // Container swatch per tab, so the overview shows which cookie jar each tab uses.
+                    // Personal/default (contextId == null) resolves to null → no ring/dot.
+                    val gridContainerColorProvider: (String) -> Color? = { tabId ->
+                        val ctx = tabsList.firstOrNull { it.id == tabId }?.contextId
+                        ctx?.let { id ->
+                            gridContainers.firstOrNull { it.contextId == id }?.color?.swatch()
+                        }
+                    }
                     val gridSnapshotProvider: (String) -> Bitmap? = { tabId ->
                         val tabIndex = tabsList.indexOfFirst { it.id == tabId }
                         val tab = tabsList.getOrNull(tabIndex)
@@ -3124,6 +3273,7 @@ fun TangentRoot(
                             snapshotVersion = snapshotCacheVersionState,
                             snapshotProvider = gridSnapshotProvider,
                             themeColorProvider = gridThemeColorProvider,
+                            containerColorProvider = gridContainerColorProvider,
                             bottomControlsHeightPx = gridBottomControlsHeightPx,
                         )
                     } else {
@@ -3154,6 +3304,7 @@ fun TangentRoot(
                                 tab?.content?.url?.let { faviconCache[faviconKeyFor(it)] }
                                     ?: tab?.content?.icon
                             },
+                            containerColorProvider = gridContainerColorProvider,
                             tabViewMode = tabViewMode,
                             // Reserve the top cutout band (status bar / hole punch) plus the caption
                             // band that hangs ~66dp above each card, so the card titles/favicons sit
@@ -3181,6 +3332,39 @@ fun TangentRoot(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
+                        // Space switcher — pick which local Space the tab overview shows. Sits just
+                        // above the overview toolbar ("from the bottom of the tab switcher").
+                        run {
+                            val groupedIds = remember(spaceGroups) {
+                                spaceGroups.flatMapTo(HashSet()) { it.tabIds }
+                            }
+                            val personalCount = allTabs.count { it.id !in groupedIds }
+                            com.firebolt9907.tangentbrowser.ui.grid.SpaceSwitcherStrip(
+                                spaces = spaceGroups,
+                                activeSpaceId = effectiveSpaceId,
+                                personalCount = personalCount,
+                                countFor = { id ->
+                                    spaceGroups.firstOrNull { it.id == id }?.tabIds?.size ?: 0
+                                },
+                                onSelectSpace = { spaceId ->
+                                    tangentHaptics.select()
+                                    activeSpaceId = spaceId
+                                    components.globalPreferencesStore.activeSpaceId = spaceId
+                                },
+                                onNewSpace = {
+                                    tangentHaptics.create()
+                                    val palette = com.firebolt9907.tangentbrowser.state.TabGroupColor.entries
+                                    val color = palette[spaceGroups.size % palette.size]
+                                    val id = components.tabGroupsRepository.createGroup("New Space", color)
+                                    activeSpaceId = id
+                                    components.globalPreferencesStore.activeSpaceId = id
+                                },
+                                onManageSpaces = {
+                                    tangentHaptics.select()
+                                    showTabGroups = true
+                                },
+                            )
+                        }
                         GridOverviewControls(
                             grid = grid,
                             syncState = firefoxSyncState,
@@ -3311,6 +3495,17 @@ fun TangentRoot(
                         if (currentUrl == "about:blank") viewModel.dismissBlankTabAndReturn()
                         components.tabRepository.selectTab(tabId)
                     },
+                    syncedTabs = remember(firefoxSyncState.devices) {
+                        firefoxSyncState.devices.flatMap { device ->
+                            device.tabs.map { tab ->
+                                com.firebolt9907.tangentbrowser.state.RemoteTabRef(
+                                    url = tab.url,
+                                    title = tab.title,
+                                    deviceName = device.name,
+                                )
+                            }
+                        }
+                    },
                     onDismiss = {
                         // Mirror the Cancel button: dismissing the sheet on an untouched blank new
                         // tab must also discard that tab, otherwise it lingers in the tab list.
@@ -3363,7 +3558,7 @@ fun TangentRoot(
                         // Translate the pill fully off the bottom edge as the reader hides it.
                         // Distance is the bar's measured bottom region plus a margin so it
                         // clears the screen entirely.
-                        { readerBarHidden.value * (bottomChromeInsetPx + with(density) { 48.dp.toPx() }) }
+                        { readerBarHidden * (bottomChromeInsetPx + with(density) { 48.dp.toPx() }) }
                     }
                     // Most-recently-used other Sync device — the Send Tab target the copy banner offers.
                     val recentTargetDevice = remember(firefoxSyncState.targetDevices) {
@@ -3479,6 +3674,20 @@ fun TangentRoot(
                     // send-to-device, received tab) registers here so simultaneous banners pile up
                     // instead of overlapping. Lower stackPriority sits nearer the pill.
                     val bannerStack = com.firebolt9907.tangentbrowser.ui.rememberBannerStackState()
+
+                    // Site content-permission request (camera/mic/location/notifications…) — an
+                    // interactive banner the user must answer, so it sits front-most in the stack.
+                    // Replaces the old center-screen AlertDialog.
+                    com.firebolt9907.tangentbrowser.ui.SitePermissionBannerHost(
+                        controller = components.sitePermissionController,
+                        bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        collapseProgress = barCollapseProgressProvider,
+                        gridProgress = pillGridProgress,
+                        horizontalOffsetX = archivePillOffsetX,
+                        switchFade = archiveSwitchFade,
+                        stack = bannerStack,
+                    )
+
                     com.firebolt9907.tangentbrowser.ui.sync.SendToDeviceBannerHost(
                         deviceName = if (sendLinkPrompt != null) recentTargetDevice?.name else null,
                         deviceType = recentTargetDevice?.type,
@@ -3529,6 +3738,16 @@ fun TangentRoot(
                             otpPasteVisible = false
                         },
                         onDismiss = { otpPasteVisible = false },
+                    )
+
+                    // "Reader mode unavailable" feedback for a manual reader request that found no
+                    // article — same bottom-anchored morphing banner as the OTP/handoff cards.
+                    com.firebolt9907.tangentbrowser.ui.reader.ReaderUnavailableBannerHost(
+                        visible = readerUnavailableVisible,
+                        bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        collapseProgress = barCollapseProgressProvider,
+                        stack = bannerStack,
+                        onDismiss = { readerUnavailableVisible = false },
                     )
 
                     // Internet Archive (Wayback) date scrubber — bottom-anchored above the pill while

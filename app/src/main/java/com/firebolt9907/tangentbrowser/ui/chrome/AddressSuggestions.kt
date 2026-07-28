@@ -5,6 +5,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -13,10 +14,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -39,16 +45,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Velocity
 import com.firebolt9907.tangentbrowser.state.AddressSuggestion
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
 import com.firebolt9907.tangentbrowser.state.AddressSuggestionKind
@@ -60,7 +72,9 @@ import com.firebolt9907.tangentbrowser.state.hostOf
 import com.firebolt9907.tangentbrowser.state.looksLikeUrlInput
 import com.firebolt9907.tangentbrowser.state.normalizeUrl
 import com.firebolt9907.tangentbrowser.state.OpenTabRef
+import com.firebolt9907.tangentbrowser.state.RemoteTabRef
 import com.firebolt9907.tangentbrowser.state.openTabSuggestions
+import com.firebolt9907.tangentbrowser.state.syncedTabSuggestions
 import com.firebolt9907.tangentbrowser.state.searchSuggestions
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -113,11 +127,15 @@ fun AddressSheet(
     openTabs: List<OpenTabRef> = emptyList(),
     currentTabId: String? = null,
     onSwitchToTab: (String) -> Unit = {},
+    // Tabs open on other Firefox-synced devices, offered as navigable suggestions. Empty list
+    // disables the feature (e.g. signed out).
+    syncedTabs: List<RemoteTabRef> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val imeController = rememberImeSheetController()
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     // `reveal` drives entry/exit slide when not dragging. `dragging` is true during a drag and its
     // release animation; `rawDragPx` is the finger's downward travel (drives the sheet's slide).
@@ -125,6 +143,11 @@ fun AddressSheet(
     var dragging by remember { mutableStateOf(false) }
     var rawDragPx by remember { mutableFloatStateOf(0f) }
     var containerHeightPx by remember { mutableFloatStateOf(0f) }
+    // Guards against a second `endDrag` while the release animation is already running. A single
+    // nested-scroll fling calls BOTH onPreFling and onPostFling; without this each would launch its
+    // own settle coroutine and the two would fight over `rawDragPx` (visible as a down-slide that
+    // rebounds up and then dismisses anyway).
+    var settling by remember { mutableStateOf(false) }
 
     // Keyboard height: captured live from WindowInsets while not dragging (the controller freezes it
     // during manual control). Used as the sheet's resting bottom inset and the drag/dismiss metric.
@@ -134,6 +157,11 @@ fun AddressSheet(
         // Capture the peak (keyboard height); don't let it shrink while the keyboard is collapsing.
         if (!dragging && imeBottomPx > kbHeightPx) kbHeightPx = imeBottomPx
     }
+
+    // IME animation control is acquired lazily when a drag actually begins (onDragStart / the
+    // nested-scroll onPreScroll), with pre-control drag deltas buffered by ImeSheetController. We do
+    // NOT pre-acquire it while the keyboard is merely visible: grabbing control mid open/close
+    // animation makes the IME visibly teleport between shown and hidden.
 
     // Note: we intentionally do NOT auto-dismiss the sheet when the keyboard collapses. Pressing
     // Back while editing hides the IME (the IME window consumes that first Back in onKeyPreIme,
@@ -210,8 +238,13 @@ fun AddressSheet(
     } else {
         emptyList()
     }
+    val syncedMatches = if (rowsActive) {
+        syncedTabSuggestions(trimmed, syncedTabs)
+    } else {
+        emptyList()
+    }
     val rows = if (rowsActive) {
-        buildSuggestionRows(localMatches, searchTerms, trimmed, tabMatches)
+        buildSuggestionRows(localMatches, searchTerms, trimmed, tabMatches, syncedMatches)
     } else {
         emptyList()
     }
@@ -241,10 +274,22 @@ fun AddressSheet(
     }
 
     fun endDrag(velocityY: Float) {
-        val dismiss = rawDragPx > travelPx * 0.5f || velocityY > 2200f
+        if (settling) return
+        settling = true
+        val dismiss = rawDragPx > travelPx * 0.5f || (rawDragPx > 30f && velocityY > 2200f)
+        val currentFrac = if (imeController.isSupported && imeController.isActive) {
+            imeController.currentFraction()
+        } else if (imeBottomPx >= kbHeightPx - 5f && kbHeightPx > 0f) {
+            1f
+        } else {
+            0f
+        }
+        val keepKeyboard = !dismiss && imeController.isSupported && (
+            velocityY < -300f || (velocityY <= 600f && currentFrac >= 0.35f)
+        )
         // Ride the real keyboard to its resting state (preserves the frame-locked feel on release).
-        if (imeController.isSupported && imeController.isReady) {
-            imeController.animateToFinish(show = !dismiss) {}
+        if (imeController.isSupported && imeController.isActive) {
+            imeController.animateToFinish(show = keepKeyboard) {}
         }
         scope.launch {
             val target = if (dismiss) {
@@ -259,7 +304,110 @@ fun AddressSheet(
             reveal.snapTo(if (dismiss) 0f else 1f)
             dragging = false
             rawDragPx = 0f
+            settling = false
             if (dismiss) onDismiss()
+        }
+    }
+
+    val nestedScrollConnection = remember(visible, imeBottomPx, kbHeightPx, keyboardController) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val dy = available.y
+                if (dy > 0f) {
+                    // Finger DOWN, phase 1 (BEFORE the list scrolls): collapse the keyboard,
+                    // frame-locked. Only what the keyboard absorbs is consumed; once it's fully
+                    // down the leftover falls through so the LazyColumn scrolls toward its end, and
+                    // the sheet-pull takes over from there (onPostScroll).
+                    val keyboardPresent = imeController.isSupported &&
+                        (imeController.isActive || imeBottomPx > 0f)
+                    if (keyboardPresent) {
+                        if (!imeController.isActive) imeController.startControlRequest {}
+                        val consumed = -imeController.insetByUp(-dy)
+                        if (consumed > 0f) {
+                            dragging = true
+                            return Offset(0f, consumed)
+                        }
+                        // Control was just requested and is still pending (insetByUp buffered the
+                        // delta, returning 0): keep consuming so the list doesn't scroll ahead of
+                        // the keyboard — the buffered delta replays once control is granted.
+                        if (!imeController.isReady) {
+                            dragging = true
+                            return Offset(0f, dy)
+                        }
+                    }
+                    return Offset.Zero
+                } else if (dy < 0f) {
+                    // Finger UP, phase 1 (BEFORE the list scrolls back): undo the sheet-pull first
+                    // (mirror of onPostScroll's down path). Once the sheet is back at rest the
+                    // leftover falls through so the list scrolls back, then the keyboard rises
+                    // (onPostScroll) — the exact reverse order of the way down.
+                    if (rawDragPx > 0f) {
+                        val newDrag = (rawDragPx + dy).coerceAtLeast(0f)
+                        val used = rawDragPx - newDrag
+                        rawDragPx = newDrag
+                        dragging = true
+                        return Offset(0f, -used)
+                    }
+                    return Offset.Zero
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                val dy = available.y
+                if (dy > 0f) {
+                    // Finger DOWN, phase 3: the list has scrolled to its end (this delta is its
+                    // overscroll) → pull the whole sheet down to dismiss. The keyboard is already
+                    // fully collapsed here, so imePadding == 0 and the sheet slides as one piece.
+                    dragging = true
+                    rawDragPx += dy
+                    return Offset(0f, dy)
+                } else if (dy < 0f) {
+                    // Finger UP, phase 3: the list has scrolled back to its bottom (this delta is
+                    // its overscroll) → bring the keyboard back up.
+                    if (imeController.isSupported && imeController.isActive &&
+                        imeController.currentFraction() < 0.999f
+                    ) {
+                        // We still hold IME control (mid-collapse, same gesture) → raise it
+                        // frame-locked to the finger.
+                        val consumed = -imeController.insetByUp(-dy)
+                        if (consumed < 0f) {
+                            dragging = true
+                            return Offset(0f, consumed)
+                        }
+                    } else if (imeBottomPx == 0f) {
+                        // Keyboard is fully hidden and we no longer hold control (it was collapsed
+                        // and the finger lifted, so control was released on settle). We can't grab
+                        // interactive control of a hidden IME reliably, so ask the system to show
+                        // it; imePadding then lifts the list up with the keyboard's own animation.
+                        keyboardController?.show()
+                    }
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                // Settle only if THIS gesture actually engaged the keyboard/sheet drag (dragging);
+                // a pure list scroll/fling (keyboard already down, no sheet pull) is left to the
+                // LazyColumn so it flings naturally.
+                if (dragging || rawDragPx > 0f) {
+                    endDrag(available.y)
+                    return available
+                }
+                return Velocity.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                if (dragging || rawDragPx > 0f) {
+                    endDrag(available.y)
+                    return available
+                }
+                return Velocity.Zero
+            }
         }
     }
 
@@ -305,17 +453,33 @@ fun AddressSheet(
                                 tracker.resetTracking()
                                 rawDragPx = 0f
                                 dragging = true
+                                settling = false
                                 if (imeController.isSupported) {
                                     imeController.startControlRequest {}
                                 }
                             },
                             onVerticalDrag = { change, dy ->
                                 tracker.addPosition(change.uptimeMillis, change.position)
-                                rawDragPx = (rawDragPx + dy).coerceAtLeast(0f)
-                                // Drive the keyboard down frame-for-frame; the pill rides it via its
-                                // own imePadding. The sheet itself slides via rawDragPx above.
-                                if (imeController.isSupported && imeController.isActive) {
-                                    imeController.insetByUp(-dy)
+                                // The grabber isn't part of the scrollable list, so it runs the same
+                                // phase order without a list-scroll step in between: DOWN collapses
+                                // the keyboard first, then pulls the sheet with the leftover; UP
+                                // restores the sheet first, then raises the keyboard. Frame-locked.
+                                if (dy > 0f) {
+                                    var remaining = dy
+                                    if (imeController.isSupported && imeController.isActive) {
+                                        remaining -= -imeController.insetByUp(-remaining)
+                                    }
+                                    if (remaining > 0f) rawDragPx += remaining
+                                } else if (dy < 0f) {
+                                    var remaining = dy
+                                    if (rawDragPx > 0f) {
+                                        val newDrag = (rawDragPx + remaining).coerceAtLeast(0f)
+                                        remaining += rawDragPx - newDrag
+                                        rawDragPx = newDrag
+                                    }
+                                    if (remaining < 0f && imeController.isSupported && imeController.isActive) {
+                                        imeController.insetByUp(-remaining)
+                                    }
                                 }
                                 change.consume()
                             },
@@ -339,38 +503,72 @@ fun AddressSheet(
                     )
                 }
 
-                Column(
+                val listState = rememberLazyListState()
+                // Pin the autoselected top row (index 0, held at the list's bottom edge by
+                // reverseLayout) back into view whenever the suggestion set changes. Without this a
+                // stale scroll offset left over from a previous, longer list can leave that row
+                // scrolled up behind the floating input pill.
+                LaunchedEffect(rows.firstOrNull()?.let { it.kind.name + it.url }) {
+                    if (rows.isNotEmpty()) listState.scrollToItem(0)
+                }
+                // Disable the list's edge overscroll. At rest the bottom-anchored list is pinned
+                // just above the keyboard, so a downward pull must translate the whole sheet /
+                // collapse the IME (handled by nestedScrollConnection) — NOT play Compose's
+                // stretch-and-snap overscroll, which read as the drag "no longer being responsive,
+                // replaced with a standard snapping animation".
+                CompositionLocalProvider(LocalOverscrollFactory provides null) {
+                LazyColumn(
+                    state = listState,
+                    // Fill the available height so reverseLayout anchors content at the BOTTOM (next
+                    // to the keyboard/input pill). With `fill = false` a short list — e.g. a lone
+                    // Paste & Go row — hugged the top of the sheet instead.
                     modifier = Modifier
+                        .weight(1f)
                         .fillMaxWidth()
-                        // Clear the keyboard plus the floating editing pill that sits at its top.
-                        // While dragging, hold the frozen peak (the sheet translates as one piece);
-                        // otherwise track the live IME height so that when Back hides the keyboard
-                        // the list reflows down to the pill instead of leaving a keyboard-tall gap.
-                        .padding(
-                            bottom = with(density) {
-                                (if (dragging) kbHeightPx else imeBottomPx).toDp()
-                            } + bottomInset + 64.dp,
-                        ),
+                        .nestedScroll(nestedScrollConnection)
+                        // Keyboard clearance in the MEASURE phase (the same mechanism the floating
+                        // editing pill uses), so the bottom-anchored list RIDES the keyboard: it
+                        // descends glued to the pill while the keyboard collapses (phase 1) and
+                        // rises with it on the way back up — smoothly, not a recomposition behind.
+                        // During the sheet-pull phase the keyboard is already fully down
+                        // (imePadding == 0), so the sheet translates as one piece with no
+                        // double-move.
+                        .imePadding()
+                        // Clear the floating editing pill that sits at the keyboard's top (72dp tall
+                        // + its 8dp bottom gap + 8dp breathing room). No nav-bar inset here: the
+                        // keyboard already covers it, so adding `bottomInset` back only opened a dead
+                        // gap between the pill and the top result.
+                        .padding(bottom = 88.dp),
+                    reverseLayout = true,
                 ) {
+                    // Paste & Go is only ever shown alone (it requires an empty/untouched field, where
+                    // there are no suggestion rows). Emit it FIRST so reverseLayout places it at the
+                    // bottom — next to the input pill, where the top suggestion would sit — rather than
+                    // stranded at the top of the sheet.
                     if (pasteAvailable) {
-                        PasteRow(onClick = {
-                            // Reading the clip item here (coerceToText) is the only place we touch
-                            // the actual content — so the OS paste-access notification fires on the
-                            // user's explicit tap, not merely on opening the address bar.
-                            val text = systemClipboard
-                                ?.primaryClip
-                                ?.getItemAt(0)
-                                ?.coerceToText(context)
-                                ?.toString()
-                                ?.trim()
-                            if (!text.isNullOrEmpty()) onSubmit(text)
-                        })
+                        item(key = "paste_row") {
+                            PasteRow(onClick = {
+                                // Reading the clip item here (coerceToText) is the only place we touch
+                                // the actual content — so the OS paste-access notification fires on the
+                                // user's explicit tap, not merely on opening the address bar.
+                                val text = systemClipboard
+                                    ?.primaryClip
+                                    ?.getItemAt(0)
+                                    ?.coerceToText(context)
+                                    ?.toString()
+                                    ?.trim()
+                                if (!text.isNullOrEmpty()) onSubmit(text)
+                            })
+                        }
                     }
-                    rows.forEachIndexed { index, suggestion ->
+
+                    itemsIndexed(
+                        items = rows,
+                        // Key by URL/title to maintain scroll position when query updates
+                        key = { _, suggestion -> suggestion.kind.name + suggestion.url }
+                    ) { index, suggestion ->
                         SuggestionRow(
                             suggestion = suggestion,
-                            // The first row is the autoselected default (what Go/Enter commits), so
-                            // it carries a highlight the way a browser omnibox marks its top result.
                             highlighted = index == 0,
                             onClick = {
                                 val tabId = suggestion.tabId
@@ -383,7 +581,40 @@ fun AddressSheet(
                         )
                     }
                 }
+                }
             }
+        }
+
+        // Floating Cancel — overlays the suggestions list (bottom-right) rather than occupying its
+        // own row in the bar, so the list rows stay full-width and remain visible to its left. It
+        // rides the sheet's drag translation and sits just above the input pill's zone (mirroring the
+        // rows' `+ 64.dp` pill clearance, plus a small gap). Calls onDismiss — the caller wires that
+        // to the same "leave editing" action the old inline Cancel button had.
+        Surface(
+            onClick = onDismiss,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .graphicsLayer { translationY = sheetOffset() }
+                .padding(
+                    end = 24.dp,
+                    top = with(density) {
+                        statusBarTopPad + 24.dp + 24.dp
+                    }
+//                    bottom = with(density) {
+//                        (if (dragging) kbHeightPx else imeBottomPx).toDp()
+//                    } + bottomInset + 12.dp,
+                ),
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            tonalElevation = 6.dp,
+            shadowElevation = 8.dp,
+        ) {
+            Text(
+                text = "Cancel",
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge,
+            )
         }
     }
 }
@@ -409,6 +640,7 @@ private fun buildSuggestionRows(
     searchTerms: List<String>,
     typed: String,
     tabMatches: List<AddressSuggestion> = emptyList(),
+    syncedMatches: List<AddressSuggestion> = emptyList(),
     max: Int = 8,
 ): List<AddressSuggestion> {
     val rows = LinkedHashMap<String, AddressSuggestion>()
@@ -446,6 +678,13 @@ private fun buildSuggestionRows(
     }
 
     for (s in local) {
+        val key = "u:" + canonicalUrlKey(s.url)
+        if (!rows.containsKey(key)) rows[key] = s
+    }
+    // Tabs from other devices rank below local history/open tabs (a page you've actually visited or
+    // have open here is the stronger local intent) but above raw search suggestions. Keyed by the same
+    // canonical URL so an open/history row for the same page suppresses the synced duplicate.
+    for (s in syncedMatches) {
         val key = "u:" + canonicalUrlKey(s.url)
         if (!rows.containsKey(key)) rows[key] = s
     }
@@ -551,14 +790,18 @@ private fun SuggestionRow(
                 )
                 Text(
                     // A switch-to-tab row labels itself so the arrow reads as "go to that tab", not
-                    // "open this URL" — otherwise it's indistinguishable from a history hit.
-                    text = if (suggestion.kind == AddressSuggestionKind.Tab) {
-                        "Switch to open tab"
-                    } else {
-                        suggestion.url
+                    // "open this URL"; a synced-tab row names its source device ("From <device>") so
+                    // it's distinguishable from a local history hit. Both otherwise show the raw URL.
+                    text = when (suggestion.kind) {
+                        AddressSuggestionKind.Tab -> "Switch to open tab"
+                        AddressSuggestionKind.SyncedTab ->
+                            suggestion.detail?.let { "From $it" } ?: suggestion.url
+                        else -> suggestion.url
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (suggestion.kind == AddressSuggestionKind.Tab) {
+                    color = if (suggestion.kind == AddressSuggestionKind.Tab ||
+                        suggestion.kind == AddressSuggestionKind.SyncedTab
+                    ) {
                         MaterialTheme.colorScheme.primary
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant

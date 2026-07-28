@@ -15,6 +15,14 @@ data class ReaderArticle(
      * CDNs with hotlink protection (which 403 requests that carry no/foreign referer) serve them.
      */
     val sourceUrl: String? = null,
+    /**
+     * True when this "article" is really a social-media thread (Reddit/X/Mastodon/Bluesky) extracted
+     * by [SocialExtractor] rather than the prose extractor. Social threads carry [ReaderBlock.SocialPost]
+     * / [ReaderBlock.SocialComment] blocks and are rendered as attributed cards. A short post is still
+     * worth showing, so [hasSubstantialBody] is unconditionally true for social threads (the article
+     * prose floor doesn't apply — a two-line viral tweet is a legitimate reader target).
+     */
+    val isSocial: Boolean = false,
 ) {
     /**
      * Total length of the extracted *prose* — paragraphs, list items, blockquotes, code, and table
@@ -29,6 +37,8 @@ data class ReaderArticle(
                 is ReaderBlock.Blockquote -> block.text.length
                 is ReaderBlock.Code -> block.text.length
                 is ReaderBlock.Table -> block.rows.sumOf { row -> row.sumOf { it.length } }
+                is ReaderBlock.SocialPost -> block.text.length + (block.title?.length ?: 0)
+                is ReaderBlock.SocialComment -> block.text.length
                 else -> 0
             }
         }
@@ -41,7 +51,7 @@ data class ReaderArticle(
      * this — the user can still force reader mode on a thin page from the aA sheet.
      */
     val hasSubstantialBody: Boolean
-        get() = bodyTextLength >= MIN_AUTO_READER_BODY_CHARS
+        get() = isSocial || bodyTextLength >= MIN_AUTO_READER_BODY_CHARS
 
     companion object {
         /**
@@ -120,7 +130,59 @@ sealed class ReaderBlock {
         val width: Int? = null,
         val height: Int? = null,
     ) : ReaderBlock()
+
+    /**
+     * The root post of a social-media thread (Reddit submission, tweet/X post, Mastodon status,
+     * Bluesky post). Rendered as an attributed card at the top of the social reader. [handle] is the
+     * secondary identity line (`u/…`, `@handle`, community/instance); [meta] is a pre-formatted stats
+     * line (score/points, likes, timestamp). [title] is present only where the platform has a distinct
+     * post title (Reddit); tweets/statuses have none. [media] carries inline images (videos are
+     * dropped — the reader is a text-first surface). Populated by [SocialExtractor]; see [ReaderMedia].
+     */
+    data class SocialPost(
+        val author: String,
+        val handle: String?,
+        val avatarUrl: String?,
+        val timestamp: String?,
+        val meta: String?,
+        val title: String?,
+        val text: String,
+        val links: List<ReaderLinkSpan> = emptyList(),
+        val media: List<ReaderMedia> = emptyList(),
+    ) : ReaderBlock()
+
+    /**
+     * A reply/comment in a social-media thread. [depth] nests threaded replies (0 = top level), used
+     * to indent the card and draw a hierarchy rail — mirrors [ListItem.depth]. [isOp] marks a reply
+     * written by the thread's original poster (highlighted, "OP" tag), matched by handle in
+     * [SocialExtractor]. Platforms whose web UI is a flat thread (X, Mastodon, Bluesky) emit depth 0.
+     */
+    data class SocialComment(
+        val author: String,
+        val handle: String?,
+        val avatarUrl: String?,
+        val timestamp: String?,
+        val meta: String?,
+        val text: String,
+        val links: List<ReaderLinkSpan> = emptyList(),
+        val media: List<ReaderMedia> = emptyList(),
+        val depth: Int = 0,
+        val isOp: Boolean = false,
+    ) : ReaderBlock()
 }
+
+/**
+ * An inline image attached to a social post/comment. [src] is an absolute URL; [width]/[height] are
+ * intrinsic pixel dimensions when known (to reserve aspect-ratio space and avoid reflow), null
+ * otherwise.
+ */
+data class ReaderMedia(
+    val src: String,
+    val width: Int? = null,
+    val height: Int? = null,
+    /** True when [src] is an animated GIF — the reader animates it and shows a small "GIF" badge. */
+    val gif: Boolean = false,
+)
 
 enum class ReaderTheme { System, White, Sepia, Dark }
 
@@ -168,6 +230,29 @@ class ReaderManager {
 
     fun requestReaderActivation(tabId: String) {
         _pendingActivationTabs.update { it + tabId }
+    }
+
+    // A one-shot "reader isn't available for this page" signal, carrying the tab it applies to. Set
+    // only when extraction reports no article *while a manual activation is pending*, so it never
+    // fires on the silent auto-extract pass. UI (TangentRoot) shows a transient banner and clears it.
+    private val _readerUnavailableTab = MutableStateFlow<String?>(null)
+    val readerUnavailableTab: StateFlow<String?> = _readerUnavailableTab.asStateFlow()
+
+    /**
+     * Report that extraction found no readable article for [tabId]. No-op unless the tab has a
+     * pending (user-initiated) activation — an auto-extract pass that comes up empty stays silent.
+     * Consumes the pending flag and raises [readerUnavailableTab] so the manual attempt gets visible
+     * feedback instead of appearing to do nothing.
+     */
+    fun reportReaderUnavailable(tabId: String) {
+        if (!_pendingActivationTabs.value.contains(tabId)) return
+        _pendingActivationTabs.update { it - tabId }
+        _readerUnavailableTab.value = tabId
+    }
+
+    /** Clear the unavailable signal once the banner has been shown/dismissed. */
+    fun clearReaderUnavailable(tabId: String? = null) {
+        _readerUnavailableTab.update { current -> if (tabId == null || tabId == current) null else current }
     }
 
     fun setReaderEligible(tabId: String, article: ReaderArticle) {

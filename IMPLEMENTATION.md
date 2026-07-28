@@ -334,14 +334,19 @@ Passkeys are stored in the Android platform Keystore / Credential Manager and ar
 
 ## Reader mode (`ui/reader/`, `ui/chrome/AaSheet.kt`, `ui/content/ContentHost.kt`)
 
-Reader mode extracts article content from the live page via JavaScript and renders it in a clean native Compose view.
+Reader mode extracts article content from the live page via JavaScript and renders it in a clean native Compose view. The **same extraction heuristic** (article-element scoring → per-site include/strip rules → heading/paragraph/blockquote/list/table/figure/inline-math block extraction) exists in two forms with **two transports**; keep them behaviourally in step:
+
+### Two transports (Port primary, prompt fallback)
+
+1. **Content-script Port (primary).** The built-in reader extension (`assets/extensions/reader/`, content script `extractor.js`, native-messaging port `TangentReader`) runs the extractor in an **isolated world** and returns the article over a `Port` — never `window.prompt`. This is the *only* path that works on pages served with a CSP `sandbox` directive that omits `allow-modals` (which silently no-ops `prompt()` — e.g. TechCrunch). `ReaderExtension` (see `ui/reader/`) installs it once from `Engine.init` (mirrors `WebDarkModeExtension`) and owns the shared `ReaderPortHandler`. `ContentHost` calls `ReaderExtension.registerFor(session, tabId)` to route a session's port to its tab; `ReaderPortHandler.onPortConnected` pushes the compact `ReaderRules` over the port (`{action:"config", rules}`), and `onPortMessage` routes `{type:"article"}` → `ReaderManager.setReaderEligible`. `extractor.js` auto-extracts at `document_end` (+ a bounded re-extract as late content lands) and on `{action:"extract"}`.
+2. **`javascript:` prompt bridge (fallback).** `ReaderExtractor.extractReaderContent(engineSession, tabId)` injects a `javascript:` URL that walks the DOM and calls `window.prompt("tangent-reader", JSON.stringify(articleData))`. Used only when the extension isn't installed yet or a session has no live port. `ReaderExtractor.registerPromptDelegate` wraps `GeckoSession.promptDelegate` with `ReaderPromptDelegate`, which intercepts `TextPrompt` where `prompt.message == "tangent-reader"` (data in `prompt.defaultValue`); guard `if (oldDelegate is ReaderPromptDelegate) return` prevents double-wrapping. `ReaderPromptDelegate` also carries all the *other* `tangent-*` bridge probes, so it is registered regardless of transport.
+
+Both `triggerInitialReaderCheck` (per-load, in `ContentHost`) and `toggleReader` (manual "Show Reader") try `ReaderExtension.requestExtract(session)` first and fall back to `extractReaderContent` only when it returns false.
 
 ### Architecture
 
 - `ReaderManager` (singleton) holds four `StateFlow`s: `activeReaderTabs`, `eligibleReaderTabs`, `tabArticles`, `pendingActivationTabs`. All keyed by tab id.
-- `ReaderExtractor.extractReaderContent(engineSession, tabId)` injects a `javascript:` URL that walks the DOM (article element scoring → heading/paragraph/blockquote/list block extraction) and calls `window.prompt("tangent-reader", JSON.stringify(articleData))` to send the result back to Kotlin.
-- `ReaderExtractor.registerPromptDelegate(engineSession, tabId)` wraps `GeckoSession.promptDelegate` with `ReaderPromptDelegate` which intercepts `TextPrompt` where `prompt.message == "tangent-reader"`. The data is in `prompt.defaultValue` (the second argument to `window.prompt`). Guard `if (oldDelegate is ReaderPromptDelegate) return` prevents double-wrapping on re-render.
-- `ContentHost` calls `registerPromptDelegate` inside `DisposableEffect(engineView, engineSession, tabId)` after `engineView.render(session)`.
+- `ContentHost` calls `registerPromptDelegate` **and** `ReaderExtension.registerFor` inside `DisposableEffect(engineView, engineSession, tabId)` after `engineView.render(session)`.
 
 ### Critical: `prompt.message` not `prompt.title`
 

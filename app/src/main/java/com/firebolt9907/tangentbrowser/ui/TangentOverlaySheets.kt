@@ -37,8 +37,9 @@ import mozilla.components.concept.engine.EngineView
 /**
  * All of [TangentRoot]'s modal sheets and floating overlays — the tab-overview-independent surfaces
  * that render on top of the browser: Settings / History / Bookmarks / Downloads / Passwords /
- * Add-ons / Synced-tabs / the aA appearance sheet, plus the site-permission + prompt dialogs, the
- * standalone UtilityWebCard, the link glance (LinkPeekCard) and the image context sheet.
+ * Add-ons / Synced-tabs / the aA appearance sheet, plus the prompt dialogs, the standalone
+ * UtilityWebCard, the link glance (LinkPeekCard) and the image context sheet. (The site-permission
+ * request is a Now-Bar banner mounted in TangentRoot, not a dialog here.)
  *
  * Pulled out of TangentRoot.kt verbatim: the visibility flags and the TangentRoot-owned state each
  * surface mutates are hoisted in as values + callbacks, while anything reachable through
@@ -252,7 +253,8 @@ internal fun TangentOverlaySheets(
         )
     }
 
-    SitePermissionDialog(controller = components.sitePermissionController)
+    // The site content-permission prompt is rendered as a Now-Bar banner (SitePermissionBannerHost),
+    // mounted with the other banners in TangentRoot — not as a dialog here.
 
     PromptHandler(
         engineSession = selectedEngineSession,
@@ -261,6 +263,10 @@ internal fun TangentOverlaySheets(
         creditCardAutofillEnabled = components.globalPreferencesStore.creditCardAutofillEnabled,
         addressAutofillEnabled = components.globalPreferencesStore.addressAutofillEnabled,
     )
+
+    // Bitwarden-backed passkeys: credential picker + biometric gate for navigator.credentials
+    // ceremonies routed via PasskeyUiController (inert unless a ceremony is in flight).
+    PasskeyUiHost()
 
     // Proactive login autofill: offer the saved-password picker before the user taps a login field,
     // so the keyboard never appears when a credential is already saved (see ProactiveLoginAutofill).
@@ -274,6 +280,7 @@ internal fun TangentOverlaySheets(
     if (showPasswords) {
         PasswordsSheet(
             loginsStorage = components.loginsStorage,
+            bitwardenController = components.bitwardenController,
             onDismiss = onDismissPasswords,
         )
     }
@@ -332,11 +339,35 @@ internal fun TangentOverlaySheets(
     }
 
     if (showAa) {
+        val aaContainers by components.containerRepository.containers.collectAsStateWithLifecycle()
+        val aaCurrentContextId = selectedTabId
+            ?.let { id -> components.store.state.tabs.firstOrNull { it.id == id } }?.contextId
+        val aaSpaces by components.tabGroupsRepository.groups.collectAsStateWithLifecycle()
+        val aaCurrentSpaceId = selectedTabId
+            ?.let { id -> components.tabGroupsRepository.groupIdForTab(id) }
         AaSheet(
             host = currentHost,
             store = components.sitePreferencesStore,
             globalPrefsStore = components.globalPreferencesStore,
             addonController = components.addonController,
+            sitePermissionController = components.sitePermissionController,
+            containers = aaContainers,
+            currentContextId = aaCurrentContextId,
+            onReopenInContainer = { contextId ->
+                val id = selectedTabId ?: return@AaSheet
+                (components.tabRepository as? com.firebolt9907.tangentbrowser.state.GeckoTabRepository)
+                    ?.reopenTabInContainer(id, contextId)
+            },
+            spaces = aaSpaces,
+            currentSpaceId = aaCurrentSpaceId,
+            onMoveToSpace = { groupId ->
+                val id = selectedTabId ?: return@AaSheet
+                if (groupId != null) {
+                    components.tabGroupsRepository.addTabToGroup(id, groupId)
+                } else {
+                    components.tabGroupsRepository.removeTabFromGroup(id)
+                }
+            },
             onDismiss = {
                 onDismissAa()
                 // The appearance sheet's opaque backdrop pauses the GeckoView compositor while

@@ -6,6 +6,7 @@ import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.webextension.MessageHandler
 import mozilla.components.concept.engine.webextension.Port
 import mozilla.components.concept.engine.webextension.WebExtension
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -51,19 +52,39 @@ class ReaderPortHandler : MessageHandler {
     /**
      * Send an `{action:"extract"}` message to the content script for the given session, triggering
      * a re-extraction (used by the manual "Show Reader" button for SPAs / late-loading content).
+     * Returns true iff a live port existed to receive it — callers use a false to fall back to the
+     * javascript:-URL prompt-bridge extractor (e.g. the extension isn't installed / connected yet).
      */
-    fun sendExtract(session: EngineSession) {
+    fun sendExtract(session: EngineSession): Boolean {
         val port = ports[session]
         if (port == null) {
             TangentLog.debug(TAG) { "sendExtract: no port for session=$session" }
-            return
+            return false
         }
-        try {
-            val msg = JSONObject().put("action", "extract")
-            port.postMessage(msg)
+        return try {
+            port.postMessage(JSONObject().put("action", "extract"))
             TangentLog.debug(TAG) { "sendExtract sent to session=$session" }
+            true
         } catch (e: Exception) {
             Log.w(TAG, "sendExtract failed", e)
+            false
+        }
+    }
+
+    /** True iff a live port exists for [session] (the content script has connected). */
+    fun hasPort(session: EngineSession): Boolean = ports[session] != null
+
+    /**
+     * Push the compact per-site ruleset to the content script so its extraction applies the same
+     * `include`/`strip` overrides as the javascript: path. The script re-extracts on receipt. Sent
+     * on every (re)connect because a port is per-load; a null/blank ruleset is simply not sent.
+     */
+    private fun sendConfig(port: Port) {
+        val rules = try { JSONArray(ReaderRules.cached()) } catch (e: Exception) { return }
+        try {
+            port.postMessage(JSONObject().put("action", "config").put("rules", rules))
+        } catch (e: Exception) {
+            Log.w(TAG, "sendConfig failed", e)
         }
     }
 
@@ -76,6 +97,10 @@ class ReaderPortHandler : MessageHandler {
         ports[session] = port
         val tabId = sessionTabIds[session] ?: "unknown"
         TangentLog.debug(TAG) { "onPortConnected tab=$tabId session=$session port=${port.name()}" }
+        // Hand the content script the per-site rules as soon as it connects (before it can produce a
+        // rule-aware extraction). Its initial document_end pass runs with an empty ruleset, then
+        // re-runs on this config.
+        sendConfig(port)
     }
 
     override fun onPortMessage(message: Any, port: Port) {
@@ -101,14 +126,17 @@ class ReaderPortHandler : MessageHandler {
                             ReaderManager.instance.setReaderEligible(tabId, article)
                         } else {
                             TangentLog.debug(TAG) { "onPortMessage: parseArticleJson returned null tab=$tabId" }
+                            ReaderManager.instance.reportReaderUnavailable(tabId)
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "onPortMessage: failed to parse article tab=$tabId", e)
+                        ReaderManager.instance.reportReaderUnavailable(tabId)
                     }
                 }
             }
             "none" -> {
                 TangentLog.debug(TAG) { "onPortMessage: page not readable tab=$tabId" }
+                ReaderManager.instance.reportReaderUnavailable(tabId)
             }
             else -> {
                 TangentLog.debug(TAG) { "onPortMessage: unknown type=$type tab=$tabId" }

@@ -1,0 +1,553 @@
+/*
+ * Reader overlay styling for the STANDARD desktop extension build only.
+ *
+ * The Tangent built-in build never uses this — there the article blocks are handed to the native app
+ * and rendered by Compose (ui/reader/ReaderView.kt). This sheet is inlined into the standard bundle
+ * at build time (as TANGENT_READER_CSS) and injected inside the overlay's shadow root, so no page
+ * style can leak in and nothing here leaks out onto the page.
+ */
+
+:host {
+  all: initial;
+}
+
+/* Darker-gray dim behind the sheet; fades in during the slide, out on dismiss. */
+.tangent-reader-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  background: #2b2c30;
+  animation: tangent-reader-backdrop-in 0.42s ease both;
+}
+.tangent-reader-backdrop.tangent-reader-closing {
+  animation: tangent-reader-backdrop-out 0.32s ease both;
+}
+
+/* Full-viewport scroller: spans the whole window so its scrollbar sits at the far right, and it
+   scrolls the sheet (plus its top-margin gap) as one. Transparent, so the backdrop shows in the gap
+   and side margins. */
+.tangent-reader-scroll {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+/* The reader itself: a centered card that slides up from the bottom, sitting below a scrollable top
+   gap (its margin-top). Scrolling lifts the gap off the top of the viewport. */
+.tangent-reader-sheet {
+  width: min(1024px, 100vw);
+  margin: 40px auto 0;
+  min-height: calc(100vh - 40px);
+  box-sizing: border-box;
+  background: #c9cacd;
+  color: #1c1b1a;
+  border-radius: 18px 18px 0 0;
+  /* Second (inset) shadow paints a thin top edge in the active Zen space colour when the companion
+     "Zen Space Color Sync" Sine mod is installed (it sets --zen-space-color on the page root, which
+     inherits through :host — `all: initial` does not reset custom properties). Absent the mod the
+     colour is `transparent`, so the sheet looks exactly as before with zero layout shift. */
+  box-shadow: 0 -10px 44px rgba(0, 0, 0, 0.30), inset 0 3px 0 0 var(--zen-space-color, transparent);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.7;
+  overflow: hidden;
+  will-change: transform;
+  animation: tangent-reader-sheet-in 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.tangent-reader-sheet.tangent-reader-closing {
+  animation: tangent-reader-sheet-out 0.4s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes tangent-reader-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes tangent-reader-sheet-out {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
+@keyframes tangent-reader-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes tangent-reader-backdrop-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Staggered content reveal: every top-level article element (title, byline, each block) fades and
+   lifts into place, sequenced by an inline --tangent-reveal-delay set in render.js. The delay is
+   based off the sheet's slide-up so the copy arrives as the card settles. */
+.tangent-reader-reveal {
+  animation: tangent-reader-reveal-in 0.55s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation-delay: var(--tangent-reveal-delay, 0s);
+  will-change: transform, opacity;
+}
+
+@keyframes tangent-reader-reveal-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Images and figures settle in with a gentle scale as their bitmap streams in. */
+.tangent-reader-figure { transition: opacity 0.4s ease; }
+.tangent-reader-article img { transition: transform 0.35s cubic-bezier(0.22, 0.61, 0.36, 1); }
+.tangent-reader-figure:hover img { transform: scale(1.012); }
+
+/* Smooth link + close-button state changes. */
+.tangent-reader-article a { transition: color 0.2s ease, text-decoration-color 0.2s ease; }
+.tangent-reader-close { transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease; }
+.tangent-reader-close:active { transform: scale(0.92); }
+
+@media (prefers-reduced-motion: reduce) {
+  .tangent-reader-backdrop,
+  .tangent-reader-backdrop.tangent-reader-closing,
+  .tangent-reader-sheet,
+  .tangent-reader-sheet.tangent-reader-closing,
+  .tangent-reader-reveal { animation: none; }
+  .tangent-reader-figure,
+  .tangent-reader-article img,
+  .tangent-reader-article a,
+  .tangent-reader-close { transition: none; }
+  .tangent-reader-figure:hover img { transform: none; }
+}
+
+/* Dark palette. Two entry points share one declaration set:
+   - AUTO (default): the system-preference query, but qualified with :not(.tangent-theme-light) so a
+     user who forces Light in the settings popover overrides even a dark OS.
+   - FORCED: :host(.tangent-theme-dark) applies dark on any system.
+   The forced selectors carry a class on :host, so they out-specify the media-query auto rules and win
+   when both could match. */
+@media (prefers-color-scheme: dark) {
+  :host(:not(.tangent-theme-light)) .tangent-reader-sheet { background: #17181a; color: #e7e5e2; }
+  /* On the dark sheet, lift the space colour toward white for legibility (fallback ~#7db2ff). */
+  :host(:not(.tangent-theme-light)) .tangent-reader-sheet a { color: color-mix(in srgb, var(--zen-space-color, #7db2ff) 82%, #ffffff 18%); }
+  :host(:not(.tangent-theme-light)) .tangent-reader-sheet pre,
+  :host(:not(.tangent-theme-light)) .tangent-reader-sheet table { background: #202225; }
+  :host(:not(.tangent-theme-light)) .tangent-reader-sheet blockquote { border-color: #3a3d42; color: #b9b6b1; }
+  :host(:not(.tangent-theme-light)) .tangent-reader-close { background: rgba(32, 34, 37, 0.92); color: #e7e5e2; border-color: #3a3d42; }
+  :host(:not(.tangent-theme-light)) .tangent-reader-hr { border-color: #2c2e31; }
+}
+:host(.tangent-theme-dark) .tangent-reader-sheet { background: #17181a; color: #e7e5e2; }
+:host(.tangent-theme-dark) .tangent-reader-sheet a { color: color-mix(in srgb, var(--zen-space-color, #7db2ff) 82%, #ffffff 18%); }
+:host(.tangent-theme-dark) .tangent-reader-sheet pre,
+:host(.tangent-theme-dark) .tangent-reader-sheet table { background: #202225; }
+:host(.tangent-theme-dark) .tangent-reader-sheet blockquote { border-color: #3a3d42; color: #b9b6b1; }
+:host(.tangent-theme-dark) .tangent-reader-close { background: rgba(32, 34, 37, 0.92); color: #e7e5e2; border-color: #3a3d42; }
+:host(.tangent-theme-dark) .tangent-reader-hr { border-color: #2c2e31; }
+
+.tangent-reader-close {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 2147483647;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  background: rgba(088, 088, 088, 0.92);
+  color: #ffffff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.tangent-reader-close:hover { opacity: 0.85; }
+
+/* ---- reader settings popover (gear beside the close button) ----
+   Themed through custom properties so the component rules below stay single-sourced: light values on
+   :host, dark overrides in the two dark entry points (system-auto + forced), mirroring the sheet. */
+:host {
+  /* Reader's own type unit. All in-reader font sizes are calc(N * var(--tgs-u)) instead of `N rem`,
+     because `rem` resolves against the PAGE's <html> font-size (which shadow DOM and `all: initial` do
+     NOT shield) — sites using the "1rem = 10px" reset (html{font-size:62.5%}, e.g. Bootstrap 3, AWS)
+     would otherwise shrink the whole reader to 62.5%. Anchored to a fixed 16px base times the "Text
+     size" setting, so it's page-independent AND scales every element uniformly. */
+  --tgs-u: calc(16px * var(--tangent-font-scale, 1));
+  --tgs-btn-bg: rgba(88, 88, 88, 0.92);
+  --tgs-btn-fg: #ffffff;
+  --tgs-btn-border: rgba(0, 0, 0, 0.10);
+  --tgs-panel-bg: #ffffff;
+  --tgs-panel-fg: #1c1b1a;
+  --tgs-panel-muted: #6b6864;
+  --tgs-panel-border: #e6e2db;
+  --tgs-seg-bg: #ece8e1;
+  --tgs-seg-active-bg: #ffffff;
+  --tgs-seg-active-fg: #1c1b1a;
+}
+@media (prefers-color-scheme: dark) {
+  :host(:not(.tangent-theme-light)) {
+    --tgs-btn-bg: rgba(32, 34, 37, 0.92);
+    --tgs-btn-fg: #e7e5e2;
+    --tgs-btn-border: #3a3d42;
+    --tgs-panel-bg: #202225;
+    --tgs-panel-fg: #e7e5e2;
+    --tgs-panel-muted: #a3a09b;
+    --tgs-panel-border: #2c2e31;
+    --tgs-seg-bg: #17181a;
+    --tgs-seg-active-bg: #34373c;
+    --tgs-seg-active-fg: #ffffff;
+  }
+}
+:host(.tangent-theme-dark) {
+  --tgs-btn-bg: rgba(32, 34, 37, 0.92);
+  --tgs-btn-fg: #e7e5e2;
+  --tgs-btn-border: #3a3d42;
+  --tgs-panel-bg: #202225;
+  --tgs-panel-fg: #e7e5e2;
+  --tgs-panel-muted: #a3a09b;
+  --tgs-panel-border: #2c2e31;
+  --tgs-seg-bg: #17181a;
+  --tgs-seg-active-bg: #34373c;
+  --tgs-seg-active-fg: #ffffff;
+}
+
+.tangent-reader-settings-btn {
+  position: fixed;
+  top: 14px;
+  right: 62px;                     /* one gap left of the 36px close button (right:16px) */
+  z-index: 2147483647;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--tgs-btn-border);
+  background: var(--tgs-btn-bg);
+  color: var(--tgs-btn-fg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+.tangent-reader-settings-btn:hover { opacity: 0.85; }
+.tangent-reader-settings-btn:active { transform: scale(0.92); }
+.tangent-reader-settings-btn.is-active { transform: rotate(30deg); }
+.tangent-reader-settings-btn svg { display: block; }
+
+.tangent-reader-settings-panel {
+  position: fixed;
+  top: 58px;
+  right: 16px;
+  z-index: 2147483647;
+  width: 250px;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--tgs-panel-bg);
+  color: var(--tgs-panel-fg);
+  border: 1px solid var(--tgs-panel-border);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+  transform-origin: top right;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.tangent-reader-settings-panel.is-open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.tangent-settings-group { margin-bottom: 14px; }
+.tangent-settings-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--tgs-panel-muted);
+  margin-bottom: 7px;
+}
+.tangent-settings-seg {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--tgs-seg-bg);
+}
+.tangent-settings-seg-btn {
+  flex: 1 1 0;
+  padding: 6px 4px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tgs-panel-fg);
+  font: 600 13px/1 inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+.tangent-settings-seg-btn:hover { background: rgba(127, 127, 127, 0.14); }
+.tangent-settings-seg-btn.is-active {
+  background: var(--tgs-seg-active-bg);
+  color: var(--tgs-seg-active-fg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+}
+
+.tangent-settings-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tangent-settings-toggle input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  cursor: pointer;
+  accent-color: var(--zen-space-color, #1c5cdf);
+}
+
+/* Top buttons (close ✕ + settings gear) slide down from above the viewport and fade in as the sheet
+   rises. `backwards` fill holds the from-state during each button's start delay, then reverts to base
+   styles on finish (base transform is none, matching the end) — so it never freezes `transform` and
+   the gear's :active press-scale / .is-active rotate keep working. */
+.tangent-reader-close,
+.tangent-reader-settings-btn {
+  animation: tangent-reader-topbtn-in 0.5s cubic-bezier(0.32, 0.72, 0, 1) backwards;
+}
+.tangent-reader-settings-btn { animation-delay: 0.10s; }
+.tangent-reader-close { animation-delay: 0.16s; }
+
+@keyframes tangent-reader-topbtn-in {
+  from { opacity: 0; transform: translateY(-52px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Exit: on dismiss, render.js tags the top buttons with .tangent-reader-closing and they slide back up
+   off the top of the viewport + fade as the sheet slides down. `forwards` holds them hidden until the
+   host is removed (~400ms later). The two-class selector out-specifies the entrance rule, replacing it. */
+.tangent-reader-close.tangent-reader-closing,
+.tangent-reader-settings-btn.tangent-reader-closing {
+  animation: tangent-reader-topbtn-out 0.32s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+@keyframes tangent-reader-topbtn-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-52px); }
+}
+/* The settings popover, if open, glides up and out with the buttons (via its existing transition). */
+.tangent-reader-settings-panel.tangent-reader-closing {
+  opacity: 0;
+  transform: translateY(-52px) scale(0.98);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tangent-reader-close,
+  .tangent-reader-settings-btn,
+  .tangent-reader-settings-panel { transition: none; animation: none; }
+  .tangent-reader-settings-btn.is-active { transform: none; }
+}
+
+.tangent-reader-article {
+  /* px, not rem: the reading measure must be page-root-independent (see --tgs-u note). */
+  max-width: 896px;
+  margin: 0 auto;
+  padding: 56px 44px 120px;
+  /* Base body size = 1.13 reader-units (--tgs-u already folds in the "Text size" setting). Every child
+     size below is likewise calc(N * var(--tgs-u)), so the whole article scales as one. */
+  font-size: calc(1.13 * var(--tgs-u));
+}
+
+.tangent-reader-article h1.tangent-reader-title {
+  font-size: calc(2.1 * var(--tgs-u));
+  line-height: 1.2;
+  font-weight: 700;
+  margin: 0 0 0.4em;
+}
+
+.tangent-reader-byline {
+  font-size: calc(0.95 * var(--tgs-u));
+  opacity: 0.7;
+  margin: 0 0 2em;
+  white-space: pre-line;
+}
+
+.tangent-reader-article h1,
+.tangent-reader-article h2,
+.tangent-reader-article h3,
+.tangent-reader-article h4,
+.tangent-reader-article h5,
+.tangent-reader-article h6 {
+  line-height: 1.3;
+  margin: 1.6em 0 0.5em;
+  font-weight: 700;
+}
+.tangent-reader-article h2 { font-size: calc(1.5 * var(--tgs-u)); }
+.tangent-reader-article h3 { font-size: calc(1.25 * var(--tgs-u)); }
+.tangent-reader-article h4,
+.tangent-reader-article h5,
+.tangent-reader-article h6 { font-size: calc(1.1 * var(--tgs-u)); }
+
+.tangent-reader-article p { margin: 0 0 1.1em; }
+/* Link accent follows the Zen space colour when present, darkened toward navy for contrast on the
+   light sheet; the fallback resolves to ~#1a56db (the prior tuned blue) when the mod is absent. */
+.tangent-reader-article a {
+  color: color-mix(in srgb, var(--zen-space-color, #1c5cdf) 72%, #0b1020 28%);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.tangent-reader-article ul,
+.tangent-reader-article ol { margin: 0 0 1.1em; padding-left: 1.6em; }
+.tangent-reader-article li { margin: 0.3em 0; }
+
+.tangent-reader-article img,
+.tangent-reader-article .tangent-reader-figure img { max-width: 100%; height: auto; border-radius: 6px; }
+.tangent-reader-figure { margin: 1.6em 0; }
+.tangent-reader-figure figcaption,
+.tangent-reader-caption { font-size: calc(0.9 * var(--tgs-u)); opacity: 0.65; margin-top: 0.5em; text-align: center; }
+.tangent-reader-math { vertical-align: middle; }
+.tangent-reader-math-inline { vertical-align: middle; height: 1.1em; }
+
+.tangent-reader-article blockquote {
+  margin: 1.4em 0;
+  padding: 0.2em 0 0.2em 1.1em;
+  border-left: 3px solid #d9d4cc;
+  color: #57544f;
+  font-style: italic;
+}
+
+.tangent-reader-article pre {
+  background: #f0ede7;
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: calc(0.92 * var(--tgs-u));
+  line-height: 1.5;
+  margin: 1.4em 0;
+}
+
+.tangent-reader-table-wrap { overflow-x: auto; margin: 1.4em 0; }
+.tangent-reader-article table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: calc(0.95 * var(--tgs-u));
+  background: #f5f2ec;
+}
+.tangent-reader-article th,
+.tangent-reader-article td { border: 1px solid rgba(0, 0, 0, 0.12); padding: 8px 10px; text-align: left; }
+.tangent-reader-article th { font-weight: 700; }
+
+.tangent-reader-hr { border: none; border-top: 1px solid #e2ddd4; margin: 2.2em 0; }
+
+/* Article images become tap-to-zoom targets (wired in render.js). */
+.tangent-reader-zoomable { cursor: zoom-in; }
+
+/* ---- full-screen image viewer (zoom / pan) ---- */
+.tangent-reader-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.92);
+  opacity: 0;
+  touch-action: none;             /* pan/zoom handled in JS, not by the browser */
+  overflow: hidden;
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  transition: opacity 0.26s ease;
+}
+.tangent-reader-lightbox.open { display: flex; opacity: 1; }
+
+.tangent-reader-lightbox-img {
+  max-width: 92vw;
+  max-height: 92vh;
+  border-radius: 8px;
+  transform-origin: center center;
+  will-change: transform;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-drag: none;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+.tangent-reader-lightbox.open .tangent-reader-lightbox-img {
+  animation: tangent-lightbox-fade 0.26s ease both;
+}
+.tangent-reader-lightbox.grabbing .tangent-reader-lightbox-img { cursor: grabbing; }
+
+@keyframes tangent-lightbox-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.tangent-reader-lightbox-close {
+  position: fixed;
+  top: 16px;
+  right: 18px;
+  z-index: 2147483647;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(32, 34, 37, 0.82);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.tangent-reader-lightbox-close:hover { background: rgba(60, 62, 66, 0.92); }
+.tangent-reader-lightbox-close:active { transform: scale(0.92); }
+
+.tangent-reader-lightbox-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(30, 30, 32, 0.82);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.tangent-reader-lightbox-bar button {
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #fff;
+  font: 600 19px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+.tangent-reader-lightbox-bar button.wide { min-width: 66px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.tangent-reader-lightbox-bar button:hover { background: rgba(255, 255, 255, 0.14); }
+
+@media (prefers-reduced-motion: reduce) {
+  .tangent-reader-lightbox { transition: none; }
+  .tangent-reader-lightbox.open .tangent-reader-lightbox-img { animation: none; }
+}

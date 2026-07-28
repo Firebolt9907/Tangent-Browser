@@ -1,3 +1,4 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.concurrent.TimeUnit
 
 plugins {
@@ -60,9 +61,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlinOptions {
-        jvmTarget = "11"
-    }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -92,6 +90,12 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_11
+    }
+}
+
 configurations.configureEach {
     exclude(group = "org.mozilla.telemetry", module = "glean-native")
 }
@@ -105,9 +109,14 @@ dependencies {
     implementation(libs.androidx.appsearch.local.storage)
     implementation(libs.androidx.appsearch.platform.storage)
     implementation(libs.androidx.concurrent.futures.ktx)
+    // AppSearch's API returns Guava ListenableFuture. GeckoView drags full Guava onto the runtime
+    // classpath (via media3), which evicts the `listenablefuture` stub AppSearch would otherwise
+    // resolve — but only at runtime, so the class is missing at compile time unless declared here.
+    implementation(libs.guava)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.coil.compose)
     implementation(libs.coil.svg)
+    implementation(libs.coil.gif)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -133,6 +142,7 @@ dependencies {
     implementation(libs.mozilla.feature.accounts.push)
     implementation(libs.mozilla.lib.push.firebase)
     implementation(libs.mozilla.support.appservices)
+    implementation(libs.mozilla.support.utils)
     implementation(libs.mozilla.appservices.logins)
     implementation(libs.mozilla.service.sync.autofill)
     implementation(libs.mozilla.telemetry.glean)
@@ -234,6 +244,48 @@ val syncReaderRules by tasks.registering {
     }
 }
 
-/* Run the sync before any variant's assets are merged, so the packaged APK gets the fresh floor. */
+/*
+ * Compile-time build of the built-in reader extension from its shared source. Runs
+ * `node extension/build.js tangent`, which regenerates app/src/main/assets/extensions/reader/
+ * (extractor.js + manifest.json) from extension/src/ — the same extractor the standalone desktop
+ * build embeds, so the app can never ship a stale copy. See extension/README.md.
+ *
+ * Best-effort like syncReaderRules: if Node isn't installed (some CI) or the build errors, it warns
+ * and keeps the checked-in asset (which is committed and normally already in sync). build.js writes
+ * only when content changed, so routine compiles don't churn the tracked files.
+ */
+val buildReaderExtension by tasks.registering {
+    group = "tangent"
+    description = "Regenerate the built-in reader extension asset from extension/src (node build.js tangent)."
+    // Resolve to plain Files at configuration time — doLast closes over these locals only (config cache).
+    val extensionDir = rootProject.layout.projectDirectory.dir("extension").asFile
+    val buildScript = File(extensionDir, "build.js")
+    doLast {
+        if (!buildScript.isFile) {
+            logger.warn("[reader-ext] ${buildScript.path} not found; keeping checked-in asset.")
+            return@doLast
+        }
+        try {
+            val proc = ProcessBuilder("node", "build.js", "tangent")
+                .directory(extensionDir)
+                .redirectErrorStream(true)
+                .start()
+            val finished = proc.waitFor(60, TimeUnit.SECONDS)
+            val out = proc.inputStream.bufferedReader().readText().trim()
+            if (!finished) {
+                proc.destroyForcibly()
+                logger.warn("[reader-ext] node build.js timed out; keeping checked-in asset.")
+            } else if (proc.exitValue() != 0) {
+                logger.warn("[reader-ext] node build.js tangent failed (exit ${proc.exitValue()}); keeping checked-in asset.\n$out")
+            } else {
+                logger.lifecycle("[reader-ext] ${out.ifBlank { "built." }}")
+            }
+        } catch (e: Exception) {
+            logger.warn("[reader-ext] skipped (${e.message}); keeping checked-in asset. Install Node to regenerate on build.")
+        }
+    }
+}
+
+/* Run both compile-time asset syncs before any variant merges assets, so the APK gets fresh copies. */
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
-    .configureEach { dependsOn(syncReaderRules) }
+    .configureEach { dependsOn(syncReaderRules, buildReaderExtension) }

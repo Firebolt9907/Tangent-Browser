@@ -86,7 +86,18 @@ fun ReaderManager.toggleReader(
     } else {
         requestReaderActivation(tabId)
         engineSession?.let { session ->
-            ReaderExtractor.extractReaderContent(session, tabId)
+            // Prefer the isolated-world Port extractor for BOTH articles and social threads: it returns
+            // over a native Port, which (unlike the window.prompt bridge) survives the strict CSP that
+            // X/Reddit serve. The content script picks article-vs-social extraction by host. Only when no
+            // live Port is connected yet do we fall back to the matching javascript: prompt extractor.
+            ReaderExtension.registerFor(session, tabId)
+            if (!ReaderExtension.requestExtract(session)) {
+                if (SocialExtractor.isSocialUrl(pageUrl)) {
+                    SocialExtractor.extract(session, tabId)
+                } else {
+                    ReaderExtractor.extractReaderContent(session, tabId)
+                }
+            }
         }
         true
     }

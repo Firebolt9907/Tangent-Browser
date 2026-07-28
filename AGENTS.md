@@ -177,6 +177,25 @@ mode only swaps the destination layout. Non-obvious:
 - Captions load **real favicons** via `components.icons` (mozilla `BrowserIcons`, URL-keyed cache in
   `TangentRoot` pruned to open tabs), falling back to `ContentState.icon` then a letter tile.
 
+### 5b. Spaces — the overview shows ONE space's tabs, not all tabs
+
+A **Space** is a `TangentTabGroup` elevated to a first-class tab set (the evolution of Tab Groups). In
+`TangentRoot`, `tabsList` is **not** `components.tabsList` directly — it is `allTabs` (the store set)
+narrowed to the active space (`activeSpaceId`; null = the default "Personal" space = tabs in no group).
+Because both the deck/pixel/grid overview AND horizontal pill tab-switching read `tabsList`, this one
+filter scopes both to the current space. Non-obvious:
+- **`activeSpaceId` follows the selected tab while the grid is CLOSED** (a `LaunchedEffect` gated on
+  `!gridEngaged`), so the visible space always contains the current tab even when a tab is selected
+  outside the grid (received/handoff/synced-tab open, "open in new tab"). While the grid is engaged the
+  user drives `activeSpaceId` via `SpaceSwitcherStrip` — don't re-enable the follow-effect there.
+- `selectedIndex`/`newSelIdx` may briefly be `-1` when the active space doesn't contain the selected
+  tab (right after switching spaces in the grid). `newSelIdx` already `.coerceAtLeast(0)`s — keep that;
+  it's what makes the transient tolerable (grid centres on card 0, prev/next swipe is null).
+- New tabs created from the grid "+" are re-added to `activeSpaceId` (`addTabToGroup`) so they don't
+  fall into Personal and vanish from the switcher they were created in.
+- The switcher strip (`ui/grid/SpaceSwitcherStrip.kt`) sits above `GridOverviewControls`; long-press a
+  chip / overflow "Manage Spaces" opens `TabGroupsSheet` (the same `TangentTabGroup` registry).
+
 ### 6. Snapshot capture — `EngineView.captureThumbnail`, not `EngineSession`
 
 `EngineSession.captureThumbnail` does not exist in this mozilla-components version. All captures go
@@ -231,19 +250,41 @@ once the header set is stable) to bound the steady-state full-document walk.
   skips it); self-heals via a bounded MutationObserver for SPAs that rebuild `<body>`. Re-added after
   being wrongly removed as a double-pad.
 
-### 12. WebAuthn/passkeys are native — no JS shim, no pref overrides
+### 12. WebAuthn/passkeys — a three-way pref (`passkeyMode`), never a page-world JS shim
 
-Passkeys use GeckoView's built-in WebAuthn (Play Services FIDO2 / Credential Manager → Google
-Password Manager). The only app-side requirement: the
+Passkeys would normally use GeckoView's built-in WebAuthn (Play Services FIDO2 / Credential Manager →
+Google Password Manager); the app-side hook is the
 `mozilla.components.concept.engine.activity.ActivityDelegate` that `MainActivity`/`CustomTabActivity`
-register in `onStart` (GeckoView hands us a `PendingIntent` for the system passkey sheet; we launch it
-and return the result). Do NOT:
-- polyfill/override `navigator.credentials` via JS (a previous shim faked credentials in
-  `localStorage`; never reached GPM, produced raw-r||s ECDSA signatures RPs reject — WebAuthn needs
-  DER);
-- force `security.webauth.webauthn_enable_softtoken = true` — routes to Gecko's silent *virtual test
-  authenticator* (success, no system prompt, nothing in GPM). Gecko's Android defaults are correct,
-  incl. `security.webauthn.webauthn_enable_android_fido2.residentkey = true`.
+register in `onStart`. But Tangent is NOT on the platform trusted-browser allowlist, so that path is
+rejected — hence `GlobalPreferencesStore.passkeyMode` (`Off`/`Softtoken`/`Bitwarden`), emitted by
+`writeGeckoConfig` in `Engine.kt`, migrated from the old `builtInPasskeysEnabled` boolean. The three
+modes are **mutually exclusive** (one enum, not independent toggles) — Gecko reads the config once, so
+a change needs a restart:
+- **Off** — `security.webauth.webauthn: false`; the API is disabled and sites cleanly fall back to
+  passwords.
+- **Softtoken** — WebAuthn on, serviced by Gecko's INTERNAL softtoken
+  (`..._enable_softtoken = true` + `..._enable_android_fido2 = false`). Spec-correct assertions, no
+  allowlist, but keys live in the Gecko profile (not GPM/vault) and there is no biometric prompt.
+- **Bitwarden** — WebAuthn on with **softtoken OFF**, and the built-in passkey-bridge extension
+  (`assets/extensions/passkey/`, `sync/webauthn/PasskeyExtension`) overrides `navigator.credentials`
+  and services ceremonies from the connected Bitwarden vault, biometric-gated. Installed only in this
+  mode (`Engine.init`), so Off/Softtoken paths are untouched.
+
+**The forbidden thing is a PAGE-WORLD JS shim, not the Bitwarden override.** Do NOT polyfill
+`navigator.credentials` from page-world JS (a previous shim faked credentials in `localStorage`, never
+reached a real authenticator, and produced raw-r‖s ECDSA signatures RPs reject — WebAuthn needs DER).
+The Bitwarden path is categorically different and sanctioned: the override is installed from an
+**isolated content script** via Firefox Xray/`exportFunction` (page CSP can't touch it), and the
+crypto is real — `sync/webauthn/WebAuthnAuthenticator` produces spec-correct **DER** ES256 assertions
+over **real vault key material** (`sync/bitwarden/BitwardenPasskeyStore`), never fabricated values.
+See [[bitwarden-passkeys-progress]] and the `sync/webauthn` + `sync/bitwarden` sources.
+
+Do NOT remove the pref gate or default an active mode on for an allowlisted build — both are fallbacks
+for the blocked native path. If Tangent ever gets allowlisted, prefer the native path.
+
+**Cross-client interop risk:** whether Tangent can use a passkey created on desktop Bitwarden depends
+on schema details (credentialId GUID vs base64url, `keyValue` base64 variant, .NET mixed-endian byte
+order) that unit tests only prove self-consistent — confirm on-device against a real vault.
 
 ### 13. Compact bar — tap to expand, no horizontal swipe
 
@@ -381,8 +422,9 @@ every build. Bump `version` on any edit and raise the floor in `ReaderBundledRul
 The most-violated mistakes are the bolded **do NOT** lines in the invariants above (esp. #1 `render()`
 from `AndroidView.update`, #2 `startDragImmediately = true`, #4 `snapTo` on hot path, #6
 `EngineSession.captureThumbnail`, #11 JS injection without the guard / spacer sizing, #12
-`navigator.credentials` shim or `webauthn_enable_softtoken`, #17 editing the generated
-`assets/extensions/reader/extractor.js` instead of `extension/src`).
+page-world `navigator.credentials` shim (the softtoken AND the isolated-world Bitwarden override are
+sanctioned pref-gated paths — see #12), #17
+editing the generated `assets/extensions/reader/extractor.js` instead of `extension/src`).
 
 ## Testing
 

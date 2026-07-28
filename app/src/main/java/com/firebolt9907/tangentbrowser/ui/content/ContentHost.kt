@@ -116,6 +116,12 @@ fun ContentHost(
     // spring updates drive the engine's vertical clipping via snapshotFlow without recomposing
     // ContentHost. See the clipping effects below and BarPill.PillMorph.
     barCollapseProgress: () -> Float = { 0f },
+    // Bottom reserve (px) that remains obscured when [barCollapseProgress] reaches 1. Defaults to the
+    // main browser's compact-pill footprint (compactPill + nav bar), which never fully hides. Surfaces
+    // whose chrome slides COMPLETELY off screen (the Custom Tab pill) pass 0 so the engine reclaims
+    // the whole strip — the revealed region is then the live, interactive web surface, not a stale
+    // clipped band.
+    collapsedBottomReservePx: Int? = null,
     tabIsLoading: Boolean = false,
     keyboardInsetPx: Int = 0,
 ) {
@@ -154,6 +160,19 @@ fun ContentHost(
     }
     val engineView = remember(engine) {
         engine.createView(context).also { it.setActivityContext(context) }
+    }
+    // System autofill (Android Autofill Framework): when enabled, expose the web-content view so the
+    // device's autofill service (the official Bitwarden/1Password app, etc.) can enumerate and fill
+    // fields. GeckoView already provides the virtual view structure the OS service reads; we only
+    // gate whether the subtree participates. When disabled, exclude it so the OS overlay doesn't
+    // compete with the in-browser login client's doorhangers. Read at view creation; a toggle change
+    // takes effect on newly created content views.
+    LaunchedEffect(engineView) {
+        val systemAutofill = com.firebolt9907.tangentbrowser.state.GlobalPreferencesStore(context)
+            .systemAutofillEnabled
+        engineView.asView().importantForAutofill =
+            if (systemAutofill) android.view.View.IMPORTANT_FOR_AUTOFILL_YES
+            else android.view.View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
     }
     // Wrap the EngineView in a PullRefreshContainer (a nested-scroll parent) so pull-to-refresh
     // works reliably over GeckoView, which cooperates as a NestedScrollingChild. canPull is true
@@ -264,12 +283,13 @@ fun ContentHost(
     // WITHOUT recomposing ContentHost — recomposing the engine host per frame was part of the
     // collapse-scroll frame drops. The obscured height shrinks from the full reserve (bar expanded)
     // toward the compact-pill footprint as the pill collapses.
-    LaunchedEffect(engineView, bottomChromeInsetPx, maxReservePx, compactPillPx, navBarPx) {
+    val collapsedFloorPx = collapsedBottomReservePx ?: (compactPillPx + navBarPx)
+    LaunchedEffect(engineView, bottomChromeInsetPx, maxReservePx, collapsedFloorPx) {
         if (bottomChromeInsetPx <= 0) return@LaunchedEffect
         snapshotFlow { barCollapseProgress().coerceIn(0f, 1f) }.collect { p ->
             val currentObscuredPx = lerp(
                 maxReservePx.toFloat(),
-                (compactPillPx + navBarPx).toFloat(),
+                collapsedFloorPx.toFloat(),
                 p,
             ).roundToInt().coerceAtLeast(0)
             engineView.setVerticalClipping(currentObscuredPx - maxReservePx)
@@ -315,6 +335,14 @@ fun ContentHost(
             findGeckoView(engineView.asView())?.coverUntilFirstPaint(firstPaintCoverColor)
             if (tabId != null) {
                 com.firebolt9907.tangentbrowser.ui.reader.ReaderExtractor.registerPromptDelegate(session, tabId)
+                // Route this session's reader-extractor content-script Port to this tab. No-op until
+                // the extension finishes installing; triggerInitialReaderCheck re-registers per load,
+                // so a session that renders before install completes still gets wired up.
+                com.firebolt9907.tangentbrowser.ui.reader.ReaderExtension.registerFor(session, tabId)
+                // Route this session's passkey-bridge Port too (no-op unless Bitwarden passkey mode
+                // installed the extension). Lets the content script's navigator.credentials override
+                // reach the vault.
+                com.firebolt9907.tangentbrowser.sync.webauthn.PasskeyExtension.registerFor(session)
             }
         }
         onDispose {
@@ -412,6 +440,7 @@ fun ContentHost(
             var loginDetectorInjectedForCurrentLoad = false
             var formFieldMemoryInjectedForCurrentLoad = false
             var archiveMobilifyInjectedForCurrentLoad = false
+            var themeColorProbedForCurrentLoad = false
             var currentUrl = pageUrl
             var capturedLeavingUrl: String? = null
             // True while a genuine document load is in flight (real navigation), so the delayed
@@ -425,6 +454,21 @@ fun ContentHost(
                 if (capturedLeavingUrl == currentUrl) return
                 capturedLeavingUrl = currentUrl
                 captureSnapshot(capturingUrl = currentUrl)
+            }
+            // Sample the page's declared theme-color AND the real background behind the status bar
+            // (Safari-style). Deliberately NOT injected at first-contentful-paint like the viewport
+            // spacers: the top of the page frequently paints its final header/background color only
+            // late in the load (web fonts, hydration, a hero image swapping in), so an FCP-time sample
+            // would latch a transient color (usually the bare body white) and the status bar / top
+            // strip would keep it for the whole session. Instead it runs when the load FINISHES
+            // (onLoadingStateChange:false) and after an SPA route settles, so it reads the color the
+            // user actually ends up looking at. Cheap one-shot DOM read; falls back natively when no
+            // theme color / background can be resolved. Guarded to once per (real or SPA) load.
+            fun injectThemeColorProbe(force: Boolean = false) {
+                if (themeColorProbedForCurrentLoad && !force) return
+                themeColorProbedForCurrentLoad = true
+                suppressJavascriptLoadCallback = true
+                engineSession.loadJavascriptUrl(ThemeColorProbe.buildScript())
             }
             // Re-arm snapshotting after an SPA (history.pushState) navigation. Such navigations fire
             // ONLY onLocationChange — no loading-state toggle, no FCP — so nothing else flips
@@ -440,7 +484,12 @@ fun ContentHost(
                 spaSettleRunnable?.let(hostView::removeCallbacks)
                 val runnable = Runnable {
                     spaSettleRunnable = null
-                    if (!realLoadInProgress) isSafeToSnapshot = true
+                    if (!realLoadInProgress) {
+                        isSafeToSnapshot = true
+                        // The SPA route has settled (no loading-state toggle fires for pushState navs),
+                        // so re-sample the top color for the new route's final paint.
+                        injectThemeColorProbe()
+                    }
                 }
                 spaSettleRunnable = runnable
                 hostView.postDelayed(runnable, SpaSettleCaptureDelayMs)
@@ -456,13 +505,6 @@ fun ContentHost(
                     skipHeaderInsets = topPaddingFixActive,
                 )
                 engineSession.injectPageZoom(pageZoomFactor)
-                // Sample the page's declared theme-color (Safari-style). Done for top-padding sites
-                // (to tint the exposed strip / status bar) and whenever the "Match website theme
-                // color" option is on (to recolor the chrome for any site). Falls back to the system
-                // primary color natively when none is declared.
-                if (topPaddingFixActive || themeColorSamplingEnabled) {
-                    engineSession.loadJavascriptUrl(ThemeColorProbe.buildScript())
-                }
                 // Re-apply the system-color boost on every load: a fresh page has a fresh DOM with no
                 // overlay yet. The LaunchedEffect below covers the already-loaded page and tab swaps.
                 if (siteTintColor != null) {
@@ -557,7 +599,19 @@ fun ContentHost(
                         return
                     }
                     readerExtractedForCurrentLoad = true
-                    com.firebolt9907.tangentbrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
+                    // Prefer the isolated-world content-script Port (works where window.prompt is
+                    // CSP-sandbox-blocked — e.g. X). The content script picks article-vs-social
+                    // extraction by host. Re-register in case the session rendered before the extension
+                    // finished installing. Fall back to the matching javascript: prompt extractor
+                    // (social vs article) only when no live port received the request.
+                    com.firebolt9907.tangentbrowser.ui.reader.ReaderExtension.registerFor(engineSession, tabId)
+                    if (!com.firebolt9907.tangentbrowser.ui.reader.ReaderExtension.requestExtract(engineSession)) {
+                        if (com.firebolt9907.tangentbrowser.ui.reader.SocialExtractor.isSocialUrl(currentUrl)) {
+                            com.firebolt9907.tangentbrowser.ui.reader.SocialExtractor.extract(engineSession, tabId)
+                        } else {
+                            com.firebolt9907.tangentbrowser.ui.reader.ReaderExtractor.extractReaderContent(engineSession, tabId)
+                        }
+                    }
                 }
             }
 
@@ -583,6 +637,7 @@ fun ContentHost(
                         amoInstallerInjectedForCurrentLoad = false
                         readerExtractedForCurrentLoad = false
                         archiveMobilifyInjectedForCurrentLoad = false
+                        themeColorProbedForCurrentLoad = false
                         suppressJavascriptLoadCallback = false
                         injectAmoInstaller(url)
                         injectCleanPlayer(url)
@@ -630,6 +685,7 @@ fun ContentHost(
                         loginDetectorInjectedForCurrentLoad = false
                         formFieldMemoryInjectedForCurrentLoad = false
                         archiveMobilifyInjectedForCurrentLoad = false
+                        themeColorProbedForCurrentLoad = false
                     } else {
                         realLoadInProgress = false
                         isSafeToSnapshot = true
@@ -640,6 +696,9 @@ fun ContentHost(
                         injectOtpDetector()
                         injectLoginDetector()
                         injectFormFieldMemory()
+                        // Sample the status-bar / top-strip color now that the load has finished, so it
+                        // reflects the page's final painted top rather than a transient mid-load color.
+                        injectThemeColorProbe()
                         captureSnapshot(capturingUrl = currentUrl, deduped = true)
                         notifyPainted()
                         if (tabId != null) {
@@ -748,6 +807,11 @@ fun ContentHost(
             }
             engineSession.register(observer)
             injectSpacer(force = true)
+            // Sample the top color at bind time ONLY when the page has already finished loading (tab
+            // swap, config change, or the sampling pref toggling on a settled page). If a load is
+            // still in flight, do nothing here and let onLoadingStateChange(false) sample it once the
+            // page's final top has painted — the whole point of deferring the probe.
+            if (!tabIsLoading) injectThemeColorProbe(force = true)
             injectAmoInstaller(currentUrl, force = true)
             triggerInitialReaderCheck()
             onDispose {

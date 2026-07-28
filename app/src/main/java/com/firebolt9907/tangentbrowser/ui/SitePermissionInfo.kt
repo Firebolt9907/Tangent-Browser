@@ -12,84 +12,34 @@ import androidx.compose.material.icons.filled.ScreenShare
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.core.net.toUri
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.firebolt9907.tangentbrowser.permissions.SitePermissionController
+import com.firebolt9907.tangentbrowser.permissions.ManagedPermission
 import mozilla.components.concept.engine.permission.Permission
 
 /**
- * The site content-permission prompt (geolocation, camera, microphone, notifications…). Extracted
- * from `TangentRoot.kt` — it depends only on the [SitePermissionController], not on any of the root's
- * gesture state, so it lives cleanly on its own. The controller applies remembered decisions and the
- * autoplay policy before this ever shows; this only surfaces genuinely-new requests.
- *
- * Every GeckoView content-permission type (see `GeckoPermissionRequest`) must map to a real label,
- * explanation, and icon here. Anything that falls through to the generic fallback reads as the
- * infamous "wants to use this feature" — uninformative, so the user can't make a sane allow/block
- * decision. If mozilla-components adds a new `Permission.Content*`, add a branch below.
- */
-@Composable
-internal fun SitePermissionDialog(
-    controller: SitePermissionController,
-) {
-    val request by controller.contentRequest.collectAsStateWithLifecycle()
-    val current = request ?: return
-    val host = remember(current.uri) {
-        runCatching { current.uri?.toUri()?.host }.getOrNull()
-            ?.takeIf { it.isNotBlank() }
-            ?: current.uri?.takeIf { it.isNotBlank() }
-            ?: "This site"
-    }
-    val info = remember(current) { describePermissions(current.permissions) }
-    AlertDialog(
-        onDismissRequest = { controller.rejectCurrent() },
-        icon = {
-            Icon(
-                imageVector = info.icon,
-                contentDescription = null,
-            )
-        },
-        title = { Text("Allow $host to use ${info.phrase}?") },
-        text = { Text(info.explanation) },
-        confirmButton = {
-            TextButton(onClick = { controller.grantCurrent() }) {
-                Text("Allow")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = { controller.rejectCurrent() }) {
-                Text("Block")
-            }
-        },
-    )
-}
-
-/**
- * How a single permission is presented: the noun [phrase] that slots into "Allow <host> to use
+ * How a single site permission is presented: the noun [phrase] that slots into "Allow <host> to use
  * <phrase>?" (carries its own determiner, e.g. "your camera"), a one-line [explanation] of what
- * granting it means, and the [icon] shown above the dialog.
+ * granting it means, and the [icon] shown alongside.
+ *
+ * Shared by the permission request banner ([SitePermissionBannerHost]) and the aA sheet's
+ * site-permissions section so both render identical copy and iconography. Every GeckoView
+ * content-permission type (see `Permission.Content*`) must map to a real label, explanation, and icon
+ * here — anything falling through to [GenericPermission] reads as the uninformative "wants to use this
+ * feature", leaving the user unable to make a sane allow/block decision.
  */
-private data class PermissionInfo(
+data class PermissionInfo(
     val phrase: String,
     val explanation: String,
     val icon: ImageVector,
 )
 
-private val GenericPermission = PermissionInfo(
+val GenericPermission = PermissionInfo(
     phrase = "this feature",
     explanation = "The site is requesting a browser permission.",
     icon = Icons.Filled.Lock,
 )
 
-private fun infoFor(permission: Permission): PermissionInfo = when (permission) {
+fun infoFor(permission: Permission): PermissionInfo = when (permission) {
     is Permission.ContentGeoLocation -> PermissionInfo(
         "your location",
         "The site will be able to see your device's location.",
@@ -163,7 +113,7 @@ private fun infoFor(permission: Permission): PermissionInfo = when (permission) 
     else -> GenericPermission
 }
 
-private fun describePermissions(permissions: List<Permission>): PermissionInfo {
+fun describePermissions(permissions: List<Permission>): PermissionInfo {
     val infos = permissions.map(::infoFor).distinctBy { it.phrase }
     return when {
         infos.isEmpty() -> GenericPermission
@@ -176,4 +126,16 @@ private fun describePermissions(permissions: List<Permission>): PermissionInfo {
             PermissionInfo(phrase, explanation, infos.first().icon)
         }
     }
+}
+
+/** The icon shown next to a [ManagedPermission] row in the aA sheet's site-permissions section. */
+fun iconFor(permission: ManagedPermission): ImageVector = when (permission) {
+    ManagedPermission.Location -> Icons.Filled.LocationOn
+    ManagedPermission.Camera -> Icons.Filled.Videocam
+    ManagedPermission.Microphone -> Icons.Filled.Mic
+    ManagedPermission.Notifications -> Icons.Filled.Notifications
+    ManagedPermission.PersistentStorage -> Icons.Filled.Storage
+    ManagedPermission.DrmMedia -> Icons.Filled.PlayArrow
+    ManagedPermission.LocalNetwork -> Icons.Filled.Lan
+    ManagedPermission.LocalDevice -> Icons.Filled.Usb
 }

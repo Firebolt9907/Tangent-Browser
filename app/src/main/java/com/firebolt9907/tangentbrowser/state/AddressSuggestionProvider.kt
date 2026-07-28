@@ -11,23 +11,32 @@ import mozilla.components.concept.storage.HistoryStorage
 import mozilla.components.concept.storage.SearchResult
 
 /** What a single address-bar suggestion was sourced from — drives the row's leading icon. */
-enum class AddressSuggestionKind { Search, History, Bookmark, Tab }
+enum class AddressSuggestionKind { Search, History, Bookmark, Tab, SyncedTab }
 
 /**
  * One row in the address-bar suggestion list. For [AddressSuggestionKind.Search] the [url] is the
  * raw query text (it is run through `normalizeUrl` → search on submit); for the other kinds it is a
  * concrete page URL. [tabId] is set only for [AddressSuggestionKind.Tab] rows (an already-open tab):
- * committing that row switches to the existing tab instead of navigating.
+ * committing that row switches to the existing tab instead of navigating. [detail] is an optional
+ * subtitle override — used by [AddressSuggestionKind.SyncedTab] to show the source device name
+ * ("From <device>") instead of the raw URL.
  */
 data class AddressSuggestion(
     val title: String,
     val url: String,
     val kind: AddressSuggestionKind,
     val tabId: String? = null,
+    val detail: String? = null,
 )
 
 /** Minimal open-tab descriptor fed to [openTabSuggestions] — decouples ranking from GeckoView types. */
 data class OpenTabRef(val id: String, val url: String, val title: String)
+
+/**
+ * A tab open on another Firefox-synced device, fed to [syncedTabSuggestions]. [deviceName] is shown
+ * as the row's subtitle so the user can tell which of their devices the tab came from.
+ */
+data class RemoteTabRef(val url: String, val title: String, val deviceName: String)
 
 /**
  * Open tabs matching [query], as switch-to-tab suggestions ranked ahead of history (an open tab is a
@@ -54,6 +63,39 @@ fun openTabSuggestions(
                 url = it.url,
                 kind = AddressSuggestionKind.Tab,
                 tabId = it.id,
+            )
+        }
+        .filter { seen.add(canonicalUrlKey(it.url)) }
+        .sortedByDescending { rankScore(q, it) }
+        .take(max)
+        .toList()
+}
+
+/**
+ * Tabs open on other synced devices matching [query], offered as navigable suggestions. Unlike
+ * [openTabSuggestions] these carry no [AddressSuggestion.tabId] — the tab lives on another device, so
+ * committing the row navigates to its URL locally. Matches on host/title/URL substring, de-duplicates
+ * by [canonicalUrlKey] (keeping the first/most-recent device that has the page), skips blank/internal
+ * pages, and ranks with the shared host-aware [rankScore]. Pure/synchronous so it stays unit-testable
+ * without GeckoView or a live account.
+ */
+fun syncedTabSuggestions(
+    query: String,
+    tabs: List<RemoteTabRef>,
+    max: Int = 3,
+): List<AddressSuggestion> {
+    val q = query.trim().lowercase()
+    if (q.isEmpty()) return emptyList()
+    val seen = HashSet<String>()
+    return tabs.asSequence()
+        .filter { it.url.isNotBlank() && !it.url.startsWith("about:") }
+        .filter { it.url.lowercase().contains(q) || it.title.lowercase().contains(q) }
+        .map {
+            AddressSuggestion(
+                title = it.title.ifBlank { it.url },
+                url = it.url,
+                kind = AddressSuggestionKind.SyncedTab,
+                detail = it.deviceName,
             )
         }
         .filter { seen.add(canonicalUrlKey(it.url)) }

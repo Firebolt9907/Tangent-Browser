@@ -71,6 +71,8 @@ internal fun estimateReadMinutes(article: ReaderArticle): Int {
             is ReaderBlock.Divider -> null
             is ReaderBlock.Image -> null
             is ReaderBlock.Figure -> null
+            is ReaderBlock.SocialPost -> listOfNotNull(block.title, block.text).joinToString(" ")
+            is ReaderBlock.SocialComment -> block.text
         } ?: continue
         if (text.isNotBlank()) words += text.trim().split(whitespaceRegex).size
     }
@@ -91,6 +93,46 @@ internal fun readerHost(sourceUrl: String?): String? {
             ?.lowercase()
             ?.takeIf { it.isNotEmpty() }
     }.getOrNull()
+}
+
+/**
+ * Tidy a social-post timestamp for display. Platforms hand back either a human string ("2h", "Jul 3")
+ * or a raw ISO-8601 instant ("2026-07-03T14:39:00.000Z"); for the latter we show just the date part so
+ * the header stays compact. Null/blank in → null out (the line is then omitted).
+ */
+internal fun formatSocialTimestamp(ts: String?): String? {
+    val t = ts?.trim()?.takeIf { it.isNotEmpty() && it != "null" } ?: return null
+    val tIndex = t.indexOf('T')
+    // ISO instant: keep the date (YYYY-MM-DD) only when it really looks like one.
+    if (tIndex == 10 && t.getOrNull(4) == '-' && t.getOrNull(7) == '-') return t.substring(0, 10)
+    return t
+}
+
+/**
+ * Apollo-style nested comment "threadline" colours, one per indent level (cycled beyond the last).
+ * Apollo's signature is a rainbow of thin vertical rails down the left of nested replies, so a
+ * conversation's shape is readable at a glance; [ReaderSocialCard] draws rail level `i` in
+ * `commentRailColors[i % size]`.
+ */
+internal val commentRailColors: List<androidx.compose.ui.graphics.Color> = listOf(
+    androidx.compose.ui.graphics.Color(0xFF2D9CDB), // blue
+    androidx.compose.ui.graphics.Color(0xFF27AE60), // green
+    androidx.compose.ui.graphics.Color(0xFFF2C94C), // yellow
+    androidx.compose.ui.graphics.Color(0xFFF2994A), // orange
+    androidx.compose.ui.graphics.Color(0xFFEB5757), // red
+    androidx.compose.ui.graphics.Color(0xFFBB6BD9), // purple
+    androidx.compose.ui.graphics.Color(0xFF56CCF2), // cyan
+)
+
+/** A deterministic accent colour for an author's letter-tile avatar, seeded by their name. */
+internal fun avatarColorFor(seed: String): androidx.compose.ui.graphics.Color {
+    val palette = longArrayOf(
+        0xFF5C6BC0, 0xFF26A69A, 0xFFEF5350, 0xFFAB47BC, 0xFF42A5F5,
+        0xFF66BB6A, 0xFFFFA726, 0xFFEC407A, 0xFF7E57C2, 0xFF29B6F6,
+    )
+    val h = seed.fold(0) { acc, c -> acc * 31 + c.code }
+    val idx = ((h % palette.size) + palette.size) % palette.size
+    return androidx.compose.ui.graphics.Color(palette[idx])
 }
 
 internal fun getFontFamily(fontName: String): FontFamily {

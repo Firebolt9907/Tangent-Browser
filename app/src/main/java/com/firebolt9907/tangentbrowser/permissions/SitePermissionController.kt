@@ -25,6 +25,32 @@ internal fun sitePermissionOriginKey(uri: String?): String? {
 }
 
 /**
+ * A user-facing site permission that can be reviewed / changed after the fact from the aA sheet.
+ *
+ * Each maps to one or more concrete `Permission.Content*` classes (by [Permission] `simpleName`) — the
+ * same class names [SitePermissionController] keys remembered decisions under. Some user-facing
+ * permissions cover more than one Gecko permission (e.g. "Camera" = both `ContentVideoCamera` and
+ * `ContentVideoCapture`), so setting a decision writes every underlying key and reading treats them as
+ * one. Autoplay is intentionally absent — it's resolved by a fixed global policy in
+ * [SitePermissionController.onContentPermissionRequest] before remembered decisions are consulted, so a
+ * stored autoplay decision would never be honoured.
+ */
+enum class ManagedPermission(
+    val label: String,
+    val description: String,
+    val classNames: List<String>,
+) {
+    Location("Location", "See this site's requests for your device location.", listOf("ContentGeoLocation")),
+    Camera("Camera", "Let this site access your camera.", listOf("ContentVideoCamera", "ContentVideoCapture")),
+    Microphone("Microphone", "Let this site access your microphone.", listOf("ContentAudioCapture", "ContentAudioMicrophone")),
+    Notifications("Notifications", "Let this site send you notifications.", listOf("ContentNotification")),
+    PersistentStorage("Persistent storage", "Let this site store data that isn't auto-cleared.", listOf("ContentPersistentStorage")),
+    DrmMedia("DRM media", "Let this site play DRM-protected media.", listOf("ContentMediaKeySystemAccess", "ContentProtectedMediaId")),
+    LocalNetwork("Local network", "Let this site reach devices on your local network.", listOf("ContentLocalNetworkAccess")),
+    LocalDevice("Connected device", "Let this site talk to a device connected to your phone.", listOf("ContentLocalDeviceAccess")),
+}
+
+/**
  * Bridges GeckoView permission requests to the Compose UI.
  *
  * There are two kinds of request:
@@ -118,11 +144,46 @@ class SitePermissionController(context: Context? = null) {
         prefs?.edit { clear() }
     }
 
+    /**
+     * The remembered decision for [permission] on the site whose URL is [uri]: `true` = allow, `false`
+     * = block, `null` = ask (no stored decision). All of the permission's underlying class keys are
+     * written together by [setManagedDecision], so reading the first that has a value is sufficient.
+     * Returns `null` when [uri] has no usable origin or nothing is stored.
+     */
+    fun managedDecisionFor(uri: String?, permission: ManagedPermission): Boolean? {
+        val store = prefs ?: return null
+        val origin = sitePermissionOriginKey(uri) ?: return null
+        for (className in permission.classNames) {
+            val key = keyFor(origin, className)
+            if (store.contains(key)) return store.getBoolean(key, false)
+        }
+        return null
+    }
+
+    /**
+     * Set (or with [decision] = `null`, clear back to "ask") the remembered decision for [permission]
+     * on [uri]. Writes/removes every underlying Gecko permission key so the change is honoured no
+     * matter which concrete `Content*` variant the site later requests. No-op if [uri] has no origin.
+     */
+    fun setManagedDecision(uri: String?, permission: ManagedPermission, decision: Boolean?) {
+        val store = prefs ?: return
+        val origin = sitePermissionOriginKey(uri) ?: return
+        store.edit {
+            permission.classNames.forEach { className ->
+                val key = keyFor(origin, className)
+                if (decision == null) remove(key) else putBoolean(key, decision)
+            }
+        }
+    }
+
     private fun Permission.isAutoPlay(): Boolean =
         this is Permission.ContentAutoPlayAudible || this is Permission.ContentAutoPlayInaudible
 
     private fun keyFor(origin: String, permission: Permission): String =
-        "$origin|${permission::class.java.simpleName}"
+        keyFor(origin, permission::class.java.simpleName)
+
+    private fun keyFor(origin: String, permissionClassName: String): String =
+        "$origin|$permissionClassName"
 
     /** Remembered decision for one permission on an origin: true=allow, false=deny, null=unknown. */
     private fun rememberedDecision(origin: String, permission: Permission): Boolean? {

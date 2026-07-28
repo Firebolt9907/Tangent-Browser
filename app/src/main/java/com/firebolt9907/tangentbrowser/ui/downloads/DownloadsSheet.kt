@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -85,6 +86,10 @@ fun DownloadsSheet(
     val context = LocalContext.current
     var downloads by remember { mutableStateOf<List<DownloadEntry>>(emptyList()) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    // True until the first query comes back. Without it the sheet renders its "No downloads yet"
+    // empty state for the duration of that query and then swaps to the list — the same reason every
+    // other library sheet keeps a loading flag.
+    var loading by remember { mutableStateOf(true) }
 
     // Initial load + poll while anything is still in flight so progress updates live.
     // queryDownloads runs a DownloadManager content-provider query + cursor walk, so keep it off
@@ -92,6 +97,7 @@ fun DownloadsSheet(
     LaunchedEffect(Unit) {
         while (true) {
             downloads = withContext(Dispatchers.IO) { queryDownloads(context) }
+            loading = false
             if (downloads.none { it.isActive }) break
             delay(1200)
         }
@@ -108,7 +114,16 @@ fun DownloadsSheet(
 
         Spacer(Modifier.height(12.dp))
 
-        if (downloads.isEmpty()) {
+        if (loading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 40.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        } else if (downloads.isEmpty()) {
             EmptyState(
                 icon = Icons.Default.Download,
                 title = "No downloads yet",

@@ -80,6 +80,38 @@ class BannerStackState {
 fun rememberBannerStackState(): BannerStackState = remember { BannerStackState() }
 
 /**
+ * The one place the banner Z-stack order is decided. Every `MorphingBannerHost` call site must take
+ * its `stackPriority` from here — higher = front-most (full size, on top), lower = further back
+ * (scaled down, lifted so its top edge peeks out).
+ *
+ * These MUST be distinct. Two banners sharing a priority is a silent bug: [BannerStackState.depthOf]
+ * breaks the tie alphabetically by id and pushes one of them back, but `zIndex(stackPriority)` is
+ * then equal for both, so which one actually *draws* on top falls to declaration order in the
+ * overlay — the demoted card can end up painted over the front one. Values are spaced by 10 so a new
+ * banner can slot between two existing ones without renumbering.
+ *
+ * Ordering rationale, back to front: passive suggestions sit behind the surfaces the user is
+ * actively operating, which sit behind transient notifications, which sit behind anything demanding
+ * a decision.
+ */
+object BannerPriority {
+    /** Passive "this page has a native app" suggestion — nothing is waiting on it. */
+    const val OpenInApp = 10
+
+    /** Persistent context bar for archive mode, and an interactive one (the timeline scrubber). */
+    const val Archive = 20
+
+    const val OtpPaste = 30
+    const val SendToDevice = 40
+    const val ReceivedTab = 50
+    const val Handoff = 60
+    const val ReaderUnavailable = 70
+
+    /** Front-most: the page is blocked on the user granting or denying a capability. */
+    const val SitePermission = 100
+}
+
+/**
  * Follows the finger while the user drags a banner card away (downward, since the cards live at the
  * bottom, or sideways) and dismisses it when the drag passes a distance/velocity threshold; otherwise
  * springs the card back to rest. Keeps the tap-to-act / X-to-dismiss affordances intact — a small

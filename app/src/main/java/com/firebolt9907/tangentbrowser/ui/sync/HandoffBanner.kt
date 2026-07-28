@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.sync.FirefoxHandoffTab
 import com.firebolt9907.tangentbrowser.sync.FirefoxReceivedTab
+import com.firebolt9907.tangentbrowser.ui.BannerPriority
 import com.firebolt9907.tangentbrowser.ui.BannerStackState
 import com.firebolt9907.tangentbrowser.ui.MorphingBannerHost
 import com.firebolt9907.tangentbrowser.ui.bannerSwipeToDismiss
@@ -62,7 +63,7 @@ fun HandoffBannerHost(
         collapseProgress = collapseProgress,
         stack = stack,
         stackId = "handoff",
-        stackPriority = 4,
+        stackPriority = BannerPriority.Handoff,
     ) {
         // The banner stays mounted through the exit morph, after the candidate has been cleared from
         // state — hold the last one so the card doesn't blank out mid-morph.
@@ -97,7 +98,7 @@ fun SendToDeviceBannerHost(
         collapseProgress = collapseProgress,
         stack = stack,
         stackId = "sendToDevice",
-        stackPriority = 2,
+        stackPriority = BannerPriority.SendToDevice,
     ) {
         // Hold the last name/type so the card doesn't blank out mid-exit-morph after state clears.
         var lastName by remember { mutableStateOf(deviceName) }
@@ -138,7 +139,7 @@ fun OtpPasteBannerHost(
         collapseProgress = collapseProgress,
         stack = stack,
         stackId = "otpPaste",
-        stackPriority = 1,
+        stackPriority = BannerPriority.OtpPaste,
     ) {
         Surface(
             shape = SquircleShape(28.dp),
@@ -323,7 +324,7 @@ fun ReceivedTabBannerHost(
         collapseProgress = collapseProgress,
         stack = stack,
         stackId = "receivedTab",
-        stackPriority = 3,
+        stackPriority = BannerPriority.ReceivedTab,
     ) {
         // Hold the last value so the card doesn't blank out mid-exit-morph after state clears.
         var last by remember { mutableStateOf(received) }

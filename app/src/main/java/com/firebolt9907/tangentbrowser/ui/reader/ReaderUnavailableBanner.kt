@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.firebolt9907.tangentbrowser.ui.BannerPriority
 import com.firebolt9907.tangentbrowser.ui.BannerStackState
 import com.firebolt9907.tangentbrowser.ui.MorphingBannerHost
 import com.firebolt9907.tangentbrowser.ui.bannerSwipeToDismiss
@@ -48,7 +49,7 @@ fun ReaderUnavailableBannerHost(
         collapseProgress = collapseProgress,
         stack = stack,
         stackId = "readerUnavailable",
-        stackPriority = 5,
+        stackPriority = BannerPriority.ReaderUnavailable,
     ) {
         Surface(
             shape = SquircleShape(28.dp),

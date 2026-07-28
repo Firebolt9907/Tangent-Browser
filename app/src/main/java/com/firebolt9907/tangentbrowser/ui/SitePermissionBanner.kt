@@ -62,7 +62,7 @@ fun SitePermissionBannerHost(
         switchFade = switchFade,
         stack = stack,
         stackId = "sitePermission",
-        stackPriority = 10,
+        stackPriority = BannerPriority.SitePermission,
     ) {
         // Hold the last request so the card keeps its content through the exit morph after the
         // controller clears the flow on grant/reject.

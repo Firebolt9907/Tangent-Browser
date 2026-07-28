@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.firebolt9907.tangentbrowser.ui.TangentHaptics
+import com.firebolt9907.tangentbrowser.ui.BannerPriority
 import com.firebolt9907.tangentbrowser.ui.MorphingBannerHost
 import com.firebolt9907.tangentbrowser.ui.archive.WaybackManager.ArchiveSession
 import com.firebolt9907.tangentbrowser.ui.archive.WaybackManager.DayCapture
@@ -134,11 +135,11 @@ fun ArchiveTimelineBarHost(
         // Replay the spring-out whenever we land on a different tab that's in archive mode, so the
         // bar animates in on a tab switch rather than appearing already-settled.
         enterKey = session?.tabId,
-        // Bottom of the stack (nearest the pill) — it's the persistent context bar; transient
-        // notifications pile above it.
+        // Near the bottom of the stack — it's the persistent context bar, so transient
+        // notifications pile above it. See BannerPriority.
         stack = stack,
         stackId = "archive",
-        stackPriority = 0,
+        stackPriority = BannerPriority.Archive,
         collapseProgress = collapseProgress,
         gridProgress = gridProgress,
         horizontalOffsetX = horizontalOffsetX,

@@ -78,10 +78,9 @@ fun OpenInAppBannerHost(
         switchFade = switchFade,
         stack = stack,
         stackId = "openInApp",
-        // Base of the stack (like the archive scrubber): this is a persistent banner, so transient
-        // banners (OTP paste, send-to-device, received tab, handoff — priorities 1-4) pile in FRONT
-        // of it rather than behind it.
-        stackPriority = 0,
+        // Base of the stack: a passive suggestion, so everything else — including the archive
+        // scrubber the user may be actively dragging — piles in FRONT of it. See BannerPriority.
+        stackPriority = BannerPriority.OpenInApp,
     ) {
         // Hold the last values so the card doesn't blank out mid-exit-morph after state clears.
         var lastName by remember { mutableStateOf(appName) }

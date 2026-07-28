@@ -110,13 +110,28 @@ internal fun buildViewportSpacerScript(topPx: Int, skipHeaderInsets: Boolean): S
            dark strip above a blue bar. The stack contains the ancestors too, so this strictly
            supersedes the old walk. (Third time this loop that elementFromPoint's single hit was the
            wrong question and elementsFromPoint was the right one.) */
-        function topBgAt(sp,y){try{var x=Math.floor(window.innerWidth/2);var st=document.elementsFromPoint?document.elementsFromPoint(x,y):[document.elementFromPoint(x,y)];for(var i=0;i<st.length&&i<16;i++){var n=st[i];if(!n||n===sp||n===document.documentElement||n===document.body)continue;if(n.id===topId||(n.dataset&&n.dataset.tangentIgnoreSafeTop==='true'))continue;var r=topPick(n);if(r)return r}}catch(e){}return null}
+        /* A consent sheet or modal scrim is what the reader actually sees, so the strip has to show
+           the SAME composite. Two ways the naive "first background in the stack" answer was wrong:
+           a half-transparent scrim (temu's rgba(0,0,0,.5)) was copied onto the strip verbatim, where
+           it composites over a different backdrop than it does over the page; and a full-screen
+           <iframe> consent sheet (spiegel's Sourcepoint modal) was walked straight THROUGH to the
+           brand gradient behind it, painting a bright orange strip above a dark sheet. So: collect
+           translucent layers, fold them onto the first opaque one, and stop at anything large we
+           cannot see through. */
+        function topRgb(c){var m=(c||'').replace(/\s+/g,'').match(/^rgba?\(([^)]+)\)${'$'}/i);if(!m)return null;var p=m[1].split(',');var a=p.length>=4?parseFloat(p[3]):1;if(!isFinite(a))a=1;return {r:parseFloat(p[0])||0,g:parseFloat(p[1])||0,b:parseFloat(p[2])||0,a:a}}
+        function topOver(t,b){var a=t.a+b.a*(1-t.a);if(a<=0)return b;return {r:(t.r*t.a+b.r*b.a*(1-t.a))/a,g:(t.g*t.a+b.g*b.a*(1-t.a))/a,b:(t.b*t.a+b.b*b.a*(1-t.a))/a,a:a}}
+        function topFold(layers,base){var out=base;for(var i=layers.length-1;i>=0;i--)out=topOver(layers[i],out);return 'rgb('+Math.round(out.r)+', '+Math.round(out.g)+', '+Math.round(out.b)+')'}
+        /* A big replaced element paints pixels we cannot read (cross-origin iframe, video, canvas)
+           and hides everything behind it. Small ones are logos/icons inside a bar, so they must NOT
+           abort the walk. */
+        function topOccluder(n,r){var t=n.tagName;if(t!=='IFRAME'&&t!=='VIDEO'&&t!=='CANVAS'&&t!=='EMBED'&&t!=='OBJECT'&&t!=='IMG')return false;return r.width>=window.innerWidth*0.6&&r.height>=40}
+        function topBgAt(sp,y,base){try{var x=Math.floor(window.innerWidth/2);var st=document.elementsFromPoint?document.elementsFromPoint(x,y):[document.elementFromPoint(x,y)];var layers=[];for(var i=0;i<st.length&&i<16;i++){var n=st[i];if(!n||n===sp||n===document.documentElement||n===document.body)continue;if(n.id===topId||(n.dataset&&n.dataset.tangentIgnoreSafeTop==='true'))continue;var rect=null;try{rect=n.getBoundingClientRect()}catch(e){}if(rect&&topOccluder(n,rect))return null;var r=topPick(n);if(!r)continue;if(r.img)return r;var col=topRgb(r.c);if(!col)continue;if(col.a>=0.999)return {c:layers.length?topFold(layers,col):r.c};/* A TRANSLUCENT overlay that spans the strip as well as the point being sampled paints over BOTH, so it is common to the two: folding it in would apply the scrim twice and leave the strip darker than the page under it (temu). Skip it and keep looking for the content it is dimming, which is what the strip has to match. An OPAQUE full-screen layer is not skipped — it covers the strip itself, so its colour is exactly what shows there. */if(rect&&rect.top<=1&&rect.bottom>=topPx-1&&rect.height>topPx+4)continue;layers.push(col)}if(layers.length&&base)return {c:topFold(layers,base)}}catch(e){}return null}
         /* Sample a few depths, not just one. topPx+2 can land in a 1-3px seam between the strip and
            the bar (wikipedia's minerva header has one), where the only thing painting is the page
            background — which then became a white strip above a grey bar. body/html are skipped in
            the stack walk and used only as the final fallback, so "there is a bar" always beats
            "there is a page background behind the bar". */
-        function topBg(sp){var ys=[topPx+2,topPx+6,topPx+12];for(var i=0;i<ys.length;i++){var r=topBgAt(sp,ys[i]);if(r)return r}var rb=topPick(document.body);if(rb)return rb;var rh=topPick(document.documentElement);if(rh)return rh;return null}
+        /* The paint stack is the primary answer, but it can come up empty: a page whose bar is built entirely from transparent wrappers over a transparent body (udemy) yields no opaque layer at any depth, and returning nothing leaves the strip transparent — the very defect this fill exists to prevent. Fall back to the old ancestor walk from the element below the strip before giving up. */function topBgAnc(sp,y){try{var x=Math.floor(window.innerWidth/2);for(var n=document.elementFromPoint(x,y);n&&n!==document.documentElement;n=n.parentElement){if(n===sp||n.id===topId||(n.dataset&&n.dataset.tangentIgnoreSafeTop==='true'))continue;var r=topPick(n);if(r)return r}}catch(e){}return null}function topBg(sp){var rb=topPick(document.body);var rh=topPick(document.documentElement);var base=topRgb((rb&&rb.c)||(rh&&rh.c)||'')||{r:255,g:255,b:255,a:1};var ys=[topPx+2,topPx+6,topPx+12];for(var i=0;i<ys.length;i++){var r=topBgAt(sp,ys[i],base);if(r)return r}for(var j=0;j<ys.length;j++){var a2=topBgAnc(sp,ys[j]);if(a2)return a2}if(rb)return rb;if(rh)return rh;return null}
         /* A viewport-height-locked app shell (height:100vh / 100dvh / 100% of a locked body) does NOT
            shrink when the in-flow spacer pushes it down: its bottom topPx pixels leave the screen,
            taking the bottom nav / player / composer with them. In a scroll-locked document

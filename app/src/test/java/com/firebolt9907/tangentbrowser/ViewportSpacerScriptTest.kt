@@ -319,6 +319,53 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `the strip fill survives modal scrims and unreadable overlays (iter 57)`() {
+        // A consent sheet or modal scrim is what the reader actually sees, so the strip has to show
+        // the same composite. Three ways the naive "first background in the paint stack" answer was
+        // wrong, all found by sweeping bandFill.js over the corpus:
+        //  - a half-transparent scrim was copied onto the strip verbatim (topOpaque only rejected
+        //    alpha exactly 0), where it composites over a different backdrop than over the page;
+        //  - a full-screen cross-origin <iframe> consent sheet (spiegel's Sourcepoint modal) was
+        //    walked straight THROUGH to the brand gradient behind it, painting a bright orange strip
+        //    above a dark sheet;
+        //  - a translucent scrim spanning the strip too was folded in, applying it twice and leaving
+        //    the strip darker than the page under it (temu). An OPAQUE full-screen layer is NOT
+        //    skipped: it covers the strip itself, so its colour is exactly what shows there.
+        val s = script()
+        assertTrue(
+            "translucent layers are composited, not copied",
+            s.contains("function topOver(t,b)") && s.contains("function topFold(layers,base)"),
+        )
+        assertTrue(
+            "only a fully opaque layer ends the walk",
+            s.contains("if(col.a>=0.999)return {c:layers.length?topFold(layers,col):r.c}"),
+        )
+        assertTrue(
+            "a large unreadable replaced element hides what is behind it and stops the walk",
+            s.contains("function topOccluder(n,r)") && s.contains("if(rect&&topOccluder(n,rect))return null"),
+        )
+        assertTrue(
+            "small logos and icons must NOT count as occluders",
+            s.contains("return r.width>=window.innerWidth*0.6&&r.height>=40"),
+        )
+        assertTrue(
+            "a translucent overlay spanning the strip is skipped, not folded twice",
+            s.contains("if(rect&&rect.top<=1&&rect.bottom>=topPx-1&&rect.height>topPx+4)continue"),
+        )
+        assertTrue(
+            "collected layers fold onto the page base when no opaque layer is found",
+            s.contains("if(layers.length&&base)return {c:topFold(layers,base)}"),
+        )
+        // A bar built entirely from transparent wrappers over a transparent body (udemy) yields no
+        // opaque layer at any depth. Returning nothing leaves the strip transparent — the very
+        // defect this fill exists to prevent — so the old ancestor walk stays as a fallback.
+        assertTrue(
+            "an empty paint stack falls back to the ancestor walk before giving up",
+            s.contains("function topBgAnc(sp,y)") && s.contains("var a2=topBgAnc(sp,ys[j]);if(a2)return a2"),
+        )
+    }
+
+    @Test
     fun `observer also reacts to hidden and aria-hidden toggles (iter 49)`() {
         // Headers/cookie banners revealed by removing a `hidden`/`aria-hidden` attribute must
         // trigger a re-inset; the attributeFilter has to include those attrs or the mutation is

@@ -41,6 +41,8 @@ node overflowTest.js https://web.telegram.org 48 # app shell / bottom UI pushed 
 node resizeTest.js https://web.telegram.org/k/ 48 # inset survives a keyboard-sized viewport shrink
 node latencyTest.js 48                           # how LONG a late-mounted header sits in the band
 node dutyTest.js fixtures/autohide.html 48       # what FRACTION of frames the band is dirty
+node bandFill.js https://github.com 48           # does the bar's colour reach the top bezel
+node scrollHeaderTest.js https://www.bbc.com 48  # headers that CHANGE with scroll position
 ./fixtures.sh                                    # offline adversarial header fixtures (no network)
 ./anchors.sh                                     # offline scroll-padding-top anchor-jump fixtures
 ./shells.sh                                      # offline viewport-locked app-shell fixtures
@@ -120,6 +122,19 @@ cleared it. Fast and stable — good as a first gate before the live sweeps.
   in a rAF loop and fails above 5% dirty frames. `fixtures/autohide.html` is the discriminating
   case: `?case=transform|cssText|padding|fast` each rewrite the header's inline styles the way a
   real auto-hiding bar does.
+
+- **`bandFill.js`** — does the strip look RIGHT, not just clear. Screenshots the viewport and
+  compares actual PAINTED PIXELS in the strip against the bar right below it, so a site with a
+  solid-coloured navbar must have that colour running to the top bezel. Mechanism-agnostic, unlike
+  `stripColor.js`, which reads the spacer div's declared CSS and is therefore blind on the
+  host-padding and app-shell paths. NEVER pass `clip` to `page.screenshot()` here: that goes through
+  "capture beyond viewport", which re-renders and drops injected inline styles — a spacer forced to
+  solid red still screenshots white, so every coloured site reads as a false FAIL.
+
+- **`scrollHeaderTest.js`** — headers that CHANGE with scroll position, as opposed to `scrollTest.js`'s
+  headers that merely become sticky. Drives a full scroll cycle with real wheel events and checks both
+  band ink and strip colour at each phase. `fixtures/scrollhdr.html` has the four shapes:
+  `?case=autohide|shrink|retop|swap`.
 
 ## Known limitation — scroll-dependent headers with a custom smooth-scroll
 

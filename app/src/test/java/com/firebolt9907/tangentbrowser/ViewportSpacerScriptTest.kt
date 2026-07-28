@@ -278,6 +278,47 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `a header that changes with scroll position keeps a stable inset (iter 56)`() {
+        // Scroll-reactive headers (auto-hide on scroll-down, shrink once scrolled) broke the inset
+        // two ways that only show up across a scroll cycle:
+        //  (a) applyFixed grew a border-box header's height from the LIVE rect. On a header with
+        //      `transition:height`, restore() clears our height, the box animates back over ~200ms,
+        //      and the next pass measures a value still containing most of the previous inset and
+        //      adds topPx again — 56px ratcheted to 200px across one scroll cycle. The base height
+        //      is now measured with transitions suppressed, so the inset is idempotent.
+        //  (b) a bar slid out of the band is restored; when the site slides it back in, the site
+        //      writes the transform when the slide STARTS, so the mutation we observe still shows it
+        //      off-screen and nothing fires when it lands. The re-inset waited for the next cooldown
+        //      and the bar sat over the status bar for ~485ms on every scroll-up.
+        val s = script()
+        assertTrue(
+            "the base height is measured with transitions suppressed",
+            s.contains("function baseHeight(el)") && s.contains("el.style.setProperty('transition','none','important')"),
+        )
+        assertTrue(
+            "the measurement excludes our own padding and height",
+            s.contains("el.style.removeProperty('height');el.style.removeProperty('min-height');el.style.removeProperty('padding-top')"),
+        )
+        assertTrue(
+            "the grown height comes from that base, never from the live rect",
+            s.contains("const newH=(bh>0?bh:rect.height)+topPx"),
+        )
+        assertTrue(
+            "bars we dropped are remembered so their return can trigger a walk",
+            s.contains("function headerReturned()") && s.contains("!headerReturned()"),
+        )
+        assertTrue(
+            "the dropped list accumulates until the bar is re-inset, instead of being wiped each pass",
+            s.contains("var _d=(window.__tangentDropped||[]).filter("),
+        )
+        assertTrue(
+            "a finished transition/animation re-runs the walk",
+            s.contains("document.addEventListener('transitionend',function(){schedule()}") &&
+                s.contains("document.addEventListener('animationend',function(){schedule()}"),
+        )
+    }
+
+    @Test
     fun `observer also reacts to hidden and aria-hidden toggles (iter 49)`() {
         // Headers/cookie banners revealed by removing a `hidden`/`aria-hidden` attribute must
         // trigger a re-inset; the attributeFilter has to include those attrs or the mutation is
@@ -631,7 +672,7 @@ class ViewportSpacerScriptTest {
         )
         assertTrue(
             "the walk's cooldown also yields to the clobber check",
-            s.contains("if(since<cd&&!bandChanged(now)&&!insetsClobbered())"),
+            s.contains("if(since<cd&&!bandChanged(now)&&!insetsClobbered()&&"),
         )
     }
 }

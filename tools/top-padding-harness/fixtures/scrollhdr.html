@@ -1,0 +1,53 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+  body{margin:0;font-family:sans-serif;background:#fff}
+  .bar{position:fixed;top:0;left:0;width:100%;box-sizing:border-box;background:#1a73e8;color:#fff;
+       display:flex;align-items:center;gap:12px;padding:0 12px;height:56px;z-index:9;
+       transition:transform .2s ease,height .2s ease}
+  .logo{width:26px;height:26px;background:#fff;border-radius:6px}
+  .tall{height:4000px;padding-top:140px}
+  .tall p{margin:0 12px 900px}
+</style></head><body>
+<!--
+  SCROLL-REACTIVE HEADER fixture. These headers change with scroll position rather than merely
+  becoming sticky, which is what scrollTest.js already covers. Each case is a shape that is known
+  to fight a fixed top inset:
+
+    ?case=autohide  slides out on scroll-down and back in on scroll-up by rewriting `transform`
+                    (the classic pattern). Our inset lives on `top`/`padding-top`, but the site
+                    writes `transform` every direction change.
+    ?case=shrink    shrinks 96px -> 56px once scrolled, rewriting `height` inline — the inset has
+                    to survive a header that changes size under it.
+    ?case=retop     re-pins itself with `style.top = '0px'` on every scroll tick, overwriting the
+                    `top` our applyFixed() set. The single most direct attack on the inset.
+    ?case=swap      removes the tall marketing header and mounts a different compact one once
+                    scrolled — the inset must follow to the NEW element.
+-->
+<header class="bar" id="hdr"><div class="logo"></div><span>Scroll-reactive header</span><button>Menu</button></header>
+<div class="tall"><h1 style="margin:0 12px">Body</h1>
+  <p>first block</p><p>second block</p><p>third block</p><p>fourth block</p></div>
+<script>
+const c = new URLSearchParams(location.search).get('case') || 'autohide';
+const hdr = document.getElementById('hdr');
+let last = 0, swapped = false;
+function onScroll() {
+  const y = window.scrollY;
+  if (c === 'autohide') {
+    hdr.style.transform = (y > last && y > 120) ? 'translateY(-100%)' : 'translateY(0)';
+  } else if (c === 'shrink') {
+    hdr.style.height = y > 80 ? '56px' : '96px';
+  } else if (c === 'retop') {
+    hdr.style.top = '0px';
+  } else if (c === 'swap' && y > 200 && !swapped) {
+    swapped = true;
+    hdr.remove();
+    const n = document.createElement('header');
+    n.className = 'bar'; n.id = 'hdr2';
+    n.innerHTML = '<div class="logo"></div><span>Compact header</span><button>Menu</button>';
+    document.body.appendChild(n);
+  }
+  last = y;
+}
+if (c === 'shrink') hdr.style.height = '96px';
+window.addEventListener('scroll', onScroll, { passive: true });
+</script>
+</body></html>

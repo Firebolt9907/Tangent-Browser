@@ -236,7 +236,7 @@ fun HistorySheet(
                         reload()
                     }
                 }) {
-                    Text("Clear all")
+                    Text("Clear all", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {

@@ -282,7 +282,7 @@ private fun AddonRow(
                         onUninstall()
                     },
                 ) {
-                    Text("Remove")
+                    Text("Remove", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {

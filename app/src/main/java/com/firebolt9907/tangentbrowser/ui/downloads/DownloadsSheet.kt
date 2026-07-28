@@ -154,7 +154,7 @@ fun DownloadsSheet(
                     runCatching { downloads.forEach { dm?.remove(it.id) } }
                     downloads = emptyList()
                 }) {
-                    Text("Clear all")
+                    Text("Clear all", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {

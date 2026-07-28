@@ -1481,7 +1481,7 @@ private fun ClearBrowsingDataDialog(
             TextButton(
                 enabled = history || cookies || cache,
                 onClick = { onConfirm(history, cookies, cache) },
-            ) { Text("Clear") }
+            ) { Text("Clear", color = MaterialTheme.colorScheme.error) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

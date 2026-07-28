@@ -230,13 +230,51 @@ class ViewportSpacerScriptTest {
         // its bottom edge (elementFromPoint) and paints itself that element's first opaque bg, so a
         // colored nav bar reads as continuous to the screen top. Falls back to body/html base color.
         val s = script()
-        assertTrue("samples the element below the strip", s.contains("elementFromPoint(x,topPx+2)"))
+        assertTrue("samples just below the strip", s.contains("var ys=[topPx+2,topPx+6,topPx+12]"))
         assertTrue("computes a fill for the strip", s.contains("function topBg(sp)"))
         assertTrue("reads a solid or gradient bg per element", s.contains("function topPick(n)"))
         assertTrue("walks up to the first opaque background", s.contains("function topOpaque(c)"))
-        assertTrue("applies the sampled bg to the spacer", s.contains("var __sbg=topBg(el)"))
+        assertTrue("applies the sampled bg to the spacer", s.contains("function paintStrip(el)"))
         assertTrue("carries a branded gradient header up into the strip", s.contains("/gradient/i.test(img)"))
         assertTrue("falls back to the page base color", s.contains("topPick(document.body)"))
+    }
+
+    @Test
+    fun `the strip fill comes from the paint stack and clamps vertical gradients (iter 55)`() {
+        // Two ways the strip ended up a different colour from the bar right under it:
+        // (a) the fill was picked by walking the ANCESTOR chain of whatever hit-tests below the
+        //     strip. On github that is a transparent `header` whose ancestors run straight to
+        //     `body` (#0d1117) — the hero gradient that actually paints there hangs off a sibling
+        //     subtree, so the strip came out page-dark above a blue bar. The paint stack contains
+        //     the ancestors as well, so reading it strictly supersedes the old walk.
+        // (b) a vertical gradient was copied into the strip, squashing the whole ramp into topPx
+        //     and painting a colour from the MIDDLE of the bar. Continued upward past its first
+        //     stop a gradient clamps, so the strip takes that stop's flat colour instead.
+        val s = script()
+        assertTrue(
+            "the fill is read from the paint stack, not an ancestor walk",
+            s.contains("document.elementsFromPoint?document.elementsFromPoint(x,y)"),
+        )
+        assertTrue(
+            "a gradient with no opaque stop is an overlay, not the bar's fill",
+            s.contains("function gradHasOpaque(img)") && s.contains("/gradient/i.test(img)&&gradHasOpaque(img)"),
+        )
+        assertTrue(
+            "vertical gradients are flattened to their top-edge stop",
+            s.contains("function gradFlat(img)") && s.contains("var flat=gradFlat(img);if(flat&&topOpaque(flat))return {c:flat}"),
+        )
+        assertTrue(
+            "horizontal gradients stay uniform vertically, so they are still copied verbatim",
+            s.contains("if(/to\\s+(left|right)/i.test(head)&&!/top|bottom/i.test(head))return ''"),
+        )
+        assertTrue(
+            "body/html are the last resort, so a real bar always beats the page background",
+            s.contains("n===document.documentElement||n===document.body)continue"),
+        )
+        assertTrue(
+            "the fill is re-sampled after the headers are inset, against the final layout",
+            s.contains("if(_sp&&_sp.style.display!=='none')paintStrip(_sp)"),
+        )
     }
 
     @Test

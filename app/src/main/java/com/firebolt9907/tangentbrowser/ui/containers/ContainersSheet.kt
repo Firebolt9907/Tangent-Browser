@@ -1,6 +1,8 @@
 package com.firebolt9907.tangentbrowser.ui.containers
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.BeachAccess
 import androidx.compose.material.icons.filled.BusinessCenter
@@ -46,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -300,6 +304,13 @@ private fun ContainerRow(
     val accent = container.color.swatch()
     // Expandable to reveal the container's open tabs; collapsed by default to keep the list scannable.
     var expanded by remember { mutableStateOf(false) }
+    // Rotating chevron rather than swapped up/down glyphs — the same disclosure idiom as the aA
+    // sheet's collapsible sections (see CollapsibleSection in AaSheetComponents).
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(220),
+        label = "containerChevron",
+    )
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -340,6 +351,17 @@ private fun ContainerRow(
                     text = if (tabs.isEmpty()) "No open tabs" else "${tabs.size} tab${if (tabs.size == 1) "" else "s"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            // Disclosure indicator: without it nothing told the user the row expands at all, or
+            // whether it currently is. Only shown when there are tabs to reveal — the same
+            // condition that enables the tap targets above.
+            if (tabs.isNotEmpty()) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.rotate(chevronRotation),
                 )
             }
             IconButton(onClick = onNewTab) {

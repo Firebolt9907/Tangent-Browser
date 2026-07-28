@@ -13,10 +13,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
@@ -31,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
 import mozilla.components.concept.engine.prompt.Choice
 
 /**
@@ -258,31 +257,31 @@ internal fun IdentityCredentialPrivacyPolicyDialog(
     )
 }
 
-/** The shared bottom-sheet shell for the three `<select>`/choice pickers below. */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The shared bottom-sheet shell for the three `<select>`/choice pickers below.
+ *
+ * [TangentModalSheet] with `scrollable = true`: [ChoiceItems] emits its rows straight into this
+ * column rather than into a lazy list, so a long `<select>` — a country, state or year dropdown,
+ * which is where most of them come from — otherwise ran off the bottom of the sheet with no way to
+ * reach the last options. The shared shell also brings `skipPartiallyExpanded`, so the picker opens
+ * at full height and the first upward drag scrolls the options instead of expanding a half-detent.
+ */
 @Composable
 private fun ChoiceSheet(
     title: String?,
     onDismiss: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp)
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-        ) {
-            if (title != null) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(bottom = 8.dp),
-                )
-            }
-            content()
+    TangentModalSheet(onDismissRequest = onDismiss, scrollable = true) {
+        Spacer(Modifier.height(8.dp))
+        if (title != null) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
         }
+        content()
     }
 }
 

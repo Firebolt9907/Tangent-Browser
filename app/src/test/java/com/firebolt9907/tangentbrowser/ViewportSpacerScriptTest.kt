@@ -391,6 +391,32 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `a changed topPx replaces the previous inset instead of compounding (iter 59)`() {
+        // topPx is not a constant on a phone: ContentHost re-injects when the SafariBar collapses or
+        // expands, and rotation changes the status-bar height outright. The cooldown state, the rAF
+        // pending flag and the trailing timer all live on `window`, but applyHeaderInsets is a
+        // CLOSURE with topPx baked in — so a re-injection carrying a NEW inset was suppressed by the
+        // previous injection's cooldown, and the stale closure's pending timer then re-applied the
+        // OLD value. Going 48 -> 100 -> 48 left the header padded 100 and scroll-padding-top latched
+        // at the taller inset (the latch is deliberately grow-only WITHIN one inset).
+        // The reset is scoped to an actual change so a same-topPx re-inject still hits the
+        // deliberate rapid-re-inject no-op.
+        val s = script()
+        assertTrue(
+            "the stale-inset reset is keyed on topPx actually changing",
+            s.contains("if(window.__tangentTopPx!==topPx){"),
+        )
+        assertTrue(
+            "the grow-only scroll-padding latch is dropped when the inset changes",
+            s.contains("window.__tangentSptApplied=0;window.__tangentTopPx=topPx"),
+        )
+        assertTrue(
+            "a pending pass from the previous closure cannot re-apply the old inset",
+            s.contains("if(window.__tangentTrailingTimer){clearTimeout(window.__tangentTrailingTimer);window.__tangentTrailingTimer=0}}"),
+        )
+    }
+
+    @Test
     fun `observer also reacts to hidden and aria-hidden toggles (iter 49)`() {
         // Headers/cookie banners revealed by removing a `hidden`/`aria-hidden` attribute must
         // trigger a re-inset; the attributeFilter has to include those attrs or the mutation is

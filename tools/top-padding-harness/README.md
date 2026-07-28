@@ -43,9 +43,11 @@ node latencyTest.js 48                           # how LONG a late-mounted heade
 node dutyTest.js fixtures/autohide.html 48       # what FRACTION of frames the band is dirty
 node bandFill.js https://github.com 48           # does the bar's colour reach the top bezel
 node scrollHeaderTest.js https://www.bbc.com 48  # headers that CHANGE with scroll position
+node insetChangeTest.js --seq=48,100,48          # the INSET ITSELF changing (bar collapse, rotation)
 ./fixtures.sh                                    # offline adversarial header fixtures (no network)
 ./anchors.sh                                     # offline scroll-padding-top anchor-jump fixtures
 ./shells.sh                                      # offline viewport-locked app-shell fixtures
+./insets.sh --seq=48,0,48                        # every header fixture, inset changing under it
 ```
 
 ### Offline fixtures
@@ -135,6 +137,15 @@ cleared it. Fast and stable — good as a first gate before the live sweeps.
   headers that merely become sticky. Drives a full scroll cycle with real wheel events and checks both
   band ink and strip colour at each phase. `fixtures/scrollhdr.html` has the four shapes:
   `?case=autohide|shrink|retop|swap`.
+
+- **`insetChangeTest.js`** / **`insets.sh`** — the inset ITSELF changing. Every other probe injects
+  one topPx and asks whether that value is honoured, but topPx is not a constant: ContentHost
+  re-injects when the SafariBar collapses or expands, and rotation changes the status-bar height.
+  Distinct from `resizeTest.js`, which changes the VIEWPORT and expects the inset to survive
+  unchanged — here the hazards are the opposite ones, insets that COMPOUND and values latched
+  grow-only that never come back down. Drives a sequence (`--seq=48,100,48`) and checks that exactly
+  one mechanism carries the inset, that it equals topPx rather than a sum, and that
+  `scroll-padding-top` is not stuck at a taller inset's value.
 
 ## Known limitation — scroll-dependent headers with a custom smooth-scroll
 

@@ -74,6 +74,15 @@ internal fun buildViewportSpacerScript(topPx: Int, skipHeaderInsets: Boolean): S
         const top=topPx+'px';
         const topId='tangent-top-scroll-spacer';
         const styleId='tangent-viewport-scroll-style';
+        /* topPx is not a constant: ContentHost re-injects when the SafariBar collapses or expands,
+           and rotation changes the status-bar height outright. The cooldown state, the rAF pending
+           flag and the trailing timer all live on `window`, but applyHeaderInsets is a CLOSURE with
+           topPx baked in — so a re-injection carrying a NEW inset was suppressed by the previous
+           injection's cooldown, and the stale closure's pending timer then re-applied the OLD
+           value. Going 48 -> 100 -> 48 left the header padded 100 and scroll-padding-top latched at
+           the taller inset. Clear that state when the inset actually CHANGES; leaving it alone for
+           a same-topPx re-inject keeps the deliberate rapid-re-inject no-op below. */
+        if(window.__tangentTopPx!==topPx){window.__tangentSptApplied=0;window.__tangentTopPx=topPx;window.__tangentLastHeaderInsetMs=0;window.__tangentHeaderInsetPending=false;if(window.__tangentTrailingTimer){clearTimeout(window.__tangentTrailingTimer);window.__tangentTrailingTimer=0}}
         function setSPT(v){let s=document.getElementById(styleId);if(!s){s=document.createElement('style');s.id=styleId;(document.head||document.documentElement).appendChild(s)}var vs=v+'px';s.textContent='html,body{scroll-padding-top:'+vs+'!important;}';try{if(document.documentElement)document.documentElement.style.setProperty('scroll-padding-top',vs,'important')}catch(e){}try{if(document.body)document.body.style.setProperty('scroll-padding-top',vs,'important')}catch(e){}}
         function ensureStyle(){let s=document.getElementById(styleId);if(!s){s=document.createElement('style');s.id=styleId;(document.head||document.documentElement).appendChild(s)}var de=document.documentElement;var base=0;try{de.style.removeProperty('scroll-padding-top');s.textContent='';base=px(getComputedStyle(de).scrollPaddingTop)}catch(e){}var floor=(base>0?base:0)+topPx;window.__tangentSptFloor=floor;var eff=Math.max(floor,window.__tangentSptApplied||0);var effS=eff+'px';window.__tangentSptEffPx=eff;s.textContent='html,body{scroll-padding-top:'+effS+'!important;}';try{if(de)de.style.setProperty('scroll-padding-top',effS,'important')}catch(e){}try{if(document.body)document.body.style.setProperty('scroll-padding-top',effS,'important')}catch(e){}}
         ensureStyle();

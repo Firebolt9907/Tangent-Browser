@@ -40,6 +40,7 @@ node gapTest.js https://www.reddit.com 48        # over-padding: content shifted
 node overflowTest.js https://web.telegram.org 48 # app shell / bottom UI pushed off the bottom
 node resizeTest.js https://web.telegram.org/k/ 48 # inset survives a keyboard-sized viewport shrink
 node latencyTest.js 48                           # how LONG a late-mounted header sits in the band
+node dutyTest.js fixtures/autohide.html 48       # what FRACTION of frames the band is dirty
 ./fixtures.sh                                    # offline adversarial header fixtures (no network)
 ./anchors.sh                                     # offline scroll-padding-top anchor-jump fixtures
 ./shells.sh                                      # offline viewport-locked app-shell fixtures
@@ -111,6 +112,14 @@ cleared it. Fast and stable — good as a first gate before the live sweeps.
   to move when we inset the container), injects, forces four more passes, and fails if the reference
   moved. `fixtures/scrollanchor.html?case=none` is the case that matters: pages that opt out of
   scroll anchoring get no help from the browser.
+
+- **`dutyTest.js`** — exposure *duty cycle*. `run.js` asks whether the band is clear once things
+  settle; `latencyTest.js` asks how long after a mount. Neither can see a header that is inset,
+  clobbered by the site's own inline-style writes, re-inset, clobbered again — flickering under the
+  status bar for most of the time while every settled snapshot still looks clean. Samples the band
+  in a rAF loop and fails above 5% dirty frames. `fixtures/autohide.html` is the discriminating
+  case: `?case=transform|cssText|padding|fast` each rewrite the header's inline styles the way a
+  real auto-hiding bar does.
 
 ## Known limitation — scroll-dependent headers with a custom smooth-scroll
 

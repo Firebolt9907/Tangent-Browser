@@ -190,7 +190,7 @@ class ViewportSpacerScriptTest {
         val s = script()
         assertTrue(
             "the cooldown early-return is gated on the band being unchanged",
-            s.contains("if(since<cd&&!bandChanged(now)){"),
+            s.contains("if(since<cd&&!bandChanged(now)&&"),
         )
         assertTrue(
             "samples the top-painted element across the strip, ignoring our own spacer",
@@ -563,6 +563,37 @@ class ViewportSpacerScriptTest {
             "a shell that is itself the scroll container gets its own scroll-padding-top",
             s.contains("if(scs.overflowY==='auto'||scs.overflowY==='scroll')") &&
                 s.contains("k.style.setProperty('scroll-padding-top',(window.__tangentSptEffPx||topPx)+'px','important')"),
+        )
+    }
+
+    @Test
+    fun `a site rewriting its own header's inline styles re-triggers the walk (iter 54)`() {
+        // Our insets are inline !important, which wins the CASCADE — but a site that drives its
+        // header from JS (auto-hiding bars, `style.cssText = …` rewrites) REPLACES the declaration
+        // outright. Two throttles used to swallow that: the MutationObserver dismissed any record
+        // whose target is an element we already inset as "ours", and the walk's 2000ms cooldown
+        // blocked the re-apply. Both must yield to a clobber check, or the header sits under the
+        // status bar for most of every cooldown (measured 88% of frames on the autohide fixture).
+        val s = script()
+        assertTrue(
+            "every inline inset we apply is recorded so a clobber is detectable",
+            s.contains("function want(el,prop,val){el.style.setProperty(prop,val,'important');(el.__tangentWant=el.__tangentWant||{})[prop]=val}"),
+        )
+        assertTrue(
+            "the header inset paths go through want(), not raw setProperty",
+            s.contains("want(el,'padding-top',(px(cs.paddingTop)+topPx)+'px');want(el,'top',Math.max(0,px(cs.top))+'px')"),
+        )
+        assertTrue(
+            "a clobber detector compares our recorded declarations against the live style",
+            s.contains("if(el.style.getPropertyValue(k)!==w[k])return true"),
+        )
+        assertTrue(
+            "the observer's all-ours early-return yields to the clobber check",
+            s.contains("if(allOurs&&!insetsClobbered())return;schedule()"),
+        )
+        assertTrue(
+            "the walk's cooldown also yields to the clobber check",
+            s.contains("if(since<cd&&!bandChanged(now)&&!insetsClobbered())"),
         )
     }
 }

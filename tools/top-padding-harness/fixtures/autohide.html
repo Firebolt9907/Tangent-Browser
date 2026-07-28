@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+  body{margin:0;font-family:sans-serif}
+  .tall{height:3000px;padding-top:120px}
+  .bar{display:flex;align-items:center;gap:12px;padding:0 12px;box-sizing:border-box;position:fixed;top:0;left:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc;z-index:9}
+  .logo{width:28px;height:28px;background:#e00;border-radius:6px}
+</style></head><body>
+<!--
+  AUTO-HIDING HEADER fixture. Sites like this drive their header with their OWN inline styles on a
+  timer or every scroll tick (transform to hide/show, sometimes padding or top too). Our insets are
+  inline `!important`, which wins the CASCADE — but a direct `el.style.transform = ...` REPLACES the
+  declaration outright, and `el.style.cssText = ...` wipes every declaration we set. Used by
+  dutyTest.js to measure how much of the time the header is actually exposed under the status bar.
+  ?case=transform rewrites transform; ?case=cssText nukes the whole style attribute; ?case=padding
+  rewrites padding-top (fighting applyFixed head-on); ?case=fast does cssText every animation frame.
+-->
+<header class="bar" id="hdr"><div class="logo"></div><span class="txt">Auto-hiding header</span><button>Menu</button></header>
+<div class="tall"><h1>Body</h1><p>scroll region</p></div>
+<script>
+const BASE = 'position:fixed;top:0;left:0;width:100%;height:56px;background:#fff;border-bottom:1px solid #ccc;display:flex;align-items:center;gap:12px;padding:0 12px;box-sizing:border-box;z-index:9';
+const c = new URLSearchParams(location.search).get('case') || 'transform';
+function clobber() {
+  const h = document.getElementById('hdr');
+  if (!h) return;
+  if (c === 'transform') h.style.transform = 'translateY(0px)';
+  else if (c === 'padding') h.style.paddingTop = '0px';
+  else h.style.cssText = BASE;
+}
+if (c === 'fast') { const loop = () => { clobber(); requestAnimationFrame(loop); }; requestAnimationFrame(loop); }
+else setInterval(clobber, 400);
+</script>
+</body></html>

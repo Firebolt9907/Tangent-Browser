@@ -17,7 +17,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -45,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
+import com.firebolt9907.tangentbrowser.ui.components.SwipeToRemoveRow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -217,52 +217,58 @@ private fun AddonRow(
 ) {
     var pendingRemoval by remember { mutableStateOf(false) }
     val haptics = rememberTangentHaptics()
-    ListItem(
-        headlineContent = {
-            Text(
-                text = addon.name,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        supportingContent = {
-            val details = buildList {
-                if (addon.version.isNotBlank()) add("v${addon.version}")
-                if (addon.description.isNotBlank()) add(addon.description)
-            }.joinToString(" - ")
-            if (details.isNotBlank()) {
+    // Swipe end-to-start to remove → confirm dialog (the row springs back until confirmed, since
+    // uninstalling loses the add-on's data). Matches every other list sheet — no per-row trash
+    // icon, which here also un-crowds a trailing group that already holds a switch and two
+    // optional icon buttons. See SwipeToRemoveRow.
+    SwipeToRemoveRow(
+        onRemove = { pendingRemoval = true },
+        settleOnRemove = false,
+    ) {
+        ListItem(
+            headlineContent = {
                 Text(
-                    text = details,
-                    maxLines = 2,
+                    text = addon.name,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-        },
-        trailingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(
-                    checked = addon.isEnabled,
-                    onCheckedChange = {
-                        haptics.toggle(it)
-                        onEnabledChange(it)
-                    },
-                )
-                if (addon.isEnabled && addon.hasQuickSettings) {
-                    IconButton(onClick = { haptics.softClick(); onOpenQuickSettings() }) {
-                        Icon(Icons.Default.Tune, contentDescription = "Open ${addon.name} quick settings")
+            },
+            supportingContent = {
+                val details = buildList {
+                    if (addon.version.isNotBlank()) add("v${addon.version}")
+                    if (addon.description.isNotBlank()) add(addon.description)
+                }.joinToString(" - ")
+                if (details.isNotBlank()) {
+                    Text(
+                        text = details,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            },
+            trailingContent = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(
+                        checked = addon.isEnabled,
+                        onCheckedChange = {
+                            haptics.toggle(it)
+                            onEnabledChange(it)
+                        },
+                    )
+                    if (addon.isEnabled && addon.hasQuickSettings) {
+                        IconButton(onClick = { haptics.softClick(); onOpenQuickSettings() }) {
+                            Icon(Icons.Default.Tune, contentDescription = "Open ${addon.name} quick settings")
+                        }
+                    }
+                    if (addon.optionsPageUrl != null) {
+                        IconButton(onClick = { haptics.softClick(); onOpenSettings() }) {
+                            Icon(Icons.Default.Settings, contentDescription = "Open ${addon.name} settings")
+                        }
                     }
                 }
-                if (addon.optionsPageUrl != null) {
-                    IconButton(onClick = { haptics.softClick(); onOpenSettings() }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Open ${addon.name} settings")
-                    }
-                }
-                IconButton(onClick = { haptics.softClick(); pendingRemoval = true }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Remove ${addon.name}")
-                }
-            }
-        },
-    )
+            },
+        )
+    }
 
     if (pendingRemoval) {
         AlertDialog(

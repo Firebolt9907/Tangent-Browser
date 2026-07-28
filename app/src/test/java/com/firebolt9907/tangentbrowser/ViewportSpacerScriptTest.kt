@@ -366,6 +366,31 @@ class ViewportSpacerScriptTest {
     }
 
     @Test
+    fun `the strip fill ignores edge slivers and sees into shadow roots (iter 58)`() {
+        // Two ways the sample landed on the wrong surface, both from the corpus sweep:
+        //  - a thin sliver pinned at the strip's edge (a Material progress-bar track, a divider, a
+        //    4px accent) is not the surface to match. Google's apps put one exactly at topPx, so the
+        //    strip came out #1e1f20 above a #0e0e0e app background on mail/docs/accounts.
+        //  - elementsFromPoint stops at a shadow HOST, so a header rendered inside a shadow root
+        //    (paypal's #shadow-host-header) was invisible and the strip took the warm page
+        //    background behind the host instead of the white nav. collect() already pierces shadow
+        //    roots for the header walk; the colour sampling has to as well.
+        val s = script()
+        assertTrue(
+            "a sliver at the strip edge cannot define the fill",
+            s.contains("if(rect&&rect.height<16)continue;"),
+        )
+        assertTrue(
+            "the sample stack pierces shadow roots",
+            s.contains("function topStack(x,y,root,depth)") && s.contains("if(depth<3&&n.shadowRoot)"),
+        )
+        assertTrue(
+            "shadow content paints above its host, so it is sampled first",
+            s.contains("for(var j=0;j<inner.length;j++){if(inner[j]!==n)out.push(inner[j])}"),
+        )
+    }
+
+    @Test
     fun `observer also reacts to hidden and aria-hidden toggles (iter 49)`() {
         // Headers/cookie banners revealed by removing a `hidden`/`aria-hidden` attribute must
         // trigger a re-inset; the attributeFilter has to include those attrs or the mutation is

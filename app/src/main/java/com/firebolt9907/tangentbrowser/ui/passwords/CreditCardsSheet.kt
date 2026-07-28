@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -94,7 +95,10 @@ fun CreditCardsSheet(
                         "payment forms. Add one with the button below.",
                 )
             } else {
-                LazyColumn(modifier = Modifier.height(320.dp)) {
+                // Capped, not fixed: the Add button below must stay reachable when the
+                // list is long, but a short list should shrink to fit rather than reserve
+                // 320dp of empty space above it.
+                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
                     items(cards, key = { it.guid }) { card ->
                         // Swipe end-to-start to delete → confirm dialog (row springs back until
                         // confirmed, since payment data is sensitive). See SwipeToRemoveRow.

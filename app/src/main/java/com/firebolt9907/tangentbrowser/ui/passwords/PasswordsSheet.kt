@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -155,7 +156,10 @@ fun PasswordsSheet(
                     )
                 }
             } else {
-                LazyColumn(modifier = Modifier.height(320.dp)) {
+                // Capped, not fixed: the Add button below must stay reachable when the
+                // list is long, but a short list should shrink to fit rather than reserve
+                // 320dp of empty space above it.
+                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
                     items(filtered, key = { it.guid }) { meta ->
                         // Swipe end-to-start to delete — opens the confirm dialog (sensitive data,
                         // so it's confirmed, not immediate); the row springs back until confirmed.

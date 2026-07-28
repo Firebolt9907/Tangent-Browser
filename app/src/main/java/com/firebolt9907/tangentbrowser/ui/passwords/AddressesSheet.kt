@@ -97,7 +97,10 @@ fun AddressesSheet(
                         "checkout and profile forms. Add one with the button below.",
                 )
             } else {
-                LazyColumn(modifier = Modifier.height(320.dp)) {
+                // Capped, not fixed: the Add button below must stay reachable when the
+                // list is long, but a short list should shrink to fit rather than reserve
+                // 320dp of empty space above it.
+                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
                     items(addresses, key = { it.guid }) { address ->
                         // Swipe end-to-start to delete → confirm dialog (row springs back until
                         // confirmed). See SwipeToRemoveRow.

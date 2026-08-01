@@ -45,6 +45,7 @@ import com.firebolt9907.tangentbrowser.ui.reader.ReaderTheme
 import com.firebolt9907.tangentbrowser.ui.reader.ReaderManager
 import com.firebolt9907.tangentbrowser.ui.reader.toggleReader
 import com.firebolt9907.tangentbrowser.ui.TangentMotion
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import com.firebolt9907.tangentbrowser.ui.shareUrl
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -60,6 +61,8 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -81,7 +84,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -260,12 +262,18 @@ fun AaSheet(
             targetState = pane,
             transitionSpec = {
                 // Sub-panes slide in from the right (deeper); returning to Page slides back left.
+                // Expressive motion: the slide is spatial (springs, with the slight overshoot that
+                // sells the pane as a physical object), the cross-fade is an effect (critically
+                // damped, so opacity never wobbles). Nothing here rides an M3 component's own
+                // animation, so it is free to use the expressive scheme.
                 val toSub = targetState != AaPane.Page
-                val enter = if (toSub) slideInHorizontally(tween(220)) { it / 5 }
-                    else slideInHorizontally(tween(220)) { -it / 5 }
-                val exit = if (toSub) slideOutHorizontally(tween(180)) { -it / 5 }
-                    else slideOutHorizontally(tween(180)) { it / 5 }
-                (enter + fadeIn(tween(220))) togetherWith (exit + fadeOut(tween(180)))
+                val slide = ExpressiveMotion.defaultSpatialSpec<IntOffset>()
+                val enter = if (toSub) slideInHorizontally(slide) { it / 5 }
+                    else slideInHorizontally(slide) { -it / 5 }
+                val exit = if (toSub) slideOutHorizontally(slide) { -it / 5 }
+                    else slideOutHorizontally(slide) { it / 5 }
+                val fade = ExpressiveMotion.defaultEffectsSpec<Float>()
+                (enter + fadeIn(fade)) togetherWith (exit + fadeOut(fade))
             },
             label = "aaContent",
         ) { current ->
@@ -741,8 +749,10 @@ private fun PageTabContent(
 
             AnimatedVisibility(
                 visible = isActive,
-                enter = expandVertically(animationSpec = tween(220)) + fadeIn(tween(220)),
-                exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(tween(180)),
+                enter = expandVertically(ExpressiveMotion.defaultSpatialSpec<IntSize>()) +
+                    fadeIn(ExpressiveMotion.defaultEffectsSpec<Float>()),
+                exit = shrinkVertically(ExpressiveMotion.defaultSpatialSpec<IntSize>()) +
+                    fadeOut(ExpressiveMotion.defaultEffectsSpec<Float>()),
             ) {
                 Column {
                 Spacer(Modifier.height(12.dp))

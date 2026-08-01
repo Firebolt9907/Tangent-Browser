@@ -96,6 +96,20 @@ internal object TangentMotion {
     // expanded and compact states with this one spring, so up and down feel identical. Near-critical
     // damping (0.9) + a medium-low stiffness give a quick, smooth glide with no visible bounce.
     val BarCollapse = spring<Float>(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow)
+
+    // Material 3's ModalBottomSheet does NOT animate on a tween — it springs, and asymmetrically:
+    // show (and drag-release settle) uses the motion scheme's "default spatial" spring, hide uses
+    // the far snappier "fast effects" one. Anything that has to move *with* a sheet — the scaled-page
+    // backdrop behind it, a companion overlay — must use the same two specs, chosen by direction, or
+    // it visibly desyncs: a tween lags the sheet on the way up and leaves the page card lingering
+    // scaled-down for a beat after the sheet has already gone on the way down.
+    //
+    // These mirror `MaterialTheme.motionScheme`'s standard values (material3
+    // `StandardMotionTokens.SpringDefaultSpatial*` / `SpringFastEffects*`) because that accessor is
+    // `internal` to material3 and can't be read from here. Re-check them when the Compose BOM moves;
+    // the app uses the plain `MaterialTheme` (standard scheme), not `MaterialExpressiveTheme`.
+    val SheetShow = spring<Float>(dampingRatio = 0.9f, stiffness = 700f)
+    val SheetHide = spring<Float>(dampingRatio = 1f, stiffness = 3800f)
 }
 
 // Horizontal tab-switch commit spring: damping scales with the finger's release velocity (fast

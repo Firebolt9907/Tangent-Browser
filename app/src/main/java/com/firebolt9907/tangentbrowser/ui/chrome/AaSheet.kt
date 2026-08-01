@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import com.firebolt9907.tangentbrowser.ui.reader.ReaderTheme
 import com.firebolt9907.tangentbrowser.ui.reader.ReaderManager
 import com.firebolt9907.tangentbrowser.ui.reader.toggleReader
+import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import com.firebolt9907.tangentbrowser.ui.shareUrl
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -188,10 +189,14 @@ fun AaSheet(
 
     // iOS-style scaled-page backdrop behind the sheet. Driven by the sheet's own show/hide target so
     // the page scales down on open and back up on dismiss; read lazily so it doesn't recompose here.
+    // The spec is picked by direction to match ModalBottomSheet's own asymmetric springs (see
+    // [TangentMotion.SheetShow]/[TangentMotion.SheetHide]) — with a single tween the page card and the
+    // sheet travel on different curves, so the card trails the rising sheet and then sits scaled-down
+    // for a beat after the sheet has already dropped off screen.
     val showingTarget = sheetState.targetValue != SheetValue.Hidden
     val backdropFraction = animateFloatAsState(
         targetValue = if (showingTarget) 1f else 0f,
-        animationSpec = tween(300),
+        animationSpec = if (showingTarget) TangentMotion.SheetShow else TangentMotion.SheetHide,
         label = "aaBackdrop",
     )
     ScaledPageBackdrop(

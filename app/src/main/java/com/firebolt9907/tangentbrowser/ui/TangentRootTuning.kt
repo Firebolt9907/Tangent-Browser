@@ -3,6 +3,7 @@ package com.firebolt9907.tangentbrowser.ui
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.sign
@@ -110,6 +111,22 @@ internal object TangentMotion {
     // the app uses the plain `MaterialTheme` (standard scheme), not `MaterialExpressiveTheme`.
     val SheetShow = spring<Float>(dampingRatio = 0.9f, stiffness = 700f)
     val SheetHide = spring<Float>(dampingRatio = 1f, stiffness = 3800f)
+
+    // Release of a swipe-to-close on an overview card (deck/pixel up-swipe, classic-grid side-swipe).
+    // Both outcomes take over from a finger that is still moving, so neither may ease *in* — and the
+    // default FastOutSlowIn does exactly that: its curve leaves the origin at zero velocity, so the
+    // card stalls for a frame at the instant the finger lifts and then re-accelerates. That hitch is
+    // the whole reason [EaseOut] exists (its comment already names "grid dismiss"); the grid just
+    // wasn't using it.
+    //
+    // Dismiss rides EaseOut — the card is leaving the screen, so a fixed decelerate-only slide is
+    // predictable and can't overshoot. Snap-back springs instead, seeded by the caller with the
+    // finger's release velocity where a tracker is available, so a card still travelling keeps
+    // travelling and settles rather than replaying a fixed 200 ms ramp from a standstill.
+    // visibilityThreshold is half a pixel because the animated value is a raw pixel offset: the
+    // Float default of 0.01 would keep the spring emitting frames long past anything visible.
+    val CardDismiss = tween<Float>(durationMillis = 200, easing = EaseOut)
+    val CardSnapBack = spring<Float>(dampingRatio = 0.82f, stiffness = 420f, visibilityThreshold = 0.5f)
 }
 
 // Horizontal tab-switch commit spring: damping scales with the finger's release velocity (fast

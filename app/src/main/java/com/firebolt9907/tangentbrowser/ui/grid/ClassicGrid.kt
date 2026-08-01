@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -758,16 +759,19 @@ private fun GridTabCard(
                                 animate(
                                     initialValue = targetOffset,
                                     targetValue = endValue,
-                                    animationSpec = tween(durationMillis = 200)
+                                    animationSpec = TangentMotion.CardDismiss
                                 ) { value, _ ->
                                     swipeOffsets[tab.id] = value
                                 }
                                 onCloseTab(tab.id)
                             } else {
+                                // Unlike the deck's up-swipe this gesture keeps no VelocityTracker,
+                                // so the spring starts unseeded — it still removes the ease-in stall,
+                                // it just can't carry the flick through.
                                 animate(
                                     initialValue = targetOffset,
                                     targetValue = 0f,
-                                    animationSpec = tween(durationMillis = 200)
+                                    animationSpec = TangentMotion.CardSnapBack
                                 ) { value, _ ->
                                     swipeOffsets[tab.id] = value
                                 }
@@ -780,7 +784,7 @@ private fun GridTabCard(
                             animate(
                                 initialValue = targetOffset,
                                 targetValue = 0f,
-                                animationSpec = tween(durationMillis = 200)
+                                animationSpec = TangentMotion.CardSnapBack
                             ) { value, _ ->
                                 swipeOffsets[tab.id] = value
                             }

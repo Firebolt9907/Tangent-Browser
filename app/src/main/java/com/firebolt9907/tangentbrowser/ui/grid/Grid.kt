@@ -33,6 +33,7 @@ import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.calculateTargetValue
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateMapOf
@@ -875,14 +876,19 @@ private fun GridTabCard(
                                 animate(
                                     initialValue = offset,
                                     targetValue = -containerH,
-                                    animationSpec = tween(durationMillis = 200)
+                                    animationSpec = TangentMotion.CardDismiss
                                 ) { value, _ -> swipeOffsets[tab.id] = value }
                                 onCloseTab(tab.id)
                             } else {
+                                // Hand the tracker's velocity to the spring so a card that was still
+                                // moving upward when the finger left keeps moving before it turns
+                                // around — the snap-back continues the gesture instead of restarting
+                                // the motion from a standstill.
                                 animate(
                                     initialValue = offset,
                                     targetValue = 0f,
-                                    animationSpec = tween(durationMillis = 200)
+                                    initialVelocity = vY,
+                                    animationSpec = TangentMotion.CardSnapBack
                                 ) { value, _ -> swipeOffsets[tab.id] = value }
                             }
                         }
@@ -890,10 +896,12 @@ private fun GridTabCard(
                     onDragCancel = {
                         coroutineScope.launch {
                             val offset = swipeOffsets[tab.id] ?: 0f
+                            // No velocity to seed here: a cancel means the pointer was taken away
+                            // rather than released, so the card really is starting from rest.
                             animate(
                                 initialValue = offset,
                                 targetValue = 0f,
-                                animationSpec = tween(durationMillis = 200)
+                                animationSpec = TangentMotion.CardSnapBack
                             ) { value, _ -> swipeOffsets[tab.id] = value }
                         }
                     },

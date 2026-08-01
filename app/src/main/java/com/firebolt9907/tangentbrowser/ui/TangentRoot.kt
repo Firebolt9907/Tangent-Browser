@@ -2542,7 +2542,7 @@ fun TangentRoot(
                     animate(
                         predictiveBackOffsetPx,
                         width,
-                        animationSpec = tween(PredictiveBackDurationMs, easing = EaseOut),
+                        animationSpec = TangentMotion.PredictiveBackCommit,
                     ) { value, _ ->
                         predictiveBackOffsetPx = value
                     }
@@ -2560,7 +2560,7 @@ fun TangentRoot(
                         animate(
                             current,
                             0f,
-                            animationSpec = tween(durationMillis = 180, easing = EaseOut),
+                            animationSpec = TangentMotion.PredictiveBackCancel,
                         ) { value, _ ->
                             predictiveBackOffsetPx = value
                         }

@@ -127,6 +127,21 @@ internal object TangentMotion {
     // Float default of 0.01 would keep the spring emitting frames long past anything visible.
     val CardDismiss = tween<Float>(durationMillis = 200, easing = EaseOut)
     val CardSnapBack = spring<Float>(dampingRatio = 0.82f, stiffness = 420f, visibilityThreshold = 0.5f)
+
+    // Release of a predictive-back drag, for BOTH activities' back gestures. Same reason as the card
+    // specs above: the finger is mid-travel when the system hands the gesture over, so the settle
+    // must be decelerate-only. These exist mainly to keep MainActivity and CustomTabActivity in
+    // sync — the same back-swipe used to commit over 220 ms in one and 180 ms in the other, on two
+    // different curves, so going back felt like a different gesture depending on how the page had
+    // been opened.
+    val PredictiveBackCommit = tween<Float>(durationMillis = PredictiveBackDurationMs, easing = EaseOut)
+    val PredictiveBackCancel = tween<Float>(durationMillis = 180, easing = EaseOut)
+
+    // The Custom Tab *close* commit is deliberately the one exception to [PredictiveBackCommit]: the
+    // window's own exit animation (`overridePendingTransition`, see AGENTS.md → Custom Tab exit
+    // animation) picks up from whatever frame this ends on, so the in-app slide is kept short to
+    // reach that handoff quickly. Only the duration differs — the curve still must not ease in.
+    val CustomTabCloseCommit = tween<Float>(durationMillis = 120, easing = EaseOut)
 }
 
 // Horizontal tab-switch commit spring: damping scales with the finger's release velocity (fast

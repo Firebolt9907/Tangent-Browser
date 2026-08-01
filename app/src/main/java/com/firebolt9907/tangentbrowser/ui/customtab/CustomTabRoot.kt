@@ -9,7 +9,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
+import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -421,14 +421,14 @@ fun CustomTabRoot(
                     closeTouchDy = backEvent.touchY - startTouchY
                     closeSlide = backEvent.progress.coerceIn(0f, 1f)
                 }
-                animate(closeSlide, 1f, animationSpec = tween(120)) { v, _ -> closeSlide = v }
+                animate(closeSlide, 1f, animationSpec = TangentMotion.CustomTabCloseCommit) { v, _ -> closeSlide = v }
                 // Leave closeSlide at 1: the window's exit animation continues from this frame,
                 // resetting it would flash the full-size page before the window fades.
                 onClose()
             } catch (_: CancellationException) {
                 val cancelSlide = closeSlide
                 val cancelDy = closeTouchDy
-                animate(1f, 0f, animationSpec = tween(200)) { v, _ ->
+                animate(1f, 0f, animationSpec = TangentMotion.PredictiveBackCancel) { v, _ ->
                     closeSlide = cancelSlide * v
                     closeTouchDy = cancelDy * v
                 }
@@ -448,11 +448,11 @@ fun CustomTabRoot(
         PredictiveBackHandler(enabled = canGoBack && !readerActive && !isVideoFullscreen) { progress ->
             try {
                 progress.collect { backEvent -> backSlide = backEvent.progress.coerceIn(0f, 1f) }
-                animate(backSlide, 1f, animationSpec = tween(180)) { v, _ -> backSlide = v }
+                animate(backSlide, 1f, animationSpec = TangentMotion.PredictiveBackCommit) { v, _ -> backSlide = v }
                 customTabId?.let { components.sessionUseCases.goBack.invoke(it) }
                 backSlide = 0f
             } catch (_: CancellationException) {
-                animate(backSlide, 0f, animationSpec = tween(160)) { v, _ -> backSlide = v }
+                animate(backSlide, 0f, animationSpec = TangentMotion.PredictiveBackCancel) { v, _ -> backSlide = v }
                 backSlide = 0f
             }
         }

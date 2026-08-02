@@ -34,7 +34,11 @@ import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.animation.core.Animatable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -127,6 +131,28 @@ internal fun BottomBarLayer(
     }
     val hideForKeyboard = isKeyboardVisible && activeState.mode != BarMode.Editing
 
+    // Fade the bar out ON the keyboard's own curve instead of blanking it. `isKeyboardVisible` flips
+    // the moment the IME inset crosses zero — the FIRST frame of a 285 ms keyboard animation — so
+    // switching alpha straight to 0 made the pill vanish instantly and then left the keyboard still
+    // visibly sliding up into the hole where it had been. The bar is `imePadding`-lifted, so it now
+    // rides up with the keyboard and dissolves as it goes.
+    val keyboardHideAlpha = remember { Animatable(if (hideForKeyboard) 0f else 1f) }
+    // Composition gate. Read instead of `hideForKeyboard` so the bar survives its own fade-out; it is
+    // a plain boolean flipped at the ends of the animation rather than a derived read of
+    // `keyboardHideAlpha`, so composition changes once per transition instead of once per frame —
+    // the alpha itself is read only inside the graphicsLayer below (draw phase), matching how
+    // gridProgress is handled.
+    var barComposed by remember { mutableStateOf(!hideForKeyboard) }
+    LaunchedEffect(hideForKeyboard) {
+        if (hideForKeyboard) {
+            keyboardHideAlpha.animateTo(0f, TangentMotion.ImeTrack)
+            barComposed = false
+        } else {
+            barComposed = true
+            keyboardHideAlpha.animateTo(1f, TangentMotion.ImeTrack)
+        }
+    }
+
     // Wide layout: pin the pill (and its ghosts/toolbar) into a capped-width band at the bottom-right
     // instead of stretching full-width. SPLIT moves the action buttons into a cluster left of the
     // pill (toolbar beside, not above); CORNER keeps the classic stacked pill+toolbar, just corner-
@@ -145,10 +171,10 @@ internal fun BottomBarLayer(
             .imePadding()
             .graphicsLayer {
                 val baseAlpha = (1f - (gridProgress() * 1.5f).coerceIn(0f, 1f)).coerceIn(0f, 1f)
-                alpha = if (hideForKeyboard) 0f else baseAlpha
+                alpha = baseAlpha * keyboardHideAlpha.value
             },
     ) {
-        if (!hideForKeyboard) {
+        if (barComposed) {
             val barHeight = if (activeState.mode == BarMode.Editing) {
                 72.dp
             } else {

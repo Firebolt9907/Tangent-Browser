@@ -43,7 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
+import com.firebolt9907.tangentbrowser.ui.theme.titleLargeEmphasized
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -86,7 +86,7 @@ fun TangentModalSheet(
 }
 
 /**
- * Consistent sheet title row: an optional leading icon, a large bold title, and an optional trailing
+ * Consistent sheet title row: an optional leading icon, an emphasized title, and an optional trailing
  * action (e.g. a "Clear all" button or a busy spinner). Every sheet's header goes through this so the
  * icon spacing, title weight, and trailing alignment stay identical across surfaces.
  */
@@ -105,12 +105,14 @@ fun SheetHeader(
             leadingIcon()
             Spacer(Modifier.width(10.dp))
         }
-        // iOS-18 large-title weight — bold rather than the M3 default Normal. Weighted so the
-        // trailing content sits flush right (and a long title ellipsizes rather than shoving it off).
+        // M3 Expressive's emphasized cut of titleLarge (Medium, not the base Regular) — a sheet
+        // title is exactly the "assert the hierarchy" case the emphasized styles exist for. This
+        // was previously an ad-hoc iOS-18 large-title Bold, a heavier weight than the spec's.
+        // Weighted so the trailing content sits flush right (and a long title ellipsizes rather
+        // than shoving it off).
         Text(
             text = title,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.titleLargeEmphasized,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),

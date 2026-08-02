@@ -10,8 +10,8 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.remember
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -105,7 +105,13 @@ internal class SnapshotCoverState {
         fadingCoverJob.value?.cancel()
         fadingCoverJob.value = scope.launch {
             fadingCoverAlpha.snapTo(1f)
-            fadingCoverAlpha.animateTo(0f, animationSpec = tween(durationMillis = 220))
+            // Effects spring, not a tween. This cover is the last thing standing between the user
+            // and a page Gecko has already painted, so every millisecond it holds is pure latency —
+            // and FastOutSlowIn (the tween default this replaces) leaves the origin at zero
+            // velocity, meaning the cover sat at *full* opacity for the first frames of its own
+            // dismissal before it began to dissolve. Critically damped so the alpha can't wobble
+            // back up, and it clears in appreciably less than the 220 ms it used to take.
+            fadingCoverAlpha.animateTo(0f, animationSpec = ExpressiveMotion.defaultEffectsSpec())
             fadingCoverBitmap.value = null
             fadingCoverActive.value = false
             fadingCoverJob.value = null

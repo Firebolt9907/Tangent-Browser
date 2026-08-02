@@ -2,7 +2,6 @@ package com.firebolt9907.tangentbrowser.ui.chrome
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -44,7 +43,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import com.firebolt9907.tangentbrowser.ui.TangentHaptics
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 
 /**
  * Reusable presentational building blocks for the "aA" sheet — extracted from `AaSheet.kt`
@@ -185,9 +186,15 @@ internal fun CollapsibleSection(
 ) {
     // Rotate one chevron rather than hard-swapping up/down icons, and animate the body's
     // expand/collapse (and the sheet-height change) instead of popping it in and out.
+    //
+    // Expressive motion throughout: the chevron is a small control that moves, so it takes the
+    // *fast spatial* tier (the tier is chosen by the size of the change, not by taste) — its light
+    // damping gives the flick of overshoot that makes the rotation read as a physical flip rather
+    // than a linear sweep. Nothing here animates alongside a material3 component, so the expressive
+    // scheme is free to apply; see ExpressiveMotion's docs for the sheet-backdrop exception.
     val chevronRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(220),
+        animationSpec = ExpressiveMotion.fastSpatialSpec(),
         label = "collapsibleChevron",
     )
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -214,8 +221,13 @@ internal fun CollapsibleSection(
         }
         AnimatedVisibility(
             visible = expanded,
-            enter = expandVertically(animationSpec = tween(220)) + fadeIn(tween(220)),
-            exit = shrinkVertically(animationSpec = tween(180)) + fadeOut(tween(180)),
+            // The body's height change is spatial, the cross-fade over it is an effect (critically
+            // damped — a bouncing opacity reads as a flicker). Matches the section rows in AaSheet.kt
+            // exactly, so the two collapsibles in the same sheet no longer open on different curves.
+            enter = expandVertically(ExpressiveMotion.defaultSpatialSpec<IntSize>()) +
+                fadeIn(ExpressiveMotion.defaultEffectsSpec<Float>()),
+            exit = shrinkVertically(ExpressiveMotion.defaultSpatialSpec<IntSize>()) +
+                fadeOut(ExpressiveMotion.defaultEffectsSpec<Float>()),
         ) {
             Column {
                 Spacer(Modifier.height(8.dp))

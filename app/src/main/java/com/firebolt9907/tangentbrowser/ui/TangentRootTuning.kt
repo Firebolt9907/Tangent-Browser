@@ -65,6 +65,21 @@ internal val EaseOutInterpolator: Interpolator = PathInterpolator(0f, 0f, 0.2f, 
 // settle ValueAnimator and the suggestion sheet's own slide — because the sheet is glued to the
 // keyboard through the drag and must not come unstuck at the moment the finger lifts.
 internal const val ImeSettleDurationMs = 200
+// The platform's own IME show/hide animation, mirrored so app UI that has to rise and fall WITH the
+// keyboard stays glued to it instead of running a parallel timer at a different speed.
+//
+// Verified against AOSP `android.view.InsetsController` (android-36 platform sources):
+// `InternalAnimationControlListener.getInsetsInterpolator` returns `SYNC_IME_INTERPOLATOR` =
+// `PathInterpolator(0.2f, 0f, 0f, 1f)` and `getDurationMs` returns `ANIMATION_DURATION_SYNC_IME_MS`
+// = 285 — the SAME curve and duration in BOTH directions — whenever `mHasAnimationCallbacks` is set,
+// i.e. the app has registered a `WindowInsetsAnimation.Callback`. Compose registers one for any
+// window that reads `WindowInsets.ime` or uses `imePadding()`, which this app does throughout, so
+// the synced branch is the one that applies here. (The unsynced fallback — 200 ms, asymmetric
+// LINEAR_OUT_SLOW_IN / FAST_OUT_LINEAR_IN — applies only without that callback, and the separate
+// `hasZeroInsetsIme` branch only to keyboards with no height at all, where nothing is visible to
+// track anyway.)
+internal const val ImeSyncDurationMs = 285
+internal val ImeSyncEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 internal const val PredictiveBackDurationMs = 220
 internal val TabSwitchGap = 64.dp
@@ -159,6 +174,11 @@ internal object TangentMotion {
     // drives the real IME with — the sheet tracks the keyboard 1:1 through the drag, so any
     // divergence here shows up as the two coming unstuck exactly when the finger lifts.
     val ImeSettle = tween<Float>(durationMillis = ImeSettleDurationMs, easing = EaseOut)
+
+    // For UI that enters and leaves alongside the keyboard on the *system's* animation (as opposed
+    // to [ImeSettle], which is the app-driven settle after a manual-control drag). Symmetric in both
+    // directions because the platform's synced IME animation is — see [ImeSyncDurationMs].
+    val ImeTrack = tween<Float>(durationMillis = ImeSyncDurationMs, easing = ImeSyncEasing)
 }
 
 // Horizontal tab-switch commit spring: damping scales with the finger's release velocity (fast

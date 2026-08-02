@@ -2,8 +2,6 @@ package com.firebolt9907.tangentbrowser.ui.chrome
 
 import android.graphics.Bitmap
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -170,13 +168,19 @@ fun AddressSheet(
     val fallbackTravelPx = with(density) { 320.dp.toPx() }
     val travelPx = if (kbHeightPx > 0f) kbHeightPx else fallbackTravelPx
 
+    // Non-drag entry/exit. The sheet rises and falls with the keyboard — tapping the pill shows the
+    // IME and this sheet together, submitting hides both — so it runs on the platform's own synced
+    // IME curve and duration rather than a timer of its own (TangentMotion.ImeTrack; see
+    // ImeSyncDurationMs for where those numbers come from). Previously 280 ms in / 220 ms out on
+    // FastOutSlowIn, which drifted against the keyboard in both directions and worst on the way out,
+    // where it was a full 65 ms shorter than the IME it was supposed to be travelling with.
     LaunchedEffect(visible) {
         if (visible) {
-            reveal.animateTo(1f, tween(280, easing = FastOutSlowInEasing))
+            reveal.animateTo(1f, TangentMotion.ImeTrack)
         } else {
             dragging = false
             rawDragPx = 0f
-            reveal.animateTo(0f, tween(220, easing = FastOutSlowInEasing))
+            reveal.animateTo(0f, TangentMotion.ImeTrack)
         }
     }
 

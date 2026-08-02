@@ -29,7 +29,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
+import com.firebolt9907.tangentbrowser.ui.theme.headlineSmallEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.titleMediumEmphasized
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import mozilla.components.concept.storage.Address
@@ -122,8 +123,7 @@ private fun AutofillPickerScaffold(
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.headlineSmallEmphasized,
             )
             Spacer(Modifier.height(4.dp))
             Text(
@@ -178,8 +178,7 @@ private fun AutofillPickerRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = primary,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium,
+                    style = MaterialTheme.typography.titleMediumEmphasized,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

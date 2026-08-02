@@ -14,7 +14,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
+import com.firebolt9907.tangentbrowser.ui.theme.titleLargeEmphasized
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.addons.AddonPermissionPrompt
 
@@ -52,7 +52,7 @@ internal fun AddonPermissionSheetContent(
             .padding(bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text(prompt.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(prompt.title, style = MaterialTheme.typography.titleLargeEmphasized)
         if (permissionGroups.isEmpty()) {
             Text(
                 text = "This add-on does not request additional permissions.",

@@ -32,7 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.text.font.FontWeight
+import com.firebolt9907.tangentbrowser.ui.theme.headlineSmallEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.titleMediumEmphasized
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.state.compactHost
@@ -65,8 +66,7 @@ internal fun SelectLoginSheet(
         ) {
             Text(
                 text = "Fill password",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.headlineSmallEmphasized,
             )
             Spacer(Modifier.height(4.dp))
             Text(
@@ -108,8 +108,7 @@ private fun LoginRow(login: Login, onClick: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = primary,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium,
+                    style = MaterialTheme.typography.titleMediumEmphasized,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -156,8 +155,7 @@ private fun LetterTile(label: String) {
         Text(
             text = letter,
             color = onTile,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.titleMediumEmphasized,
         )
     }
 }

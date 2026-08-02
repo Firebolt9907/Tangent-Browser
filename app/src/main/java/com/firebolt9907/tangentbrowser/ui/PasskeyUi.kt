@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
+import com.firebolt9907.tangentbrowser.ui.theme.pressMorphShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -179,10 +181,12 @@ private fun PasskeyRow(candidate: BitwardenPasskeyStore.Candidate, onClick: () -
         ?: candidate.userName?.takeIf { it.isNotBlank() }
         ?: host
 
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
+        shape = pressMorphShape(interactionSource, resting = 16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        interactionSource = interactionSource,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(

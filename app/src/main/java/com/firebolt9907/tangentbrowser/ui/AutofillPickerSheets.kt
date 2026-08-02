@@ -35,6 +35,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import mozilla.components.concept.storage.Address
 import mozilla.components.concept.storage.CreditCardEntry
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
+import com.firebolt9907.tangentbrowser.ui.theme.pressMorphShape
 
 /**
  * The "pick a saved card to fill" sheet shown for
@@ -148,10 +151,12 @@ private fun AutofillPickerRow(
     secondary: String,
     onClick: () -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
+        shape = pressMorphShape(interactionSource, resting = 16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        interactionSource = interactionSource,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(

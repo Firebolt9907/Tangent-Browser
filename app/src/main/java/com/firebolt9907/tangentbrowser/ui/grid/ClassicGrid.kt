@@ -33,8 +33,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
 import com.firebolt9907.tangentbrowser.ui.TangentMotion
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -831,13 +831,15 @@ private fun GridTabCard(
             // persists across snapshot changes. LaunchedEffect(snapshot) restarts the animation
             // when a new bitmap arrives; animAlpha is read ONLY inside graphicsLayer/drawBehind
             // blocks (draw phase), so the card never recomposes on animation frames.
-            val crossfadeAlpha = remember { Animatable(if (isGesture) 1f else 1f) }
+            val crossfadeAlpha = remember { Animatable(1f) }
             LaunchedEffect(snapshot) {
                 if (!isGesture && (animateOnLoad || prev != null)) {
                     crossfadeAlpha.snapTo(0f)
                     crossfadeAlpha.animateTo(
                         targetValue = 1f,
-                        animationSpec = tween(180),
+                        // Same effects spring as the deck's cards in Grid.kt — the two overviews
+                        // draw the same thumbnails and must reveal them identically.
+                        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
                     )
                     tracker.previous = null
                 } else {

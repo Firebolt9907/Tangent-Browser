@@ -32,8 +32,8 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.calculateTargetValue
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import com.firebolt9907.tangentbrowser.ui.TangentMotion
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateMapOf
@@ -950,13 +950,18 @@ private fun GridTabCard(
             // blocks (draw phase), so the card never recomposes on animation frames — matching
             // the provider-lambda pattern used by barCollapseProgressProvider and GridTabCard's
             // per-card graphicsLayer.
-            val crossfadeAlpha = remember { Animatable(if (isGesture) 1f else 1f) }
+            val crossfadeAlpha = remember { Animatable(1f) }
             LaunchedEffect(snapshot) {
                 if (!isGesture && (animateOnLoad || prev != null)) {
                     crossfadeAlpha.snapTo(0f)
                     crossfadeAlpha.animateTo(
                         targetValue = 1f,
-                        animationSpec = tween(180),
+                        // Pure alpha, so this is an *effects* spring, not a spatial one: critically
+                        // damped, because an opacity that overshoots reads as a flicker. It also
+                        // replaces a tween whose default FastOutSlowIn leaves zero velocity at the
+                        // origin — a thumbnail landing would creep for the first frames and then
+                        // rush, when what it should do is commit immediately.
+                        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
                     )
                     tracker.previous = null
                 } else {

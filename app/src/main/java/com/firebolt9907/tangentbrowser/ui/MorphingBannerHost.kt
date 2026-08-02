@@ -2,7 +2,6 @@ package com.firebolt9907.tangentbrowser.ui
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,12 +22,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.zIndex
 import com.firebolt9907.tangentbrowser.ui.shape.SquircleShape
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import kotlin.math.abs
 import kotlinx.coroutines.launch
 
@@ -125,6 +126,12 @@ internal fun Modifier.bannerSwipeToDismiss(onDismiss: () -> Unit): Modifier = co
     val density = LocalDensity.current
     // Distance past which a release commits the dismissal.
     val dismissThresholdPx = with(density) { 96.dp.toPx() }
+    // Far enough that the card is fully off-screen whichever way it was thrown; the banner sits at
+    // the bottom, so the screen's longest edge clears it in either axis.
+    val configuration = LocalConfiguration.current
+    val exitTravelPx = with(density) {
+        maxOf(configuration.screenWidthDp, configuration.screenHeightDp).dp.toPx()
+    }
 
     this
         .graphicsLayer {
@@ -148,15 +155,41 @@ internal fun Modifier.bannerSwipeToDismiss(onDismiss: () -> Unit): Modifier = co
                     val flungDown = offsetY.value > dismissThresholdPx
                     val flungSide = abs(offsetX.value) > dismissThresholdPx
                     if (flungDown || flungSide) {
+                        // Commit immediately, exactly as before, so the Z-stack learns this card is
+                        // leaving and the one behind it starts coming forward without waiting.
                         onDismiss()
+                        // …but keep the throw going. The card stays composed through its exit morph
+                        // (the host holds it until `morph` reaches 0, after the Now Bar's 110 ms
+                        // delayed tuck), and it used to spend that time frozen at whatever offset the
+                        // finger left it at before tucking straight *down* — so a card flung sideways
+                        // stopped dead in mid-air and then went somewhere else entirely. Carrying it
+                        // off-screen along the axis it was actually thrown lets the tuck happen after
+                        // it is already gone. CardDismiss rather than a spatial spring: this is the
+                        // established house spec for "card leaves the screen on gesture release", and
+                        // an overshooting spring is meaningless once the card is out of view.
+                        scope.launch {
+                            if (flungSide) {
+                                val dir = if (offsetX.value > 0f) 1f else -1f
+                                offsetX.animateTo(dir * exitTravelPx, TangentMotion.CardDismiss)
+                            } else {
+                                offsetY.animateTo(exitTravelPx, TangentMotion.CardDismiss)
+                            }
+                        }
                     } else {
-                        scope.launch { offsetX.animateTo(0f, spring()) }
-                        scope.launch { offsetY.animateTo(0f, spring()) }
+                        // Snap-back is app-owned spatial motion, so it takes the expressive spring —
+                        // the bare `spring()` here was Compose's critically-damped default, which
+                        // returned the card to rest with no character at all. The px variant matters:
+                        // these are raw pixel offsets, and the stock 0.01 threshold would run the
+                        // spring for frames past anything visible.
+                        val snapBack = ExpressiveMotion.defaultSpatialPxSpec()
+                        scope.launch { offsetX.animateTo(0f, snapBack) }
+                        scope.launch { offsetY.animateTo(0f, snapBack) }
                     }
                 },
                 onDragCancel = {
-                    scope.launch { offsetX.animateTo(0f, spring()) }
-                    scope.launch { offsetY.animateTo(0f, spring()) }
+                    val snapBack = ExpressiveMotion.defaultSpatialPxSpec()
+                    scope.launch { offsetX.animateTo(0f, snapBack) }
+                    scope.launch { offsetY.animateTo(0f, snapBack) }
                 },
             )
         }

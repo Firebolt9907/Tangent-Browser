@@ -51,12 +51,24 @@ object ExpressiveMotion {
     private val DefaultEffects = spring<Any>(dampingRatio = 1f, stiffness = 1600f)
     private val FastEffects = spring<Any>(dampingRatio = 1f, stiffness = 3800f)
     private val SlowEffects = spring<Any>(dampingRatio = 1f, stiffness = 800f)
+    private val DefaultSpatialPx =
+        spring(dampingRatio = 0.8f, stiffness = 380f, visibilityThreshold = 0.5f)
 
     /** Spatial motion for the common case — a row expanding, a pane sliding in. */
     fun <T> defaultSpatialSpec(): FiniteAnimationSpec<T> = DefaultSpatial.cast()
 
     /** Spatial motion for small controls — a chip, a switch, an icon rotating. */
     fun <T> fastSpatialSpec(): FiniteAnimationSpec<T> = FastSpatial.cast()
+
+    /**
+     * [defaultSpatialSpec] for a value measured in **raw pixels** (a drag offset, a translation).
+     *
+     * Identical spring, but `visibilityThreshold` is half a pixel instead of the `Float` default of
+     * `0.01`. That default assumes a normalized 0..1 value; against a pixel offset it is a hundredth
+     * of a pixel, so the spring keeps emitting frames long after the motion is visually finished.
+     * Prefer this for anything animating a `translationX`/`translationY`-style quantity.
+     */
+    fun defaultSpatialPxSpec(): FiniteAnimationSpec<Float> = DefaultSpatialPx
 
     /** Spatial motion for large surfaces — a sheet, a full-screen overlay. */
     fun <T> slowSpatialSpec(): FiniteAnimationSpec<T> = SlowSpatial.cast()

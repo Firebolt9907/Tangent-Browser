@@ -8,6 +8,8 @@ import android.view.WindowInsets
 import android.view.WindowInsetsAnimationControlListener
 import android.view.WindowInsetsAnimationController
 import android.view.animation.LinearInterpolator
+import com.firebolt9907.tangentbrowser.ui.EaseOutInterpolator
+import com.firebolt9907.tangentbrowser.ui.ImeSettleDurationMs
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -173,8 +175,13 @@ class ImeSheetController(private val view: View) {
         val end = if (show) shown else hidden
         settleAnimator?.cancel()
         settleAnimator = ValueAnimator.ofInt(start, end).apply {
-            duration = 200L
-            interpolator = LinearInterpolator()
+            // Decelerate-only, NOT linear: this runs after the finger has left, and a constant
+            // velocity that stops dead at the resting inset is the one curve a gesture release must
+            // never have. (The LinearInterpolator above, on the control request, is a different
+            // thing and must stay linear — it maps the finger's own drag to the inset fraction.)
+            // The suggestion sheet rides this same duration/curve via TangentMotion.ImeSettle.
+            duration = ImeSettleDurationMs.toLong()
+            interpolator = EaseOutInterpolator
             addUpdateListener { anim ->
                 val ctrl = controller ?: return@addUpdateListener
                 val value = anim.animatedValue as Int

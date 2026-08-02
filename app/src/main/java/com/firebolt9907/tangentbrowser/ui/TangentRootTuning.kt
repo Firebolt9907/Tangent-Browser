@@ -1,5 +1,7 @@
 package com.firebolt9907.tangentbrowser.ui
 
+import android.view.animation.Interpolator
+import android.view.animation.PathInterpolator
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -54,6 +56,15 @@ internal const val ScrollVelocityMaxAgeMs = 80L
 // continues from the finger and eases into the target without re-accelerating, matching iOS's
 // interactive-pop settle. Default FastOutSlowIn eases in *and* out, which feels wrong mid-gesture.
 internal val EaseOut = CubicBezierEasing(0f, 0f, 0.2f, 1f)
+// [EaseOut] again, as a View-world interpolator, for the places a gesture release is settled by an
+// android ValueAnimator rather than a Compose animation (the IME insets controller). Same four
+// control points — kept adjacent so the two can't drift apart.
+internal val EaseOutInterpolator: Interpolator = PathInterpolator(0f, 0f, 0.2f, 1f)
+// How long the keyboard takes to settle to its resting state after a sheet-drag release, once the
+// app hands manual IME control back. Shared by BOTH halves of that handoff — ImeSheetController's
+// settle ValueAnimator and the suggestion sheet's own slide — because the sheet is glued to the
+// keyboard through the drag and must not come unstuck at the moment the finger lifts.
+internal const val ImeSettleDurationMs = 200
 
 internal const val PredictiveBackDurationMs = 220
 internal val TabSwitchGap = 64.dp
@@ -142,6 +153,12 @@ internal object TangentMotion {
     // animation) picks up from whatever frame this ends on, so the in-app slide is kept short to
     // reach that handoff quickly. Only the duration differs — the curve still must not ease in.
     val CustomTabCloseCommit = tween<Float>(durationMillis = 120, easing = EaseOut)
+
+    // The suggestion sheet's half of the keyboard-settle handoff. Must stay the same duration and
+    // curve as [EaseOutInterpolator] at [ImeSettleDurationMs], which is what ImeSheetController
+    // drives the real IME with — the sheet tracks the keyboard 1:1 through the drag, so any
+    // divergence here shows up as the two coming unstuck exactly when the finger lifts.
+    val ImeSettle = tween<Float>(durationMillis = ImeSettleDurationMs, easing = EaseOut)
 }
 
 // Horizontal tab-switch commit spring: damping scales with the finger's release velocity (fast

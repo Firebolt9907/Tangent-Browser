@@ -3,7 +3,6 @@ package com.firebolt9907.tangentbrowser.ui.chrome
 import android.graphics.Bitmap
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.background
@@ -62,6 +61,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Velocity
 import com.firebolt9907.tangentbrowser.state.AddressSuggestion
+import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
 import com.firebolt9907.tangentbrowser.state.AddressSuggestionKind
 import com.firebolt9907.tangentbrowser.state.SearchEngine
@@ -298,7 +298,10 @@ fun AddressSheet(
                 0f
             }
             val anim = Animatable(rawDragPx)
-            anim.animateTo(target, tween(200, easing = LinearEasing)) { rawDragPx = value }
+            // Same duration and curve ImeSheetController.animateToFinish settles the real keyboard
+            // on. The sheet is glued to the keyboard for the whole drag; if the two settle on
+            // different curves they visibly come unstuck the instant the finger lifts.
+            anim.animateTo(target, TangentMotion.ImeSettle) { rawDragPx = value }
             // Pin the post-drag resting state BEFORE clearing `dragging` so the offset doesn't snap:
             // dismissed → keep it off-screen (reveal 0); settled → keep it open (reveal 1).
             reveal.snapTo(if (dismiss) 0f else 1f)

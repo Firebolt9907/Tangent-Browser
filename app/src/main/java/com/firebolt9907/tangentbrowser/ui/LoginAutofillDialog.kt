@@ -21,7 +21,9 @@ import androidx.compose.runtime.remember
 import com.firebolt9907.tangentbrowser.ui.theme.pressMorphShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -36,9 +38,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import com.firebolt9907.tangentbrowser.ui.theme.headlineSmallEmphasized
 import com.firebolt9907.tangentbrowser.ui.theme.titleMediumEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.titleSmallEmphasized
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.state.compactHost
+import com.firebolt9907.tangentbrowser.ui.content.LoginFieldProbe
 import mozilla.components.concept.storage.Login
 import kotlin.math.abs
 
@@ -54,6 +58,12 @@ internal fun SelectLoginSheet(
     logins: List<Login>,
     onSelect: (Login) -> Unit,
     onDismiss: () -> Unit,
+    // When non-null, this credential has earned the unattended-autofill offer: it is the only match
+    // on an enterprise identity provider and the user has already filled it by hand several times.
+    // See [com.firebolt9907.tangentbrowser.state.AutofillTrustStore] for every condition. Null in the
+    // ordinary case, which is what keeps this off individual websites.
+    alwaysAutofillCandidate: Login? = null,
+    onAlwaysAutofill: (Login) -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -85,6 +95,30 @@ internal fun SelectLoginSheet(
                 items(logins, key = { it.guid }) { login ->
                     LoginRow(login = login, onClick = { onSelect(login) })
                 }
+            }
+
+            if (alwaysAutofillCandidate != null) {
+                Spacer(Modifier.height(18.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "You sign in here often",
+                    style = MaterialTheme.typography.titleSmallEmphasized,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Tangent can fill this one automatically on " +
+                        compactHost(alwaysAutofillCandidate.origin).ifBlank { "this sign-in service" } +
+                        ", without asking. It applies to this saved login only, and stays off " +
+                        "everywhere else.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = { onAlwaysAutofill(alwaysAutofillCandidate) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Always autofill") }
             }
         }
     }
@@ -168,38 +202,10 @@ private fun LetterTile(label: String) {
  * `javascript:` payload injected into the page shortly after a login is filled, to press the form's
  * submit control — the "click login after autofill" behavior.
  *
- * Conservative on purpose: it only acts on a form that actually contains a filled password field, so
- * it never submits a stray search box. It prefers an explicit submit control inside that form, then
- * falls back to `form.requestSubmit()`. Runs a couple of delayed attempts because Gecko fills the
- * fields asynchronously after the prompt is confirmed.
+ * Delegates to [LoginFieldProbe.buildSubmitScript], which shares the probe's *visibility-aware* field
+ * locator. That sharing is the point: a hidden decoy password input (which every identifier-first IdP
+ * keeps in the DOM) used to satisfy a plain `querySelector` here and stall the submit.
  */
-internal fun buildLoginSubmitScript(): String {
-    val js = """
-        (function(){
-          function trySubmit(){
-            var pw = document.querySelector('input[type=password]');
-            if(!pw || !pw.value) return false;
-            var form = pw.form;
-            if(!form) return false;
-            var btn = form.querySelector('button[type=submit], input[type=submit], button:not([type])');
-            if(!btn){
-              var cands = form.querySelectorAll('button, input[type=button], [role=button]');
-              for(var i=0;i<cands.length;i++){
-                var t=(cands[i].innerText||cands[i].value||'').toLowerCase();
-                if(/log\s?in|sign\s?in|continue|submit|next/.test(t)){ btn=cands[i]; break; }
-              }
-            }
-            if(btn){ btn.click(); return true; }
-            if(form.requestSubmit){ form.requestSubmit(); return true; }
-            form.submit();
-            return true;
-          }
-          var tries=0;
-          var iv=setInterval(function(){
-            tries++;
-            if(trySubmit() || tries>6){ clearInterval(iv); }
-          }, 250);
-        })();
-    """.trimIndent().replace("\n", "")
-    return "javascript:$js"
-}
+internal fun buildLoginSubmitScript(
+    stage: String = LoginFieldProbe.Stage.Password,
+): String = LoginFieldProbe.buildSubmitScript(stage)

@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><title>inline</title>
+<style>body{background:#fff;color:#111}</style></head><body>
+<!-- The page sets its OWN inline colors. Teardown used to blanket-remove these properties from
+     every element, so turning dark mode off left the page permanently wrong until a reload. -->
+<div id="a" style="background-color: rgb(255, 0, 0); color: rgb(0, 0, 255); padding: 10px">brand red</div>
+<div id="b" style="border: 2px solid rgb(0, 128, 0); background-image: linear-gradient(rgb(255,255,255), rgb(200,200,200))">gradient</div>
+<div id="c">no inline style of its own</div>
+<script>
+window.__probe=function(){
+  return ['a','b','c'].map(function(id){
+    return {name:id,bg:getComputedStyle(document.getElementById(id)).backgroundColor};
+  });
+};
+</script>
+</body></html>

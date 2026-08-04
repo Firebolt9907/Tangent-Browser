@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- Heavy app shell: the surface carrying the dark theme does not exist until hydration finishes,
+     well after the 1.2s re-check the script used to stop at. -->
+<html><head><meta charset="utf-8"><title>late dark</title>
+<style>html,body{margin:0;height:100%;background:#fff;color:#111}</style></head>
+<body>
+  <div id="root"></div>
+  <script>
+    setTimeout(function () {
+      document.body.style.background = '#151515';
+      document.body.style.color = '#eaeaea';
+      var d = document.createElement('div');
+      d.style.cssText = 'position:absolute;inset:0;background:#151515;color:#eaeaea';
+      d.textContent = 'hydrated';
+      document.getElementById('root').appendChild(d);
+      window.__hydrated = 1;
+    }, 1800);
+  </script>
+</body></html>

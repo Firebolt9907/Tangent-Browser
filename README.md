@@ -53,6 +53,19 @@ edge-to-edge under the status bar.
 - **Coil** for image loading, **BouncyCastle** for the Sync 1.5 crypto path.
 - Single Gradle module under `app/`.
 
+## Install (Obtainium)
+
+Tangent isn't on any app store. Tagged releases publish a signed `arm64-v8a` APK to
+[GitHub Releases](https://github.com/Firebolt9907/TangentBrowser/releases), which
+[Obtainium](https://github.com/ImranR98/Obtainium) can install and keep updated.
+
+With Obtainium already installed, one tap adds it with the source pre-filled:
+
+[<img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="54">](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22com.firebolt9907.tangentbrowser%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FFirebolt9907%2FTangentBrowser%22%2C%22author%22%3A%22Firebolt9907%22%2C%22name%22%3A%22Tangent%20Browser%22%2C%22preferredApkIndex%22%3A0%2C%22additionalSettings%22%3A%22%7B%5C%22includePrereleases%5C%22%3Afalse%2C%5C%22fallbackToOlderReleases%5C%22%3Atrue%2C%5C%22autoApkFilterByArch%5C%22%3Atrue%7D%22%2C%22overrideSource%22%3A%22GitHub%22%7D)
+
+Otherwise: **Add App** → paste the repo URL. Full setup (keystore, secrets, cutting a release):
+[`docs/OBTAINIUM.md`](docs/OBTAINIUM.md).
+
 ## Build & run
 
 ```sh
@@ -67,8 +80,9 @@ The dev build defaults to a **single-ABI** APK (`arm64-v8a`) to keep the size ar
 ```
 
 Notes:
-- Release builds are signed with the local **debug** keystore (`~/.android/debug.keystore`) —
-  intentional for local use, not distribution.
+- Release builds are signed with the local **debug** keystore (`~/.android/debug.keystore`) unless
+  an upload keystore is supplied (`TANGENT_KEYSTORE_FILE` — see
+  [`docs/OBTAINIUM.md`](docs/OBTAINIUM.md)); the debug fallback is for local use, not distribution.
 - **Firebase / FxA push is optional.** `app/google-services.json` is gitignored; without it the
   build drops the Google Services plugin and sync falls back to its foreground poll (see
   [`AGENTS.md`](AGENTS.md) → *Firefox Sync*). The app builds and syncs fine with no Firebase project.

@@ -107,6 +107,11 @@ internal fun TangentOverlaySheets(
     onDismissAa: () -> Unit,
     onAaEngineRefresh: () -> Unit,
     onFindInPage: () -> Unit,
+    // Element zap: starts the in-page element picker for the current tab, and restores everything
+    // hidden on this host. [zappedCount] is the current host's hidden-element count.
+    onZapElement: (() -> Unit)?,
+    zappedCount: Int,
+    onRestoreZapped: () -> Unit,
     // Enters Internet Archive (Wayback) mode for the current tab.
     onOpenArchive: () -> Unit,
     siteTrackingProtectionDisabled: Boolean,
@@ -345,6 +350,9 @@ internal fun TangentOverlaySheets(
         val aaSpaces by components.tabGroupsRepository.groups.collectAsStateWithLifecycle()
         val aaCurrentSpaceId = selectedTabId
             ?.let { id -> components.tabGroupsRepository.groupIdForTab(id) }
+        val dataSaverActive by components.dataSaverController.active.collectAsStateWithLifecycle()
+        val dataSaverBlocked by components.dataSaverController.blockedCount
+            .collectAsStateWithLifecycle()
         AaSheet(
             host = currentHost,
             store = components.sitePreferencesStore,
@@ -396,6 +404,9 @@ internal fun TangentOverlaySheets(
                 components.addonController.openPopup(addon.id)
             },
             onFindInPage = onFindInPage,
+            onZapElement = onZapElement,
+            zappedCount = zappedCount,
+            onRestoreZapped = onRestoreZapped,
             onPrint = {
                 // GeckoView opens the Android print dialog (physical printers + Save as PDF).
                 selectedTabId?.let { components.sessionUseCases.printContent.invoke(it) }
@@ -417,6 +428,19 @@ internal fun TangentOverlaySheets(
                     // Re-run the page so the new policy takes effect immediately.
                     components.sessionUseCases.reload.invoke(id)
                 }
+            },
+            dataSaverActive = dataSaverActive,
+            dataSaverExempt = components.dataSaverController.isExempt(currentUrl),
+            dataSaverBlockedCount = dataSaverBlocked,
+            onToggleDataSaverExempt = { exempt ->
+                if (exempt) {
+                    components.dataSaverController.exempt(currentUrl)
+                } else {
+                    components.dataSaverController.unexempt(currentUrl)
+                }
+                // The blocking decision is made per request, so the page has to be fetched again for
+                // the change to mean anything — same as the tracking-protection toggle above.
+                selectedTabId?.let { components.sessionUseCases.reload.invoke(it) }
             },
             pageUrl = currentUrl.orEmpty(),
             pageTitle = selectedContent?.title.orEmpty(),

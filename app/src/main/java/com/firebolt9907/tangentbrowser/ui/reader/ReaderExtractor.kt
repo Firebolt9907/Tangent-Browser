@@ -990,6 +990,12 @@ object ReaderExtractor {
                             }
                             return GeckoResult.fromValue(prompt.confirm("ok"))
                         }
+                        com.firebolt9907.tangentbrowser.ui.content.ElementZap.BRIDGE_MESSAGE -> {
+                            prompt.defaultValue?.let {
+                                com.firebolt9907.tangentbrowser.ui.content.ElementZap.onPayload(it)
+                            }
+                            return GeckoResult.fromValue(prompt.confirm("ok"))
+                        }
                         com.firebolt9907.tangentbrowser.ui.content.DarkImageSegmenter.BRIDGE_MESSAGE -> {
                             prompt.defaultValue?.let {
                                 com.firebolt9907.tangentbrowser.ui.content.DarkImageSegmenter.onPayload(tabId, it)

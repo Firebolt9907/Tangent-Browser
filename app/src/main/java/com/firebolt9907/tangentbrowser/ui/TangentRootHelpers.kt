@@ -55,9 +55,28 @@ internal fun predictiveBackTargetUrl(
     if (loading && currentHistoryUrl != null && currentHistoryUrl != visibleUrl) {
         return currentHistoryUrl
     }
-    val previousIndex = history.currentIndex - 1
+    val previousIndex = ssoCollapsedBackIndex(history) ?: (history.currentIndex - 1)
     return history.items.getOrNull(previousIndex)?.uri?.takeUnless(::isBlankHistoryUrl)
 }
+
+/**
+ * The history index Back should jump to when the entries immediately behind the current one are the
+ * transient hops of a federated sign-in chain — or null when an ordinary one-step Back is correct.
+ *
+ * Stepping back *into* a spent IdP entry is worse than useless: its `SAMLRequest`/`code` is already
+ * consumed, so the IdP just redirects forward again and Back appears frozen. Collapsing the whole
+ * contiguous run lands on the page the user was on before signing in, which is what "back" means to
+ * them.
+ *
+ * Shared by the cover-target lookup above and the three Back commit sites in [TangentRoot], so the
+ * snapshot shown during a predictive-back drag is the page the release actually navigates to.
+ * See [com.firebolt9907.tangentbrowser.state.SsoFlow] for what counts as a chain hop.
+ */
+internal fun ssoCollapsedBackIndex(history: HistoryState): Int? =
+    com.firebolt9907.tangentbrowser.state.SsoFlow.collapsedBackIndex(
+        urls = history.items.map { it.uri },
+        currentIndex = history.currentIndex,
+    )
 
 internal fun isBlankHistoryUrl(url: String): Boolean {
     return url.isBlankPageUrl()

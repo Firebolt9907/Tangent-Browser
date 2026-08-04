@@ -41,20 +41,26 @@ internal fun buildBottomSpacerScript(bottomPx: Int): String {
         const bottom=bottomPx+'px';
         const spacerId='tangent-bottom-scroll-spacer';
         const styleId='tangent-viewport-bottom-style';
-        function ensureStyle(){let s=document.getElementById(styleId);if(!s){s=document.createElement('style');s.id=styleId;(document.head||document.documentElement).appendChild(s)}s.textContent='html,body{scroll-padding-bottom:'+bottom+'!important;}'}
+        /* Writing textContent REPLACES the style element's text node, which is a childList
+           mutation — and the observer below only recognised the spacer div as "ours", so every
+           apply() re-triggered the observer, which scheduled another apply(). That ran this whole
+           script at animation-frame rate (~120x/second) on every page, forever, for no visual
+           change at all. Write only when the value actually differs, and mark the style element
+           tangentIgnoreSafeTop so the TOP spacer's walk skips it too. */
+        function ensureStyle(){let s=document.getElementById(styleId);if(!s){s=document.createElement('style');s.id=styleId;s.dataset.tangentIgnoreSafeTop='true';(document.head||document.documentElement).appendChild(s)}if(s.dataset.tangentIgnoreSafeTop!=='true')s.dataset.tangentIgnoreSafeTop='true';const t='html,body{scroll-padding-bottom:'+bottom+'!important;}';if(s.textContent!==t)s.textContent=t}
         function opaque(c){if(!c)return false;c=c.replace(/\s+/g,'');if(c==='transparent')return false;var m=c.match(/^rgba?\(([^)]+)\)${'$'}/i);if(m){var p=m[1].split(',');if(p.length>=4&&parseFloat(p[3])===0)return false}return true}
         /* Match the strip to the page: sample the element the spacer sits below, walking up its
            ancestors to the first real (opaque) background, then fall back to the body / html base
            color. Makes the reserved band read as a seamless continuation of the page instead of a
            transparent gap under a colored footer. */
         function bgColor(el){for(var n=el?el.previousElementSibling:null;n;n=n.parentElement){try{var c=getComputedStyle(n).backgroundColor;if(opaque(c))return c}catch(e){}}try{var b=getComputedStyle(document.body).backgroundColor;if(opaque(b))return b}catch(e){}try{var h=getComputedStyle(document.documentElement).backgroundColor;if(opaque(h))return h}catch(e){}return ''}
-        function ensureSpacer(){const host=document.body;if(!host)return;let el=document.getElementById(spacerId);if(!el){el=document.createElement('div');el.id=spacerId}el.setAttribute('aria-hidden','true');el.dataset.tangentIgnoreSafeTop='true';if(host.lastElementChild!==el){host.appendChild(el)}const bg=bgColor(el);el.style.cssText='height:'+bottom+'!important;min-height:'+bottom+'!important;width:100%!important;flex:0 0 auto!important;pointer-events:none!important;margin:0!important;padding:0!important;border:0!important;background:'+(bg||'transparent')+'!important;'}
+        function ensureSpacer(){const host=document.body;if(!host)return;let el=document.getElementById(spacerId);if(!el){el=document.createElement('div');el.id=spacerId}if(el.getAttribute('aria-hidden')!=='true')el.setAttribute('aria-hidden','true');if(el.dataset.tangentIgnoreSafeTop!=='true')el.dataset.tangentIgnoreSafeTop='true';if(host.lastElementChild!==el){host.appendChild(el)}const bg=bgColor(el);const css='height:'+bottom+'!important;min-height:'+bottom+'!important;width:100%!important;flex:0 0 auto!important;pointer-events:none!important;margin:0!important;padding:0!important;border:0!important;background:'+(bg||'transparent')+'!important;';if(el.style.cssText!==css)el.style.cssText=css}
         function apply(){ensureStyle();ensureSpacer()}
         apply();
         function schedule(){if(window.__tangentBottomPending)return;window.__tangentBottomPending=true;requestAnimationFrame(function(){window.__tangentBottomPending=false;apply()})}
         setTimeout(schedule,1000);setTimeout(schedule,3000);
         if(window.__tangentBottomObserver){window.__tangentBottomObserver.disconnect();window.__tangentBottomObserver=null}
-        window.__tangentBottomObserver=new MutationObserver(function(records){const allOurs=records.every(function(r){return r.target&&r.target.id===spacerId});if(allOurs)return;schedule()});
+        window.__tangentBottomObserver=new MutationObserver(function(records){const allOurs=records.every(function(r){return r.target&&(r.target.id===spacerId||r.target.id===styleId||(r.target.parentElement&&r.target.parentElement.id===styleId))});if(allOurs)return;schedule()});
         try{window.__tangentBottomObserver.observe(document.documentElement,{childList:true,subtree:true})}catch(e){}
         if(!window.__tangentBottomListenersBound){window.__tangentBottomListenersBound=true;window.addEventListener('load',function(){schedule()},{passive:true});var wrapHist=function(n){var o=history[n];if(typeof o==='function'&&!o.__tangentBottomWrapped){var w=function(){var r=o.apply(this,arguments);schedule();setTimeout(schedule,300);return r};w.__tangentBottomWrapped=true;try{history[n]=w}catch(e){}}};wrapHist('pushState');wrapHist('replaceState');window.addEventListener('popstate',function(){schedule();setTimeout(schedule,300)});}
         })()

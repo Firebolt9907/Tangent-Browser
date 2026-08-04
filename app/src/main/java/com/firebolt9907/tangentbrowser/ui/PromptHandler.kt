@@ -35,6 +35,12 @@ fun PromptHandler(
     var promptRequest by remember { mutableStateOf<PromptRequest?>(null) }
     val context = LocalContext.current
 
+    // Autofill pickers the user explicitly dismissed on the current page. Gecko re-raises
+    // Select*Prompt on *every* focus of the field, so without this a dismissed picker pops straight
+    // back up on the next tap and the field can never be typed into by hand. Suppressed entries are
+    // auto-dismissed (Gecko still needs the callback) until the page navigates — see onLocationChange.
+    val dismissedPickers = remember { mutableSetOf<String>() }
+
     // File-upload (<input type=file>) plumbing. The active File request is held here so the
     // activity-result callbacks can route the chosen document(s) back to Gecko (or dismiss on
     // cancel). Uses OpenDocument, which grants a persistable read grant on the returned Uri.
@@ -64,6 +70,13 @@ fun PromptHandler(
 
         val observer = object : EngineSession.Observer {
             override fun onPromptRequest(request: PromptRequest) {
+                val kind = suppressiblePickerKind(request)
+                if (kind != null && kind in dismissedPickers) {
+                    // Already waved off on this page — dismiss silently so the field keeps focus and
+                    // the keyboard stays up for manual entry.
+                    (request as? PromptRequest.Dismissible)?.onDismiss?.invoke()
+                    return
+                }
                 promptRequest = request
             }
 
@@ -71,6 +84,11 @@ fun PromptHandler(
                 if (promptRequest == request) {
                     promptRequest = null
                 }
+            }
+
+            override fun onLocationChange(url: String, hasUserGesture: Boolean) {
+                // New page (or SPA route) — the user's "not now" was about the old form.
+                dismissedPickers.clear()
             }
         }
         engineSession.register(observer)
@@ -233,6 +251,20 @@ fun PromptHandler(
                 LaunchedEffect(request) { request.onDismiss(); promptRequest = null }
                 return
             }
+            // Only one login picker at a time. ProactiveLoginAutofill raises the same sheet off a
+            // field-detection probe, and a page whose password field autofocuses (Microsoft's sign-in
+            // step) fires both at once — see LoginPickerCoordinator. Losing the claim means the user
+            // already has this sheet in front of them, or we just filled by JS, so dismiss silently.
+            var claimed by remember(request) { mutableStateOf<Boolean?>(null) }
+            DisposableEffect(request) {
+                claimed = LoginPickerCoordinator.claim(LoginPickerCoordinator.OwnerFocus)
+                if (claimed != true) {
+                    request.onDismiss()
+                    promptRequest = null
+                }
+                onDispose { LoginPickerCoordinator.release(LoginPickerCoordinator.OwnerFocus) }
+            }
+            if (claimed != true) return
             SelectLoginSheet(
                 logins = request.logins,
                 onSelect = { login ->
@@ -243,6 +275,17 @@ fun PromptHandler(
                         request.onConfirm(login)
                         promptRequest = null
                         engineSession?.loadJavascriptUrl(buildLoginSubmitScript())
+                        // Count the hand-fill. This is the other half of what earns a credential the
+                        // "Always autofill" offer in ProactiveLoginAutofill — the focus-driven path
+                        // gets there just as legitimately as the proactive sheet.
+                        com.firebolt9907.tangentbrowser.state.AutofillTrustStore(context)
+                            .recordManualFill(login.guid)
+                        // Filling re-fires focus/change on the field, so Gecko re-raises this same
+                        // prompt moments later — over a form that is already filled. Stay quiet.
+                        LoginPickerCoordinator.release(
+                            LoginPickerCoordinator.OwnerFocus,
+                            quietForMs = LoginPickerCoordinator.QuietAfterFillMs,
+                        )
                         Unit
                     }
                     if (biometricAutofillRequired) {
@@ -259,7 +302,13 @@ fun PromptHandler(
                         fill()
                     }
                 },
-                onDismiss = { request.onDismiss(); promptRequest = null },
+                onDismiss = {
+                    // The user waved the picker off — they want to type. Don't re-offer on the next
+                    // focus of the field (Gecko re-raises this prompt on every focus).
+                    dismissedPickers.add(PickerKindLogin)
+                    request.onDismiss()
+                    promptRequest = null
+                },
             )
         }
         is PromptRequest.SaveLoginPrompt -> {
@@ -306,7 +355,11 @@ fun PromptHandler(
                         fill()
                     }
                 },
-                onDismiss = { request.onDismiss(); promptRequest = null },
+                onDismiss = {
+                    dismissedPickers.add(PickerKindCreditCard)
+                    request.onDismiss()
+                    promptRequest = null
+                },
             )
         }
         is PromptRequest.SaveCreditCard -> {
@@ -337,7 +390,11 @@ fun PromptHandler(
                     request.onConfirm(address)
                     promptRequest = null
                 },
-                onDismiss = { request.onDismiss(); promptRequest = null },
+                onDismiss = {
+                    dismissedPickers.add(PickerKindAddress)
+                    request.onDismiss()
+                    promptRequest = null
+                },
             )
         }
         is PromptRequest.Popup -> {
@@ -358,4 +415,20 @@ fun PromptHandler(
             android.util.Log.w("PromptHandler", "Unhandled prompt: ${request?.javaClass?.simpleName}")
         }
     }
+}
+
+private const val PickerKindLogin = "login"
+private const val PickerKindCreditCard = "creditCard"
+private const val PickerKindAddress = "address"
+
+/**
+ * The autofill pickers that Gecko re-raises on **every** focus of a matching field, so a dismissal
+ * has to be remembered for the rest of the page (see [PromptHandler]'s `dismissedPickers`). Anything
+ * else — alerts, file pickers, save doorhangers — is page-driven and must never be suppressed.
+ */
+private fun suppressiblePickerKind(request: PromptRequest): String? = when (request) {
+    is PromptRequest.SelectLoginPrompt -> PickerKindLogin
+    is PromptRequest.SelectCreditCard -> PickerKindCreditCard
+    is PromptRequest.SelectAddress -> PickerKindAddress
+    else -> null
 }

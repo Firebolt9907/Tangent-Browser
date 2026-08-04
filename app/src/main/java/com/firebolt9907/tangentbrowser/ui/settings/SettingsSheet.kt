@@ -255,10 +255,19 @@ fun SettingsSheet(
             SheetRowDivider()
             SettingsPicker(
                 title = "Cookie banner auto-dismiss",
-                subtitle = "Automatically decline or ignore cookie consent banners",
+                // "Reject only" is the private choice but silently does nothing on the many banners
+                // that offer no reject control — those sites keep showing the dialog. Say so in the
+                // subtitle, so a banner that stays up doesn't read as the feature being broken.
+                // (Option labels must stay identical to selectedLabel — SettingsPicker marks the
+                // active row by string equality.)
+                subtitle = when (cookieBannerHandlingMode) {
+                    1 -> "Declines banners that offer a reject option; others stay up"
+                    2 -> "Declines banners, accepting only when there's no reject option"
+                    else -> "Automatically dismiss cookie consent banners"
+                },
                 selectedLabel = when (cookieBannerHandlingMode) {
-                    1 -> "Reject all"
-                    2 -> "Reject or accept all"
+                    1 -> "Reject only"
+                    2 -> "Reject, else accept"
                     else -> "Disabled"
                 },
                 options = listOf(
@@ -267,12 +276,12 @@ fun SettingsSheet(
                         globalPrefsStore.cookieBannerHandlingMode = 0
                         onSettingChanged()
                     },
-                    "Reject all" to {
+                    "Reject only" to {
                         cookieBannerHandlingMode = 1
                         globalPrefsStore.cookieBannerHandlingMode = 1
                         onSettingChanged()
                     },
-                    "Reject or accept all" to {
+                    "Reject, else accept" to {
                         cookieBannerHandlingMode = 2
                         globalPrefsStore.cookieBannerHandlingMode = 2
                         onSettingChanged()

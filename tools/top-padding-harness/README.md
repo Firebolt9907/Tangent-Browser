@@ -44,6 +44,7 @@ node dutyTest.js fixtures/autohide.html 48       # what FRACTION of frames the b
 node bandFill.js https://github.com 48           # does the bar's colour reach the top bezel
 node scrollHeaderTest.js https://www.bbc.com 48  # headers that CHANGE with scroll position
 node insetChangeTest.js --seq=48,100,48          # the INSET ITSELF changing (bar collapse, rotation)
+node pairTest.js https://www.reddit.com 48 64    # BOTH spacers together, as they actually ship
 ./fixtures.sh                                    # offline adversarial header fixtures (no network)
 ./anchors.sh                                     # offline scroll-padding-top anchor-jump fixtures
 ./shells.sh                                      # offline viewport-locked app-shell fixtures
@@ -146,6 +147,15 @@ cleared it. Fast and stable — good as a first gate before the live sweeps.
   grow-only that never come back down. Drives a sequence (`--seq=48,100,48`) and checks that exactly
   one mechanism carries the inset, that it equals topPx rather than a sum, and that
   `scroll-padding-top` is not stuck at a taller inset's value.
+
+- **`pairTest.js`** — both spacers at once. Every other probe injects the top script alone, but
+  `injectViewportSpacers()` injects the top AND bottom spacers, so two independent MutationObservers
+  watch one document and each one's writes are the other's input. Checks that both insets still land
+  and — the part no single-script probe can see — that neither observer drives the other, by counting
+  passes of each over a quiet window. A feedback loop here costs battery on every page without ever
+  showing up as a wrong pixel, which is exactly how one survived: the bottom spacer was re-running
+  ~120x/second because writing `style.textContent` is a childList mutation its own observer treated
+  as page churn.
 
 ## Known limitation — scroll-dependent headers with a custom smooth-scroll
 

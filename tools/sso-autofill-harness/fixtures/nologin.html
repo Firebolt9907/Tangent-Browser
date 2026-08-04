@@ -1,0 +1,23 @@
+<!doctype html>
+<!--
+  A busy page with no login on it. Pins that the mutation watcher is never armed here: the detector
+  runs on every page load, so a watcher that attached unconditionally would put a debounced DOM scan
+  behind every mutation on the whole web. This page mutates continuously and must stay silent.
+-->
+<html>
+<head><meta charset="utf-8"><title>Feed</title></head>
+<body>
+  <input type="search" name="q" placeholder="Search">
+  <div id="feed"></div>
+  <script>
+    var n = 0;
+    setInterval(function () {
+      var d = document.createElement('div');
+      d.className = 'card-' + (n++);
+      d.textContent = 'item ' + n;
+      document.getElementById('feed').appendChild(d);
+      document.body.className = 'churn-' + n;
+    }, 30);
+  </script>
+</body>
+</html>

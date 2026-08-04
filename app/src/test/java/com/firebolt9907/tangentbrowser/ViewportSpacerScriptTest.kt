@@ -1,5 +1,6 @@
 package com.firebolt9907.tangentbrowser
 
+import com.firebolt9907.tangentbrowser.ui.content.buildBottomSpacerScript
 import com.firebolt9907.tangentbrowser.ui.content.buildViewportSpacerScript
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -413,6 +414,38 @@ class ViewportSpacerScriptTest {
         assertTrue(
             "a pending pass from the previous closure cannot re-apply the old inset",
             s.contains("if(window.__tangentTrailingTimer){clearTimeout(window.__tangentTrailingTimer);window.__tangentTrailingTimer=0}}"),
+        )
+    }
+
+    @Test
+    fun `the bottom spacer's own writes do not re-trigger its observer (iter 60)`() {
+        // Setting textContent REPLACES the style element's text node, which is a childList mutation.
+        // The observer's allOurs check only recognised the spacer DIV, so every apply() re-triggered
+        // the observer, which scheduled another apply(). The bottom spacer therefore re-ran at
+        // animation-frame rate — measured 721 passes in 6 seconds — on every page, forever, for no
+        // visual change at all. Invisible to every probe until the harness injected BOTH scripts the
+        // way injectViewportSpacers does.
+        val s = buildBottomSpacerScript(64)
+        assertTrue(
+            "the style text is only written when it actually changes",
+            s.contains("if(s.textContent!==t)s.textContent=t"),
+        )
+        assertTrue(
+            "the spacer's inline style is only written when it actually changes",
+            s.contains("if(el.style.cssText!==css)el.style.cssText=css"),
+        )
+        assertTrue(
+            "attribute writes are idempotent too",
+            s.contains("if(el.getAttribute('aria-hidden')!=='true')") &&
+                s.contains("if(el.dataset.tangentIgnoreSafeTop!=='true')"),
+        )
+        assertTrue(
+            "the observer counts our own style element (and its text node) as ours",
+            s.contains("r.target.id===styleId||(r.target.parentElement&&r.target.parentElement.id===styleId)"),
+        )
+        assertTrue(
+            "the style element is marked so the TOP spacer's walk skips it as well",
+            s.contains("s.dataset.tangentIgnoreSafeTop='true'"),
         )
     }
 

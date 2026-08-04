@@ -6,10 +6,10 @@ const path = require('path');
 // Resolve the shipping source relative to this tool, so the harness is portable.
 const KT = path.resolve(__dirname, '../../app/src/main/java/com/firebolt9907/tangentbrowser/ui/content/PageBottomSpacer.kt');
 
-function buildViewportSpacerScript(topPx, skipHeaderInsets) {
+// Shared: pull the triple-quoted Kotlin template out of `marker`'s function body and flatten it
+// exactly the way Kotlin's .trimIndent().replace("\n","") does.
+function extractTemplate(marker) {
   const src = fs.readFileSync(KT, 'utf8');
-  // Grab the triple-quoted template inside buildViewportSpacerScript's return.
-  const marker = 'internal fun buildViewportSpacerScript';
   const start = src.indexOf(marker);
   if (start < 0) throw new Error('function not found');
   const q1 = src.indexOf('"""', start);
@@ -26,12 +26,25 @@ function buildViewportSpacerScript(topPx, skipHeaderInsets) {
   // ${'$'} is Kotlin's escape for a literal $ inside a template (used in regex end-anchors like
   // /...\)${'$'}/i); collapse it to $ so the harness runs the same regex the app ships.
   tpl = tpl.replace(/\$\{'\$'\}/g, '$');
+  return tpl;
+}
+
+function buildViewportSpacerScript(topPx, skipHeaderInsets) {
+  let tpl = extractTemplate('internal fun buildViewportSpacerScript');
   tpl = tpl.replace('${topPx}', String(topPx));
   tpl = tpl.replace('${if (skipHeaderInsets) "true" else "false"}', skipHeaderInsets ? 'true' : 'false');
   return tpl.replace(/\n/g, '');
 }
 
-module.exports = { buildViewportSpacerScript };
+// The BOTTOM spacer ships alongside the top one — injectViewportSpacers() injects both — so any
+// probe asking how they interact needs the real bytes of this one too.
+function buildBottomSpacerScript(bottomPx) {
+  let tpl = extractTemplate('internal fun buildBottomSpacerScript');
+  tpl = tpl.replace('${bottomPx}', String(bottomPx));
+  return tpl.replace(/\n/g, '');
+}
+
+module.exports = { buildViewportSpacerScript, buildBottomSpacerScript };
 
 if (require.main === module) {
   const s = buildViewportSpacerScript(48, false);

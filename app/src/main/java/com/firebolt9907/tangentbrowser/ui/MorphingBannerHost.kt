@@ -102,6 +102,9 @@ object BannerPriority {
     /** Persistent context bar for archive mode, and an interactive one (the timeline scrubber). */
     const val Archive = 20
 
+    /** The element-zap picker: an interactive mode the user is actively operating. */
+    const val ElementZap = 25
+
     const val OtpPaste = 30
     const val SendToDevice = 40
     const val ReceivedTab = 50

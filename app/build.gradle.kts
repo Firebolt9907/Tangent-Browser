@@ -17,6 +17,20 @@ if (firebaseConfigured) {
     apply(plugin = "com.google.gms.google-services")
 }
 
+// --- Release/distribution inputs (Obtainium) -------------------------------------------------
+// Tagged CI builds inject the version from the git tag and sign with a real upload keystore; a
+// plain local build keeps the dev version and the debug-keystore signing config. See
+// .github/workflows/release.yml and docs/OBTAINIUM.md.
+fun releaseInput(env: String, prop: String): String? =
+    providers.environmentVariable(env).orNull ?: (project.findProperty(prop) as String?)
+
+val tangentVersionName = releaseInput("TANGENT_VERSION_NAME", "tangentVersionName") ?: "1.0"
+val tangentVersionCode =
+    releaseInput("TANGENT_VERSION_CODE", "tangentVersionCode")?.toIntOrNull() ?: 1
+val uploadKeystore = releaseInput("TANGENT_KEYSTORE_FILE", "tangentKeystoreFile")
+    ?.let(::file)
+    ?.takeIf { it.exists() }
+
 android {
     namespace = "com.firebolt9907.tangentbrowser"
     compileSdk = 36
@@ -25,8 +39,8 @@ android {
         applicationId = "com.firebolt9907.tangentbrowser"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = tangentVersionCode
+        versionName = tangentVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -44,11 +58,22 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        // Distribution key. Obtainium (and Android itself) will only accept an update signed by
+        // the SAME key as the installed build, so this must stay stable across every release —
+        // never regenerate it, and never fall back to the debug keystore for a published APK.
+        if (uploadKeystore != null) {
+            create("upload") {
+                storeFile = uploadKeystore
+                storePassword = releaseInput("TANGENT_KEYSTORE_PASSWORD", "tangentKeystorePassword")
+                keyAlias = releaseInput("TANGENT_KEY_ALIAS", "tangentKeyAlias")
+                keyPassword = releaseInput("TANGENT_KEY_PASSWORD", "tangentKeyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("localRelease")
+            signingConfig = signingConfigs.getByName(if (uploadKeystore != null) "upload" else "localRelease")
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(
@@ -82,7 +107,9 @@ android {
     }
     // Skip stripping debug symbols from the ~1 GB of Gecko/appservices native libraries.
     // This is the single slowest packaging step; for local dev installs (debug keystore, no
-    // distribution) the larger on-disk APK is irrelevant. Remove for a real size-optimized build.
+    // distribution) the larger on-disk APK is irrelevant. Keep it on for release builds too:
+    // measured, it costs nothing in APK size — the .so files in the GeckoView/appservices AARs
+    // are already stripped upstream, so the strip step only burns packaging time.
     packaging {
         jniLibs {
             keepDebugSymbols += "**/*.so"

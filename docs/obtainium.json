@@ -1,0 +1,24 @@
+{
+  "apps": [
+    {
+      "id": "com.firebolt9907.tangentbrowser",
+      "url": "https://github.com/Firebolt9907/TangentBrowser",
+      "author": "Firebolt9907",
+      "name": "Tangent Browser",
+      "installedVersion": null,
+      "latestVersion": null,
+      "apkUrls": [],
+      "preferredApkIndex": 0,
+      "additionalSettings": "{\"includePrereleases\":false,\"fallbackToOlderReleases\":true,\"filterReleaseTitlesByRegex\":\"\",\"filterReleaseNotesByRegex\":\"\",\"verifyLatestTag\":false,\"dontSortReleasesList\":false,\"useLatestAssetDateAsReleaseDate\":false,\"trackOnly\":false,\"versionExtractionRegEx\":\"\",\"matchGroupToUse\":\"\",\"versionDetection\":true,\"releaseDateAsVersion\":false,\"useVersionCodeAsOSVersion\":false,\"apkFilterRegEx\":\"\",\"invertAPKFilter\":false,\"autoApkFilterByArch\":true,\"appName\":\"Tangent Browser\",\"appAuthor\":\"Firebolt9907\",\"exemptFromBackgroundUpdates\":false,\"skipUpdateNotifications\":false,\"about\":\"Safari-style Android browser powered by GeckoView.\"}",
+      "lastUpdateCheck": null,
+      "pinned": false,
+      "categories": [],
+      "releaseDate": null,
+      "changeLog": null,
+      "overrideSource": "GitHub",
+      "allowIdChange": false
+    }
+  ],
+  "categories": {},
+  "settings": {}
+}

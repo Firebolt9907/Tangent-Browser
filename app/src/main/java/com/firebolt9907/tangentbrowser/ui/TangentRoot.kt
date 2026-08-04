@@ -864,6 +864,26 @@ fun TangentRoot(
         }
     }
 
+    // Every Back commit goes through here so a federated sign-in chain is cleared in one step.
+    // Stepping back INTO a spent IdP entry re-runs its redirect forward, so plain `goBack` looks
+    // frozen after an SSO login; `goToHistoryIndex` jumps the whole contiguous run to the page the
+    // user was on before signing in. Reads history from the LIVE store rather than the
+    // composition-captured `selectedContent`, because the predictive-back callers below invoke this
+    // from coroutines that can outlive the composition that created them. Falls back to a normal
+    // one-step Back whenever there is no chain immediately behind the current entry.
+    val commitGoBack: (String?) -> Unit = { tabId ->
+        val history = tabId
+            ?.let { id -> components.store.state.tabs.firstOrNull { it.id == id } }
+            ?.content
+            ?.history
+        val collapsedIndex = history?.let(::ssoCollapsedBackIndex)
+        if (tabId != null && collapsedIndex != null) {
+            components.sessionUseCases.goToHistoryIndex.invoke(collapsedIndex, tabId)
+        } else {
+            components.sessionUseCases.goBack.invoke(tabId, true)
+        }
+    }
+
     LaunchedEffect(addonsState.pendingPrompt?.id) {
         if (addonsState.pendingPrompt != null) {
             showAddons = true
@@ -941,6 +961,11 @@ fun TangentRoot(
                     // copy-code-from-Messages-then-return flow): if the clip timestamp advanced and
                     // an OTP field is still present, surface the paste banner. Metadata only.
                     if (clipWatcher.consumeChanged() && otpFieldPresent) otpPasteVisible = true
+                    // Both halves of the data-saver signal (the OS Data Saver toggle and whether the
+                    // active network is metered) can change freely while we're backgrounded, and
+                    // neither raises a callback we listen for. Foreground is the moment that matters,
+                    // so re-derive the policy here; it's a couple of set reads and one port message.
+                    components.dataSaverController.recompute()
                 }
                 Lifecycle.Event.ON_PAUSE ->
                     components.firefoxSyncController.stopForegroundPeriodicSync()
@@ -1253,6 +1278,86 @@ fun TangentRoot(
     }
     LaunchedEffect(sitePrefsStore) {
         sitePrefsStore.updates.collect { sitePrefsVersion += 1 }
+    }
+
+    // ---- Element zap (tap a page element to hide it for this site; see ui/content/ElementZap.kt) ----
+    val zappedStore = components.zappedElementsStore
+    var zapVersion by remember { mutableIntStateOf(0) }
+    LaunchedEffect(zappedStore) {
+        zappedStore.updates.collect { zapVersion += 1 }
+    }
+    // The selectors ContentHost re-applies as a stylesheet. Recomputed on host change and on any
+    // store write, so a zap or a restore lands on the live page without a reload.
+    val zappedSelectors = remember(currentHost, zapVersion) { zappedStore.selectors(currentHost) }
+    // True while the in-page picker is running (it is swallowing the page's clicks).
+    var zapPickerActive by remember { mutableStateOf(false) }
+    // What the picker currently has under its crosshair, null until the user's first tap.
+    var zapSelection by remember { mutableStateOf<com.firebolt9907.tangentbrowser.ui.content.ElementZap.Selection?>(null) }
+    // Read through a holder rather than keying the effect below: re-keying mid-pick would tear the
+    // live picker down and re-inject it, losing the user's current selection.
+    val zapHost by rememberUpdatedState(currentHost)
+    // Picker lifecycle: inject on entry, tear down on exit, and route the page's events into state.
+    // ElementZap.onEvent fires on Gecko's thread, so every handler hops to the UI scope first.
+    DisposableEffect(zapPickerActive, selectedEngineSession) {
+        val session = selectedEngineSession
+        if (!zapPickerActive || session == null) {
+            com.firebolt9907.tangentbrowser.ui.content.ElementZap.onEvent = null
+            onDispose { }
+        } else {
+            com.firebolt9907.tangentbrowser.ui.content.ElementZap.onEvent = { event ->
+                scope.launch {
+                    when (event) {
+                        is com.firebolt9907.tangentbrowser.ui.content.ElementZap.Event.Selected -> {
+                            zapSelection = event.selection
+                            tangentHaptics.select()
+                        }
+                        is com.firebolt9907.tangentbrowser.ui.content.ElementZap.Event.Zapped -> {
+                            val stored = zappedStore.add(
+                                host = zapHost,
+                                selector = event.selection.selector,
+                                label = event.selection.label,
+                            )
+                            zapPickerActive = false
+                            zapSelection = null
+                            if (stored) {
+                                // The store's update flow bumps zapVersion, which re-injects the
+                                // stylesheet — that, not the picker, is what actually hides it.
+                                tangentHaptics.toggle(true)
+                            } else {
+                                android.widget.Toast.makeText(
+                                    appContext,
+                                    "Couldn't hide that element",
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
+                        com.firebolt9907.tangentbrowser.ui.content.ElementZap.Event.Cancelled -> {
+                            zapPickerActive = false
+                            zapSelection = null
+                        }
+                    }
+                }
+            }
+            session.loadJavascriptUrl(
+                com.firebolt9907.tangentbrowser.ui.content.ElementZap.buildPickerScript(),
+            )
+            onDispose {
+                com.firebolt9907.tangentbrowser.ui.content.ElementZap.onEvent = null
+                // No-op when the picker already tore itself down (a committed zap); this covers every
+                // other exit — cancel, navigation, tab switch — so the page never keeps swallowing
+                // clicks after the banner is gone.
+                session.loadJavascriptUrl(
+                    com.firebolt9907.tangentbrowser.ui.content.ElementZap.buildCancelScript(),
+                )
+            }
+        }
+    }
+    // A navigation replaces the DOM the picker was hit-testing, so leave picker mode with it.
+    LaunchedEffect(currentUrl, selectedTabId) {
+        if (zapPickerActive) {
+            zapPickerActive = false
+            zapSelection = null
+        }
     }
     // Keep the selected session's desktop-mode UA in sync with the current host's saved preference,
     // so restored tabs and cross-host navigation honor a "Request desktop site" choice. reload=false
@@ -2322,7 +2427,7 @@ fun TangentRoot(
                 stickyBackCoverSnapshot = activePredictiveBackSnapshot ?: predictiveBackSnapshot
                 stickyBackCoverUrl = targetUrl
                 resetPredictiveBackGesture()
-                components.sessionUseCases.goBack.invoke(selectedTabId, true)
+                commitGoBack(selectedTabId)
             } else {
                 // Cancel: spring back to rest with the same velocity continuity (critically damped so
                 // any residual outward momentum settles without oscillating).
@@ -2549,7 +2654,7 @@ fun TangentRoot(
                     stickyBackCoverSnapshot = activePredictiveBackSnapshot
                     stickyBackCoverUrl = targetUrl
                     resetPredictiveBackGesture()
-                    components.sessionUseCases.goBack.invoke(tabId, true)
+                    commitGoBack(tabId)
                 } else {
                     resetPredictiveBackGesture()
                 }
@@ -2615,7 +2720,7 @@ fun TangentRoot(
         }
 
         BackHandler(enabled = selectedContent?.canGoBack == true && !predictiveBackGestureEnabled && !gridOpen && !isVideoFullscreen) {
-            components.sessionUseCases.goBack.invoke(selectedTabId, true)
+            commitGoBack(selectedTabId)
         }
 
         BackHandler(
@@ -2729,6 +2834,7 @@ fun TangentRoot(
                     addonController = components.addonController,
                     sitePermissionController = components.sitePermissionController,
                     sitePreferencesStore = components.sitePreferencesStore,
+                    zappedSelectors = zappedSelectors,
                     onTabPainted = { paintedTabId ->
                         if (paintedTabId == actualSelectedTabId) geckoHasPainted = true
                         if (paintedTabId == actualSelectedTabId && paintedTabId == stickyIncomingTabId) {
@@ -3401,6 +3507,28 @@ fun TangentRoot(
                         )
                     }
                 }
+                // "Completing sign-in" cover over a federated SSO chain. Composed HERE — after the
+                // page content and the tab-switch/grid snapshot covers, but BEFORE the address sheet
+                // and the bottom chrome below — so the pill and toolbar draw on top of it and stay
+                // usable: an SSO chain can stall on a slow IdP, and being unable to switch tabs or
+                // reach the address bar until it finishes would be a worse trap than the flashing
+                // this cover exists to hide. Because the chrome is composed later it also wins hit
+                // testing, so the cover's pointer-swallowing never blocks it.
+                //
+                // Never raised over the tab overview or a fullscreen video, and it uncovers itself
+                // the moment a hop settles (the password and Authenticator number-matching screens
+                // must stay readable) — see SsoChainOverlay for the full uncover rule.
+                com.firebolt9907.tangentbrowser.ui.content.SsoChainOverlay(
+                    state = com.firebolt9907.tangentbrowser.ui.content.rememberSsoChainState(
+                        url = selectedContent?.url,
+                        loading = selectedContent?.loading == true,
+                        enabled = !gridEngaged && !isVideoFullscreen && !isInPipMode,
+                        pageProgress = selectedContent?.progress ?: 0,
+                        tabId = actualSelectedTabId,
+                    ),
+                    host = currentHost,
+                )
+
                 // Arc-style spaces deck, summoned by swiping up on the overview toolbar above.
                 if (showSpaces) {
                     com.firebolt9907.tangentbrowser.ui.sync.SpacesSheet(
@@ -3740,6 +3868,30 @@ fun TangentRoot(
                         onDismiss = { otpPasteVisible = false },
                     )
 
+                    // Element-zap picker controls. The highlight itself is drawn in the page (only it
+                    // can hit-test its own DOM); this is the Widen/Hide/Cancel half.
+                    com.firebolt9907.tangentbrowser.ui.content.ZapPickerBannerHost(
+                        visible = zapPickerActive,
+                        selection = zapSelection,
+                        bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        collapseProgress = barCollapseProgressProvider,
+                        stack = bannerStack,
+                        onWiden = {
+                            selectedEngineSession?.loadJavascriptUrl(
+                                com.firebolt9907.tangentbrowser.ui.content.ElementZap.buildWidenScript(),
+                            )
+                        },
+                        onConfirm = {
+                            selectedEngineSession?.loadJavascriptUrl(
+                                com.firebolt9907.tangentbrowser.ui.content.ElementZap.buildConfirmScript(),
+                            )
+                        },
+                        onCancel = {
+                            zapPickerActive = false
+                            zapSelection = null
+                        },
+                    )
+
                     // "Reader mode unavailable" feedback for a manual reader request that found no
                     // article — same bottom-anchored morphing banner as the OTP/handoff cards.
                     com.firebolt9907.tangentbrowser.ui.reader.ReaderUnavailableBannerHost(
@@ -3917,6 +4069,7 @@ fun TangentRoot(
                         }
                     )
                 }
+
             }
           }
         }
@@ -3990,6 +4143,19 @@ fun TangentRoot(
                 findActiveMatch = 0
                 findTotalMatches = 0
                 findInPageActive = true
+            },
+            // Only offered with a live session to inject the picker into, and never over the grid.
+            onZapElement = selectedEngineSession?.let {
+                {
+                    zapSelection = null
+                    zapPickerActive = true
+                }
+            },
+            zappedCount = zappedSelectors.size,
+            onRestoreZapped = {
+                // Clearing the host's entries re-injects an empty stylesheet, so everything reappears
+                // on the page already on screen — no reload.
+                zappedStore.clear(currentHost)
             },
             onOpenArchive = {
                 val tabId = selectedTabId

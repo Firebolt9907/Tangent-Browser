@@ -124,6 +124,9 @@ class TangentBrowserComponents(application: Application) {
     // still self-bounds via maxEntries), so thumbnails persist across app restarts / force-stops.
     val tabSnapshotCache = TabSnapshotCache(application.filesDir)
     val sitePreferencesStore = SitePreferencesStore(application)
+    // Per-site elements the user has zapped (tap-to-hide); re-applied as a stylesheet on every load.
+    val zappedElementsStore =
+        com.firebolt9907.tangentbrowser.state.ZappedElementsStore(application)
     val addonController = AddonController(engine, scope)
     // The Firefox Sync / local logins store. Kept as the raw PlacesLoginsStorage because it must
     // remain the SyncableStore the FxA sync stack registers for SyncEngine.Passwords (Bitwarden is
@@ -191,6 +194,18 @@ class TangentBrowserComponents(application: Application) {
     val externalLinkPreloader =
         com.firebolt9907.tangentbrowser.state.ExternalLinkPreloader(engine, scope)
 
+    // Which hosts have actually produced a reader article — the evidence that lets the data saver
+    // strip first-party script/CSS from a host without first loading it to find out.
+    val readerHostEvidence =
+        com.firebolt9907.tangentbrowser.state.ReaderHostEvidence(application)
+
+    // Suspends heavy subresources while the OS Data Saver is restricting us on a metered connection.
+    val dataSaverController = DataSaverController(
+        application,
+        readerHostEvidence,
+        readerRulesJson = { com.firebolt9907.tangentbrowser.ui.reader.ReaderRules.cached() },
+    )
+
     fun applyEngineSettings() {
         val prefs = globalPreferencesStore
         runCatching { engine.settings.trackingProtectionPolicy = trackingPolicyOf(prefs) }
@@ -201,14 +216,30 @@ class TangentBrowserComponents(application: Application) {
         httpsOnlyExceptionController.recompute()
         runCatching { engine.settings.globalPrivacyControlEnabled = prefs.globalPrivacyControl }
 
-        // Cookie banner auto-dismissal
+        // Cookie banner auto-dismissal. Gecko's cookiebanner actor clicks a banner's reject/accept
+        // control using rules it pulls from RemoteSettings, and the mode alone only arms the
+        // *per-site* rules — one hand-written rule per host, which is why handling looked
+        // hit-and-miss across the web. `cookieBannerHandlingGlobalRules` arms the CMP-generic rules
+        // (OneTrust/Cookiebot/Quantcast-style dialogs matched by structure rather than by host),
+        // which is where most of the real coverage lives, and it is also what makes the sub-frames
+        // setting mean anything at all: a consent dialog rendered in an <iframe> is only reachable
+        // through a global rule, so the sub-frames pref was inert on its own. GeckoView defaults
+        // both to false. Keep them derived from the mode so turning the feature off leaves no
+        // clicking machinery armed.
         val cookieMode = when (prefs.cookieBannerHandlingMode) {
             1 -> mozilla.components.concept.engine.EngineSession.CookieBannerHandlingMode.REJECT_ALL
             2 -> mozilla.components.concept.engine.EngineSession.CookieBannerHandlingMode.REJECT_OR_ACCEPT_ALL
             else -> mozilla.components.concept.engine.EngineSession.CookieBannerHandlingMode.DISABLED
         }
+        val cookieBannerHandlingOn =
+            cookieMode != mozilla.components.concept.engine.EngineSession.CookieBannerHandlingMode.DISABLED
         runCatching { engine.settings.cookieBannerHandlingMode = cookieMode }
         runCatching { engine.settings.cookieBannerHandlingModePrivateBrowsing = cookieMode }
+        runCatching { engine.settings.cookieBannerHandlingGlobalRules = cookieBannerHandlingOn }
+        runCatching {
+            engine.settings.cookieBannerHandlingGlobalRulesSubFrames =
+                cookieBannerHandlingOn && prefs.cookieBannerHandlingGlobalRulesSubFrames
+        }
 
         // Query parameter stripping
         runCatching { engine.settings.queryParameterStripping = prefs.queryParameterStripping }
@@ -304,8 +335,9 @@ class TangentBrowserComponents(application: Application) {
         // Automatic Language Adjustment
         runCatching { engine.settings.automaticLanguageAdjustment = prefs.automaticLanguageAdjustment }
 
-        // Cookie Banner Subframes Dismissal
-        runCatching { engine.settings.cookieBannerHandlingGlobalRulesSubFrames = prefs.cookieBannerHandlingGlobalRulesSubFrames }
+        // (Cookie-banner sub-frame dismissal is applied with the rest of the cookie-banner block
+        // above — it is meaningless unless global rules are armed, and applying it again here would
+        // re-enable it while handling is off.)
 
         // Email Tracker Blocking
         runCatching { engine.settings.emailTrackerBlockingPrivateBrowsing = prefs.emailTrackerBlockingPrivateBrowsing }
@@ -431,6 +463,23 @@ class TangentBrowserComponents(application: Application) {
         // a CSP sandbox that blocks modals (e.g. TechCrunch). The javascript: prompt path remains the
         // fallback. See ReaderExtension / ui/reader/extractor.js.
         com.firebolt9907.tangentbrowser.ui.reader.ReaderExtension.install(engine)
+        // Install the built-in data-saver blocking extension. It ships inert and cancels nothing
+        // until DataSaverController pushes it a policy, which only happens while the OS Data Saver is
+        // restricting us on a metered connection. Blocking is request-shaped (webRequest) rather than
+        // GeckoSessionSettings.setAllowJavascript(false) because the latter would also kill our own
+        // javascript: injection — viewport spacers (invariant #11), theme probe, reader fallback.
+        dataSaverController.install(engine)
+        // Funnel both extraction paths (the content-script Port and the javascript: fallback) into
+        // the evidence store. ReaderManager is store-less, so the tab -> URL resolution happens here.
+        com.firebolt9907.tangentbrowser.ui.reader.ReaderManager.instance.outcomeListener =
+            { tabId, extracted ->
+                val url = store.state.tabs.firstOrNull { it.id == tabId }?.content?.url
+                if (extracted) {
+                    dataSaverController.onReaderSucceeded(url)
+                } else {
+                    dataSaverController.onReaderFailed(url)
+                }
+            }
         // Bitwarden-backed passkeys: only when the user picked that mode (softtoken off — see
         // writeGeckoConfig). The content script overrides navigator.credentials and routes ceremonies
         // to the vault; the UI (picker + biometric) is driven by PasskeyUiController via PasskeyUiHost.
@@ -630,6 +679,16 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           # 280ms triggers noticeably sooner while staying above the ~150ms tap/scroll threshold so
           # normal taps and scrolls aren't misread as long-presses.
           ui.click_hold_context_menus.delay: 280
+          # --- Cookie banner auto-dismiss: widen the window the clicker watches for ---
+          # The cookiebanner actor only hunts for a banner inside a cleanup timeout: 20s from
+          # DOMContentLoaded, *reset down to 5s* the moment `load` fires. On mobile that ordering
+          # is the wrong way round — a consent SDK is typically a third-party script that only
+          # injects its dialog after load, on a slow radio, so the banner routinely appears just
+          # past the 5s cutoff and stays up even though we have a matching rule. 12s after load
+          # covers the late injectors. It is not a busy loop: the poll (500ms) only re-runs the
+          # selectors when a MutationObserver saw the DOM change, and the timer is cancelled as
+          # soon as a banner is handled or the document goes away.
+          cookiebanners.bannerClicking.timeoutAfterLoad: 12000
           # --- Battery: drop Gecko's redundant captive-portal probing ---
           # GeckoView's captive-portal service periodically fetches a canonical URL to detect
           # Wi-Fi sign-in portals. Android already owns captive-portal detection at the OS
@@ -950,10 +1009,17 @@ private fun buildDefaultSettings(
     historyStorage: PlacesHistoryStorage,
     onHttpsOnlyError: (String) -> Unit,
 ) = DefaultSettings(
-    // Record archived (web.archive.org) visits under the original page URL, so history stays clean
-    // and consistent with the de-archived URL shown everywhere else. No-op for non-snapshot URLs.
+    // Two recording-side filters over the real history delegate, outermost first:
+    //  - De-archiving: record a web.archive.org snapshot under the ORIGINAL page URL, so history
+    //    matches the de-archived URL shown everywhere else. No-op for non-snapshot URLs.
+    //  - SSO filtering: drop the transient hops of a federated sign-in chain. Their SAML auto-POST
+    //    hops record as ordinary LINK visits (unlike 302s, which the History sheet already filters
+    //    by VisitType), so one Microsoft 365 login would otherwise bury real pages under half a
+    //    dozen single-use `?SAMLRequest=…` entries.
     historyTrackingDelegate = com.firebolt9907.tangentbrowser.ui.archive.DeArchivingHistoryDelegate(
-        HistoryDelegate(lazy { historyStorage }),
+        com.firebolt9907.tangentbrowser.state.SsoFilteringHistoryDelegate(
+            HistoryDelegate(lazy { historyStorage }),
+        ),
     ),
     trackingProtectionPolicy = trackingPolicyOf(prefs),
     javaScriptCanOpenWindowsAutomatically = !prefs.blockPopUps,

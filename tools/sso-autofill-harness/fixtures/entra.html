@@ -1,0 +1,50 @@
+<!doctype html>
+<!--
+  An Entra-ID-shaped identifier-first sign-in: ONE document, two views.
+
+  The two details that broke autofill are both reproduced here deliberately:
+    1. a hidden `input[type=password]` is present during the email step (a visibility-blind
+       querySelector finds it, reads it as empty, and stalls);
+    2. pressing Next swaps in the password view with NO navigation — no load callback fires, so
+       nothing re-injects the detector.
+-->
+<html>
+<head><meta charset="utf-8"><title>Sign in</title></head>
+<body>
+  <form id="f1" method="post" action="#" onsubmit="window.__submitted = (window.__submitted||0)+1; return false;">
+    <div id="userView">
+      <div>Sign in</div>
+      <input type="email" name="loginfmt" id="i0116" autocomplete="username" placeholder="Email or phone">
+      <input type="submit" id="idSIButton9" value="Next">
+    </div>
+    <div id="pwView" style="display:none">
+      <div id="displayName"></div>
+      <input type="password" name="passwd" id="i0118" autocomplete="current-password" placeholder="Password">
+      <input type="submit" id="idSIButton10" value="Sign in" style="display:none">
+    </div>
+  </form>
+  <script>
+    // The password input exists from the start, hidden — exactly as Entra ships it.
+    document.getElementById('i0118').style.display = 'none';
+
+    document.getElementById('idSIButton9').addEventListener('click', function (e) {
+      e.preventDefault();
+      var email = document.getElementById('i0116').value;
+      window.__nextPressedWith = email;
+      // Client-side view swap, no navigation.
+      setTimeout(function () {
+        document.getElementById('userView').style.display = 'none';
+        document.getElementById('pwView').style.display = '';
+        document.getElementById('i0118').style.display = '';
+        document.getElementById('idSIButton10').style.display = '';
+        document.getElementById('displayName').textContent = email;
+        window.__pwViewShown = 1;
+      }, 120);
+    });
+    document.getElementById('idSIButton10').addEventListener('click', function (e) {
+      e.preventDefault();
+      window.__signInPressedWith = document.getElementById('i0118').value;
+    });
+  </script>
+</body>
+</html>

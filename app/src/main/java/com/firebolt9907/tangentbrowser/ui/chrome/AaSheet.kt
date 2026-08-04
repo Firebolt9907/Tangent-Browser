@@ -17,6 +17,8 @@ import com.firebolt9907.tangentbrowser.permissions.ManagedPermission
 import com.firebolt9907.tangentbrowser.permissions.SitePermissionController
 import mozilla.components.browser.state.state.ContainerState
 import com.firebolt9907.tangentbrowser.ui.containers.swatch
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.outlined.HideSource
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Workspaces
 import androidx.compose.material.icons.filled.Lock
@@ -152,11 +154,23 @@ fun AaSheet(
     onOpenAddonQuickSettings: (InstalledAddon) -> Unit = {},
     onFindInPage: () -> Unit = {},
     onPrint: () -> Unit = {},
+    // Element zap (tap a page element to hide it for this site). Null hides the row entirely — the
+    // picker needs a live page session to inject into. [zappedCount] drives the restore row.
+    onZapElement: (() -> Unit)? = null,
+    zappedCount: Int = 0,
+    onRestoreZapped: () -> Unit = {},
     // Enters Internet Archive (Wayback) time-travel mode for this tab. Null hides the row.
     onOpenArchive: (() -> Unit)? = null,
     trackingProtectionEnabledGlobally: Boolean = false,
     siteTrackingProtectionDisabled: Boolean = false,
     onToggleSiteTrackingProtection: (disable: Boolean) -> Unit = {},
+    // Data saver (OS Data Saver on a metered connection). [dataSaverActive] gates the row entirely —
+    // there is nothing to say when we aren't blocking anything. [dataSaverExempt] is this host's
+    // "load in full" escape hatch; toggling it reloads the page.
+    dataSaverActive: Boolean = false,
+    dataSaverExempt: Boolean = false,
+    dataSaverBlockedCount: Int = 0,
+    onToggleDataSaverExempt: (exempt: Boolean) -> Unit = {},
     // Flips the global high-performance web dark mode (see WebDarkMode.kt). Routed through the host so
     // Tier 1 (engine.preferredColorScheme via applyEngineSettings) and the live-page Tier-2 injection
     // both update. Reflected locally for instant switch feedback.
@@ -298,6 +312,10 @@ fun AaSheet(
                     trackingProtectionEnabledGlobally = trackingProtectionEnabledGlobally,
                     siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
                     onToggleSiteTrackingProtection = onToggleSiteTrackingProtection,
+                    dataSaverActive = dataSaverActive,
+                    dataSaverExempt = dataSaverExempt,
+                    dataSaverBlockedCount = dataSaverBlockedCount,
+                    onToggleDataSaverExempt = onToggleDataSaverExempt,
                     onBack = { pane = AaPane.Page },
                 )
                 AaPane.Permissions -> SitePermissionsPaneContent(
@@ -314,6 +332,9 @@ fun AaSheet(
                     onDismiss = onDismiss,
                     onFindInPage = onFindInPage,
                     onPrint = onPrint,
+                    onZapElement = onZapElement,
+                    zappedCount = zappedCount,
+                    onRestoreZapped = onRestoreZapped,
                     onOpenArchive = onOpenArchive,
                     pageUrl = pageUrl,
                     pageTitle = pageTitle,
@@ -361,6 +382,11 @@ private fun PageTabContent(
     onDismiss: () -> Unit,
     onFindInPage: () -> Unit = {},
     onPrint: () -> Unit = {},
+    // Element zap (tap a page element to hide it for this site). Null hides the row entirely — the
+    // picker needs a live page session to inject into. [zappedCount] drives the restore row.
+    onZapElement: (() -> Unit)? = null,
+    zappedCount: Int = 0,
+    onRestoreZapped: () -> Unit = {},
     onOpenArchive: (() -> Unit)? = null,
     pageUrl: String,
     pageTitle: String = "",
@@ -907,6 +933,38 @@ private fun PageTabContent(
             }
         }
 
+        // ---------- 4b. Element zap: tap a page element to hide it, for good, on this site ----------
+        if (hasRealUrl && isWebPage && onZapElement != null && canEdit) {
+            Spacer(Modifier.height(12.dp))
+            SectionCard {
+                TextButton(
+                    onClick = { haptics.softClick(); onZapElement(); onDismiss() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    ActionRowContent(
+                        icon = Icons.Outlined.HideSource,
+                        text = "Hide an element",
+                    )
+                }
+                // Only offered once there's something to undo — the row is meaningless otherwise.
+                if (zappedCount > 0) {
+                    TextButton(
+                        onClick = { haptics.softClick(); onRestoreZapped() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        ActionRowContent(
+                            icon = Icons.Default.Restore,
+                            text = if (zappedCount == 1) {
+                                "Restore 1 hidden element"
+                            } else {
+                                "Restore $zappedCount hidden elements"
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
         // ---------- 5. Secondary actions: open-in ----------
         if (hasRealUrl) {
             Spacer(Modifier.height(8.dp))
@@ -1289,6 +1347,10 @@ private fun PageSettingsPaneContent(
     trackingProtectionEnabledGlobally: Boolean,
     siteTrackingProtectionDisabled: Boolean,
     onToggleSiteTrackingProtection: (disable: Boolean) -> Unit,
+    dataSaverActive: Boolean,
+    dataSaverExempt: Boolean,
+    dataSaverBlockedCount: Int,
+    onToggleDataSaverExempt: (exempt: Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
     val haptics = rememberTangentHaptics()
@@ -1323,6 +1385,33 @@ private fun PageSettingsPaneContent(
             },
         )
         Spacer(Modifier.height(16.dp))
+
+        // Data saver escape hatch. Only shown while we're actually blocking (OS Data Saver on a
+        // metered connection) — off Data Saver the row would be a toggle for nothing. "Checked" =
+        // saving data on this site; unchecking exempts the host for the session and reloads, which is
+        // the answer to "this page looks broken / I want the images after all".
+        if (dataSaverActive && canEdit) {
+            var saving by remember(pageUrl) { mutableStateOf(!dataSaverExempt) }
+            AaToggleRow(
+                title = "Save data on this site",
+                // Lead with the running tally once there is one: the whole feature is invisible by
+                // construction (nothing arrives, so nothing shows), and a number is the only feedback
+                // that it is doing anything at all.
+                subtitle = if (dataSaverBlockedCount > 0) {
+                    "$dataSaverBlockedCount downloads skipped so far. Turn off to load this site in full."
+                } else {
+                    "Skips images, media and third-party scripts. Turn off to load in full."
+                },
+                checked = saving,
+                enabled = true,
+                onToggle = {
+                    saving = !saving
+                    onToggleDataSaverExempt(!saving)
+                    haptics.toggle(saving)
+                },
+            )
+            Spacer(Modifier.height(16.dp))
+        }
 
         // Per-site tracking protection (only meaningful when ETP is on globally). "Checked" =
         // protected; unchecking adds this site to the exception list so its trackers load — the

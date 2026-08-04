@@ -84,6 +84,72 @@ class WebDarkModeScriptTest {
         assertTrue(s.contains("getComputedStyle"))
     }
 
+    /*
+     * The already-dark detector. A false negative inverts a page that is already dark — the most
+     * visible way this feature breaks — and each signal below exists because body/html's declared
+     * background alone misses a whole class of real dark themes. Verified end-to-end in
+     * tools/dark-mode-harness (`node detect.js`); four of its seven fixtures fail against the previous
+     * implementation. These pins are the cheap guard that a future edit doesn't drop one.
+     */
+
+    @Test
+    fun `detector samples the painted surface, not just body and html`() {
+        val s = WebDarkMode.buildApplyScript()
+        // Sites overwhelmingly paint their dark surface on a full-bleed wrapper and leave the document
+        // background at the light default, so body/html alone read the page as light.
+        assertTrue("hit-tests the viewport", s.contains("elementFromPoint"))
+        assertTrue("walks up to the first opaque background", s.contains("paintedLum"))
+    }
+
+    @Test
+    fun `detector reports the lightest probed surface so a dark hero cannot fake a dark page`() {
+        val s = WebDarkMode.buildApplyScript()
+        // Unanimity, encoded as a max: a LIGHT page whose dark hero fills the viewport must still be
+        // inverted. Averaging the probes would call that page dark and leave a light site light.
+        assertTrue("keeps the lightest, not the mean", s.contains("if(l>worst)worst=l"))
+        // ...and overriding a light document background needs the text colour to agree too.
+        assertTrue("corroborated by text colour", s.contains("fgLum"))
+    }
+
+    @Test
+    fun `detector treats a declared dark color-scheme as dark, not as no background`() {
+        val s = WebDarkMode.buildApplyScript()
+        // "No opaque background" used to mean "the UA canvas is white". Under `color-scheme: dark`
+        // that canvas is dark — which is exactly how many sites ship their dark theme.
+        assertTrue(s.contains("schemeIsDark"))
+        assertTrue("reads the CSS property", s.contains("color-scheme"))
+        assertTrue("and the meta tag", s.contains("meta[name=\"color-scheme\"]"))
+    }
+
+    @Test
+    fun `detector measures with our own filter class off`() {
+        val s = WebDarkMode.buildApplyScript()
+        // Our class puts an opaque #fafafa background and color-scheme:dark on <html>. Measuring with
+        // it on reads our own output back, so a page relying on the UA canvas could never be
+        // recognised as dark on a re-check — the filter would latch on forever.
+        assertTrue("drops the class to measure", s.contains("classList.remove(TG_CLS)"))
+        assertTrue("and always puts it back", s.contains("finally{if(had)"))
+    }
+
+    @Test
+    fun `apply re-checks late enough for a theme that lands after hydration`() {
+        val s = WebDarkMode.buildApplyScript()
+        assertTrue(s.contains("setTimeout(apply,300)"))
+        assertTrue(s.contains("setTimeout(apply,1200)"))
+        // Heavy app shells build the surface carrying the dark theme well after 1.2s.
+        assertTrue("late pass for slow hydration", s.contains("setTimeout(apply,3000)"))
+    }
+
+    @Test
+    fun `the filter and dynamic tiers share one detector`() {
+        // Two copies drifting apart means the same site is judged differently depending on which tier
+        // the user has enabled.
+        for (token in listOf("paintedLum", "schemeIsDark", "measureDark", "function pageIsDark(deep)")) {
+            assertTrue("apply missing '$token'", WebDarkMode.buildApplyScript().contains(token))
+            assertTrue("dynamic missing '$token'", WebDarkMode.buildDynamicScript().contains(token))
+        }
+    }
+
     @Test
     fun `default apply does not run the aggressive background scan`() {
         val s = WebDarkMode.buildApplyScript(aggressive = false)
@@ -275,6 +341,37 @@ class WebDarkModeScriptTest {
     }
 
     @Test
+    fun `pre-paint script carries the SAME already-dark detector as the native tiers`() {
+        // darkmode.js can't import from the native injection (it's a document_start content script),
+        // so the detector is a hand-kept copy. Drift means the pre-paint frame and the settled frame
+        // disagree about whether the site is dark — a visible flash on exactly the sites the detector
+        // was improved for.
+        val js = readAsset("src/main/assets/extensions/darkmode/darkmode.js")
+        val apply = WebDarkMode.buildApplyScript()
+        for (token in listOf("paintedLum", "schemeIsDark", "measureDark", "fgLum", "elementFromPoint")) {
+            assertTrue("darkmode.js missing '$token'", js.contains(token))
+            assertTrue("buildApplyScript missing '$token' (drift!)", apply.contains(token))
+        }
+        // Same thresholds on both sides, written the same way.
+        for (token in listOf("painted < 100", "fg >= 150", "fg >= 200")) {
+            assertTrue("darkmode.js missing threshold '$token'", js.contains(token))
+        }
+        for (token in listOf("painted<100", "fg>=150", "fg>=200")) {
+            assertTrue("buildApplyScript missing threshold '$token' (drift!)", apply.contains(token))
+        }
+    }
+
+    @Test
+    fun `pre-paint script skips the hit-test probe before first paint but runs it after`() {
+        val js = readAsset("src/main/assets/extensions/darkmode/darkmode.js")
+        // At document_start there is no layout to hit-test, and forcing one is the cost this script
+        // exists to avoid. The later macrotask passes do probe — that's when the wrapper carrying a
+        // site's dark surface exists.
+        assertTrue("pre-paint pass is shallow", js.contains("recheck(false)"))
+        assertTrue("later passes are deep", js.contains("recheck(true)"))
+    }
+
+    @Test
     fun `pre-paint script removes the invert before first paint for genuinely dark pages`() {
         val js = readAsset("src/main/assets/extensions/darkmode/darkmode.js")
         // rAF fires before the frame's paint; getComputedStyle is filter-independent, so a dark page
@@ -318,5 +415,78 @@ class WebDarkModeScriptTest {
         assertTrue("strips per-element inline recolors", s.contains("removeProperty"))
         assertTrue("terminates the cutout worker", s.contains("__lumCut") && s.contains("terminate"))
         assertTrue("strips the cutout CSS mask", s.contains("mask-image"))
+    }
+
+    /*
+     * The properties below are what make the dynamic tier reach the elements it used to miss, and
+     * what makes turning dark mode off restore the page without a reload. Each is verified
+     * end-to-end in tools/dark-mode-harness (every fixture there fails against the previous
+     * implementation); these pins are the cheap guard that a future edit doesn't quietly drop one.
+     */
+
+    @Test
+    fun `dynamic walk is resumable and frame-budgeted, not a truncating cap`() {
+        val s = WebDarkMode.buildDynamicScript()
+        // The old walk took Math.min(all.length, CAP) from index 0 on EVERY pass, so a long page's
+        // tail was never darkened however many passes ran.
+        assertFalse("no truncating re-scan from index 0", s.contains("Math.min(all.length"))
+        assertTrue("per-frame budget", s.contains("BUDGET"))
+        assertTrue("resumes across frames", s.contains("requestAnimationFrame(pump)"))
+        assertTrue("static resumable lists", s.contains("querySelectorAll('*')"))
+    }
+
+    @Test
+    fun `dynamic separates the read phase from the write phase`() {
+        val s = WebDarkMode.buildDynamicScript()
+        // Interleaved read/write forces a style recalc per element; visit() may only collect ops.
+        assertTrue("visit collects ops", s.contains("function visit(el,ops)"))
+        assertTrue("ops are applied in a batch", s.contains("function flush(ops)"))
+        assertTrue("writes happen in flush", s.contains("el.style.setProperty(ops[i+1]"))
+    }
+
+    @Test
+    fun `dynamic memoizes color math by color string`() {
+        val s = WebDarkMode.buildDynamicScript()
+        assertTrue("cache keyed by kind and color", s.contains("var k=kind+'|'+c,v=st.cache[k]"))
+        assertTrue("raw conversion is the cache miss path", s.contains("function modifyRaw"))
+    }
+
+    @Test
+    fun `dynamic reaches shadow roots and same-origin iframes`() {
+        val s = WebDarkMode.buildDynamicScript()
+        assertTrue("adopts open shadow roots", s.contains("adoptRoot") && s.contains("shadowRoot"))
+        assertTrue("adopts same-origin iframes", s.contains("adoptFrame") && s.contains("contentDocument"))
+    }
+
+    @Test
+    fun `dynamic re-reads an element whose class or style changed`() {
+        val s = WebDarkMode.buildDynamicScript()
+        assertTrue("observes attributes", s.contains("attributeFilter:['class','style']"))
+        assertTrue("clears the done latch on mutation", s.contains("t[DONE]=0"))
+        // Our own writes must not be mistaken for the page's, or the observer re-queues forever.
+        assertTrue("counts self-writes", s.contains("t[PEND]>0"))
+    }
+
+    @Test
+    fun `dynamic darkens pseudo-elements and light background images`() {
+        val s = WebDarkMode.buildDynamicScript()
+        assertTrue("pseudo rules are keyed by a tagging attribute", s.contains("data-tangent-dyn-p"))
+        assertTrue("probes both pseudos", s.contains("'::before'") && s.contains("'::after'"))
+        assertTrue("scrims url() backgrounds", s.contains("linear-gradient(rgba(0,0,0,'+SCRIM+')"))
+        assertTrue("size floor keeps icons unscrimmed", s.contains("el.offsetWidth>=BGMIN"))
+    }
+
+    @Test
+    fun `remove restores the page's own inline colors instead of stripping them`() {
+        val s = WebDarkMode.buildRemoveScript()
+        // The blanket sweep wiped colors the SITE had set inline, so the page stayed visibly wrong
+        // until a reload — which is what made dark mode look like it needed a refresh to turn off.
+        assertTrue("reads the recorded originals", s.contains("__lumDynOrig"))
+        assertTrue("puts the original value back", s.contains("el.style.setProperty(p,v[0],v[1])"))
+        assertTrue("works from the touched list", s.contains("dyn.touched"))
+        assertTrue("disconnects every observer it registered", s.contains("dyn.obs"))
+        assertTrue("clears the pseudo tagging attribute", s.contains("data-tangent-dyn-p"))
+        // The old brute-force sweep survives only for pages injected by an older build.
+        assertTrue("legacy fallback is gated on missing state", s.contains("}else{"))
     }
 }

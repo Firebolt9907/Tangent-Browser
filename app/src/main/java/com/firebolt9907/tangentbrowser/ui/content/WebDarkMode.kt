@@ -36,10 +36,11 @@ import mozilla.components.concept.engine.EngineSession
  * page. No pixel decode; images only, so it stays far cheaper than a full-DOM walk. Plus one
  * `getComputedStyle` read to decide whether the page is already dark, and a couple of re-checks.
  *
- * Deciding light-vs-dark: after Tier 1 is active we read the effective page background color. If it's
- * dark the site honored the override (Tier 1 handled it) and we leave it alone; if it's light we add
- * the fallback class. `getComputedStyle` returns the *declared* background, unaffected by our filter,
- * so re-running the check is idempotent and stable.
+ * Deciding light-vs-dark is [darkDetectJs] — see its doc for why reading `body`/`html`'s declared
+ * background is not enough (wrapper-painted surfaces and `color-scheme`-only dark themes both read as
+ * light, and get inverted on top of their own dark theme). If the page is already dark the site
+ * honored the override and Tier 1 handled it, so we leave it alone; if it's light we add the fallback
+ * class. The check measures with our own class off, so re-running it is idempotent and stable.
  *
  * ### Known tradeoff (the price of "high performance")
  * The fallback re-inverts only media it can select statically — `<img>`/`<video>`/etc. and
@@ -191,6 +192,124 @@ object WebDarkMode {
     private const val MEDIA_CONTRAST = "1.1111"
 
     /**
+     * The shared **"is this page already dark?"** detector — the gate that decides whether Tier 1 (the
+     * site's own dark theme, honored via the forced `prefers-color-scheme: dark`) already handled the
+     * page, in which case we must keep our hands off it entirely.
+     *
+     * Getting this wrong is the most visible failure the whole feature has: a false *negative* inverts
+     * a page that is already dark, which reads as "dark mode is broken on this site". Inlined verbatim
+     * into [buildApplyScript] and [buildDynamicScript], and mirrored in
+     * `assets/extensions/darkmode/darkmode.js` (the document_start pre-paint script, which has no way
+     * to import it) — `WebDarkModeScriptTest` pins that all three agree.
+     *
+     * Three signals, because reading only `body`/`html`'s declared background misses two entire
+     * classes of dark theme:
+     *
+     *  - **Painted surface.** Sites overwhelmingly leave the *document* background alone and paint
+     *    their real surface on a full-bleed wrapper `<div>`. `body` then computes to the light default
+     *    and the page reads as light no matter how dark it looks. So we hit-test a few viewport points
+     *    and walk up to the first opaque background at each — what the user is actually looking at.
+     *    The probe returns the **lightest** surface it found, not the average: that encodes unanimity,
+     *    so a light page with one dark hero (or a dark sticky header) is still correctly light, and the
+     *    bias is toward applying our filter — the status quo — rather than toward skipping it.
+     *  - **`color-scheme`.** With no opaque background declared anywhere, the *UA* paints the canvas,
+     *    and under `color-scheme: dark` (or `light dark`, which our forced dark preference resolves to
+     *    dark) that canvas is **dark, not white**. The old code assumed "no background ⇒ white", which
+     *    inverts every site that ships its dark theme this way.
+     *  - **Text colour as a contradiction check.** Near-white body text over an apparently light
+     *    background is not a light page — it is a dark page whose surface we failed to sample. Text
+     *    that light would be unreadable if the background really were light.
+     */
+    private val darkDetectJs = """
+        var TG_CLS='${FALLBACK_CLASS}';
+        function tgLum(c){
+          if(!c)return -1;
+          var m=c.match(/rgba?\(([^)]+)\)/);if(!m)return -1;
+          var p=m[1].split(',');
+          var a=p.length>3?parseFloat(p[3]):1;
+          if(a<0.5)return -1;
+          var r=parseFloat(p[0]),g=parseFloat(p[1]),b=parseFloat(p[2]);
+          if(isNaN(r)||isNaN(g)||isNaN(b))return -1;
+          return 0.2126*r+0.7152*g+0.0722*b;
+        }
+        function bgLum(el){if(!el)return -1;try{return tgLum(getComputedStyle(el).backgroundColor);}catch(e){return -1;}}
+        function fgLum(el){if(!el)return -1;try{return tgLum(getComputedStyle(el).color);}catch(e){return -1;}}
+        /* The LIGHTEST opaque surface under a handful of viewport probes, or -1 if none resolved.
+           Lightest (not average) so this only ever reports "dark" when the whole visible page is dark. */
+        function paintedLum(){
+          try{
+            if(!document.body||!document.elementFromPoint)return -1;
+            var w=window.innerWidth||0,h=window.innerHeight||0;
+            if(w<=0||h<=0)return -1;
+            var pts=[[w*0.5,h*0.35],[w*0.5,h*0.65],[w*0.12,h*0.5],[w*0.88,h*0.5],[w*0.5,h*0.9]];
+            var worst=-1;
+            for(var i=0;i<pts.length;i++){
+              var el=document.elementFromPoint(pts[i][0],pts[i][1]),d=0;
+              while(el&&d<12){var l=bgLum(el);if(l>=0){if(l>worst)worst=l;break;}el=el.parentElement;d++;}
+            }
+            return worst;
+          }catch(e){return -1;}
+        }
+        /* True when the page declares a dark color-scheme, i.e. the UA canvas it relies on is dark. */
+        function schemeIsDark(){
+          try{
+            var m=document.querySelector('meta[name="color-scheme"]');
+            if(m&&/dark/i.test(m.content||''))return true;
+          }catch(e){}
+          try{
+            var s=getComputedStyle(document.documentElement);
+            return /\bdark\b/.test(s.colorScheme||s.getPropertyValue('color-scheme')||'');
+          }catch(e){}
+          return false;
+        }
+        function measureDark(deep){
+          var declared=bgLum(document.body);
+          if(declared<0)declared=bgLum(document.documentElement);
+          if(declared>=0&&declared<128)return true;
+          var painted=deep?paintedLum():-1;
+          if(declared<0)return painted>=0?painted<128:schemeIsDark();
+          /* The document background is light. Override it only when two independent signals agree the
+             page is really dark — every visible surface AND the body text — so a light page with a
+             dark hero filling the probes is still treated as light. */
+          var fg=fgLum(document.body);
+          if(painted>=0&&painted<100&&fg>=150)return true;
+          return fg>=200;
+        }
+        /* deep=false skips the hit-testing probe — used before the first paint, where there is no
+           layout to hit-test and forcing one would be the very cost the pre-paint script avoids.
+
+           Every measurement runs with OUR filter class off. The class carries an opaque
+           `background-color:#fafafa` and `color-scheme:dark` on <html>, so once applied it is what
+           `getComputedStyle` reports — the detector would be reading its own output back, which is
+           why a page that relies on the UA canvas could never be recognised as dark on a re-check.
+           Toggling inside one task forces a style recalc but never paints, so there is no flicker. */
+        function pageIsDark(deep){
+          var root=document.documentElement;
+          var had=false;
+          try{had=!!(root&&root.classList.contains(TG_CLS));if(had)root.classList.remove(TG_CLS);}catch(e){}
+          try{return measureDark(deep);}
+          finally{if(had){try{root.classList.add(TG_CLS);}catch(e){}}}
+        }
+        function isMediaDoc(){
+          /* A directly-viewed image/video/audio/PDF is a browser-generated document wrapping a single
+             media element. Inverting it turns a photo into a negative (and a PDF into a wrongly-lit
+             scan), so the filter must never touch these — the page IS the content, not chrome around
+             it. Detected by the document's own content type, with a structural fallback for the
+             lone-media-child wrapper Gecko builds. */
+          try{
+            var ct=document.contentType||'';
+            if(/^(image|video|audio)\//.test(ct)||ct==='application/pdf')return true;
+            var b=document.body;
+            if(b&&b.children&&b.children.length===1){
+              var t=b.children[0].tagName;
+              if(t==='IMG'||t==='VIDEO'||t==='AUDIO')return true;
+            }
+          }catch(e){}
+          return false;
+        }
+    """
+
+    /**
      * The apply script as a flattened one-line `javascript:` URL (pure; JVM-testable). Use only block
      * comments — the source is flattened to one line so a `//` would eat the rest. Idempotent: safe to
      * run repeatedly (per load, on the re-check timers).
@@ -320,49 +439,12 @@ object WebDarkMode {
                 });
                 try{window.__tangentDarkObserver.observe(document.documentElement,{childList:true,subtree:true});}catch(e){}
               }
-              function bgLum(el){
-                if(!el)return -1;
-                var c;
-                try{c=getComputedStyle(el).backgroundColor;}catch(e){return -1;}
-                var m=c&&c.match(/rgba?\(([^)]+)\)/);
-                if(!m)return -1;
-                var p=m[1].split(',');
-                var a=p.length>3?parseFloat(p[3]):1;
-                if(a<0.5)return -1;
-                var r=parseFloat(p[0]),g=parseFloat(p[1]),b=parseFloat(p[2]);
-                return 0.2126*r+0.7152*g+0.0722*b;
-              }
-              function pageIsDark(){
-                var l=bgLum(document.body);
-                if(l<0)l=bgLum(document.documentElement);
-                /* No opaque background declared anywhere: the UA canvas is white (light), so under the
-                   prefers-color-scheme override an honored dark theme would have set an opaque dark bg.
-                   Treat "no bg" as light so the fallback engages. */
-                if(l<0)return false;
-                return l<128;
-              }
-              function isMediaDoc(){
-                /* A directly-viewed image/video/audio/PDF is a browser-generated document wrapping a
-                   single media element. Inverting it turns a photo into a negative (and a PDF into a
-                   wrongly-lit scan), so the filter must never touch these — the page IS the content,
-                   not chrome around it. Detected by the document's own content type, with a structural
-                   fallback for the lone-media-child wrapper Gecko builds. */
-                try{
-                  var ct=document.contentType||'';
-                  if(/^(image|video|audio)\//.test(ct)||ct==='application/pdf')return true;
-                  var b=document.body;
-                  if(b&&b.children&&b.children.length===1){
-                    var t=b.children[0].tagName;
-                    if(t==='IMG'||t==='VIDEO'||t==='AUDIO')return true;
-                  }
-                }catch(e){}
-                return false;
-              }
+              $darkDetectJs
               function apply(){
                 ensureStyle();
                 var root=document.documentElement;
                 if(!root)return;
-                if(pageIsDark()||isMediaDoc()){root.classList.remove(CLS);}
+                if(pageIsDark(true)||isMediaDoc()){root.classList.remove(CLS);}
                 else{
                   root.classList.add(CLS);
                   /* Only pay the image/background scan on pages actually getting the filter. */
@@ -372,16 +454,48 @@ object WebDarkMode {
                 }
               }
               apply();
-              /* A couple of re-checks catch sites that swap in a (dark) theme a beat after load, so we
-                 remove the fallback once their real dark theme lands. Cheap: one getComputedStyle each. */
+              /* Re-checks catch sites that swap in a (dark) theme a beat after load, so we remove the
+                 fallback once their real dark theme lands. Cheap: a handful of getComputedStyle reads
+                 and five hit-tests each. The 3s pass is for slow hydration on heavy app shells, where
+                 the surface that carries the dark theme does not exist at 1.2s. */
               setTimeout(apply,300);
               setTimeout(apply,1200);
+              setTimeout(apply,3000);
             })();
-        """.trimIndent().replace("\n", " ")
+        """.trimIndent().replace("\n", " ").trim()
     }
 
     /** Cap on elements the dynamic per-section walk touches per pass — bounds worst-case cost. */
-    private const val DYN_SCAN_CAP = 8000
+    /**
+     * Backstop on how many elements the dynamic tier will ever touch on one page. This is NOT the
+     * old per-pass scan cap: work is now frame-budgeted ([DYN_FRAME_BUDGET_MS]) and resumable, so a
+     * long page is finished across several frames instead of being truncated. The old fixed cap
+     * silently stranded everything past element 8000 — every pass restarted at index 0, so the tail
+     * of a long page was *never* darkened no matter how many times the scan re-ran. That was the
+     * single biggest "some elements stay light" cause. This value only guards pathological DOMs.
+     */
+    private const val DYN_MAX_ELEMENTS = 50000
+
+    /** Per-frame work budget (ms) for the resumable walk — keeps a long page from ever blocking a frame. */
+    private const val DYN_FRAME_BUDGET_MS = 8
+
+    /**
+     * Cap on elements whose `::before`/`::after` we probe. Pseudo-elements can't take an inline
+     * style, so each match costs a generated rule in our stylesheet; we only probe elements we
+     * already had to recolor (decorative pseudos hang off styled containers), and stop at this many.
+     */
+    private const val DYN_PSEUDO_CAP = 800
+
+    /** Min box side (px) before a `url()` background is worth scrimming — skips icons and sprites. */
+    private const val DYN_BG_IMAGE_MIN = 64
+
+    /**
+     * Opacity of the black scrim composited over a light `url()` background image. The recolor can't
+     * see *into* an image, so a section whose background is a light photo stays glaring; a scrim
+     * layered in the same `background-image` stack darkens it without touching the children drawn on
+     * top (a `filter` on the element would drag its text down with it).
+     */
+    private const val DYN_BG_SCRIM = "0.45"
 
     /** Dark canvas base for the dynamic tier (mixed pages need an opaque dark floor behind transparency). */
     private const val DYN_BASE_BG = "#1c1c1e"
@@ -390,18 +504,46 @@ object WebDarkMode {
      * The **dynamic** per-section recoloring script (pure; JVM-testable). Same one-line-`javascript:`
      * shape and block-comment-only rule as [buildApplyScript].
      *
-     * Unlike the filter tiers this applies **no** page-wide filter. It walks the DOM (bounded by
-     * [DYN_SCAN_CAP], plus an rAF-batched MutationObserver for later/ SPA nodes) and, per element,
+     * Unlike the filter tiers this applies **no** page-wide filter. It walks the DOM and, per element,
      * reads the computed `background-color`/`color`/border colors, converts each to HSL, and remaps
      * lightness so light colors go dark while already-dark colors stay put (`mapBgL`/`mapFgL` are
      * piecewise, hinged at a threshold below which the input passes through unchanged). Hue is always
      * preserved; extreme saturation is gently compressed. Transparent colors are left untouched so a
-     * darkened ancestor shows through. Media (`img`/`video`/`canvas`/`iframe`/…) and SVG-namespaced
-     * nodes are skipped entirely — with no inversion, photos and logos are already correct.
+     * darkened ancestor shows through. Media (`img`/`video`/`canvas`/…) and SVG-namespaced nodes are
+     * skipped entirely — with no inversion, photos and logos are already correct.
      *
      * The light-vs-dark verdict is taken **once** and latched in `window.__lumDynActive`: after the
      * first pass our own darkening would make `getComputedStyle` report a dark page, so a re-decide
      * would wrongly bail. Later `apply()` passes only catch up newly-added nodes.
+     *
+     * ### The walk (rewritten for coverage + cost)
+     * - **Resumable, frame-budgeted** ([DYN_FRAME_BUDGET_MS], backstopped by [DYN_MAX_ELEMENTS])
+     *   over static `querySelectorAll` lists. The previous fixed per-pass cap restarted at index 0
+     *   every time, so everything past element 8000 was *never* reached — the main reason long pages
+     *   kept light patches. Now a chunk stops on the budget and the next frame resumes at the same
+     *   index until the page is finished.
+     * - **Read/write split.** `visit()` only reads and appends (element, property, value) triples;
+     *   `flush()` applies them after the chunk. Interleaving reads and writes forced a style recalc
+     *   per element — this is the biggest single cost reduction in the tier.
+     * - **Color memoization.** `modify()` caches by `kind|color`; a page has dozens of distinct
+     *   colors across thousands of elements.
+     * - **Inherited text color is skipped.** A child whose computed `color` equals its parent's
+     *   original inherits our remapped value anyway, so writing it again is wasted work and a wasted
+     *   inline style.
+     * - **Shadow roots and same-origin iframes** are adopted as their own walks + observers; open
+     *   shadow trees are invisible to `querySelectorAll`, so component-heavy sites used to keep whole
+     *   light subtrees.
+     * - **Attribute mutations** (`class`/`style`) clear the per-element done latch and re-queue it.
+     *   Without this a site that swaps a class after load kept our stale recolor forever. Our own
+     *   writes are counted (`__lumDynPend`) so the observer can tell them from the page's and not
+     *   loop.
+     * - **`::before`/`::after`** can't take an inline style, so matching pseudos get a generated rule
+     *   in our stylesheet, keyed by a tagging attribute, capped at [DYN_PSEUDO_CAP].
+     * - **`url()` backgrounds** get a [DYN_BG_SCRIM] scrim composited into the same background stack
+     *   (children drawn on top are unaffected), for boxes at least [DYN_BG_IMAGE_MIN] on both sides.
+     *
+     * Every write records the element's prior inline value for an exact teardown — see
+     * [buildRemoveScript].
      */
     internal fun buildDynamicScript(): String {
         return """
@@ -409,8 +551,20 @@ object WebDarkMode {
               var STYLE_ID='${DYN_STYLE_ID}';
               var CLS='${DYN_CLASS}';
               var BASE_BG='${DYN_BASE_BG}';
-              var CAP=${DYN_SCAN_CAP};
+              var MAXEL=${DYN_MAX_ELEMENTS};
+              var BUDGET=${DYN_FRAME_BUDGET_MS};
+              var PSEUDO_CAP=${DYN_PSEUDO_CAP};
+              var BGMIN=${DYN_BG_IMAGE_MIN};
+              var SCRIM='${DYN_BG_SCRIM}';
               var DONE='__lumDynDone';
+              var ORIG='__lumDynOrig';
+              var PEND='__lumDynPend';
+              var OFG='__lumDynOfg';
+              /* All mutable state hangs off one object so the teardown script can find exactly what
+                 we touched (including inside shadow roots and iframes) and undo precisely that. */
+              var st=window.__lumDyn;
+              if(!st)st=window.__lumDyn={q:[],touched:[],cache:{},count:0,pseudo:0,pseudoSeq:0,
+                rules:[],rulesDirty:0,pending:0,obs:[],base:''};
               /* The document_start pre-paint extension (darkmode.js) always applies the FILTER tier
                  (invert) to kill the white flash, before it knows the user picked the dynamic tier.
                  Strip that filter here so the page isn't both inverted AND recolored. */
@@ -419,6 +573,7 @@ object WebDarkMode {
               function baseStyle(){
                 var css='html.'+CLS+'{background-color:'+BASE_BG+' !important;color-scheme:dark;}'
                   +'html.'+CLS+' img,html.'+CLS+' video,html.'+CLS+' canvas,html.'+CLS+' picture,html.'+CLS+' iframe,html.'+CLS+' embed,html.'+CLS+' object{filter:none !important;}';
+                st.base=css;
                 var s=document.getElementById(STYLE_ID);
                 if(!s){s=document.createElement('style');s.id=STYLE_ID;(document.head||document.documentElement).appendChild(s);}
                 if(s.textContent!==css)s.textContent=css;
@@ -457,7 +612,7 @@ object WebDarkMode {
               function mapFgL(l){var T=0.55;if(l>=T)return l;return T+(T-l)/T*(0.92-T);}
               /* Borders sit between: darken light rules but keep them a touch above the bg band. */
               function mapBorderL(l){var T=0.4;if(l<=T)return l;return T-(l-T)/(1-T)*(T-0.22);}
-              function modify(c,kind){
+              function modifyRaw(c,kind){
                 var p=parseColor(c);if(!p)return null;
                 if(p[3]===0)return null;
                 var hsl=rgbToHsl(p[0],p[1],p[2]);
@@ -467,90 +622,210 @@ object WebDarkMode {
                 if(p[3]<1)return 'rgba('+rgb[0]+','+rgb[1]+','+rgb[2]+','+p[3]+')';
                 return 'rgb('+rgb[0]+','+rgb[1]+','+rgb[2]+')';
               }
+              /* A page uses dozens of distinct colors across thousands of elements, so the parse +
+                 HSL round-trip is almost entirely repeat work. Memoizing by color string collapses
+                 it to one computation per distinct color — this is the part a WASM port would have
+                 targeted, and caching removes far more of it than a port could. */
+              function modify(c,kind){
+                if(!c)return null;
+                var k=kind+'|'+c,v=st.cache[k];
+                if(v!==undefined)return v;
+                v=modifyRaw(c,kind);
+                st.cache[k]=v;
+                return v;
+              }
               function isMedia(t){return t==='IMG'||t==='VIDEO'||t==='CANVAS'||t==='IFRAME'||t==='EMBED'||t==='OBJECT'||t==='PICTURE'||t==='SVG';}
-              function styleEl(el){
+              /* READ phase only: never writes. Every change is pushed onto `ops` as an
+                 (element, property, value) triple and applied by flush() after the whole chunk has
+                 been read, so a style write can't force the next element's read to recalc. */
+              function visit(el,ops){
                 if(!el||el.nodeType!==1||el[DONE])return;
                 el[DONE]=1;
-                if(isMedia(el.tagName))return;
+                if(st.count>=MAXEL)return;
+                st.count++;
+                var tag=el.tagName;
+                if(el.shadowRoot)adoptRoot(el.shadowRoot);
+                if(tag==='IFRAME'){adoptFrame(el);return;}
+                if(isMedia(tag))return;
                 /* Skip anything in the SVG namespace (icons/logos) — recoloring their fills mangles art. */
                 if(el.namespaceURI&&el.namespaceURI.indexOf('svg')>=0)return;
                 var cs;try{cs=getComputedStyle(el);}catch(e){return;}
+                var wrote=0;
                 var nb=modify(cs.backgroundColor,0);
-                if(nb)el.style.setProperty('background-color',nb,'important');
-                var nf=modify(cs.color,1);
-                if(nf)el.style.setProperty('color',nf,'important');
+                if(nb){ops.push(el,'background-color',nb);wrote=1;}
+                /* Text color is inherited, so a child whose computed color equals its parent's
+                   ORIGINAL color will inherit our remapped value for free. Skipping those writes
+                   removes most of the inline styles this tier used to create on text-heavy pages. */
+                var fg=cs.color,pe=el.parentElement;
+                var inherited=pe&&pe[OFG]===fg;
+                el[OFG]=fg;
+                if(!inherited){var nf=modify(fg,1);if(nf){ops.push(el,'color',nf);wrote=1;}}
                 if(cs.borderTopWidth!=='0px'||cs.borderBottomWidth!=='0px'||cs.borderLeftWidth!=='0px'||cs.borderRightWidth!=='0px'){
                   var sides=['borderTopColor','borderRightColor','borderBottomColor','borderLeftColor'];
                   var props=['border-top-color','border-right-color','border-bottom-color','border-left-color'];
-                  for(var k=0;k<4;k++){var nc=modify(cs[sides[k]],2);if(nc)el.style.setProperty(props[k],nc,'important');}
+                  for(var k=0;k<4;k++){var nc=modify(cs[sides[k]],2);if(nc){ops.push(el,props[k],nc);wrote=1;}}
                 }
-                /* Recolor gradient stops (cheap regex) but leave url() image backgrounds to render as-is. */
                 var bi=cs.backgroundImage;
-                if(bi&&bi.indexOf('gradient')>=0&&bi.indexOf('url(')<0){
-                  var ng=bi.replace(/rgba?\([^)]+\)/g,function(m){var r=modify(m,0);return r||m;});
-                  if(ng!==bi)el.style.setProperty('background-image',ng,'important');
+                if(bi&&bi!=='none'){
+                  if(bi.indexOf('url(')>=0){
+                    /* Can't recolor into an image, so composite a scrim over it in the same
+                       background stack — children drawn on top are unaffected. */
+                    if(el.offsetWidth>=BGMIN&&el.offsetHeight>=BGMIN){
+                      ops.push(el,'background-image','linear-gradient(rgba(0,0,0,'+SCRIM+'),rgba(0,0,0,'+SCRIM+')),'+bi);
+                      wrote=1;
+                    }
+                  }else if(bi.indexOf('gradient')>=0){
+                    var ng=bi.replace(/rgba?\([^)]+\)/g,function(m){var r=modify(m,0);return r||m;});
+                    if(ng!==bi){ops.push(el,'background-image',ng);wrote=1;}
+                  }
+                }
+                if(wrote&&st.pseudo<PSEUDO_CAP){pseudo(el,'::before');pseudo(el,'::after');}
+              }
+              /* Enqueue a subtree. querySelectorAll returns a STATIC list, which is what makes the
+                 walk resumable: pump() can stop mid-list on a frame budget and pick up at the same
+                 index next frame instead of restarting (the old fixed cap restarted at 0 every pass,
+                 so a long page's tail was never reached). */
+              function pushTree(n){
+                if(!n||n.nodeType!==1)return;
+                st.q.push({l:[n],i:0});
+                try{var d=n.querySelectorAll('*');if(d.length)st.q.push({l:d,i:0});}catch(e){}
+              }
+              function schedule(){if(st.pending)return;st.pending=1;requestAnimationFrame(pump);}
+              /* Read every element's computed style first, then write in one batch. Interleaving the
+                 two thrashes layout: each style write invalidates, so the next getComputedStyle forces
+                 a fresh recalc. Splitting the phases is the single biggest win in this walk. */
+              function pump(){
+                st.pending=0;
+                var t0=Date.now(),ops=[],n=0,over=0;
+                while(st.q.length&&!over){
+                  var e=st.q[0];
+                  while(e.i<e.l.length){
+                    visit(e.l[e.i++],ops);
+                    if((++n&127)===0&&Date.now()-t0>BUDGET){over=1;break;}
+                  }
+                  if(e.i>=e.l.length)st.q.shift();
+                }
+                flush(ops);
+                flushRules();
+                if(st.q.length)schedule();
+              }
+              function record(el,p){
+                var o=el[ORIG];
+                if(!o){o=el[ORIG]={};st.touched.push(el);}
+                /* Remember the page's OWN inline value once, so turning dark mode off restores it
+                   exactly instead of blanket-removing the property (which used to wipe colors the
+                   site itself set inline, leaving the page wrong until a reload). */
+                if(!(p in o))o[p]=[el.style.getPropertyValue(p),el.style.getPropertyPriority(p)];
+              }
+              function flush(ops){
+                for(var i=0;i<ops.length;i+=3){
+                  var el=ops[i];
+                  try{
+                    record(el,ops[i+1]);
+                    /* Count our own style mutations so the observer can tell them from the page's. */
+                    el[PEND]=(el[PEND]||0)+1;
+                    el.style.setProperty(ops[i+1],ops[i+2],'important');
+                  }catch(e){}
                 }
               }
-              function scan(host){
-                styleEl(document.documentElement);
-                if(document.body)styleEl(document.body);
-                var root=host||document.body;if(!root)return;
-                if(root.nodeType===1)styleEl(root);
-                if(!root.getElementsByTagName)return;
-                var all=root.getElementsByTagName('*');
-                var n=Math.min(all.length,CAP);
-                for(var i=0;i<n;i++)styleEl(all[i]);
+              function flushRules(){
+                if(!st.rulesDirty)return;
+                st.rulesDirty=0;
+                var s=document.getElementById(STYLE_ID);
+                if(s)s.textContent=st.base+st.rules.join('');
               }
-              function ensureObserver(){
-                if(window.__tangentDynObserver)return;
-                var queue=[],pending=false;
-                function flush(){pending=false;var q=queue;queue=[];for(var i=0;i<q.length;i++)scan(q[i]);}
-                window.__tangentDynObserver=new MutationObserver(function(recs){
-                  for(var i=0;i<recs.length;i++){var a=recs[i].addedNodes;for(var j=0;j<a.length;j++){if(a[j].nodeType===1)queue.push(a[j]);}}
-                  if(queue.length&&!pending){pending=true;requestAnimationFrame(flush);}
-                });
-                try{window.__tangentDynObserver.observe(document.documentElement,{childList:true,subtree:true});}catch(e){}
+              /* Pseudo-elements can't take an inline style, so a light ::before/::after survived the
+                 whole recolor. Probe only elements we already recolored (decorative pseudos hang off
+                 styled containers) and emit a generated rule keyed by a tagging attribute. */
+              function pseudo(el,which){
+                var cs;try{cs=getComputedStyle(el,which);}catch(e){return;}
+                var c=cs.content;
+                if(!c||c==='none'||c==='normal')return;
+                var nb=modify(cs.backgroundColor,0),nf=modify(cs.color,1);
+                if(!nb&&!nf)return;
+                st.pseudo++;
+                var id=el.getAttribute('data-tangent-dyn-p');
+                if(!id){id='p'+(++st.pseudoSeq);try{el.setAttribute('data-tangent-dyn-p',id);}catch(e){return;}}
+                var d='';
+                if(nb)d+='background-color:'+nb+' !important;';
+                if(nf)d+='color:'+nf+' !important;';
+                st.rules.push('[data-tangent-dyn-p="'+id+'"]'+which+'{'+d+'}');
+                st.rulesDirty=1;
               }
-              function bgLum(el){
-                if(!el)return -1;
-                var c;try{c=getComputedStyle(el).backgroundColor;}catch(e){return -1;}
-                var p=parseColor(c);if(!p||p[3]<0.5)return -1;
-                return 0.2126*p[0]+0.7152*p[1]+0.0722*p[2];
+              /* Open shadow roots are invisible to querySelectorAll, so whole web-component subtrees
+                 used to stay light. Adopt each root as its own walk + observer. */
+              function adoptRoot(r){
+                if(!r||r.__lumDynAdopted)return;
+                r.__lumDynAdopted=1;
+                try{var k=r.children;for(var i=0;i<k.length;i++)pushTree(k[i]);}catch(e){}
+                observe(r);
+                schedule();
               }
-              function pageIsDark(){
-                var l=bgLum(document.body);if(l<0)l=bgLum(document.documentElement);
-                if(l<0)return false;
-                return l<128;
-              }
-              function isMediaDoc(){
+              /* Same-origin iframes are separate documents; cross-origin ones throw and are skipped. */
+              function adoptFrame(el){
                 try{
-                  var ct=document.contentType||'';
-                  if(/^(image|video|audio)\//.test(ct)||ct==='application/pdf')return true;
-                  var b=document.body;
-                  if(b&&b.children&&b.children.length===1){
-                    var t=b.children[0].tagName;
-                    if(t==='IMG'||t==='VIDEO'||t==='AUDIO')return true;
+                  var d=el.contentDocument;
+                  if(d&&d.documentElement&&!d.__lumDynAdopted){
+                    d.__lumDynAdopted=1;
+                    pushTree(d.documentElement);
+                    observe(d);
+                    schedule();
                   }
                 }catch(e){}
-                return false;
+                if(!el.__lumDynFrameHook){
+                  el.__lumDynFrameHook=1;
+                  try{el.addEventListener('load',function(){try{el.contentDocument.__lumDynAdopted=0;}catch(e2){}adoptFrame(el);});}catch(e){}
+                }
               }
+              function observe(target){
+                try{
+                  var o=new MutationObserver(onMut);
+                  o.observe(target.nodeType===9?target.documentElement:target,
+                    {childList:true,subtree:true,attributes:true,attributeFilter:['class','style']});
+                  st.obs.push(o);
+                  if(!window.__tangentDynObserver)window.__tangentDynObserver=o;
+                }catch(e){}
+              }
+              /* Attribute mutations matter as much as added nodes: a site that swaps a class (theme
+                 switch, a lazy `.loaded` class, hover state) used to keep our stale recolor forever,
+                 because every element was latched done on first visit and never re-read. */
+              function onMut(recs){
+                for(var i=0;i<recs.length;i++){
+                  var r=recs[i],t=r.target;
+                  if(r.type==='attributes'){
+                    if(r.attributeName==='style'&&t[PEND]>0){t[PEND]--;continue;}
+                    t[DONE]=0;
+                    st.q.push({l:[t],i:0});
+                    continue;
+                  }
+                  var a=r.addedNodes;
+                  for(var j=0;j<a.length;j++){if(a[j].nodeType===1){a[j][DONE]=0;pushTree(a[j]);}}
+                }
+                schedule();
+              }
+              $darkDetectJs
               function apply(){
                 var root=document.documentElement;if(!root)return;
                 /* Already engaged: only catch up newly-added nodes. Re-deciding here would be wrong —
                    our own recoloring has since darkened the page. */
-                if(window.__lumDynActive){scan(document.body);return;}
-                if(pageIsDark()||isMediaDoc())return;
+                if(window.__lumDynActive){pushTree(document.body||root);schedule();return;}
+                if(pageIsDark(true)||isMediaDoc())return;
                 window.__lumDynActive=1;
                 baseStyle();
                 root.classList.add(CLS);
-                scan(document.body);
-                ensureObserver();
+                /* Walk from documentElement, not body: html-level backgrounds count too. */
+                pushTree(root);
+                observe(document);
+                schedule();
               }
               apply();
               setTimeout(apply,300);
               setTimeout(apply,1200);
+              /* Late stylesheets change what getComputedStyle reports; re-run once the page settles
+                 so elements read before their CSS arrived are not left latched with default colors. */
+              try{if(document.readyState!=='complete')window.addEventListener('load',function(){apply();},{once:true});}catch(e){}
             })();
-        """.trimIndent().replace("\n", " ")
+        """.trimIndent().replace("\n", " ").trim()
     }
 
     /* ---- WASM image-cutout tuning (see tools/dark-cutout-wasm; kernel = src/lib.rs) ---- */
@@ -659,11 +934,19 @@ object WebDarkMode {
 
     /**
      * The removal script: drops both the filter fallback (class + `<style>` + observer) and the
-     * dynamic tier (class + `<style>` + observer + the per-element inline recolors it set). Stripping
-     * `background-color`/`color`/border/`background-image` from every element is coarse — it also
-     * clears any inline color a page had set on those same elements — but a reload restores them, and
-     * toggling dark mode off mid-session is rare; the alternative (tracking each element's original)
-     * is far heavier for a teardown path.
+     * dynamic tier (class + `<style>` + observers + the per-element inline recolors it set).
+     *
+     * The dynamic teardown is **exact**: the walk records each element's original inline value the
+     * first time it overwrites a property (`__lumDynOrig`) and registers the element in
+     * `window.__lumDyn.touched`, so this restores precisely what we changed and nothing else. The
+     * old version blanket-removed `background-color`/`color`/border/`background-image` from every
+     * element in the document, which also wiped colors the *page* had set inline — the page stayed
+     * visibly wrong until a reload, which is what made dark mode look like it couldn't be turned off
+     * live. Working from the touched list also reaches elements inside shadow roots and same-origin
+     * iframes, which a `document.getElementsByTagName('*')` sweep never saw.
+     *
+     * The brute-force sweep survives only as a fallback for a page that was injected by an older
+     * build (no `__lumDyn` state to consult).
      */
     internal fun buildRemoveScript(): String {
         return """
@@ -678,9 +961,34 @@ object WebDarkMode {
               try{if(window.__lumCut&&window.__lumCut.worker)window.__lumCut.worker.terminate();window.__lumCut=null;}catch(e){}
               try{if(window.__lumCutObserver){window.__lumCutObserver.disconnect();window.__lumCutObserver=null;}}catch(e){}
               window.__lumDynActive=0;
-              /* Strip the per-element recolor AND the cutout's CSS mask (the mask is inline on <img>), so
-                 toggling dark mode off restores the original page without a reload. */
-              try{var el=document.getElementsByTagName('*');for(var i=0;i<el.length;i++){var st=el[i].style;if(st){st.removeProperty('background-color');st.removeProperty('color');st.removeProperty('border-top-color');st.removeProperty('border-right-color');st.removeProperty('border-bottom-color');st.removeProperty('border-left-color');st.removeProperty('background-image');st.removeProperty('mask-image');st.removeProperty('-webkit-mask-image');st.removeProperty('mask-size');st.removeProperty('-webkit-mask-size');st.removeProperty('mask-position');st.removeProperty('-webkit-mask-position');st.removeProperty('mask-repeat');st.removeProperty('-webkit-mask-repeat');st.removeProperty('mask-mode');}el[i].__lumDynDone=0;el[i].__lumCut=0;}}catch(e){}
+              var MASKS=['mask-image','-webkit-mask-image','mask-size','-webkit-mask-size','mask-position','-webkit-mask-position','mask-repeat','-webkit-mask-repeat','mask-mode'];
+              /* Drop the cutout's CSS mask, but only from images the cutout actually tagged, so a
+                 page that uses masks of its own keeps them. */
+              try{var im=document.getElementsByTagName('img');for(var q=0;q<im.length;q++){if(!im[q].__lumCut)continue;var ms=im[q].style;for(var w=0;w<MASKS.length;w++)ms.removeProperty(MASKS[w]);im[q].__lumCut=0;try{im[q].removeAttribute('data-tangent-cut-id');}catch(e2){}}}catch(e){}
+              var dyn=window.__lumDyn;
+              if(dyn){
+                try{for(var o=0;o<dyn.obs.length;o++){try{dyn.obs[o].disconnect();}catch(e2){}}}catch(e){}
+                /* Exact restore: put back the page's own inline value, or remove the property if it
+                   had none. Covers shadow-root and iframe elements, which a document-wide sweep misses. */
+                try{
+                  var t=dyn.touched;
+                  for(var i=0;i<t.length;i++){
+                    var el=t[i],orig=el.__lumDynOrig;
+                    if(orig){
+                      for(var p in orig){
+                        var v=orig[p];
+                        try{if(v&&v[0])el.style.setProperty(p,v[0],v[1]);else el.style.removeProperty(p);}catch(e2){}
+                      }
+                    }
+                    el.__lumDynOrig=null;el.__lumDynDone=0;el.__lumDynPend=0;el.__lumDynOfg=null;
+                    try{el.removeAttribute('data-tangent-dyn-p');}catch(e2){}
+                  }
+                }catch(e){}
+                window.__lumDyn=null;
+              }else{
+                /* Legacy fallback: page was injected by an older build with no recorded originals. */
+                try{var el2=document.getElementsByTagName('*');for(var i2=0;i2<el2.length;i2++){var s2=el2[i2].style;if(s2){s2.removeProperty('background-color');s2.removeProperty('color');s2.removeProperty('border-top-color');s2.removeProperty('border-right-color');s2.removeProperty('border-bottom-color');s2.removeProperty('border-left-color');s2.removeProperty('background-image');for(var w2=0;w2<MASKS.length;w2++)s2.removeProperty(MASKS[w2]);}el2[i2].__lumDynDone=0;el2[i2].__lumCut=0;}}catch(e){}
+              }
             })();
         """.trimIndent().replace("\n", " ")
     }

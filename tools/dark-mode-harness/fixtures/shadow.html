@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>shadow</title>
+<style>body{background:#fff;color:#111}</style></head><body>
+<div id="host"></div>
+<script>
+/* Open shadow roots are invisible to querySelectorAll, so this subtree used to stay light. */
+var host=document.getElementById('host');
+var r=host.attachShadow({mode:'open'});
+r.innerHTML='<style>.card{background:#fafafa;color:#222;padding:20px}</style><div class="card" id="card">shadow card</div>';
+window.__probe=function(){
+  var c=document.getElementById('host').shadowRoot.getElementById('card');
+  return [{name:'shadow-card',bg:getComputedStyle(c).backgroundColor}];
+};
+</script>
+</body></html>

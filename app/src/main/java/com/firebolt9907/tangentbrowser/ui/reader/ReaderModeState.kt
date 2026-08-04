@@ -205,6 +205,20 @@ class ReaderManager {
     private val _fontName = MutableStateFlow("System") // System, Georgia, Charter, Athelas
     val fontName: StateFlow<String> = _fontName.asStateFlow()
 
+    /**
+     * Notified of **every** extraction outcome for [tabId] — including the silent auto-extract pass
+     * that [reportReaderUnavailable] deliberately keeps quiet for UI purposes. `extracted` is true
+     * only when the page yielded an article with real prose ([ReaderArticle.hasSubstantialBody]), so
+     * a technically-parsed stub counts as a failure.
+     *
+     * Set by the DI graph to feed [com.firebolt9907.tangentbrowser.state.ReaderHostEvidence], which
+     * is how the data saver learns which hosts it can strip first-party script/CSS from without
+     * loading them first. The listener resolves the tab's URL itself — this manager is Context- and
+     * store-less by design.
+     */
+    @Volatile
+    var outcomeListener: ((tabId: String, extracted: Boolean) -> Unit)? = null
+
     fun isReaderActive(tabId: String): Boolean = _activeReaderTabs.value.contains(tabId)
     
     fun isReaderEligible(tabId: String): Boolean = _eligibleReaderTabs.value.contains(tabId)
@@ -245,6 +259,9 @@ class ReaderManager {
      * feedback instead of appearing to do nothing.
      */
     fun reportReaderUnavailable(tabId: String) {
+        // Ahead of the pending-activation gate below: the auto pass staying silent is a *UI* rule,
+        // but a host that can't be extracted is exactly what the data saver needs to hear about.
+        outcomeListener?.invoke(tabId, false)
         if (!_pendingActivationTabs.value.contains(tabId)) return
         _pendingActivationTabs.update { it - tabId }
         _readerUnavailableTab.value = tabId
@@ -259,6 +276,10 @@ class ReaderManager {
         com.firebolt9907.tangentbrowser.util.TangentLog.debug("ReaderDbg") { "setReaderEligible tab=$tabId pending=${_pendingActivationTabs.value.contains(tabId)}" }
         _eligibleReaderTabs.update { it + tabId }
         _tabArticles.update { it + (tabId to article) }
+        // Only a page with real prose counts as evidence the host is reader-readable — the same bar
+        // auto-activation uses. A thin page stays eligible for manual reader but must not license the
+        // data saver to strip that host's script and CSS on the next visit.
+        outcomeListener?.invoke(tabId, article.hasSubstantialBody)
 
         // Only fulfill a pending auto-activation when the page actually has enough prose to read;
         // a thin page stays eligible (reader can be turned on by hand) but won't pop into reader

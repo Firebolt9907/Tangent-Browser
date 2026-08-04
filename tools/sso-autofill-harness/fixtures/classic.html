@@ -1,0 +1,17 @@
+<!doctype html>
+<!--
+  An ordinary single-step login form. Pins that the identifier-first work did not change the common
+  case: the detector reports the password stage straight away, and the username field it picks is the
+  one carrying the autocomplete hint rather than the newsletter box above it.
+-->
+<html>
+<head><meta charset="utf-8"><title>Log in</title></head>
+<body>
+  <input type="email" name="newsletter" placeholder="Get our newsletter">
+  <form id="login" onsubmit="window.__submitted = (window.__submitted||0)+1; return false;">
+    <input type="text" name="username" autocomplete="username" placeholder="Username">
+    <input type="password" name="password" placeholder="Password">
+    <button type="submit">Log in</button>
+  </form>
+</body>
+</html>

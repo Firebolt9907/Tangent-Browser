@@ -1,0 +1,22 @@
+{
+  "manifest_version": 2,
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "datasaver@tangent.firebolt9907"
+    }
+  },
+  "name": "Tangent Data Saver",
+  "description": "Suspends heavy subresources (third-party scripts, images, media, web fonts) while the OS Data Saver is active, so a page costs a fraction of its normal bytes.",
+  "version": "1.0",
+  "background": {
+    "scripts": ["datasaver.js"],
+    "persistent": true
+  },
+  "permissions": [
+    "geckoViewAddons",
+    "nativeMessaging",
+    "webRequest",
+    "webRequestBlocking",
+    "<all_urls>"
+  ]
+}

@@ -32,3 +32,10 @@ local.properties
 # foreground sync-poll fallback when absent (see AGENTS.md -> FxA push). Remove this line if you
 # want push to build on CI / other machines.
 /app/google-services.json
+
+# Release signing material. The upload keystore identifies the app forever (Android refuses an
+# update signed by a different key) — keep it backed up OUTSIDE the repo, never in it.
+# See docs/OBTAINIUM.md.
+*.jks
+*.keystore
+keystore.properties

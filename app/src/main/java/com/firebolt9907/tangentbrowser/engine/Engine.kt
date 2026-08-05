@@ -440,6 +440,10 @@ class TangentBrowserComponents(application: Application) {
         // Backing store for generic (non-login/card/address) form-field memory. The bridge handlers
         // in ReaderExtractor are static, so the store is attached once here.
         com.firebolt9907.tangentbrowser.ui.content.FormFieldMemory.attach(application)
+        // Files captured from blob: URLs, and the index that maps a dead blob URL to its cached
+        // copy. Must be attached BEFORE restoreOrSeedBlank below: that is where a restored tab
+        // pointing at a blob URL is rewritten to the cached file it was captured into.
+        com.firebolt9907.tangentbrowser.state.BlobFileStore.attach(application)
         applyEngineSettings()
         runtime.autocompleteStorageDelegate = autocompleteStorageDelegate
         storeSubscription.resume()

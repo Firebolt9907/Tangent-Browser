@@ -106,6 +106,10 @@ object BannerPriority {
     const val ElementZap = 25
 
     const val OtpPaste = 30
+
+    /** "Save this file" for a captured blob document — an offer about what's already on screen. */
+    const val BlobFile = 35
+
     const val SendToDevice = 40
     const val ReceivedTab = 50
     const val Handoff = 60

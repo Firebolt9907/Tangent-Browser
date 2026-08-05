@@ -990,6 +990,14 @@ object ReaderExtractor {
                             }
                             return GeckoResult.fromValue(prompt.confirm("ok"))
                         }
+                        com.firebolt9907.tangentbrowser.ui.content.BlobCapture.BRIDGE_MESSAGE -> {
+                            // Streams the bytes of a blob: document into the blob cache, chunk by
+                            // chunk; the reply carries the capture id / flow control back to the page.
+                            val res = prompt.defaultValue?.let {
+                                com.firebolt9907.tangentbrowser.ui.content.BlobCapture.onPayload(tabId, it)
+                            } ?: ""
+                            return GeckoResult.fromValue(prompt.confirm(res))
+                        }
                         com.firebolt9907.tangentbrowser.ui.content.ElementZap.BRIDGE_MESSAGE -> {
                             prompt.defaultValue?.let {
                                 com.firebolt9907.tangentbrowser.ui.content.ElementZap.onPayload(it)

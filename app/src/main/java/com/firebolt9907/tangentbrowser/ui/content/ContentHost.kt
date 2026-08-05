@@ -460,6 +460,7 @@ fun ContentHost(
             var formFieldMemoryInjectedForCurrentLoad = false
             var archiveMobilifyInjectedForCurrentLoad = false
             var themeColorProbedForCurrentLoad = false
+            var blobCaptureInjectedForCurrentLoad = false
             var currentUrl = pageUrl
             var capturedLeavingUrl: String? = null
             // True while a genuine document load is in flight (real navigation), so the delayed
@@ -613,6 +614,21 @@ fun ContentHost(
                 suppressJavascriptLoadCallback = true
                 engineSession.loadJavascriptUrl(ElementZap.buildApplyScript(selectors))
             }
+            fun injectBlobCapture() {
+                // A blob: document is the ONLY place its own bytes can still be read (see
+                // [BlobCapture]) — the handle dies with the document, so this is a now-or-never
+                // copy into the blob cache. Nothing is injected on ordinary pages, and nothing is
+                // re-read for a blob already captured (a revisit within the same session).
+                if (!com.firebolt9907.tangentbrowser.state.isBlobUrl(currentUrl)) return
+                if (blobCaptureInjectedForCurrentLoad) return
+                if (com.firebolt9907.tangentbrowser.state.BlobFileStore.lookup(currentUrl) != null) return
+                blobCaptureInjectedForCurrentLoad = true
+                suppressJavascriptLoadCallback = true
+                // Bind the capture to this tab's real current URL, so the bridge can't be talked
+                // into copying a blob the tab isn't showing.
+                BlobCapture.arm(tabId, currentUrl)
+                engineSession.loadJavascriptUrl(BlobCapture.buildScript())
+            }
             fun injectFormFieldMemory() {
                 // Generic (non-login/card/address) form-field memory: capture eligible values on
                 // submit/blur and offer an in-page suggestion dropdown on focus. Behavior is gated at
@@ -722,6 +738,10 @@ fun ContentHost(
                         readerExtractedForCurrentLoad = false
                         archiveMobilifyInjectedForCurrentLoad = false
                         themeColorProbedForCurrentLoad = false
+                        blobCaptureInjectedForCurrentLoad = false
+                        // Leaving the blob document ends the only window in which its bytes are
+                        // readable; abandon a capture still streaming rather than keep a partial file.
+                        if (navigatedAway) BlobCapture.disarm(tabId)
                         suppressJavascriptLoadCallback = false
                         injectAmoInstaller(url)
                         injectCleanPlayer(url)
@@ -758,6 +778,7 @@ fun ContentHost(
                     injectOtpDetector()
                     injectLoginDetector()
                     injectFormFieldMemory()
+                    injectBlobCapture()
                     captureSnapshot(capturingUrl = currentUrl, deduped = true)
                     notifyPainted()
                     if (tabId != null) {
@@ -787,6 +808,7 @@ fun ContentHost(
                         formFieldMemoryInjectedForCurrentLoad = false
                         archiveMobilifyInjectedForCurrentLoad = false
                         themeColorProbedForCurrentLoad = false
+                        blobCaptureInjectedForCurrentLoad = false
                     } else if (isAuthHop()) {
                         // A settled sign-in hop is a real page the user looks at — the password
                         // prompt, the "approve this sign-in" number-matching screen — so it gets the
@@ -815,6 +837,7 @@ fun ContentHost(
                         injectOtpDetector()
                         injectLoginDetector()
                         injectFormFieldMemory()
+                        injectBlobCapture()
                         // Sample the status-bar / top-strip color now that the load has finished, so it
                         // reflects the page's final painted top rather than a transient mid-load color.
                         injectThemeColorProbe()
@@ -932,6 +955,9 @@ fun ContentHost(
             // page's final top has painted — the whole point of deferring the probe.
             if (!tabIsLoading) injectThemeColorProbe(force = true)
             injectAmoInstaller(currentUrl, force = true)
+            // A blob tab that was bound mid-load (or swapped away from before its bytes were read)
+            // gets another chance here; the script's own guard makes a second attempt a no-op.
+            injectBlobCapture()
             triggerInitialReaderCheck()
             onDispose {
                 spaSettleRunnable?.let(hostView::removeCallbacks)

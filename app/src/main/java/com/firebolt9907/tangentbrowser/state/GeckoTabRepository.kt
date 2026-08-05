@@ -136,11 +136,16 @@ class GeckoTabRepository(
             if (tab.selected) selectedId = id
             lastAccessById[id] = tab.lastAccess
             tab.groupId?.let { groupAssignments += id to it }
+            // A tab left on a blob: URL comes back to a URL that no longer resolves — the blob died
+            // with the document that minted it. When we captured its bytes, point the restored tab at
+            // the cached copy instead, and drop the engine session state: replaying Gecko's history
+            // would navigate straight back to the dead blob URL. See [BlobFileStore].
+            val cachedBlobUrl = BlobFileStore.restoreUrl(tab.url)
             RecoverableTab(
-                engineSessionState = tab.engineStateJson?.let(::engineStateFromJson),
+                engineSessionState = if (cachedBlobUrl != null) null else tab.engineStateJson?.let(::engineStateFromJson),
                 state = TabState(
                     id = id,
-                    url = normalizeUrl(tab.url, searchEngine()),
+                    url = cachedBlobUrl ?: normalizeUrl(tab.url, searchEngine()),
                     title = tab.title,
                     lastAccess = tab.lastAccess,
                     index = index,
@@ -544,6 +549,10 @@ internal fun isLocalHttpHost(url: String): Boolean =
 
 /** Short host label (e.g. `nytimes.com`) used by the compact pill. Strips `www.`. */
 internal fun compactHost(url: String): String {
+    // A blob: URL (and the cached copy a restored blob tab loads) has no host worth showing — it is
+    // `blob:https://site.com/3f9c…-uuid`, an opaque handle into a document's memory. Label it by what
+    // it actually is ("PDF file") instead. See [BlobFileStore].
+    BlobFileStore.blobAddressLabel(url)?.let { return it }
     val host = runCatching { URI(normalizeUrl(url)).host }.getOrNull().orEmpty().removePrefix("www.")
     return host.ifEmpty { url }
 }

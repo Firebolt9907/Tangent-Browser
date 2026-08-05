@@ -69,6 +69,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Public
@@ -931,6 +932,41 @@ private fun PageTabContent(
                     enabled = canEdit && zoomFactor < 2.0f,
                 ) {
                     Icon(Icons.Default.Add, contentDescription = "Zoom in")
+                }
+            }
+        }
+
+        // ---------- 4a. A file the page produced as a blob: URL — the durable way to keep it ----------
+        // Blob documents have no link to long-press and often no download button of their own, and
+        // the "save this file" banner can be waved away; this row is the affordance that stays put.
+        val blobFile = remember(pageUrl) {
+            com.firebolt9907.tangentbrowser.state.BlobFileStore.lookup(pageUrl)
+        }
+        if (blobFile != null) {
+            Spacer(Modifier.height(12.dp))
+            SectionCard {
+                TextButton(
+                    onClick = {
+                        haptics.softClick()
+                        bookmarkScope.launch {
+                            val saved = withContext(Dispatchers.IO) {
+                                com.firebolt9907.tangentbrowser.state.BlobFileStore
+                                    .saveToDownloads(context, blobFile)
+                            }
+                            Toast.makeText(
+                                context,
+                                if (saved != null) "Saved $saved to Downloads" else "Couldn't save this file",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    ActionRowContent(
+                        icon = Icons.Default.Download,
+                        text = "Save ${blobFile.typeLabel} to Downloads",
+                    )
                 }
             }
         }

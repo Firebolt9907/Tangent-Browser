@@ -35,6 +35,7 @@ app/src/main/java/com/firebolt9907/tangentbrowser/
   (data saver: state/DataSaverPolicy.kt + engine/DataSaverController.kt — see invariant #18)
   (element zap: ui/content/ElementZap.kt + state/ZappedElementsStore.kt — see invariant #19)
   (SSO chains: state/SsoFlow.kt + state/SsoFilteringHistoryDelegate.kt — see invariant #21)
+  (blob: files: state/BlobFiles.kt + ui/content/BlobCapture.kt — see invariant #22)
     theme/        # Material 3 colors/type
   TangentRoot.kt        # ~3000-line main composable — most gesture orchestration lives here
   TangentBrowserActivity.kt # shared activity base (lifecycle, ActivityDelegate, downloads)
@@ -616,6 +617,28 @@ injectors on them.
   deliberately do **not** increment the counter — trust is only ever built by the user. This is a
   narrow exception to #15, not a relaxation of it: everything else still goes through the
   biometric-gated sheet.
+
+### 22. A `blob:` URL must be captured FROM the blob document, and only from it
+
+`blob:https://site.com/<uuid>` is not an address — it is a handle into one document's memory. Nothing
+native can fetch it, it dies with the document that minted it, and shown raw it tells the user
+nothing. `state/BlobFiles.kt` + `ui/content/BlobCapture.kt` copy the bytes into `cacheDir/blobs/` and
+index them; three consumers read that index: `compactHost` (address bar shows "PDF file"),
+`GeckoTabRepository.restoreOrSeedBlank` (a restored blob tab loads the cached `file://` copy) and the
+save affordances (`BlobFileBanner` + the aA sheet row).
+
+- **The capture window is the blob document's own lifetime.** Only same-origin script can read a blob
+  URL, and the blob document qualifies precisely because it was *loaded from* the blob. So capture is
+  injected on arriving at a blob URL — do NOT defer it to when the user asks to save (by then the
+  bytes may be unreachable), and do NOT try to fetch a blob URL from Kotlin.
+- **`begin` is refused unless the URL is the one the tab is showing** (`BlobCapture.arm`, set by
+  `ContentHost` at injection time). Without it, a script that got hold of the bridge nonce could
+  stream blobs of its own choosing into our cache.
+- **A restored blob tab drops its engine session state.** Replaying Gecko's history would navigate
+  straight back to the dead blob URL, undoing the substitution.
+- Bytes cross the bridge in base64 chunks written straight to disk, with the page yielding between
+  chunks — do NOT collapse this to one message (the bridge is synchronous; a big file would freeze
+  the page and hold the whole thing in memory twice).
 
 The most-violated mistakes are the bolded **do NOT** lines in the invariants above (esp. #1 `render()`
 from `AndroidView.update`, #2 `startDragImmediately = true`, #4 `snapTo` on hot path, #6

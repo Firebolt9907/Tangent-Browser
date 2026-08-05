@@ -579,6 +579,15 @@ fun TangentRoot(
     var otpPasteVisible by remember { mutableStateOf(false) }
     var otpFieldPresent by remember { mutableStateOf(false) }
 
+    // "Save this file" offer for a blob document (see BlobCapture / BlobFileStore). Derived, not
+    // event-driven: the banner is up whenever the page on screen IS a captured file and the user
+    // hasn't waved it away, so it survives tab swaps and comes back with the tab after a restart.
+    val capturedBlobFiles by com.firebolt9907.tangentbrowser.state.BlobFileStore.files.collectAsState()
+    var blobBannerDismissedId by remember { mutableStateOf<String?>(null) }
+    val currentBlobFile = remember(capturedBlobFiles, selectedContent?.url) {
+        com.firebolt9907.tangentbrowser.state.BlobFileStore.lookup(selectedContent?.url)
+    }
+
     // "Reader mode unavailable" banner — shown only when a manual reader activation on the FOREGROUND
     // tab comes up empty. Consume the manager signal immediately so it can re-fire on a later attempt.
     var readerUnavailableVisible by remember { mutableStateOf(false) }
@@ -3967,6 +3976,32 @@ fun TangentRoot(
                             otpPasteVisible = false
                         },
                         onDismiss = { otpPasteVisible = false },
+                    )
+
+                    // The page on screen is a file we captured out of a blob URL — offer to keep it.
+                    com.firebolt9907.tangentbrowser.ui.content.BlobFileBannerHost(
+                        file = currentBlobFile,
+                        visible = currentBlobFile != null &&
+                            currentBlobFile.id != blobBannerDismissedId,
+                        bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        collapseProgress = barCollapseProgressProvider,
+                        stack = bannerStack,
+                        onSave = { blob ->
+                            blobBannerDismissedId = blob.id
+                            scope.launch {
+                                val saved = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.firebolt9907.tangentbrowser.state.BlobFileStore
+                                        .saveToDownloads(appContext, blob)
+                                }
+                                android.widget.Toast.makeText(
+                                    appContext,
+                                    if (saved != null) "Saved $saved to Downloads"
+                                    else "Couldn't save this file",
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        onDismiss = { blobBannerDismissedId = currentBlobFile?.id },
                     )
 
                     // Element-zap picker controls. The highlight itself is drawn in the page (only it

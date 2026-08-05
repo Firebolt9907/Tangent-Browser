@@ -6,4 +6,7 @@
 -->
 <paths>
     <cache-path name="shared" path="shared/" />
+    <!-- Files captured out of blob: URLs (state/BlobFiles.kt), so a captured PDF can be handed to
+         another app. Same narrow-subdir rule as "shared". -->
+    <cache-path name="blobs" path="blobs/" />
 </paths>

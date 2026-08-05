@@ -11,14 +11,15 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -63,7 +64,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -75,6 +78,11 @@ import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import com.firebolt9907.tangentbrowser.ui.components.SheetContentPhase
 import com.firebolt9907.tangentbrowser.ui.components.SheetContentSwitch
 import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
+import com.firebolt9907.tangentbrowser.ui.theme.bodySmallEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.labelLargeEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.labelSmallEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.titleMediumEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.titleSmallEmphasized
 import com.firebolt9907.tangentbrowser.ui.archive.WaybackManager.ArchiveSession
 import com.firebolt9907.tangentbrowser.ui.archive.WaybackManager.DayCapture
 import com.firebolt9907.tangentbrowser.ui.archive.WaybackManager.Phase
@@ -220,8 +228,7 @@ private fun SlimArchiveBar(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Internet Archive",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelLargeEmphasized,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -277,8 +284,7 @@ private fun ArchivePickerModal(
         ) {
             Text(
                 text = "Pick a date",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleMediumEmphasized,
                 modifier = Modifier.padding(bottom = 4.dp),
             )
             Text(
@@ -466,7 +472,16 @@ private fun YearBarGraph(
                 verticalArrangement = Arrangement.Bottom,
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    .clickable { haptics.select(); onSelectYear(yd.year) }
+                    // A bar reads as "'03" to TalkBack otherwise — no year, no capture count, and
+                    // no indication that it's the one currently shown.
+                    .semantics {
+                        contentDescription =
+                            "${yd.year}, ${yd.total} ${if (yd.total == 1) "snapshot" else "snapshots"}"
+                    }
+                    .selectable(
+                        selected = selected,
+                        role = Role.Tab,
+                    ) { haptics.select(); onSelectYear(yd.year) }
                     .padding(horizontal = 3.dp, vertical = 2.dp)
                     .height(66.dp),
             ) {
@@ -480,9 +495,9 @@ private fun YearBarGraph(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = "'" + (yd.year % 100).toString().padStart(2, '0'),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = if (selected) MaterialTheme.typography.labelSmallEmphasized
+                    else MaterialTheme.typography.labelSmall,
                     fontSize = 10.sp,
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                     color = yearLabelColor,
                 )
             }
@@ -562,8 +577,7 @@ private fun ArchiveCalendarPicker(
             }
             Text(
                 text = "${MONTH_NAMES.getOrElse(viewMonth) { "" }} $viewYear",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmallEmphasized,
                 modifier = Modifier.weight(1f),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
@@ -706,24 +720,41 @@ private fun DayCell(
         animationSpec = ExpressiveMotion.defaultEffectsSpec(),
         label = "archiveDayLabel",
     )
+    // The tap target is the whole calendar cell, not just the 34dp dot: a dot that small leaves a
+    // ring of dead pixels around every day, and the cell is ~48dp wide. The dot stays the visual.
+    // TalkBack got a bare "12" before — it now hears the date, the capture count and the selection.
+    val label = formatSelected(capture.timestamp) ?: dayNum.toString()
     Box(
         modifier = Modifier
-            .size(34.dp)
-            .graphicsLayer {
-                val s = 1f + 0.10f * selection
-                scaleX = s
-                scaleY = s
+            .fillMaxSize()
+            .clip(RoundedCornerShape(12.dp))
+            .semantics {
+                contentDescription =
+                    "$label, ${capture.count} ${if (capture.count == 1) "snapshot" else "snapshots"}"
             }
-            .clip(CircleShape)
-            .background(fillColor)
-            .clickable { haptics.step(); onSelect(capture.timestamp) },
+            .selectable(
+                selected = isSelected,
+                role = Role.RadioButton,
+            ) { haptics.step(); onSelect(capture.timestamp) },
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = dayNum.toString(),
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.SemiBold,
-            color = labelColor,
-        )
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .graphicsLayer {
+                    val s = 1f + 0.10f * selection
+                    scaleX = s
+                    scaleY = s
+                }
+                .clip(CircleShape)
+                .background(fillColor),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = dayNum.toString(),
+                style = MaterialTheme.typography.bodySmallEmphasized,
+                color = labelColor,
+            )
+        }
     }
 }

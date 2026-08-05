@@ -1,6 +1,13 @@
 package com.firebolt9907.tangentbrowser.ui.archive
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -62,6 +69,10 @@ import androidx.compose.ui.unit.sp
 import com.firebolt9907.tangentbrowser.ui.TangentHaptics
 import com.firebolt9907.tangentbrowser.ui.BannerPriority
 import com.firebolt9907.tangentbrowser.ui.MorphingBannerHost
+import com.firebolt9907.tangentbrowser.ui.TangentMotion
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentPhase
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentSwitch
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import com.firebolt9907.tangentbrowser.ui.archive.WaybackManager.ArchiveSession
 import com.firebolt9907.tangentbrowser.ui.archive.WaybackManager.DayCapture
 import com.firebolt9907.tangentbrowser.ui.archive.WaybackManager.Phase
@@ -274,16 +285,35 @@ private fun ArchivePickerModal(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 10.dp),
             )
-            when (session.phase) {
-                Phase.Loading -> StatusRow(spinner = true, text = "Finding snapshots…")
-                Phase.Empty -> StatusRow(spinner = false, text = "No snapshots for this page")
-                Phase.Error -> StatusRow(spinner = false, text = "Couldn't reach the Internet Archive")
-                Phase.Ready -> ArchiveCalendarPicker(
-                    session = session,
-                    haptics = haptics,
-                    onSelectYear = onSelectYear,
-                    onSelect = onSelect,
-                )
+            // Finding snapshots → the calendar is a ~340dp height change, and the thing being
+            // replaced is a *spinner* — the loudest possible hard cut (see SheetContentSwitch).
+            // Error and Empty share a slot: they're both "one line of text instead of a calendar",
+            // and the session never moves between them.
+            SheetContentSwitch(
+                phase = when (session.phase) {
+                    Phase.Loading -> SheetContentPhase.Loading
+                    Phase.Ready -> SheetContentPhase.Content
+                    else -> SheetContentPhase.Empty
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { phase ->
+                when (phase) {
+                    SheetContentPhase.Loading -> StatusRow(spinner = true, text = "Finding snapshots…")
+                    SheetContentPhase.Empty -> StatusRow(
+                        spinner = false,
+                        text = if (session.phase == Phase.Error) {
+                            "Couldn't reach the Internet Archive"
+                        } else {
+                            "No snapshots for this page"
+                        },
+                    )
+                    SheetContentPhase.Content -> ArchiveCalendarPicker(
+                        session = session,
+                        haptics = haptics,
+                        onSelectYear = onSelectYear,
+                        onSelect = onSelect,
+                    )
+                }
             }
 
             // Save Page Now — request a fresh capture of the live page so a new snapshot exists.
@@ -308,20 +338,64 @@ private fun ArchivePickerModal(
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                if (saving) {
+                SaveButtonContent(saving = saving)
+            }
+        }
+    }
+}
+
+/**
+ * "Save this page to the Archive now" / "Saving…". Both halves change at once, so a bare
+ * `if (saving)` cut the label *and* replaced a spinning indicator with a static glyph in a single
+ * frame — and since the button centres its content, the label's width change also jumped the glyph
+ * sideways. The glyph sits in a fixed-size slot and cross-fades in place (scale+fade, the
+ * [BusyIndicator] idiom, minus its size animation — the slot is the same width either way), and the
+ * label fade-throughs with its width as part of the motion.
+ */
+@Composable
+private fun SaveButtonContent(saving: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+            AnimatedContent(
+                targetState = saving,
+                transitionSpec = {
+                    (
+                        fadeIn(ExpressiveMotion.defaultEffectsSpec()) +
+                            scaleIn(ExpressiveMotion.defaultEffectsSpec(), initialScale = 0.7f)
+                        ) togetherWith (
+                        fadeOut(ExpressiveMotion.fastEffectsSpec()) +
+                            scaleOut(ExpressiveMotion.fastEffectsSpec(), targetScale = 0.7f)
+                        )
+                },
+                label = "archiveSaveGlyph",
+            ) { busy ->
+                if (busy) {
                     CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Text("Saving…")
                 } else {
                     Icon(
                         imageVector = Icons.Default.CloudUpload,
                         contentDescription = null,
                         modifier = Modifier.size(18.dp),
                     )
-                    Spacer(Modifier.width(10.dp))
-                    Text("Save this page to the Archive now")
                 }
             }
+        }
+        Spacer(Modifier.width(10.dp))
+        AnimatedContent(
+            targetState = saving,
+            transitionSpec = {
+                (
+                    fadeIn(ExpressiveMotion.defaultEffectsSpec()) togetherWith
+                        fadeOut(ExpressiveMotion.fastEffectsSpec())
+                    ).using(
+                    // Flat-damped, like every other size animation here: an expressive spatial's
+                    // overshoot on an IntSize would push the label past its resting width.
+                    SizeTransform(clip = false) { _, _ -> TangentMotion.RevealExpand },
+                )
+            },
+            label = "archiveSaveLabel",
+        ) { busy ->
+            Text(if (busy) "Saving…" else "Save this page to the Archive now")
         }
     }
 }

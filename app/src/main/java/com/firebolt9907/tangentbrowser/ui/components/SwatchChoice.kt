@@ -3,6 +3,7 @@ package com.firebolt9907.tangentbrowser.ui.components
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
@@ -36,8 +37,10 @@ internal fun Color.onSwatch(): Color = if (luminance() > 0.4f) Color.Black else 
  * spring (it moves/resizes) while the check fades in on an effects spring (alpha, so critically
  * damped — a bouncing opacity reads as a flicker).
  *
- * Shared by the container editor and the tab-group editor, which pick from different colour enums
- * but present them identically.
+ * Shared by the container editor, the tab-group editor and the reader theme picker, which pick from
+ * different colour enums but present them identically. [outline] draws a hairline ring around the
+ * visible dot — needed wherever a swatch can be the same colour as the surface behind it (a white
+ * reader page on a light sheet is otherwise an invisible choice).
  */
 @Composable
 internal fun SwatchChoice(
@@ -45,6 +48,7 @@ internal fun SwatchChoice(
     label: String,
     selected: Boolean,
     onSelect: () -> Unit,
+    outline: Color? = null,
 ) {
     val diameter by animateDpAsState(
         targetValue = if (selected) 36.dp else 28.dp,
@@ -68,7 +72,8 @@ internal fun SwatchChoice(
             Modifier
                 .size(diameter)
                 .clip(CircleShape)
-                .background(swatch),
+                .background(swatch)
+                .then(if (outline != null) Modifier.border(1.dp, outline, CircleShape) else Modifier),
             contentAlignment = Alignment.Center,
         ) {
             if (check > 0.01f) {

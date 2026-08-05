@@ -54,6 +54,9 @@ import com.firebolt9907.tangentbrowser.ui.reader.ReaderManager
 import com.firebolt9907.tangentbrowser.ui.reader.toggleReader
 import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
+import com.firebolt9907.tangentbrowser.ui.components.SwatchChoice
+import com.firebolt9907.tangentbrowser.ui.theme.titleMediumEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.titleSmallEmphasized
 import com.firebolt9907.tangentbrowser.ui.shareUrl
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -100,7 +103,10 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SheetValue
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -119,10 +125,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
@@ -804,25 +807,15 @@ private fun PageTabContent(
                                 ReaderTheme.Sepia -> Color(0xFFF4ECD8)
                                 ReaderTheme.Dark -> Color(0xFF1C1C1E)
                             }
-                            val optionBorderColor = when {
-                                readerTheme == themeOption -> MaterialTheme.colorScheme.primary
-                                themeOption == ReaderTheme.System -> MaterialTheme.colorScheme.outlineVariant
-                                else -> MaterialTheme.colorScheme.outline
-                            }
-                            val borderWidth = if (readerTheme == themeOption) 3.dp else 1.5.dp
-                            val themeLabel = "${themeOption.name} reader theme"
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(CircleShape)
-                                    .background(optionBg)
-                                    .border(borderWidth, optionBorderColor, CircleShape)
-                                    .semantics {
-                                        contentDescription = themeLabel
-                                        role = Role.RadioButton
-                                        if (readerTheme == themeOption) selected = true
-                                    }
-                                    .clickable { haptics.select(); readerManager.setTheme(themeOption) }
+                            // Every page colour here can collide with the sheet behind it (White on a
+                            // light sheet, Dark on a dark one, System always), so the ring is not
+                            // optional the way it is for the container/group pickers.
+                            SwatchChoice(
+                                swatch = optionBg,
+                                label = "${themeOption.name} reader theme",
+                                selected = readerTheme == themeOption,
+                                onSelect = { haptics.select(); readerManager.setTheme(themeOption) },
+                                outline = MaterialTheme.colorScheme.outlineVariant,
                             )
                         }
                     }
@@ -840,12 +833,13 @@ private fun PageTabContent(
                                 contentDescription = "Decrease reader font size"
                             }
                         ) {
-                            Text("A", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            // titleSmallEmphasized is 14sp Bold, so the small "A" needs no override
+                            // at all; the large one keeps its size cue and borrows the same weight.
+                            Text("A", style = MaterialTheme.typography.titleSmallEmphasized)
                         }
                         Text(
                             text = "${readerFontSize}%",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            style = MaterialTheme.typography.titleMediumEmphasized,
                         )
                         IconButton(
                             onClick = { haptics.step(); readerManager.setFontSize(readerFontSize + 10) },
@@ -854,39 +848,43 @@ private fun PageTabContent(
                                 contentDescription = "Increase reader font size"
                             }
                         ) {
-                            Text("A", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                "A",
+                                style = MaterialTheme.typography.titleSmallEmphasized,
+                                fontSize = 20.sp,
+                            )
                         }
                     }
 
                     Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        listOf("System", "Georgia", "Charter", "Athelas").forEach { name ->
+                    // Four mutually exclusive choices = a segmented button row, not four TextButtons
+                    // that signalled the pick by going bold. The stock component carries the
+                    // single-choice semantics, the selected container tone and the state layers; the
+                    // check icon is dropped (`icon = {}`) because with it the four labels no longer
+                    // fit a phone-width sheet, and the label keeps its own typeface as the preview.
+                    val readerFonts = listOf("System", "Georgia", "Charter", "Athelas")
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        readerFonts.forEachIndexed { index, name ->
                             val fontTypeface = when (name) {
                                 "Georgia" -> FontFamily(Typeface.create("georgia", Typeface.NORMAL))
                                 "Charter" -> FontFamily(Typeface.create("charter", Typeface.NORMAL))
                                 "Athelas" -> FontFamily(Typeface.create("athelas", Typeface.NORMAL))
                                 else -> FontFamily.Default
                             }
-                            val fontSelected = readerFontName == name
-                            TextButton(
+                            SegmentedButton(
+                                selected = readerFontName == name,
                                 onClick = { haptics.select(); readerManager.setFontName(name) },
+                                shape = SegmentedButtonDefaults.itemShape(index, readerFonts.size),
+                                icon = {},
                                 modifier = Modifier.semantics {
                                     contentDescription = "$name reader font"
-                                    if (fontSelected) selected = true
                                 },
                             ) {
                                 Text(
                                     text = name,
                                     fontFamily = fontTypeface,
-                                    fontWeight = if (fontSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (fontSelected) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurface
-                                    }
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }

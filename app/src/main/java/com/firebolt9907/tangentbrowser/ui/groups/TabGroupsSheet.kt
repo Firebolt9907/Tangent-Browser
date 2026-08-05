@@ -1,16 +1,21 @@
 package com.firebolt9907.tangentbrowser.ui.groups
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,6 +34,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,13 +42,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -52,10 +56,14 @@ import com.firebolt9907.tangentbrowser.state.TabGroupColor
 import com.firebolt9907.tangentbrowser.state.TabGroupsRepository
 import com.firebolt9907.tangentbrowser.state.TabRepository
 import com.firebolt9907.tangentbrowser.ui.components.EmptyState
+import com.firebolt9907.tangentbrowser.ui.components.SwatchChoice
 import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.components.SheetSectionHeader
 import com.firebolt9907.tangentbrowser.ui.containers.swatch
+import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
+import com.firebolt9907.tangentbrowser.ui.theme.labelLargeEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.titleMediumEmphasized
 import mozilla.components.browser.state.state.ContainerState
 
 /** Concrete swatch for each [TabGroupColor]. Kept in the UI layer so the state enum stays Compose-free. */
@@ -234,8 +242,7 @@ private fun GroupCard(
             Column(Modifier.weight(1f)) {
                 Text(
                     text = group.name.ifBlank { "Group" },
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleMediumEmphasized,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -413,6 +420,7 @@ private fun GroupOverflow(
     var open by remember { mutableStateOf(false) }
     var colorOpen by remember { mutableStateOf(false) }
     var containerOpen by remember { mutableStateOf(false) }
+    val haptics = rememberTangentHaptics()
     Box {
         IconButton(onClick = { open = true }) {
             Icon(Icons.Default.MoreVert, contentDescription = "Group options")
@@ -480,29 +488,15 @@ private fun GroupOverflow(
             }
         }
         DropdownMenu(expanded = colorOpen, onDismissRequest = { colorOpen = false }) {
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                TabGroupColor.entries.forEach { c ->
-                    Box(
-                        Modifier
-                            .padding(4.dp)
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .background(c.swatch())
-                            .then(
-                                if (c == current) {
-                                    Modifier.border(2.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
-                                } else {
-                                    Modifier
-                                }
-                            )
-                            .semantics {
-                                contentDescription = c.name.lowercase().replaceFirstChar { it.uppercase() }
-                                selected = c == current
-                                role = Role.RadioButton
-                            }
-                            .clickable { colorOpen = false; onRecolor(c) },
-                    )
-                }
+            // Nine 48dp targets cannot sit on one line inside a dropdown, so the row wraps at a
+            // width that fits five of them rather than shrinking the swatches below the minimum.
+            ColorPickerFlow(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) { c ->
+                SwatchChoice(
+                    swatch = c.swatch(),
+                    label = c.label(),
+                    selected = c == current,
+                    onSelect = { haptics.select(); colorOpen = false; onRecolor(c) },
+                )
             }
         }
     }
@@ -519,42 +513,46 @@ private fun GroupEditDialog(
 ) {
     var name by remember { mutableStateOf(initialName) }
     var color by remember { mutableStateOf(initialColor) }
+    val haptics = rememberTangentHaptics()
+    val nameFocus = remember { FocusRequester() }
+    // The name is what every trip through this dialog is really for, so it takes focus on open —
+    // create/rename becomes type-and-done rather than tap-field-then-type.
+    LaunchedEffect(Unit) { nameFocus.requestFocus() }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column {
+            // Scrolls so the wrapped colour picker survives a large font scale / short screen
+            // rather than pushing the dialog's buttons off the bottom.
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     singleLine = true,
                     label = { Text("Name") },
-                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Words,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { onConfirm(name, color) }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(nameFocus),
                 )
                 Spacer(Modifier.size(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    TabGroupColor.entries.forEach { c ->
-                        Box(
-                            Modifier
-                                .padding(2.dp)
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(c.swatch())
-                                .then(
-                                    if (c == color) {
-                                        Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
-                                    } else {
-                                        Modifier
-                                    }
-                                )
-                                .semantics {
-                                    contentDescription = c.name.lowercase().replaceFirstChar { it.uppercase() }
-                                    selected = c == color
-                                    role = Role.RadioButton
-                                }
-                                .clickable { color = c },
-                        )
-                    }
+                Text(
+                    "Colour",
+                    style = MaterialTheme.typography.labelLargeEmphasized,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.size(6.dp))
+                ColorPickerFlow {
+                    SwatchChoice(
+                        swatch = it.swatch(),
+                        label = it.label(),
+                        selected = it == color,
+                        onSelect = { haptics.select(); color = it },
+                    )
                 }
             }
         },
@@ -562,3 +560,26 @@ private fun GroupEditDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
+
+/** Display name for a [TabGroupColor], for the picker's TalkBack label. */
+private fun TabGroupColor.label(): String = name.lowercase().replaceFirstChar { it.uppercase() }
+
+/**
+ * The nine-colour picker, laid out identically in the dialog and the recolor menu. Wraps at five
+ * per line: a 48dp target is the floor, and 9 × 48dp does not fit either surface's width.
+ */
+@Composable
+private fun ColorPickerFlow(
+    modifier: Modifier = Modifier,
+    choice: @Composable (TabGroupColor) -> Unit,
+) {
+    FlowRow(
+        modifier = modifier.width(SwatchTargetSize * SwatchesPerLine),
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        TabGroupColor.entries.forEach { choice(it) }
+    }
+}
+
+private const val SwatchesPerLine = 5
+private val SwatchTargetSize = 48.dp

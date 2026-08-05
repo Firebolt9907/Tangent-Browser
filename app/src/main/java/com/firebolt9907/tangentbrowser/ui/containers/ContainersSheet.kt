@@ -2,7 +2,6 @@ package com.firebolt9907.tangentbrowser.ui.containers
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -33,7 +32,6 @@ import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.BeachAccess
 import androidx.compose.material.icons.filled.BusinessCenter
 import androidx.compose.material.icons.filled.CardGiftcard
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Deck
 import androidx.compose.material.icons.filled.Fingerprint
@@ -63,11 +61,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -84,6 +80,8 @@ import com.firebolt9907.tangentbrowser.state.ContainerRepository
 import com.firebolt9907.tangentbrowser.state.TangentTab
 import com.firebolt9907.tangentbrowser.state.TabRepository
 import com.firebolt9907.tangentbrowser.ui.components.EmptyState
+import com.firebolt9907.tangentbrowser.ui.components.SwatchChoice
+import com.firebolt9907.tangentbrowser.ui.components.onSwatch
 import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
@@ -558,13 +556,8 @@ private fun PickerLabel(text: String) {
     Spacer(Modifier.size(6.dp))
 }
 
-/** Ink colour that stays legible on an arbitrary container swatch. */
-private fun Color.onSwatch(): Color = if (luminance() > 0.4f) Color.Black else Color.White
-
 /**
- * One colour swatch. The 48dp box is the touch target (and the ripple bounds); the swatch inside is
- * what you see. Selection *grows* the swatch on a spatial spring and fades a check into it on an
- * effects spring, instead of snapping a ring on — see [ExpressiveMotion].
+ * One colour swatch — the shared [SwatchChoice] target, labelled from the container enum.
  */
 @Composable
 private fun ColorChoice(
@@ -572,46 +565,12 @@ private fun ColorChoice(
     selected: Boolean,
     onSelect: () -> Unit,
 ) {
-    val swatch = color.swatch()
-    val diameter by animateDpAsState(
-        targetValue = if (selected) 36.dp else 28.dp,
-        animationSpec = ExpressiveMotion.fastSpatialSpec(),
-        label = "containerSwatchSize",
+    SwatchChoice(
+        swatch = color.swatch(),
+        label = color.name.lowercase().replaceFirstChar { it.uppercase() },
+        selected = selected,
+        onSelect = onSelect,
     )
-    val check by animateFloatAsState(
-        targetValue = if (selected) 1f else 0f,
-        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
-        label = "containerSwatchCheck",
-    )
-    Box(
-        Modifier
-            .size(48.dp)
-            .clip(CircleShape)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
-            .semantics {
-                contentDescription = color.name.lowercase().replaceFirstChar { it.uppercase() }
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            Modifier
-                .size(diameter)
-                .clip(CircleShape)
-                .background(swatch),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (check > 0.01f) {
-                Icon(
-                    Icons.Filled.Check,
-                    contentDescription = null,
-                    tint = swatch.onSwatch().copy(alpha = check),
-                    modifier = Modifier
-                        .size(20.dp)
-                        .scale(0.7f + 0.3f * check),
-                )
-            }
-        }
-    }
 }
 
 /**

@@ -1,7 +1,6 @@
 package com.firebolt9907.tangentbrowser.ui.content
 
 import androidx.activity.compose.PredictiveBackHandler
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -38,7 +37,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.firebolt9907.tangentbrowser.ui.TangentMotion
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import mozilla.components.concept.engine.Engine
 import mozilla.components.concept.engine.EngineSession
 
@@ -130,10 +132,14 @@ fun UtilityWebCard(
         }
     }
 
-    // Simple scale + fade entrance (no link-morph — there's no source element to grow from).
+    // Simple scale + fade entrance (no link-morph — there's no source element to grow from). Scale and
+    // opacity are driven by two Animatables, not one: the spatial spring is 0.8-damped, and letting it
+    // drive alpha would overshoot past 1f (a scrim `copy(alpha = …)` above 1f is out of range).
     val appear = remember(request) { androidx.compose.animation.core.Animatable(0f) }
+    val fade = remember(request) { androidx.compose.animation.core.Animatable(0f) }
     androidx.compose.runtime.LaunchedEffect(request) {
-        appear.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.82f, stiffness = 450f))
+        launch { appear.animateTo(1f, ExpressiveMotion.defaultSpatialSpec()) }
+        fade.animateTo(1f, ExpressiveMotion.defaultEffectsSpec())
     }
 
     // Predictive Back / back gesture dismisses the card.
@@ -143,18 +149,17 @@ fun UtilityWebCard(
             progress.collect { event -> back.snapTo(event.progress.coerceIn(0f, 1f)) }
             onDismiss()
         } catch (_: CancellationException) {
-            back.animateTo(0f)
+            back.animateTo(0f, TangentMotion.CardSnapBack)
         }
     }
 
-    val enter by animateFloatAsState(targetValue = appear.value, label = "utilityAppear")
-    val cardScale = lerp(0.92f, 1f, enter) * lerp(1f, 0.9f, back.value)
-    val cardAlpha = enter * lerp(1f, 0.6f, back.value)
+    val cardScale = lerp(0.92f, 1f, appear.value) * lerp(1f, 0.9f, back.value)
+    val cardAlpha = fade.value * lerp(1f, 0.6f, back.value)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f * enter))
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f * fade.value))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,

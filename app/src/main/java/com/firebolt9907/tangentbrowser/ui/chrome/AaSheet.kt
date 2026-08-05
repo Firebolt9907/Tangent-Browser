@@ -38,8 +38,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
@@ -1334,23 +1340,54 @@ private fun PermissionTriStateRow(
         }
     }
     Spacer(Modifier.height(8.dp))
-    // Three-segment selector: Ask (null) · Allow (true) · Block (false).
+    // Three-segment selector: Ask (null) · Allow (true) · Block (false). The selection is ONE pill
+    // that slides between the segments rather than a per-segment background that repaints — the
+    // segments are equal-weight, so the indicator's geometry is derivable in the draw phase.
+    val options = listOf<Pair<String, Boolean?>>("Ask" to null, "Allow" to true, "Block" to false)
+    val selectedIndex = options.indexOfFirst { it.second == decision }.coerceAtLeast(0)
+    val indicator = animateFloatAsState(
+        targetValue = selectedIndex.toFloat(),
+        animationSpec = ExpressiveMotion.fastSpatialSpec(),
+        label = "permissionSegmentIndicator",
+    )
+    val indicatorColor = MaterialTheme.colorScheme.primary
+    val density = LocalDensity.current
+    val segmentGapPx = with(density) { SegmentGap.toPx() }
+    val segmentRadiusPx = with(density) { 10.dp.toPx() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-            .padding(2.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+            .padding(2.dp)
+            .drawBehind {
+                val count = options.size
+                val segWidth = (size.width - segmentGapPx * (count - 1)) / count
+                drawRoundRect(
+                    color = indicatorColor,
+                    topLeft = Offset(indicator.value * (segWidth + segmentGapPx), 0f),
+                    size = Size(segWidth, size.height),
+                    cornerRadius = CornerRadius(segmentRadiusPx),
+                )
+            },
+        horizontalArrangement = Arrangement.spacedBy(SegmentGap),
     ) {
-        val options = listOf<Pair<String, Boolean?>>("Ask" to null, "Allow" to true, "Block" to false)
-        options.forEach { (segLabel, segValue) ->
-            val selected = decision == segValue
+        options.forEachIndexed { index, (segLabel, segValue) ->
+            // Label tint cross-fades on an effects spring: a 0.8-damped spatial would overshoot the
+            // colour lerp past its endpoint (see the motion log's colour rule).
+            val labelColor by animateColorAsState(
+                targetValue = if (index == selectedIndex) {
+                    MaterialTheme.colorScheme.onPrimary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+                label = "permissionSegmentLabel",
+            )
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
                     .clickable { onSelect(segValue) }
                     .padding(vertical = 8.dp),
                 contentAlignment = Alignment.Center,
@@ -1358,16 +1395,15 @@ private fun PermissionTriStateRow(
                 Text(
                     text = segLabel,
                     style = MaterialTheme.typography.labelLarge,
-                    color = if (selected) {
-                        MaterialTheme.colorScheme.onPrimary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                    color = labelColor,
                 )
             }
         }
     }
 }
+
+/** Gap between the permission selector's segments; the sliding indicator's geometry depends on it. */
+private val SegmentGap = 2.dp
 
 /**
  * The Page Settings sub-view — advanced per-site toggles (tracking exception, top padding, desktop

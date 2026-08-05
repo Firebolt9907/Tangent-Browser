@@ -47,6 +47,7 @@ import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.unit.em
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -79,8 +80,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.pager.HorizontalPager
@@ -1270,7 +1269,7 @@ fun ReaderView(
 // Entrance-reveal tuning (mirrors the desktop extension's staggered fade + slide-up in reader.css).
 private const val ReaderRevealStaggerMs = 100     // per-element delay step
 private const val ReaderRevealDelayMaxMs = 500    // cap the start delay so it never drags
-private const val ReaderRevealDurationMs = 480    // fade/slide duration per element
+private const val ReaderRevealDurationMs = 480    // approximate settle of one element's reveal
 private const val ReaderRevealMaxIndex = 24       // past this (well off-screen) skip animating
 private val ReaderRevealShift = 16.dp             // how far each element slides up into place
 
@@ -1279,21 +1278,28 @@ private val ReaderRevealShift = 16.dp             // how far each element slides
  * [index] so the article assembles top-to-bottom. Plays once per [articleKey] (keyed remember), is a
  * draw-phase `graphicsLayer` so it never triggers relayout while scrolling, and is a no-op when
  * [enabled] is false (reduced-motion) or the element is far enough down to be off-screen at start.
+ *
+ * The slide and the fade are **separate** animations on purpose: the slide is spatial (expressive
+ * springs are under-damped, so the line settles into place with a touch of energy) while opacity is
+ * an effect and must be critically damped — one shared progress value can only be right for one of
+ * them. The shift stays normalized 0..1, which puts `spring`'s default `0.01` visibility threshold
+ * at ~half a pixel of [ReaderRevealShift] — the right granularity for a translation.
  */
 @Composable
 private fun Modifier.readerReveal(index: Int, articleKey: Any?, enabled: Boolean): Modifier {
     if (!enabled || index > ReaderRevealMaxIndex) return this
-    val progress = remember(articleKey, index) { Animatable(0f) }
+    val revealAlpha = remember(articleKey, index) { Animatable(0f) }
+    val revealShift = remember(articleKey, index) { Animatable(1f) }
     LaunchedEffect(articleKey, index) {
         delay((index.toLong() * ReaderRevealStaggerMs).coerceAtMost(ReaderRevealDelayMaxMs.toLong()))
-        progress.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(durationMillis = ReaderRevealDurationMs, easing = LinearOutSlowInEasing),
-        )
+        launch {
+            revealAlpha.animateTo(1f, animationSpec = ExpressiveMotion.slowEffectsSpec())
+        }
+        revealShift.animateTo(0f, animationSpec = ExpressiveMotion.defaultSpatialSpec())
     }
     return graphicsLayer {
-        alpha = progress.value
-        translationY = (1f - progress.value) * ReaderRevealShift.toPx()
+        alpha = revealAlpha.value
+        translationY = revealShift.value * ReaderRevealShift.toPx()
     }
 }
 

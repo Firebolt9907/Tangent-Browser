@@ -6,6 +6,7 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.sign
@@ -186,6 +187,11 @@ internal object TangentMotion {
     // to [ImeSettle], which is the app-driven settle after a manual-control drag). Symmetric in both
     // directions because the platform's synced IME animation is — see [ImeSyncDurationMs].
     val ImeTrack = tween<Float>(durationMillis = ImeSyncDurationMs, easing = ImeSyncEasing)
+
+    // [ImeTrack] for the *slide* half of the same enter/exit — `slideInVertically`/`ExitTransition`
+    // animate an IntOffset, which a `tween<Float>` cannot be handed to. Same duration and curve, so
+    // a bar that both moves and fades alongside the keyboard stays one motion rather than two.
+    val ImeTrackOffset = tween<IntOffset>(durationMillis = ImeSyncDurationMs, easing = ImeSyncEasing)
 }
 
 // Horizontal tab-switch commit spring: damping scales with the finger's release velocity (fast

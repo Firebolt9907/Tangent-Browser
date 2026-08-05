@@ -3108,10 +3108,19 @@ fun TangentRoot(
                     )
                 }
                 // Find-in-page bar, pinned under the status bar at the top of the content area.
+                // It takes focus the frame it mounts (FindInPageBar's focusRequester), so the
+                // keyboard rises on the platform's synced IME animation at the same moment — the
+                // bar therefore enters on that same curve and duration (TangentMotion.ImeTrack)
+                // rather than the fadeIn/fadeOut default spring, so the two halves of one action
+                // arrive together instead of the bar materialising ahead of the keyboard. It also
+                // slides out from behind the status bar rather than only fading: a bar that is
+                // pinned to an edge should come from that edge.
                 AnimatedVisibility(
                     visible = findInPageActive && shouldShowUi,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
+                    enter = slideInVertically(TangentMotion.ImeTrackOffset) { -it } +
+                        fadeIn(TangentMotion.ImeTrack),
+                    exit = slideOutVertically(TangentMotion.ImeTrackOffset) { -it } +
+                        fadeOut(TangentMotion.ImeTrack),
                     modifier = Modifier.align(Alignment.TopCenter),
                 ) {
                     FindInPageBar(

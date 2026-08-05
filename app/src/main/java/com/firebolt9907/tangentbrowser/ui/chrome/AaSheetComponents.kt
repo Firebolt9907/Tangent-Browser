@@ -33,6 +33,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import com.firebolt9907.tangentbrowser.ui.theme.pressMorphShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -117,10 +120,18 @@ internal fun QuickActionTile(
     action: QuickAction,
     modifier: Modifier = Modifier,
 ) {
+    // The whole tile is the touch target, but the icon container is the only part of it with a
+    // fill — so that is what performs the expressive press morph. Both share one interaction
+    // source: the outer Column reports the press, the inner Box reacts to it.
+    val interactionSource = remember { MutableInteractionSource() }
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClickLabel = action.label) { action.onClick() }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                onClickLabel = action.label,
+            ) { action.onClick() }
             .padding(vertical = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -128,7 +139,7 @@ internal fun QuickActionTile(
         Box(
             modifier = Modifier
                 .size(48.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .clip(pressMorphShape(interactionSource, resting = 14.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {

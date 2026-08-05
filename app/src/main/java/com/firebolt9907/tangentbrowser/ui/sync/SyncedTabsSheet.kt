@@ -17,7 +17,6 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -29,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.firebolt9907.tangentbrowser.ui.components.BusyIndicator
 import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,16 +66,7 @@ fun SyncedTabsSheet(
         SheetHeader(
             title = "Firefox Sync",
             leadingIcon = { Icon(Icons.Default.CloudSync, contentDescription = null) },
-            trailing = {
-                if (state.isBusy) {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .width(22.dp)
-                            .height(22.dp),
-                        strokeWidth = 2.dp,
-                    )
-                }
-            },
+            trailing = { BusyIndicator(visible = state.isBusy) },
         )
 
         Spacer(Modifier.height(12.dp))

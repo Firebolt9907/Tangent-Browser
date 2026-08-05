@@ -43,7 +43,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import com.firebolt9907.tangentbrowser.ui.components.BusyIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -401,14 +401,12 @@ fun FirefoxSyncPage(
                     controller.beginSignIn { url -> onSignInUrl(url) }
                 },
             ) {
-                if (state.isBusy) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
-                    Spacer(Modifier.width(10.dp))
-                }
+                BusyIndicator(
+                    visible = state.isBusy,
+                    size = 18.dp,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    trailingSpace = 10.dp,
+                )
                 Text("Sign in with Firefox")
             }
         }

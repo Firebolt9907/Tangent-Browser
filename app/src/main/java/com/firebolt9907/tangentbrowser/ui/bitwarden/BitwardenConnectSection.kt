@@ -9,7 +9,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import com.firebolt9907.tangentbrowser.ui.components.BusyIndicator
+import com.firebolt9907.tangentbrowser.ui.components.BusyIndicatorAxis
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -252,10 +253,12 @@ private fun BitwardenConnectDialog(
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (state.isBusy) {
-                    Spacer(Modifier.height(12.dp))
-                    CircularProgressIndicator(Modifier.size(24.dp))
-                }
+                BusyIndicator(
+                    visible = state.isBusy,
+                    axis = BusyIndicatorAxis.Vertical,
+                    size = 24.dp,
+                    leadingSpace = 12.dp,
+                )
             }
         },
         confirmButton = {

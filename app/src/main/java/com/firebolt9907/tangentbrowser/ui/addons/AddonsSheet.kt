@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.Dp
@@ -22,7 +21,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
+import com.firebolt9907.tangentbrowser.ui.components.BusyIndicator
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.components.SwipeToRemoveRow
 import androidx.compose.ui.text.input.ImeAction
@@ -121,16 +120,7 @@ internal fun AddonsManagerSheetContent(
                     Icon(Icons.Default.Extension, contentDescription = null)
                 }
             },
-            trailing = {
-                if (state.isBusy) {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .width(22.dp)
-                            .height(22.dp),
-                        strokeWidth = 2.dp,
-                    )
-                }
-            },
+            trailing = { BusyIndicator(visible = state.isBusy) },
         )
 
         Spacer(Modifier.height(16.dp))

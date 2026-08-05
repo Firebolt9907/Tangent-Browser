@@ -1,10 +1,10 @@
 package com.firebolt9907.tangentbrowser.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -74,6 +74,7 @@ import com.firebolt9907.tangentbrowser.engine.TangentBrowserComponents
 import com.firebolt9907.tangentbrowser.state.TangentViewModel
 import com.firebolt9907.tangentbrowser.sync.FirefoxSyncUiState
 import com.firebolt9907.tangentbrowser.ui.grid.TabViewMode
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import com.firebolt9907.tangentbrowser.ui.sync.HandoffCard
 
 /**
@@ -115,8 +116,18 @@ internal fun ColumnScope.GridOverviewControls(
     val handoff = syncState.handoffTab
     AnimatedVisibility(
         visible = handoff != null,
-        enter = slideInVertically(initialOffsetY = { it / 2 }) + fadeIn(),
-        exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(),
+        // Expand/shrink rather than slide: the card grows out from behind the toolbar below it, and
+        // — the point — the column's height is part of the animation, so the space switcher above
+        // and the deck's bottomInset (measured off this column) travel with the card instead of
+        // jumping a full card-height in the frame it mounts. See [TangentMotion.RevealExpand].
+        enter = expandVertically(
+            expandFrom = Alignment.Bottom,
+            animationSpec = TangentMotion.RevealExpand,
+        ) + fadeIn(ExpressiveMotion.defaultEffectsSpec()),
+        exit = shrinkVertically(
+            shrinkTowards = Alignment.Bottom,
+            animationSpec = TangentMotion.RevealCollapse,
+        ) + fadeOut(ExpressiveMotion.fastEffectsSpec()),
     ) {
         var lastHandoff by remember { mutableStateOf(handoff) }
         if (handoff != null) lastHandoff = handoff

@@ -7,6 +7,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.sign
@@ -218,6 +219,25 @@ internal object TangentMotion {
     //    one surface replacing another instead of two documents ghosting.
     val TakeoverSlide =
         spring<IntOffset>(dampingRatio = 1f, stiffness = 200f, visibilityThreshold = IntOffset(1, 1))
+
+    // A card appearing INSIDE a stack that other layout is measured against — today the Firefox-Sync
+    // handoff card in the tab overview's bottom controls. Animating only the card's own fade/slide is
+    // not enough there: the controls column is bottom-anchored AND its measured height is what feeds
+    // the deck's `bottomInsetPx`, so a card that takes its full height in one frame kicks the space
+    // switcher upward and re-lays out every tab card in the overview in that same frame, while the
+    // card itself is still gliding in. Pairing the fade with `expandVertically`/`shrinkVertically` on
+    // these specs folds the column's height into the same motion, so the surroundings move with the
+    // card instead of snapping ahead of it.
+    //
+    // Critically damped deliberately: an expressive spatial's 0.8 damping overshoots, and overshoot
+    // on a *size* means the container grows taller than its content and flashes a gap before
+    // settling — the same reason [TakeoverSlide] is damped flat. Collapse is stiffer than expand,
+    // matching the show/hide asymmetry of [SheetShow]/[SheetHide]: arriving is deliberate, leaving
+    // should get out of the way.
+    val RevealExpand =
+        spring<IntSize>(dampingRatio = 1f, stiffness = 380f, visibilityThreshold = IntSize(1, 1))
+    val RevealCollapse =
+        spring<IntSize>(dampingRatio = 1f, stiffness = 900f, visibilityThreshold = IntSize(1, 1))
 }
 
 // Horizontal tab-switch commit spring: damping scales with the finger's release velocity (fast

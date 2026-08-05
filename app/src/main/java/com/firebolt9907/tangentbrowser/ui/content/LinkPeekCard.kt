@@ -72,6 +72,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.core.net.toUri
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
@@ -201,10 +202,17 @@ fun LinkPeekCard(
         }
     }
 
+    // The preview's reveal, and the spinner's exit, are ONE cross-fade driven by this value. A tween's
+    // default FastOutSlowIn leaves the origin at zero velocity, so the page sat invisible for its first
+    // frames and then rushed — over a card that has already finished growing, that reads as the preview
+    // being slow rather than as a fade. A critically-damped effects spring commits as it lands.
+    // [bodyRevealed] flips at the animation's end so the spinner's *composition* isn't a per-frame read.
+    var bodyRevealed by remember(url) { mutableStateOf(false) }
     val bodyAlpha by animateFloatAsState(
         targetValue = if (loaded) 1f else 0f,
-        animationSpec = tween(260),
+        animationSpec = ExpressiveMotion.slowEffectsSpec(),
         label = "peekBodyAlpha",
+        finishedListener = { bodyRevealed = it >= 1f },
     )
 
     // The morph driver: 0 = source (the pressed link's rect, or a chip at the finger), 1 = full
@@ -502,9 +510,14 @@ fun LinkPeekCard(
                                     .graphicsLayer { alpha = bodyAlpha },
                             )
                         }
-                        if (!loaded && !exitToBitmap) {
+                        // Held until the reveal has actually finished, fading out against it, rather
+                        // than being cut in the frame [loaded] flips — otherwise the spinner vanishes
+                        // and the card is empty until the page fades up behind it.
+                        if (!bodyRevealed && !exitToBitmap) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(28.dp),
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .graphicsLayer { alpha = (1f - bodyAlpha).coerceIn(0f, 1f) },
                                 strokeWidth = 3.dp,
                             )
                         }

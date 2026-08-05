@@ -192,6 +192,22 @@ internal object TangentMotion {
     // animate an IntOffset, which a `tween<Float>` cannot be handed to. Same duration and curve, so
     // a bar that both moves and fades alongside the keyboard stays one motion rather than two.
     val ImeTrackOffset = tween<IntOffset>(durationMillis = ImeSyncDurationMs, easing = ImeSyncEasing)
+
+    // A full-screen OPAQUE takeover sliding in over the page and back off it — reader view, in both
+    // MainActivity and the Custom Tab. Two reasons it is declared here rather than reaching for
+    // `ExpressiveMotion.slowSpatialSpec()`, which is otherwise the right tier for a surface this big:
+    //
+    //  - Every expressive spatial tier is under-damped (dampingRatio 0.8). On a surface that covers
+    //    the screen the overshoot carries the slide *past* offset 0, which uncovers a strip of the
+    //    web page along the bottom edge at the end of the enter — the one place the expressive
+    //    bounce is not free. Critically damped, at the slow tier's stiffness.
+    //  - The takeover is a slide, NOT a cross-fade. Both call sites used to pair this with
+    //    `fadeIn()`/`fadeOut()`, which held the reader translucent over the live page for the whole
+    //    transition, so the article text and the page it was extracted from were legible through
+    //    each other. An opaque card that moves needs no opacity change; the slide alone reads as
+    //    one surface replacing another instead of two documents ghosting.
+    val TakeoverSlide =
+        spring<IntOffset>(dampingRatio = 1f, stiffness = 200f, visibilityThreshold = IntOffset(1, 1))
 }
 
 // Horizontal tab-switch commit spring: damping scales with the finger's release velocity (fast

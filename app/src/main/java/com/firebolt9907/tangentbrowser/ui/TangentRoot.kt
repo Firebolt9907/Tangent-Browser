@@ -3151,8 +3151,9 @@ fun TangentRoot(
                 }
                 AnimatedVisibility(
                     visible = isReaderActiveOnSelectedTab && selectedTabArticle != null && shouldShowUi,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
+                    // Slide only, critically damped — see [TangentMotion.TakeoverSlide].
+                    enter = slideInVertically(TangentMotion.TakeoverSlide) { it },
+                    exit = slideOutVertically(TangentMotion.TakeoverSlide) { it },
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer { translationX = offsetX },

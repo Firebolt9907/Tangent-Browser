@@ -10,8 +10,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
 import com.firebolt9907.tangentbrowser.ui.TangentMotion
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import android.widget.Toast
@@ -579,8 +577,11 @@ fun CustomTabRoot(
                 if (shouldShowUi) {
                     AnimatedVisibility(
                         visible = readerActive && article != null,
-                        enter = slideInVertically { it } + fadeIn(),
-                        exit = slideOutVertically { it } + fadeOut(),
+                        // Slide only, critically damped — see [TangentMotion.TakeoverSlide]. Kept
+                        // identical to the reader takeover in TangentRoot: the same article opened
+                        // from a link and from a tab must not enter differently.
+                        enter = slideInVertically(TangentMotion.TakeoverSlide) { it },
+                        exit = slideOutVertically(TangentMotion.TakeoverSlide) { it },
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         article?.let {

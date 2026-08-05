@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
 import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
@@ -1041,7 +1042,30 @@ private fun GridCellChrome(
     // tab remains, so closing can never leave an empty browser. Positioned in
     // unscaled grid-content coordinates (like the domain pills) for a constant
     // on-screen size, and drawn after the cells so it receives the tap.
-    if (showClose) {
+    //
+    // `showClose` flips on `tabs.size > 1`, so closing the second-to-last tab would otherwise make
+    // every remaining dot in the grid stop existing in one frame (and re-appear the same way when a
+    // tab is opened). Fade + scale it instead: alpha on an effects spring, scale on the fast spatial
+    // tier (a small control). Composition is gated on a plain bool flipped at the fade's end so the
+    // alpha stays a draw-phase read and the exit is visible at all.
+    var closeMounted by remember { mutableStateOf(showClose) }
+    val closeAlpha = animateFloatAsState(
+        targetValue = if (showClose) 1f else 0f,
+        animationSpec = if (showClose) {
+            ExpressiveMotion.defaultEffectsSpec()
+        } else {
+            ExpressiveMotion.fastEffectsSpec()
+        },
+        finishedListener = { if (it == 0f) closeMounted = false },
+        label = "gridCloseAlpha",
+    )
+    val closeScale = animateFloatAsState(
+        targetValue = if (showClose) 1f else 0.6f,
+        animationSpec = ExpressiveMotion.fastSpatialSpec(),
+        label = "gridCloseScale",
+    )
+    LaunchedEffect(showClose) { if (showClose) closeMounted = true }
+    if (closeMounted) {
         val closeSizePx = with(density) { 28.dp.toPx() }
         val closeMarginPx = with(density) { 6.dp.toPx() }
         val closeLeftPx = cell.left + cell.width - closeSizePx - closeMarginPx
@@ -1056,12 +1080,17 @@ private fun GridCellChrome(
                     val swipeOffset = swipeOffsets[tab.id] ?: 0f
                     translationX = closeLeftPx - touchExtraPx + swipeOffset
                     translationY = closeTopPx - touchExtraPx
-                    alpha = progress().coerceIn(0f, 1f) * (1f - abs(swipeOffset) / (cell.width * 0.8f)).coerceIn(0f, 1f)
+                    alpha = progress().coerceIn(0f, 1f) *
+                        (1f - abs(swipeOffset) / (cell.width * 0.8f)).coerceIn(0f, 1f) *
+                        closeAlpha.value.coerceIn(0f, 1f)
+                    scaleX = closeScale.value
+                    scaleY = closeScale.value
                 }
                 .size(44.dp)
                 .clip(CircleShape)
                 .clickable {
-                    if (!cellsClickable()) return@clickable
+                    // An already-fading-out dot must not still close a tab.
+                    if (!showClose || !cellsClickable()) return@clickable
                     haptics.remove()
                     onCloseTab(tab.id)
                 },

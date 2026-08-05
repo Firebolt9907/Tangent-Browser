@@ -1,6 +1,8 @@
 package com.firebolt9907.tangentbrowser.ui.containers
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -17,7 +19,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -26,6 +33,7 @@ import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.BeachAccess
 import androidx.compose.material.icons.filled.BusinessCenter
 import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Deck
 import androidx.compose.material.icons.filled.Fingerprint
@@ -46,6 +54,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,7 +63,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -62,6 +75,8 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -74,6 +89,7 @@ import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
 import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
+import com.firebolt9907.tangentbrowser.ui.theme.labelLargeEmphasized
 import mozilla.components.browser.state.state.ContainerState
 
 /**
@@ -468,77 +484,59 @@ private fun ContainerEditDialog(
     var name by remember { mutableStateOf(initialName) }
     var color by remember { mutableStateOf(initialColor) }
     var icon by remember { mutableStateOf(initialIcon) }
+    val haptics = rememberTangentHaptics()
+    val nameFocus = remember { FocusRequester() }
+    // The name is the one thing every trip through this dialog changes, so it takes focus on open —
+    // rename becomes type-and-done rather than tap-field-then-type.
+    LaunchedEffect(Unit) { nameFocus.requestFocus() }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column {
+            // Scrolls so the two pickers survive a large font scale / short screen rather than
+            // pushing the dialog's buttons off the bottom.
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     singleLine = true,
                     label = { Text("Name") },
-                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Words,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { onConfirm(name, color, icon) }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(nameFocus),
                 )
-                Spacer(Modifier.size(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                PickerLabel("Colour")
+                // Both pickers wrap: a 48dp minimum target beats fitting all eight swatches on one
+                // line inside a dialog barely 300dp wide.
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
                     ContainerColorChoices.forEach { c ->
-                        Box(
-                            Modifier
-                                .padding(2.dp)
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(c.swatch())
-                                .then(
-                                    if (c == color) {
-                                        Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
-                                    } else {
-                                        Modifier
-                                    }
-                                )
-                                .semantics {
-                                    contentDescription = c.name.lowercase().replaceFirstChar { it.uppercase() }
-                                    selected = c == color
-                                    role = Role.RadioButton
-                                }
-                                .clickable { color = c },
+                        ColorChoice(
+                            color = c,
+                            selected = c == color,
+                            onSelect = { haptics.select(); color = c },
                         )
                     }
                 }
-                Spacer(Modifier.size(12.dp))
-                // Icon picker: a wrapping set of the container glyphs, tinted with the chosen colour.
+                PickerLabel("Icon")
                 androidx.compose.foundation.layout.FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     ContainerIconChoices.forEach { i ->
-                        Box(
-                            Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                                .then(
-                                    if (i == icon) {
-                                        Modifier.border(2.dp, color.swatch(), CircleShape)
-                                    } else {
-                                        Modifier
-                                    }
-                                )
-                                .semantics {
-                                    contentDescription = i.name.lowercase().replaceFirstChar { it.uppercase() }
-                                    selected = i == icon
-                                    role = Role.RadioButton
-                                }
-                                .clickable { icon = i },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                i.material(),
-                                contentDescription = null,
-                                tint = if (i == icon) color.swatch() else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
+                        IconChoice(
+                            icon = i,
+                            accent = color.swatch(),
+                            selected = i == icon,
+                            onSelect = { haptics.select(); icon = i },
+                        )
                     }
                 }
             }
@@ -546,4 +544,120 @@ private fun ContainerEditDialog(
         confirmButton = { TextButton(onClick = { onConfirm(name, color, icon) }) { Text(confirmLabel) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+/** Section label above a picker, so the dialog reads as three labelled clusters, not one wall. */
+@Composable
+private fun PickerLabel(text: String) {
+    Spacer(Modifier.size(16.dp))
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLargeEmphasized,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.size(6.dp))
+}
+
+/** Ink colour that stays legible on an arbitrary container swatch. */
+private fun Color.onSwatch(): Color = if (luminance() > 0.4f) Color.Black else Color.White
+
+/**
+ * One colour swatch. The 48dp box is the touch target (and the ripple bounds); the swatch inside is
+ * what you see. Selection *grows* the swatch on a spatial spring and fades a check into it on an
+ * effects spring, instead of snapping a ring on — see [ExpressiveMotion].
+ */
+@Composable
+private fun ColorChoice(
+    color: ContainerState.Color,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    val swatch = color.swatch()
+    val diameter by animateDpAsState(
+        targetValue = if (selected) 36.dp else 28.dp,
+        animationSpec = ExpressiveMotion.fastSpatialSpec(),
+        label = "containerSwatchSize",
+    )
+    val check by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+        label = "containerSwatchCheck",
+    )
+    Box(
+        Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
+            .semantics {
+                contentDescription = color.name.lowercase().replaceFirstChar { it.uppercase() }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(diameter)
+                .clip(CircleShape)
+                .background(swatch),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (check > 0.01f) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = swatch.onSwatch().copy(alpha = check),
+                    modifier = Modifier
+                        .size(20.dp)
+                        .scale(0.7f + 0.3f * check),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * One glyph choice. Selecting it fills the circle with the chosen container colour — the same way
+ * the container itself renders — rather than outlining it, so the preview is the thing you picked.
+ */
+@Composable
+private fun IconChoice(
+    icon: ContainerState.Icon,
+    accent: Color,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    val container by animateColorAsState(
+        targetValue = if (selected) accent else MaterialTheme.colorScheme.surfaceContainerHighest,
+        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+        label = "containerIconFill",
+    )
+    val content by animateColorAsState(
+        targetValue = if (selected) accent.onSwatch() else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+        label = "containerIconInk",
+    )
+    Box(
+        Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
+            .semantics {
+                contentDescription = icon.name.lowercase().replaceFirstChar { it.uppercase() }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(container),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon.material(),
+                contentDescription = null,
+                tint = content,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
 }

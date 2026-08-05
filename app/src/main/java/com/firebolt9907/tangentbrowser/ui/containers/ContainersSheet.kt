@@ -2,7 +2,10 @@ package com.firebolt9907.tangentbrowser.ui.containers
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -69,6 +72,8 @@ import com.firebolt9907.tangentbrowser.ui.components.EmptyState
 import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
+import com.firebolt9907.tangentbrowser.ui.TangentMotion
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import mozilla.components.browser.state.state.ContainerState
 
 /**
@@ -305,10 +310,14 @@ private fun ContainerRow(
     // Expandable to reveal the container's open tabs; collapsed by default to keep the list scannable.
     var expanded by remember { mutableStateOf(false) }
     // Rotating chevron rather than swapped up/down glyphs — the same disclosure idiom as the aA
-    // sheet's collapsible sections (see CollapsibleSection in AaSheetComponents).
+    // sheet's collapsible sections (see CollapsibleSection in AaSheetComponents), and now the same
+    // motion too: a small control that moves takes the *fast spatial* tier, whose light damping
+    // gives the flick of overshoot that reads as a physical flip. It previously ran a 220 ms
+    // FastOutSlowIn tween while the body below it opened on AnimatedVisibility's default springs,
+    // so the two halves of one disclosure arrived on visibly different curves.
     val chevronRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(220),
+        animationSpec = ExpressiveMotion.fastSpatialSpec(),
         label = "containerChevron",
     )
     Column(
@@ -374,7 +383,17 @@ private fun ContainerRow(
                 onDelete = onDelete,
             )
         }
-        AnimatedVisibility(visible = expanded && tabs.isNotEmpty()) {
+        // The height change is spatial, the cross-fade over it is an effect. Flat-damped
+        // (RevealExpand/RevealCollapse) rather than an expressive spatial: overshoot on an IntSize
+        // grows the row taller than the tab list and flashes a strip of sheet background before it
+        // settles — and this row sits in a scrolling list, so every row below it would kick with it.
+        AnimatedVisibility(
+            visible = expanded && tabs.isNotEmpty(),
+            enter = expandVertically(TangentMotion.RevealExpand) +
+                fadeIn(ExpressiveMotion.defaultEffectsSpec()),
+            exit = shrinkVertically(TangentMotion.RevealCollapse) +
+                fadeOut(ExpressiveMotion.defaultEffectsSpec()),
+        ) {
             Column(Modifier.padding(top = 6.dp)) {
                 tabs.forEach { tab ->
                     Row(

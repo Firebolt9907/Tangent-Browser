@@ -1,7 +1,5 @@
 package com.firebolt9907.tangentbrowser.ui.sync
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -14,15 +12,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,7 +37,7 @@ import com.firebolt9907.tangentbrowser.sync.zen.ZenSyncedTab
 import kotlin.math.absoluteValue
 import androidx.compose.foundation.clickable
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
-import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
+import com.firebolt9907.tangentbrowser.ui.components.PageIndicatorDot
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material3.Icon
@@ -150,41 +145,14 @@ fun SpacesCarousel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             for (index in spaces.indices) {
-                SpacePageIndicatorDot(selected = index == pagerState.currentPage)
+                PageIndicatorDot(
+                    selected = index == pagerState.currentPage,
+                    activeColor = MaterialTheme.colorScheme.primary,
+                    inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                )
             }
         }
     }
-}
-
-/**
- * One page-indicator pill. A dot is a small control answering a page swipe, so the stretch takes the
- * **fast spatial** tier; the tint takes the **effects** tier so the two halves of one dot finish
- * together. (The tint used to be a hard cut — the pill grew smoothly while its colour snapped.)
- */
-@Composable
-private fun SpacePageIndicatorDot(selected: Boolean) {
-    val width by animateDpAsState(
-        targetValue = if (selected) 18.dp else 6.dp,
-        animationSpec = ExpressiveMotion.fastSpatialSpec(),
-        label = "dotWidth",
-    )
-    val color by animateColorAsState(
-        targetValue = if (selected) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-        },
-        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
-        label = "dotColor",
-    )
-    Box(
-        modifier = Modifier
-            .padding(horizontal = 3.dp)
-            .height(6.dp)
-            .width(width)
-            .clip(CircleShape)
-            .background(color),
-    )
 }
 
 @Composable

@@ -84,7 +84,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.togetherWith
+import com.firebolt9907.tangentbrowser.ui.TangentMotion
+import com.firebolt9907.tangentbrowser.ui.components.PageIndicatorDot
 import androidx.compose.material.icons.filled.Warning
 
 
@@ -1122,23 +1126,48 @@ fun ReaderView(
                                         .padding(horizontal = 8.dp, vertical = 4.dp)
                                 ) {
                                     repeat(images.size) { index ->
-                                        val active = pagerState.currentPage == index
-                                        val width = if (active) 12.dp else 6.dp
-                                        val color = if (active) Color.White else Color.White.copy(alpha = 0.5f)
-                                        Box(
-                                            modifier = Modifier
-                                                .padding(horizontal = 2.5.dp)
-                                                .size(width = width, height = 6.dp)
-                                                .clip(RoundedCornerShape(3.dp))
-                                                .background(color)
+                                        // Both channels animated, on the shared dot: this indicator
+                                        // used to jump width *and* tint in one frame, so it landed a
+                                        // whole page ahead of the pager it reports on.
+                                        PageIndicatorDot(
+                                            selected = pagerState.currentPage == index,
+                                            activeColor = Color.White,
+                                            inactiveColor = Color.White.copy(alpha = 0.5f),
+                                            activeWidth = 12.dp,
+                                            spacing = 2.5.dp,
                                         )
                                     }
                                 }
                             }
 
-                            // Dynamic Caption Crossfade Below Image
+                            // Caption below the image, cross-faded as the gallery is swiped.
+                            //
+                            // This was a bare `Crossfade`, which animates only opacity: captions
+                            // differ in length (and some images have none at all), so the block's
+                            // height snapped in the frame the outgoing caption was removed, shoving
+                            // the rest of the article. `AnimatedContent` folds that height change
+                            // into the same motion — the M3 fade-through pairing, fast out /
+                            // default in, over the flat-damped size springs (an overshooting size
+                            // would flash a gap between the photo and the text below it).
                             val currentImage = images[pagerState.currentPage]
-                            Crossfade(targetState = currentImage.caption) { caption ->
+                            AnimatedContent(
+                                targetState = currentImage.caption,
+                                transitionSpec = {
+                                    (
+                                        fadeIn(ExpressiveMotion.defaultEffectsSpec()) togetherWith
+                                            fadeOut(ExpressiveMotion.fastEffectsSpec())
+                                        ).using(
+                                        SizeTransform(clip = false) { initial, target ->
+                                            if (target.height < initial.height) {
+                                                TangentMotion.RevealCollapse
+                                            } else {
+                                                TangentMotion.RevealExpand
+                                            }
+                                        },
+                                    )
+                                },
+                                label = "imageCaption",
+                            ) { caption ->
                                 caption?.let { text ->
                                     Text(
                                         text = text,

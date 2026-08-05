@@ -2,6 +2,8 @@ package com.firebolt9907.tangentbrowser.ui.archive
 
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -9,7 +11,6 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -60,6 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -441,8 +443,21 @@ private fun YearBarGraph(
     ) {
         items(years, key = { it.year }) { yd ->
             val selected = yd.year == selectedYear
-            val barColor = if (selected) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+            // Tapping a year also animates the strip's scroll, so a bar that repaints in one frame
+            // arrives before the motion it belongs to. Colour lerp ⇒ effects tier (a spatial's
+            // overshoot would carry it past the endpoint).
+            val barColor by animateColorAsState(
+                targetValue = if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+                label = "archiveYearBar",
+            )
+            val yearLabelColor by animateColorAsState(
+                targetValue = if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+                label = "archiveYearLabel",
+            )
             // Height scaled by count; a floor so a 1-capture year is still a visible tap target.
             val frac = (yd.total.toFloat() / maxTotal).coerceIn(0.06f, 1f)
             val barMaxHeight = 46.dp
@@ -468,8 +483,7 @@ private fun YearBarGraph(
                     style = MaterialTheme.typography.labelSmall,
                     fontSize = 10.sp,
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                    color = if (selected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = yearLabelColor,
                 )
             }
         }
@@ -671,14 +685,37 @@ private fun DayCell(
     // Capture day: filled circle whose opacity tracks capture frequency (desktop "bigger dot").
     val intensity = (capture.count.toFloat() / maxDayCount).coerceIn(0f, 1f)
     val fill = primary.copy(alpha = 0.35f + 0.55f * intensity)
+    // Selection has two channels: the fill reaching full primary (a colour lerp — effects tier, since
+    // a spatial's overshoot would carry it past the endpoint) and the dot growing (a transform, where
+    // the spatial overshoot is the expressive quality). The old 2dp `border(primary)` sat *inside* a
+    // circle already filled with `primary`, so it drew nothing at all — the growth is what actually
+    // distinguishes the picked day from a busy one.
+    val selection by animateFloatAsState(
+        targetValue = if (isSelected) 1f else 0f,
+        animationSpec = ExpressiveMotion.fastSpatialSpec(),
+        label = "archiveDaySelection",
+    )
+    val fillColor by animateColorAsState(
+        targetValue = if (isSelected) primary else fill,
+        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+        label = "archiveDayFill",
+    )
+    val labelColor by animateColorAsState(
+        targetValue = if (isSelected || intensity > 0.5f) Color.White
+        else MaterialTheme.colorScheme.onSurface,
+        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+        label = "archiveDayLabel",
+    )
     Box(
         modifier = Modifier
             .size(34.dp)
+            .graphicsLayer {
+                val s = 1f + 0.10f * selection
+                scaleX = s
+                scaleY = s
+            }
             .clip(CircleShape)
-            .background(if (isSelected) primary else fill)
-            .then(
-                if (isSelected) Modifier.border(2.dp, primary, CircleShape) else Modifier,
-            )
+            .background(fillColor)
             .clickable { haptics.step(); onSelect(capture.timestamp) },
         contentAlignment = Alignment.Center,
     ) {
@@ -686,8 +723,7 @@ private fun DayCell(
             text = dayNum.toString(),
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
-            color = if (isSelected || intensity > 0.5f) Color.White
-            else MaterialTheme.colorScheme.onSurface,
+            color = labelColor,
         )
     }
 }

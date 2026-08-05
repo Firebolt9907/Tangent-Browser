@@ -4,8 +4,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -49,10 +49,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.ui.shape.SquircleShape
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import com.firebolt9907.tangentbrowser.ui.theme.TangentBrowserTheme
 import kotlinx.coroutines.launch
 
 private const val PAGE_COUNT = 7
+
+/** IconButton (48dp) plus the row's own 4dp vertical padding — reserved whether Back is shown or not. */
+private val BackAffordanceRowHeight = 56.dp
 
 /**
  * Onboarding pager host. Shows a welcome hero, the three feature/permission pages
@@ -86,14 +90,22 @@ fun TangentOnboarding(onFinish: () -> Unit) {
                     .fillMaxSize()
                     .safeDrawingPadding(),
             ) {
-                // Top row: Back affordance (hidden on page 0), keeps space reserved for layout stability.
+                // Top row: Back affordance (hidden on page 0). The row keeps a fixed height so the
+                // pager below never shifts — the default AnimatedVisibility transition expands the
+                // child's *size* from zero, which would drag the whole page up and down with it.
+                // With the space reserved, the affordance only has to fade.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(BackAffordanceRowHeight)
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    AnimatedVisibility(visible = currentPage > 0) {
+                    AnimatedVisibility(
+                        visible = currentPage > 0,
+                        enter = fadeIn(ExpressiveMotion.defaultEffectsSpec()),
+                        exit = fadeOut(ExpressiveMotion.fastEffectsSpec()),
+                    ) {
                         IconButton(onClick = {
                             scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
                         }) {
@@ -134,13 +146,7 @@ fun TangentOnboarding(onFinish: () -> Unit) {
                         .padding(horizontal = 24.dp, vertical = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(modifier = Modifier.width(72.dp)) {
-                        if (!isLastPage) {
-                            TextButton(onClick = onFinish) {
-                                Text("Skip")
-                            }
-                        }
-                    }
+                    SkipSlot(visible = !isLastPage, onFinish = onFinish)
 
                     Row(
                         modifier = Modifier.weight(1f),
@@ -191,11 +197,33 @@ fun TangentOnboarding(onFinish: () -> Unit) {
     }
 }
 
+/**
+ * Skip lives in a width-reserved slot, so it fades in place — matching the Back affordance on the
+ * opposite edge, which used to be the only one of the two that animated at all. Its own composable
+ * because `AnimatedVisibility` would otherwise bind to the enclosing `RowScope`.
+ */
+@Composable
+private fun SkipSlot(visible: Boolean, onFinish: () -> Unit) {
+    Box(modifier = Modifier.width(72.dp)) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(ExpressiveMotion.defaultEffectsSpec()),
+            exit = fadeOut(ExpressiveMotion.fastEffectsSpec()),
+        ) {
+            TextButton(onClick = onFinish) {
+                Text("Skip")
+            }
+        }
+    }
+}
+
 @Composable
 private fun PageIndicatorDot(selected: Boolean) {
     val width by animateDpAsState(
         targetValue = if (selected) 22.dp else 8.dp,
-        animationSpec = spring(),
+        // A dot is a small control answering a page swipe: fast spatial tier for the stretch,
+        // effects tier for the tint, so the two halves of one dot stop finishing at different times.
+        animationSpec = ExpressiveMotion.fastSpatialSpec(),
         label = "dotWidth",
     )
     val color by animateColorAsState(
@@ -204,6 +232,7 @@ private fun PageIndicatorDot(selected: Boolean) {
         } else {
             MaterialTheme.colorScheme.surfaceVariant
         },
+        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
         label = "dotColor",
     )
     Box(
@@ -237,7 +266,8 @@ private fun OnboardingHero(
         val heroVisible = remember { MutableTransitionState(false).apply { targetState = true } }
         AnimatedVisibility(
             visibleState = heroVisible,
-            enter = fadeIn() + scaleIn(initialScale = 0.8f),
+            enter = fadeIn(ExpressiveMotion.defaultEffectsSpec()) +
+                scaleIn(ExpressiveMotion.defaultSpatialSpec(), initialScale = 0.8f),
         ) {
             Surface(
                 shape = SquircleShape(36.dp),

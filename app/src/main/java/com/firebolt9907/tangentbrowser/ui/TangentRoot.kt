@@ -161,6 +161,7 @@ import com.firebolt9907.tangentbrowser.ui.reader.openReaderLink
 import com.firebolt9907.tangentbrowser.ui.reader.toggleReader
 import com.firebolt9907.tangentbrowser.ui.shape.SquircleShape
 import com.firebolt9907.tangentbrowser.ui.sync.HandoffCard
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import com.firebolt9907.tangentbrowser.ui.theme.TangentBrowserTheme
 import com.firebolt9907.tangentbrowser.ui.theme.rememberSystemAccentColor
 import mozilla.components.concept.engine.EngineSession
@@ -3044,23 +3045,61 @@ fun TangentRoot(
                 // isn't engaged. Independent of the bottom-bar gesture system.
                 val pageLoadProgress = selectedContent?.progress ?: 0
                 val pageIsLoading = selectedContent?.loading == true
-                val showLoadBar = pageIsLoading && pageLoadProgress in 1..99 &&
+                // The bar must be allowed to REACH the end before it leaves. Gecko reports progress
+                // sparsely, so a bar hidden the instant `loading` goes false (or progress leaves
+                // 1..99) is yanked off screen from wherever it happened to be — usually 60–80% — on
+                // every single page load. Instead the completion runs it to 1f on the same linear
+                // curve and only then fades it out, so the last thing you see is the bar finishing.
+                val loadBarProgress = remember { Animatable(0f) }
+                var loadBarShown by remember { mutableStateOf(false) }
+                LaunchedEffect(selectedTabId) {
+                    // A tab switch abandons the old tab's bar; no snap here, the next load start
+                    // seeds the value, so the exit fade doesn't collapse to zero mid-dissolve.
+                    loadBarShown = false
+                }
+                LaunchedEffect(pageIsLoading, pageLoadProgress) {
+                    val target = (pageLoadProgress / 100f).coerceIn(0f, 1f)
+                    when {
+                        pageIsLoading && pageLoadProgress in 1..99 -> {
+                            if (!loadBarShown || target < loadBarProgress.value) {
+                                // Fresh load (or a navigation restarting the count): start from the
+                                // reported value rather than sweeping backwards into it.
+                                loadBarProgress.snapTo(target)
+                                loadBarShown = true
+                            } else {
+                                // Linear between discrete Gecko progress reports so the bar advances
+                                // at constant velocity; FastOutSlowIn would re-accelerate on every
+                                // update and stutter.
+                                loadBarProgress.animateTo(
+                                    target,
+                                    tween(PageLoadStepMs, easing = LinearEasing),
+                                )
+                            }
+                        }
+                        loadBarShown -> {
+                            if (loadBarProgress.value < 1f) {
+                                loadBarProgress.animateTo(
+                                    1f,
+                                    tween(PageLoadFinishMs, easing = LinearEasing),
+                                )
+                            }
+                            loadBarShown = false
+                        }
+                    }
+                }
+                val showLoadBar = loadBarShown &&
                     !gridEngaged && !findInPageActive && shouldShowUi
-                val animatedLoadProgress by animateFloatAsState(
-                    targetValue = (pageLoadProgress / 100f).coerceIn(0f, 1f),
-                    // Linear between discrete Gecko progress reports so the bar advances at constant
-                    // velocity; FastOutSlowIn would re-accelerate on every update and stutter.
-                    animationSpec = tween(durationMillis = 150, easing = LinearEasing),
-                    label = "pageLoadProgress",
-                )
                 AnimatedVisibility(
                     visible = showLoadBar,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
+                    // Effects springs, not the fadeIn/fadeOut defaults: the bar is a 2.5 dp hairline
+                    // that should be there the moment a load starts and gone the moment it finishes,
+                    // not creep in and out over a medium-low spring.
+                    enter = fadeIn(ExpressiveMotion.fastEffectsSpec()),
+                    exit = fadeOut(ExpressiveMotion.defaultEffectsSpec()),
                     modifier = Modifier.align(Alignment.TopCenter),
                 ) {
                     LinearProgressIndicator(
-                        progress = { animatedLoadProgress },
+                        progress = { loadBarProgress.value },
                         modifier = Modifier
                             .fillMaxWidth()
                             .statusBarsPadding()

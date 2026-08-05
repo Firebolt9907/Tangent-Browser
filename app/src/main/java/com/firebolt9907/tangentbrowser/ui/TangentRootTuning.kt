@@ -81,6 +81,13 @@ internal const val ImeSettleDurationMs = 200
 internal const val ImeSyncDurationMs = 285
 internal val ImeSyncEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
+// Page-load bar. Gecko reports progress in sparse jumps, so each report is swept linearly over
+// [PageLoadStepMs] to read as one continuous advance. [PageLoadFinishMs] is the run-to-the-end that
+// plays when loading completes, before the bar is allowed to fade — without it the bar is yanked
+// off screen from wherever the last report left it.
+internal const val PageLoadStepMs = 150
+internal const val PageLoadFinishMs = 180
+
 internal const val PredictiveBackDurationMs = 220
 internal val TabSwitchGap = 64.dp
 // Depth card-stack swipe (wide screens): how far the leaving/incoming page panes shrink at the

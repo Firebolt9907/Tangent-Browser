@@ -1,8 +1,12 @@
 package com.firebolt9907.tangentbrowser.ui.reader
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -29,6 +33,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -45,6 +51,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.firebolt9907.tangentbrowser.ui.TangentMotion
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import kotlinx.coroutines.launch
 
 /**
@@ -75,8 +83,8 @@ internal fun BoxScope.ReaderTableOfContents(
     // Floating Table of Contents Button
     AnimatedVisibility(
         visible = headings.size >= 2 && isButtonVisible,
-        enter = fadeIn(),
-        exit = fadeOut(),
+        enter = fadeIn(ExpressiveMotion.defaultEffectsSpec()),
+        exit = fadeOut(ExpressiveMotion.defaultEffectsSpec()),
         modifier = Modifier
             .align(Alignment.TopEnd)
             .padding(top = statusBarTop + 8.dp, end = 16.dp)
@@ -99,8 +107,26 @@ internal fun BoxScope.ReaderTableOfContents(
         }
     }
 
-    // Table of Contents Dialog (styled like a bottom sheet)
-    if (showTOC) {
+    // Table of Contents Dialog (styled like a bottom sheet). It is a Dialog rather than a
+    // ModalBottomSheet, so it gets none of material3's motion for free: `if (showTOC)` alone made a
+    // half-screen surface plus a 40%-black scrim appear and vanish as a hard cut, which reads worse
+    // than any mismatched curve. The sheet now slides on [TangentMotion.SheetShowOffset]/
+    // [TangentMotion.SheetHideOffset] — the same two springs every real sheet in the app moves on —
+    // and the scrim fades alongside on their Float twins.
+    //
+    // The Dialog has to outlive `showTOC` for the exit to be visible at all: [sheetTransition]
+    // drives the animation and the window stays mounted until it has gone fully idle at `false`.
+    // The sheet itself is opaque, so it slides WITHOUT a fade (a fade would leave the article
+    // legible through it, the same defect fixed for the reader takeover in 0d6da9e); the scrim is
+    // the only thing that changes opacity.
+    val sheetTransition = remember { MutableTransitionState(false) }
+    LaunchedEffect(showTOC) { sheetTransition.targetState = showTOC }
+    val scrimAlpha by animateFloatAsState(
+        targetValue = if (sheetTransition.targetState) 0.4f else 0f,
+        animationSpec = if (sheetTransition.targetState) TangentMotion.SheetShow else TangentMotion.SheetHide,
+        label = "tocScrim"
+    )
+    if (showTOC || sheetTransition.currentState || sheetTransition.targetState) {
         val coroutineScope = rememberCoroutineScope()
         Dialog(
             onDismissRequest = onDismiss,
@@ -109,7 +135,7 @@ internal fun BoxScope.ReaderTableOfContents(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f))
+                    .background(Color.Black.copy(alpha = scrimAlpha))
                     .clickable(
                         onClick = onDismiss,
                         interactionSource = remember { MutableInteractionSource() },
@@ -117,90 +143,96 @@ internal fun BoxScope.ReaderTableOfContents(
                     ),
                 contentAlignment = Alignment.BottomCenter
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.6f)
-                        .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                        .background(backgroundColor)
-                        .clickable(
-                            onClick = {},
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        )
-                        .padding(bottom = navBarBottom)
+                AnimatedVisibility(
+                    visibleState = sheetTransition,
+                    enter = slideInVertically(TangentMotion.SheetShowOffset) { it },
+                    exit = slideOutVertically(TangentMotion.SheetHideOffset) { it }
                 ) {
-                    // Header
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Table of Contents",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = fontFamily,
-                            color = textColor
-                        )
-                        IconButton(onClick = onDismiss) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Close",
-                                tint = textColor
-                            )
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(borderColor)
-                    )
-
-                    // Outline List
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 20.dp, vertical = 12.dp)
+                            .fillMaxHeight(0.6f)
+                            .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                            .background(backgroundColor)
+                            .clickable(
+                                onClick = {},
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            )
+                            .padding(bottom = navBarBottom)
                     ) {
-                        headings.forEach { heading ->
-                            val indent = when (heading.level) {
-                                1 -> 0.dp
-                                2 -> 16.dp
-                                3 -> 32.dp
-                                else -> 48.dp
-                            }
-                            val textStyle = when (heading.level) {
-                                1 -> TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                                2 -> TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                                else -> TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Normal)
-                            }
-
+                        // Header
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = heading.text,
-                                style = textStyle,
+                                text = "Table of Contents",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
                                 fontFamily = fontFamily,
-                                color = textColor,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onDismiss()
-                                        val offset = headingOffsets[heading]
-                                        if (offset != null) {
-                                            coroutineScope.launch {
-                                                val target = (offset - statusBarTopPx - with(density) { 16.dp.toPx() }).coerceAtLeast(0f)
-                                                scrollState.animateScrollTo(target.toInt())
+                                color = textColor
+                            )
+                            IconButton(onClick = onDismiss) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close",
+                                    tint = textColor
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(borderColor)
+                        )
+
+                        // Outline List
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp, vertical = 12.dp)
+                        ) {
+                            headings.forEach { heading ->
+                                val indent = when (heading.level) {
+                                    1 -> 0.dp
+                                    2 -> 16.dp
+                                    3 -> 32.dp
+                                    else -> 48.dp
+                                }
+                                val textStyle = when (heading.level) {
+                                    1 -> TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                                    2 -> TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                                    else -> TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Normal)
+                                }
+
+                                Text(
+                                    text = heading.text,
+                                    style = textStyle,
+                                    fontFamily = fontFamily,
+                                    color = textColor,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onDismiss()
+                                            val offset = headingOffsets[heading]
+                                            if (offset != null) {
+                                                coroutineScope.launch {
+                                                    val target = (offset - statusBarTopPx - with(density) { 16.dp.toPx() }).coerceAtLeast(0f)
+                                                    scrollState.animateScrollTo(target.toInt())
+                                                }
                                             }
                                         }
-                                    }
-                                    .padding(start = indent, top = 12.dp, bottom = 12.dp)
-                            )
+                                        .padding(start = indent, top = 12.dp, bottom = 12.dp)
+                                )
+                            }
                         }
                     }
                 }

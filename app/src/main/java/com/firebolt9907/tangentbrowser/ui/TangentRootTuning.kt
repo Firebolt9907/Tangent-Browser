@@ -146,6 +146,16 @@ internal object TangentMotion {
     val SheetShow = spring<Float>(dampingRatio = 0.9f, stiffness = 700f)
     val SheetHide = spring<Float>(dampingRatio = 1f, stiffness = 3800f)
 
+    // [SheetShow]/[SheetHide] for the *slide* half — `slideInVertically`/`slideOutVertically` animate
+    // an IntOffset and cannot be handed a `tween<Float>`/`spring<Float>`. Used by the app's
+    // hand-rolled sheet-styled surfaces (the reader's Table of Contents, which is a Dialog rather
+    // than a ModalBottomSheet) so that everything the user reads as "a bottom sheet" arrives and
+    // leaves on the same two springs, whether or not material3 is the thing drawing it.
+    val SheetShowOffset =
+        spring<IntOffset>(dampingRatio = 0.9f, stiffness = 700f, visibilityThreshold = IntOffset(1, 1))
+    val SheetHideOffset =
+        spring<IntOffset>(dampingRatio = 1f, stiffness = 3800f, visibilityThreshold = IntOffset(1, 1))
+
     // Release of a swipe-to-close on an overview card (deck/pixel up-swipe, classic-grid side-swipe).
     // Both outcomes take over from a finger that is still moving, so neither may ease *in* — and the
     // default FastOutSlowIn does exactly that: its curve leaves the origin at zero velocity, so the

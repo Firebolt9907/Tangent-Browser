@@ -1,5 +1,6 @@
 package com.firebolt9907.tangentbrowser.ui.grid
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -22,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,6 +32,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.state.TangentTabGroup
 import com.firebolt9907.tangentbrowser.ui.groups.swatch
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 
 /**
  * The Space switcher — a horizontal strip of chips at the bottom of the tab overview (above the
@@ -39,7 +42,8 @@ import com.firebolt9907.tangentbrowser.ui.groups.swatch
  *
  * Tapping a chip selects that space (via [onSelectSpace]; null = Personal); long-pressing a named
  * space opens Space management ([onManageSpaces]) to rename / recolour / set a default container /
- * delete. The active chip is filled with the primary colour.
+ * delete. The active chip is filled with the primary colour, cross-fading between states so that
+ * switching spaces reads as one chip changing rather than two chips repainting.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -115,8 +119,33 @@ private fun SpaceChip(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)?,
 ) {
-    val bg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest
-    val fg = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    // Selection is four colour channels on one control (fill, label, dot, count). They all move on
+    // the SAME effects spec so the chip changes state as one object — a chip whose fill lands before
+    // its label reads as two overlapping animations. Effects, not spatial: an 0.8-damped spatial
+    // overshoots a colour lerp past its endpoint.
+    // Each target is derived from `selected`, never from another animated value — feeding one
+    // animateColorAsState into the next stacks a second spring on an already-smooth signal.
+    val fgTarget = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    val bg by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest,
+        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+        label = "spaceChipBg",
+    )
+    val fg by animateColorAsState(
+        targetValue = fgTarget,
+        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+        label = "spaceChipFg",
+    )
+    val dotTint by animateColorAsState(
+        targetValue = if (selected) fgTarget else (dotColor ?: Color.Transparent),
+        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+        label = "spaceChipDot",
+    )
+    val countTint by animateColorAsState(
+        targetValue = if (selected) fgTarget else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+        label = "spaceChipCount",
+    )
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(18.dp))
@@ -130,7 +159,7 @@ private fun SpaceChip(
                 modifier = Modifier
                     .size(9.dp)
                     .clip(CircleShape)
-                    .background(if (selected) fg else dotColor),
+                    .background(dotTint),
             )
             Spacer(Modifier.width(7.dp))
         } else {
@@ -154,7 +183,7 @@ private fun SpaceChip(
             Text(
                 text = if (count > 99) "99+" else "$count",
                 style = MaterialTheme.typography.labelMedium,
-                color = if (selected) fg else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = countTint,
             )
         }
     }

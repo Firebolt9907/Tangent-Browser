@@ -179,19 +179,19 @@ fun TangentOnboarding(onFinish: () -> Unit) {
             // Sign-in card floated over onboarding (never dismisses it). onIntercept completes the
             // OAuth flow on the success redirect and the card dismisses itself, returning the user to
             // this page — now signed in — to finish the remaining steps.
-            signInUrl?.let { url ->
-                com.firebolt9907.tangentbrowser.ui.content.UtilityWebCard(
-                    request = com.firebolt9907.tangentbrowser.ui.content.UtilityWebRequest.Url(
+            com.firebolt9907.tangentbrowser.ui.content.UtilityWebCardHost(
+                request = signInUrl?.let { url ->
+                    com.firebolt9907.tangentbrowser.ui.content.UtilityWebRequest.Url(
                         title = "Firefox Sign In",
                         url = url,
-                    ),
-                    engine = components.engine,
-                    onIntercept = { navUrl ->
-                        components.firefoxSyncController.handleOAuthRedirect(navUrl)
-                    },
-                    onDismiss = { signInUrl = null },
-                )
-            }
+                    )
+                },
+                engine = components.engine,
+                onIntercept = { navUrl ->
+                    components.firefoxSyncController.handleOAuthRedirect(navUrl)
+                },
+                onDismiss = { signInUrl = null },
+            )
             }
         }
     }

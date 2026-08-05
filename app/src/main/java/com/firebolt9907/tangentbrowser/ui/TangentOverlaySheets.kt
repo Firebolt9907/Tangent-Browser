@@ -19,7 +19,7 @@ import com.firebolt9907.tangentbrowser.ui.bookmarks.BookmarksSheet
 import com.firebolt9907.tangentbrowser.ui.chrome.AaSheet
 import com.firebolt9907.tangentbrowser.ui.content.ImageContextSheet
 import com.firebolt9907.tangentbrowser.ui.content.LinkPeekCard
-import com.firebolt9907.tangentbrowser.ui.content.UtilityWebCard
+import com.firebolt9907.tangentbrowser.ui.content.UtilityWebCardHost
 import com.firebolt9907.tangentbrowser.ui.content.UtilityWebRequest
 import com.firebolt9907.tangentbrowser.ui.downloads.DownloadsSheet
 import com.firebolt9907.tangentbrowser.ui.history.HistorySheet
@@ -457,17 +457,15 @@ internal fun TangentOverlaySheets(
     // Add-on quick settings / options page / Firefox sign-in, floated over the current page in a
     // standalone GeckoView card (never a real tab). onIntercept handles the two navigations that
     // should close the card: an add-on .xpi install request and the FxA OAuth success redirect.
-    utilityWeb?.let { request ->
-        UtilityWebCard(
-            request = request,
-            engine = components.engine,
-            onIntercept = { url ->
-                components.firefoxSyncController.handleOAuthRedirect(url) ||
-                    components.addonController.installFromPageRequest(url)
-            },
-            onDismiss = onDismissUtilityWeb,
-        )
-    }
+    UtilityWebCardHost(
+        request = utilityWeb,
+        engine = components.engine,
+        onIntercept = { url ->
+            components.firefoxSyncController.handleOAuthRedirect(url) ||
+                components.addonController.installFromPageRequest(url)
+        },
+        onDismiss = onDismissUtilityWeb,
+    )
 
     // Link glance (Safari/Arc). Drawn last so it floats above the content, chrome and grid.
     peekUrl?.let { link ->

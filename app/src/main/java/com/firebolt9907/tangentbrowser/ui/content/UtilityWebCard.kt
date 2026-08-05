@@ -71,6 +71,35 @@ sealed interface UtilityWebRequest {
 }
 
 /**
+ * Mounts a [UtilityWebCard] for a nullable [request] and — the reason this wrapper exists — keeps it
+ * composed past `request == null` so the card can animate *out*. Dropping the card the frame the
+ * state clears made every dismissal a hard cut, however carefully the entrance was tuned.
+ *
+ * Retaining it costs one exit's worth of delay before the standalone [EngineSession]/[EngineView] are
+ * released in the card's `onDispose`; the exit is on the fast tier precisely to keep that short.
+ */
+@Composable
+fun UtilityWebCardHost(
+    request: UtilityWebRequest?,
+    engine: Engine,
+    onIntercept: (String) -> Boolean,
+    onDismiss: () -> Unit,
+) {
+    var retained by remember { mutableStateOf<UtilityWebRequest?>(null) }
+    if (request != null && request != retained) retained = request
+    val shown = retained ?: return
+
+    UtilityWebCard(
+        request = shown,
+        visible = request != null,
+        engine = engine,
+        onIntercept = onIntercept,
+        onDismiss = onDismiss,
+        onExited = { if (request == null) retained = null },
+    )
+}
+
+/**
  * A floating card that hosts a standalone GeckoView, reusing the same isolation approach as the
  * link-glance preview (own [EngineSession] + [EngineView], never in the BrowserStore, never
  * snapshot-cached, never marked active for web extensions).
@@ -82,6 +111,10 @@ sealed interface UtilityWebRequest {
  *
  * [onIntercept] is consulted on every navigation; returning true (an add-on `.xpi` install request,
  * or the FxA OAuth success redirect) both handles the URL and dismisses the card.
+ *
+ * Prefer [UtilityWebCardHost] over calling this directly: dropping the card the moment its state
+ * clears skips the exit animation entirely. [visible] drives that exit, and [onExited] fires once it
+ * has finished — that is the caller's cue to unmount.
  */
 @Composable
 fun UtilityWebCard(
@@ -89,6 +122,8 @@ fun UtilityWebCard(
     engine: Engine,
     onIntercept: (String) -> Boolean,
     onDismiss: () -> Unit,
+    visible: Boolean = true,
+    onExited: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var title by remember(request) { mutableStateOf(request.title) }
@@ -132,19 +167,29 @@ fun UtilityWebCard(
         }
     }
 
-    // Simple scale + fade entrance (no link-morph — there's no source element to grow from). Scale and
-    // opacity are driven by two Animatables, not one: the spatial spring is 0.8-damped, and letting it
-    // drive alpha would overshoot past 1f (a scrim `copy(alpha = …)` above 1f is out of range).
+    // Simple scale + fade entrance/exit (no link-morph — there's no source element to grow from).
+    // Scale and opacity are driven by two Animatables, not one: the spatial spring is 0.8-damped, and
+    // letting it drive alpha would overshoot past 1f (a scrim `copy(alpha = …)` above 1f is out of
+    // range). The exit takes the fast tier of both — it answers a deliberate dismissal and holds a
+    // live EngineView open until it finishes.
     val appear = remember(request) { androidx.compose.animation.core.Animatable(0f) }
     val fade = remember(request) { androidx.compose.animation.core.Animatable(0f) }
-    androidx.compose.runtime.LaunchedEffect(request) {
-        launch { appear.animateTo(1f, ExpressiveMotion.defaultSpatialSpec()) }
-        fade.animateTo(1f, ExpressiveMotion.defaultEffectsSpec())
+    androidx.compose.runtime.LaunchedEffect(visible) {
+        if (visible) {
+            launch { appear.animateTo(1f, ExpressiveMotion.defaultSpatialSpec()) }
+            fade.animateTo(1f, ExpressiveMotion.defaultEffectsSpec())
+        } else {
+            launch { appear.animateTo(0f, ExpressiveMotion.fastSpatialSpec()) }
+            // The fade is what actually ends the card visually, so unmount on it rather than waiting
+            // for the spatial spring's overshoot to settle under an already-invisible surface.
+            fade.animateTo(0f, ExpressiveMotion.fastEffectsSpec())
+            onExited()
+        }
     }
 
     // Predictive Back / back gesture dismisses the card.
     val back = remember(request) { androidx.compose.animation.core.Animatable(0f) }
-    PredictiveBackHandler { progress ->
+    PredictiveBackHandler(enabled = visible) { progress ->
         try {
             progress.collect { event -> back.snapTo(event.progress.coerceIn(0f, 1f)) }
             onDismiss()
@@ -163,6 +208,7 @@ fun UtilityWebCard(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
+                enabled = visible,
                 onClick = onDismiss,
             ),
     ) {

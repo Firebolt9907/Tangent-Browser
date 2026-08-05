@@ -1,7 +1,6 @@
 package com.firebolt9907.tangentbrowser.ui.video
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -56,9 +55,24 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import kotlinx.coroutines.delay
 import mozilla.components.concept.engine.EngineSession
 import kotlin.math.roundToInt
+
+// The player chrome (top scrim + exit/PiP, bottom scrim + transport) fades as ONE unit — two
+// AnimatedVisibility blocks driven by the same `controlsVisible` flag, so their specs are hoisted
+// here rather than written out twice and left to drift apart.
+//
+// Pure alpha, so these are effects springs (critically damped; opacity that overshoots reads as a
+// flicker). The asymmetry is deliberate and is the point of using two tiers rather than one: the
+// enter is a direct response to the user's tap, so it takes the *fast* tier — the tween(200) it
+// replaces used the default FastOutSlowIn, which leaves the origin at zero velocity, meaning the
+// controls held at fully transparent for the first frames after the tap. On a direct-manipulation
+// gesture that reads as input lag. The exit is not a response to anything (it is the auto-hide
+// timer, or a dismissing tap) and wants to linger, so it takes the *slow* tier.
+private val ControlsEnter = ExpressiveMotion.fastEffectsSpec<Float>()
+private val ControlsExit = ExpressiveMotion.slowEffectsSpec<Float>()
 
 /**
  * Material 3 overlay for fullscreen video mode. Replaces YouTube's own (now-hidden) player UI with
@@ -203,8 +217,8 @@ fun VideoFullscreenOverlay(
         // Top scrim + exit / PiP buttons.
         AnimatedVisibility(
             visible = controlsVisible,
-            enter = fadeIn(animationSpec = tween(200)),
-            exit = fadeOut(animationSpec = tween(300)),
+            enter = fadeIn(ControlsEnter),
+            exit = fadeOut(ControlsExit),
             modifier = Modifier.align(Alignment.TopCenter),
         ) {
             Box(
@@ -280,8 +294,8 @@ fun VideoFullscreenOverlay(
         // Bottom scrim + play/pause + scrubber.
         AnimatedVisibility(
             visible = controlsVisible,
-            enter = fadeIn(animationSpec = tween(200)),
-            exit = fadeOut(animationSpec = tween(300)),
+            enter = fadeIn(ControlsEnter),
+            exit = fadeOut(ControlsExit),
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             Column(

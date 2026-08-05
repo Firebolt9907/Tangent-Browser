@@ -241,8 +241,18 @@ class AddonController(
         }
     }
 
+    /**
+     * Remove a user-installed add-on. Built-in extensions (the reader, dark mode, data saver and
+     * passkey bridges shipped in `assets/extensions/`) are refused here as well as hidden from the
+     * UI's remove affordance: uninstalling one breaks the feature it backs until the next launch
+     * reinstalls it, and this is the only guard the non-UI callers pass through.
+     */
     fun uninstall(addonId: String) {
         val extension = extensions[addonId] ?: return
+        if (extension.isBuiltIn()) {
+            setError("${extension.displayName()} is built into Tangent and can't be removed")
+            return
+        }
         setBusy("Removing add-on...")
         engine.uninstallWebExtension(
             ext = extension,
@@ -429,6 +439,8 @@ data class InstalledAddon(
     val isEnabled: Boolean,
     val optionsPageUrl: String?,
     val hasQuickSettings: Boolean = false,
+    /** Shipped with the app (a `resource://` extension) — never removable. */
+    val isBuiltIn: Boolean = false,
 )
 
 data class AddonPermissionPrompt(
@@ -448,6 +460,7 @@ private fun WebExtension.toInstalledAddon(hasQuickSettings: Boolean): InstalledA
         isEnabled = isEnabled(),
         optionsPageUrl = getMetadata()?.optionsPageUrl?.takeIf { it.isNotBlank() },
         hasQuickSettings = hasQuickSettings,
+        isBuiltIn = isBuiltIn(),
     )
 
 private fun WebExtension.displayName(): String =

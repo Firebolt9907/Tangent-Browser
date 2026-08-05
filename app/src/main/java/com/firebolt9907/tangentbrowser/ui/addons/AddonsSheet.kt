@@ -16,11 +16,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -207,14 +212,8 @@ private fun AddonRow(
 ) {
     var pendingRemoval by remember { mutableStateOf(false) }
     val haptics = rememberTangentHaptics()
-    // Swipe end-to-start to remove → confirm dialog (the row springs back until confirmed, since
-    // uninstalling loses the add-on's data). Matches every other list sheet — no per-row trash
-    // icon, which here also un-crowds a trailing group that already holds a switch and two
-    // optional icon buttons. See SwipeToRemoveRow.
-    SwipeToRemoveRow(
-        onRemove = { pendingRemoval = true },
-        settleOnRemove = false,
-    ) {
+
+    val item: @Composable () -> Unit = {
         ListItem(
             headlineContent = {
                 Text(
@@ -225,6 +224,7 @@ private fun AddonRow(
             },
             supportingContent = {
                 val details = buildList {
+                    if (addon.isBuiltIn) add("Built in")
                     if (addon.version.isNotBlank()) add("v${addon.version}")
                     if (addon.description.isNotBlank()) add(addon.description)
                 }.joinToString(" - ")
@@ -245,18 +245,30 @@ private fun AddonRow(
                             onEnabledChange(it)
                         },
                     )
-                    if (addon.isEnabled && addon.hasQuickSettings) {
-                        IconButton(onClick = { haptics.softClick(); onOpenQuickSettings() }) {
-                            Icon(Icons.Default.Tune, contentDescription = "Open ${addon.name} quick settings")
-                        }
-                    }
-                    if (addon.optionsPageUrl != null) {
-                        IconButton(onClick = { haptics.softClick(); onOpenSettings() }) {
-                            Icon(Icons.Default.Settings, contentDescription = "Open ${addon.name} settings")
-                        }
-                    }
+                    AddonOverflow(
+                        addon = addon,
+                        onOpenSettings = onOpenSettings,
+                        onOpenQuickSettings = onOpenQuickSettings,
+                        onRemove = { pendingRemoval = true },
+                    )
                 }
             },
+        )
+    }
+
+    // Two ways to remove, both ending in the same confirm dialog (the row springs back until
+    // confirmed, since uninstalling loses the add-on's data): the swipe every other list sheet uses,
+    // and the row overflow menu, which is where an undiscoverable gesture gets a visible twin
+    // without a destructive button sitting permanently on every row.
+    // Built-in extensions (reader, dark mode, data saver, passkey bridge) back app features and are
+    // reinstalled on every launch, so they get neither affordance — see AddonController.uninstall.
+    if (addon.isBuiltIn) {
+        item()
+    } else {
+        SwipeToRemoveRow(
+            onRemove = { pendingRemoval = true },
+            settleOnRemove = false,
+            content = item,
         )
     }
 
@@ -281,5 +293,59 @@ private fun AddonRow(
                 }
             },
         )
+    }
+}
+
+/**
+ * The row's single overflow control: settings entries plus Remove, which is where a destructive
+ * action belongs — one always-visible trash icon per row invites the mis-tap it can't undo.
+ * Renders nothing when there is nothing to offer (a built-in add-on with no options page).
+ */
+@Composable
+private fun AddonOverflow(
+    addon: InstalledAddon,
+    onOpenSettings: () -> Unit,
+    onOpenQuickSettings: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val haptics = rememberTangentHaptics()
+    val showQuickSettings = addon.isEnabled && addon.hasQuickSettings
+    val showSettings = addon.optionsPageUrl != null
+    if (!showQuickSettings && !showSettings && addon.isBuiltIn) return
+
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { haptics.softClick(); open = true }) {
+            Icon(Icons.Default.MoreVert, contentDescription = "More options for ${addon.name}")
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (showQuickSettings) {
+                DropdownMenuItem(
+                    text = { Text("Quick settings") },
+                    leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null) },
+                    onClick = { open = false; haptics.softClick(); onOpenQuickSettings() },
+                )
+            }
+            if (showSettings) {
+                DropdownMenuItem(
+                    text = { Text("Settings") },
+                    leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                    onClick = { open = false; haptics.softClick(); onOpenSettings() },
+                )
+            }
+            if (!addon.isBuiltIn) {
+                DropdownMenuItem(
+                    text = { Text("Remove", color = MaterialTheme.colorScheme.error) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    onClick = { open = false; onRemove() },
+                )
+            }
+        }
     }
 }

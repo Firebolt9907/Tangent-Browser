@@ -226,10 +226,43 @@ class GlobalPreferencesStore(context: Context) {
         set(value) { prefs.edit { putLong("readerRulesLastCheckMs", value) } }
 
     // Search engine used both for address-bar searches (via normalizeUrl) and for the live query
-    // suggestions in the address sheet. Stored by enum name; unknown/missing falls back to default.
+    // suggestions in the address sheet. Stored by id; unknown/missing falls back to default.
+    //
+    // The custom engine is the one case where the id isn't enough: its URL templates live in the
+    // three customSearch* keys below, so it is reassembled here (and falls back to the default if
+    // the stored template is missing or unusable, e.g. cleared by hand).
     var searchEngine: SearchEngine
-        get() = SearchEngine.fromName(prefs.getString("searchEngine", null))
-        set(value) { prefs.edit { putString("searchEngine", value.name) } }
+        get() {
+            val id = prefs.getString("searchEngine", null)
+            if (id == SearchEngine.Custom.ID) return customSearchEngine ?: SearchEngine.DEFAULT
+            return SearchEngine.fromName(id)
+        }
+        set(value) {
+            if (value is SearchEngine.Custom) customSearchEngine = value
+            prefs.edit { putString("searchEngine", value.id) }
+        }
+
+    // The user's custom engine, whether or not it is the one currently selected — so switching away
+    // to a built-in and back doesn't lose the template. Null until a valid one has been saved.
+    var customSearchEngine: SearchEngine.Custom?
+        get() {
+            val template = prefs.getString("customSearchUrl", null)?.takeIf {
+                SearchEngine.isValidTemplate(it)
+            } ?: return null
+            val label = prefs.getString("customSearchLabel", null)?.takeIf { it.isNotBlank() }
+                ?: "Custom"
+            val suggest = prefs.getString("customSearchSuggestUrl", null)?.takeIf {
+                SearchEngine.isValidTemplate(it)
+            }
+            return SearchEngine.Custom(label = label, searchTemplate = template, suggestTemplate = suggest)
+        }
+        set(value) {
+            prefs.edit {
+                putString("customSearchLabel", value?.label)
+                putString("customSearchUrl", value?.searchTemplate)
+                putString("customSearchSuggestUrl", value?.suggestTemplate)
+            }
+        }
 
     // When on, a search-results page for the current [searchEngine] shows the typed query in the
     // address bar instead of the engine's host (e.g. "cat videos" rather than "google.com").

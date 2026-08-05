@@ -478,14 +478,22 @@ fun SearchEnginePage(modifier: Modifier = Modifier) {
     OnboardingScaffold(
         icon = Icons.Rounded.Search,
         headline = "Choose your search engine",
-        body = "This is where your address-bar searches go. You can change it later in Settings.",
+        body = "This is where your address-bar searches go. Settings has more engines — including " +
+            "your own — and you can change it any time.",
         modifier = modifier,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SearchEngine.entries.forEach { engine ->
+            // The short list only, plus whatever is already selected if it isn't on it — the rest of
+            // the built-ins (and custom engines, which need a URL template) live in Settings.
+            val choices = remember(selected) {
+                SearchEngine.onboardingChoices +
+                    listOfNotNull(selected as? SearchEngine.BuiltIn)
+                        .filterNot { it in SearchEngine.onboardingChoices }
+            }
+            choices.forEach { engine ->
                 val isSelected = engine == selected
                 Card(
                     colors = CardDefaults.cardColors(

@@ -3,6 +3,7 @@ package com.firebolt9907.tangentbrowser.ui.settings
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.DisposableEffect
@@ -76,6 +77,7 @@ fun SettingsSheet(
     var globalPrivacyControl by remember { mutableStateOf(globalPrefsStore.globalPrivacyControl) }
     var keepAliveInBackground by remember { mutableStateOf(globalPrefsStore.keepAliveInBackground) }
     var searchEngine by remember { mutableStateOf(globalPrefsStore.searchEngine) }
+    var showCustomSearchDialog by remember { mutableStateOf(false) }
     var searchSuggestionsEnabled by remember { mutableStateOf(globalPrefsStore.searchSuggestionsEnabled) }
     var showSearchTermsInBar by remember { mutableStateOf(globalPrefsStore.showSearchTermsInBar) }
     var httpCacheSizeMb by remember { mutableStateOf(globalPrefsStore.httpCacheSizeMb) }
@@ -576,18 +578,45 @@ fun SettingsSheet(
                 title = "Search engine",
                 subtitle = "Used for address-bar searches and suggestions",
                 selectedLabel = searchEngine.label,
-                options = SearchEngine.entries.map { engine ->
-                    engine.label to {
-                        searchEngine = engine
-                        globalPrefsStore.searchEngine = engine
+                // Built-ins, then the user's saved custom engine (if any), then the editor. Picking
+                // "Custom…" always opens the dialog — that's the only way to create the first one.
+                options = buildList {
+                    SearchEngine.builtIns.forEach { engine ->
+                        add(engine.label to {
+                            searchEngine = engine
+                            globalPrefsStore.searchEngine = engine
+                        })
                     }
+                    globalPrefsStore.customSearchEngine?.let { custom ->
+                        if (custom.label != searchEngine.label) {
+                            add(custom.label to {
+                                searchEngine = custom
+                                globalPrefsStore.searchEngine = custom
+                            })
+                        }
+                    }
+                    add("Custom…" to { showCustomSearchDialog = true })
                 },
                 haptics = haptics,
             )
+            if (searchEngine is SearchEngine.Custom) {
+                SheetRowDivider()
+                SettingsRow(
+                    title = "Edit custom engine",
+                    subtitle = (searchEngine as SearchEngine.Custom).searchTemplate,
+                    onClick = { haptics.select(); showCustomSearchDialog = true },
+                )
+            }
             SheetRowDivider()
             SettingsToggle(
                 title = "Search suggestions",
-                subtitle = "Show live suggestions from ${searchEngine.label} as you type. When off, only your history and bookmarks are used and no keystrokes leave the device.",
+                // A custom engine with no suggestions URL can't answer this toggle at all — say so
+                // rather than offering a switch that quietly does nothing.
+                subtitle = if (searchEngine.suggestUrl("test") == null) {
+                    "${searchEngine.label} has no suggestions URL set, so only your history and bookmarks are used."
+                } else {
+                    "Show live suggestions from ${searchEngine.label} as you type. When off, only your history and bookmarks are used and no keystrokes leave the device."
+                },
                 checked = searchSuggestionsEnabled,
                 onCheckedChange = {
                     searchSuggestionsEnabled = it
@@ -603,6 +632,19 @@ fun SettingsSheet(
                     showSearchTermsInBar = it
                     globalPrefsStore.showSearchTermsInBar = it
                     onSettingChanged()
+                },
+            )
+        }
+
+        if (showCustomSearchDialog) {
+            CustomSearchEngineDialog(
+                existing = globalPrefsStore.customSearchEngine,
+                onDismiss = { showCustomSearchDialog = false },
+                onSave = { custom ->
+                    globalPrefsStore.searchEngine = custom
+                    searchEngine = custom
+                    showCustomSearchDialog = false
+                    haptics.create()
                 },
             )
         }
@@ -1573,6 +1615,124 @@ private fun SettingsPicker(
                 )
             }
         }
+    }
+}
+
+/**
+ * Editor for the user's own search engine. The search URL is required and must be an absolute
+ * http(s) URL containing `%s`; the suggestions URL is optional (left blank, the address sheet just
+ * shows history and bookmarks — the honest default, since an arbitrary endpoint's response shape
+ * isn't knowable). Save stays disabled until the search template validates, so an unusable engine
+ * can never become the one the address bar routes searches through.
+ */
+@Composable
+private fun CustomSearchEngineDialog(
+    existing: SearchEngine.Custom?,
+    onDismiss: () -> Unit,
+    onSave: (SearchEngine.Custom) -> Unit,
+) {
+    var name by remember { mutableStateOf(existing?.label ?: "") }
+    var searchTemplate by remember { mutableStateOf(existing?.searchTemplate ?: "") }
+    var suggestTemplate by remember { mutableStateOf(existing?.suggestTemplate ?: "") }
+
+    val searchValid = SearchEngine.isValidTemplate(searchTemplate)
+    val suggestBlank = suggestTemplate.isBlank()
+    val suggestValid = suggestBlank || SearchEngine.isValidTemplate(suggestTemplate)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Custom search engine") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Use %s where the search terms go — for example " +
+                        "https://kagi.com/search?q=%s",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = searchTemplate,
+                    onValueChange = { searchTemplate = it },
+                    label = { Text("Search URL") },
+                    isError = searchTemplate.isNotBlank() && !searchValid,
+                    supportingText = if (searchTemplate.isNotBlank() && !searchValid) {
+                        { Text("Needs to be an http(s) URL containing %s") }
+                    } else {
+                        null
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = suggestTemplate,
+                    onValueChange = { suggestTemplate = it },
+                    label = { Text("Suggestions URL (optional)") },
+                    isError = !suggestValid,
+                    supportingText = if (!suggestValid) {
+                        { Text("Needs to be an http(s) URL containing %s") }
+                    } else {
+                        null
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = searchValid && suggestValid,
+                onClick = {
+                    onSave(
+                        SearchEngine.Custom(
+                            label = name.trim().ifBlank { "Custom" },
+                            searchTemplate = searchTemplate.trim(),
+                            suggestTemplate = suggestTemplate.trim().takeIf { it.isNotEmpty() },
+                        ),
+                    )
+                },
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+/** A settings row that just navigates/opens something — same shape as the other rows, no value. */
+@Composable
+private fun SettingsRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(14.dp),
+        )
     }
 }
 

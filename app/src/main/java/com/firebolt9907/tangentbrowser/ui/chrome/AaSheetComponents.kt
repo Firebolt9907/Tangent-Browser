@@ -46,7 +46,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import com.firebolt9907.tangentbrowser.ui.TangentHaptics
-import androidx.compose.ui.unit.IntSize
+import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 
@@ -235,9 +235,14 @@ internal fun CollapsibleSection(
             // The body's height change is spatial, the cross-fade over it is an effect (critically
             // damped — a bouncing opacity reads as a flicker). Matches the section rows in AaSheet.kt
             // exactly, so the two collapsibles in the same sheet no longer open on different curves.
-            enter = expandVertically(ExpressiveMotion.defaultSpatialSpec<IntSize>()) +
+            //
+            // The height takes the flat-damped [TangentMotion.RevealExpand]/[RevealCollapse] pair, not
+            // an expressive spatial: every expressive tier is 0.8-damped, and overshoot on an IntSize
+            // grows the section taller than its content and flashes a strip of sheet background before
+            // settling. This sheet scrolls, so that kick carries every row below the section with it.
+            enter = expandVertically(TangentMotion.RevealExpand) +
                 fadeIn(ExpressiveMotion.defaultEffectsSpec<Float>()),
-            exit = shrinkVertically(ExpressiveMotion.defaultSpatialSpec<IntSize>()) +
+            exit = shrinkVertically(TangentMotion.RevealCollapse) +
                 fadeOut(ExpressiveMotion.defaultEffectsSpec<Float>()),
         ) {
             Column {

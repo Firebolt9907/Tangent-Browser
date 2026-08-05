@@ -64,7 +64,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -775,9 +774,12 @@ private fun PageTabContent(
 
             AnimatedVisibility(
                 visible = isActive,
-                enter = expandVertically(ExpressiveMotion.defaultSpatialSpec<IntSize>()) +
+                // Flat-damped height (see [TangentMotion.RevealExpand]): the reader controls are a
+                // tall block in the middle of a scrolling sheet, so an expressive spatial's overshoot
+                // would kick every row below them past their resting place and back.
+                enter = expandVertically(TangentMotion.RevealExpand) +
                     fadeIn(ExpressiveMotion.defaultEffectsSpec<Float>()),
-                exit = shrinkVertically(ExpressiveMotion.defaultSpatialSpec<IntSize>()) +
+                exit = shrinkVertically(TangentMotion.RevealCollapse) +
                     fadeOut(ExpressiveMotion.defaultEffectsSpec<Float>()),
             ) {
                 Column {

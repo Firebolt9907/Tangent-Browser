@@ -39,6 +39,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.ui.components.EmptyState
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentPhase
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentSwitch
 import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.components.SwipeToRemoveRow
@@ -80,49 +82,61 @@ fun CreditCardsSheet(
 
         Spacer(Modifier.height(12.dp))
 
-        if (loading) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(vertical = 24.dp),
-            )
-        } else {
-            if (cards.isEmpty()) {
-                EmptyState(
-                    icon = Icons.Default.CreditCard,
-                    title = "No saved cards",
-                    description = "Cards you save will appear here and can be autofilled into " +
-                        "payment forms. Add one with the button below.",
-                )
-            } else {
-                // Capped, not fixed: the Add button below must stay reachable when the
-                // list is long, but a short list should shrink to fit rather than reserve
-                // 320dp of empty space above it.
-                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
-                    items(cards, key = { it.guid }) { card ->
-                        // Swipe end-to-start to delete → confirm dialog (row springs back until
-                        // confirmed, since payment data is sensitive). See SwipeToRemoveRow.
-                        SwipeToRemoveRow(
-                            onRemove = { showDeleteConfirm = card.guid },
-                            settleOnRemove = false,
-                        ) {
-                            CreditCardRow(card = card)
+        // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
+        val phase = when {
+            loading -> SheetContentPhase.Loading
+            cards.isEmpty() -> SheetContentPhase.Empty
+            else -> SheetContentPhase.Content
+        }
+        SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+            Column(modifier = Modifier.fillMaxWidth()) {
+                when (current) {
+                    SheetContentPhase.Loading -> CircularProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(vertical = 24.dp),
+                    )
+
+                    SheetContentPhase.Empty -> EmptyState(
+                        icon = Icons.Default.CreditCard,
+                        title = "No saved cards",
+                        description = "Cards you save will appear here and can be autofilled into " +
+                            "payment forms. Add one with the button below.",
+                    )
+
+                    // Capped, not fixed: the Add button below must stay reachable when the
+                    // list is long, but a short list should shrink to fit rather than reserve
+                    // 320dp of empty space above it.
+                    SheetContentPhase.Content -> LazyColumn(
+                        modifier = Modifier.heightIn(max = 320.dp),
+                    ) {
+                        items(cards, key = { it.guid }) { card ->
+                            // Swipe end-to-start to delete → confirm dialog (row springs back until
+                            // confirmed, since payment data is sensitive). See SwipeToRemoveRow.
+                            SwipeToRemoveRow(
+                                onRemove = { showDeleteConfirm = card.guid },
+                                settleOnRemove = false,
+                            ) {
+                                CreditCardRow(card = card)
+                            }
                         }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(8.dp))
+                if (current != SheetContentPhase.Loading) {
+                    Spacer(Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(
-                    onClick = { showAddDialog = true },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Add Card")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = { showAddDialog = true },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Add Card")
+                        }
+                    }
                 }
             }
         }

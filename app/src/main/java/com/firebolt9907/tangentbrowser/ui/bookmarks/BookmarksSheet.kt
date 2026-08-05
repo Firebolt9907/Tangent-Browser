@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.ui.components.SheetSearchField
 import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
 import com.firebolt9907.tangentbrowser.ui.components.EmptyState
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentPhase
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentSwitch
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.components.SwipeToRemoveRow
@@ -178,62 +180,71 @@ fun BookmarksSheet(
 
         Spacer(Modifier.height(8.dp))
 
-        when {
-            loading -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 40.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator()
+        // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
+        val phase = when {
+            loading -> SheetContentPhase.Loading
+            filtered.isEmpty() -> SheetContentPhase.Empty
+            else -> SheetContentPhase.Content
+        }
+        SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+            when (current) {
+                SheetContentPhase.Loading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 40.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator()
+                    }
                 }
-            }
 
-            filtered.isEmpty() -> {
-                EmptyState(
-                    icon = Icons.Outlined.BookmarkBorder,
-                    title = if (searchQuery.isBlank()) "No bookmarks yet" else "No matches",
-                    description = if (searchQuery.isBlank()) {
-                        "Save a page with \"Add this page\" to find it here later."
-                    } else {
-                        null
-                    },
-                )
-            }
+                SheetContentPhase.Empty -> {
+                    EmptyState(
+                        icon = Icons.Outlined.BookmarkBorder,
+                        title = if (searchQuery.isBlank()) "No bookmarks yet" else "No matches",
+                        description = if (searchQuery.isBlank()) {
+                            "Save a page with \"Add this page\" to find it here later."
+                        } else {
+                            null
+                        },
+                    )
+                }
 
-            else -> {
-                LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                    items(filtered, key = { it.guid }) { node ->
-                        val url = node.url.orEmpty()
-                        // Swipe end-to-start to remove — no per-row trash icon. See SwipeToRemoveRow.
-                        SwipeToRemoveRow(
-                            onRemove = {
-                                scope.launch {
-                                    runCatching { bookmarksStorage.deleteNode(node.guid) }
-                                    reload()
-                                }
-                            },
-                        ) {
-                            ListItem(
-                                modifier = Modifier.clickable { onOpenUrl(url) },
-                                leadingContent = { Favicon(url) },
-                                headlineContent = {
-                                    Text(
-                                        text = node.title?.takeIf { it.isNotBlank() } ?: url,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
+                SheetContentPhase.Content -> {
+                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                        items(filtered, key = { it.guid }) { node ->
+                            val url = node.url.orEmpty()
+                            // Swipe end-to-start to remove — no per-row trash icon.
+                            // See SwipeToRemoveRow.
+                            SwipeToRemoveRow(
+                                onRemove = {
+                                    scope.launch {
+                                        runCatching { bookmarksStorage.deleteNode(node.guid) }
+                                        reload()
+                                    }
                                 },
-                                supportingContent = {
-                                    Text(
-                                        text = url,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                            )
+                            ) {
+                                ListItem(
+                                    modifier = Modifier.clickable { onOpenUrl(url) },
+                                    leadingContent = { Favicon(url) },
+                                    headlineContent = {
+                                        Text(
+                                            text = node.title?.takeIf { it.isNotBlank() } ?: url,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    supportingContent = {
+                                        Text(
+                                            text = url,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                )
+                            }
                         }
                     }
                 }

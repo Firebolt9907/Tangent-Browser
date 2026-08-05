@@ -61,6 +61,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.ui.components.EmptyState
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentPhase
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentSwitch
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
 import com.firebolt9907.tangentbrowser.sync.bitwarden.BitwardenController
 import com.firebolt9907.tangentbrowser.ui.bitwarden.BitwardenConnectSection
@@ -129,67 +131,86 @@ fun PasswordsSheet(
 
         Spacer(Modifier.height(8.dp))
 
-        if (loading) {
-            CircularProgressIndicator(
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(vertical = 24.dp),
-            )
-        } else {
-            val filtered = if (searchQuery.isBlank()) entries else entries.filter {
-                it.origin.contains(searchQuery, ignoreCase = true) ||
-                    it.username.contains(searchQuery, ignoreCase = true)
-            }
+        val filtered = if (searchQuery.isBlank()) entries else entries.filter {
+            it.origin.contains(searchQuery, ignoreCase = true) ||
+                it.username.contains(searchQuery, ignoreCase = true)
+        }
 
-            if (filtered.isEmpty()) {
-                if (searchQuery.isNotBlank()) {
-                    EmptyState(
-                        icon = Icons.Default.Search,
-                        title = "No matching passwords",
-                        description = "No saved logins match \"$searchQuery\".",
+        // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
+        val phase = when {
+            loading -> SheetContentPhase.Loading
+            filtered.isEmpty() -> SheetContentPhase.Empty
+            else -> SheetContentPhase.Content
+        }
+        SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+            Column(modifier = Modifier.fillMaxWidth()) {
+                when (current) {
+                    SheetContentPhase.Loading -> CircularProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(vertical = 24.dp),
                     )
-                } else {
-                    EmptyState(
-                        icon = Icons.Default.Lock,
-                        title = "No saved passwords",
-                        description = "Logins you save will appear here. Add one with the button below.",
-                    )
-                }
-            } else {
-                // Capped, not fixed: the Add button below must stay reachable when the
-                // list is long, but a short list should shrink to fit rather than reserve
-                // 320dp of empty space above it.
-                LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
-                    items(filtered, key = { it.guid }) { meta ->
-                        // Swipe end-to-start to delete — opens the confirm dialog (sensitive data,
-                        // so it's confirmed, not immediate); the row springs back until confirmed.
-                        // Keeps only reveal + copy on the row instead of a third trash icon.
-                        SwipeToRemoveRow(
-                            onRemove = { showDeleteConfirm = meta.guid },
-                            settleOnRemove = false,
-                        ) {
-                            PasswordRow(
-                                meta = meta,
-                                // On-demand, transient decryption: fetch this one record's password
-                                // only when the row needs it (reveal/copy), never for the whole list.
-                                fetchPassword = { runCatching { loginsStorage.get(meta.guid)?.password }.getOrNull() },
-                            )
+
+                    SheetContentPhase.Empty -> if (searchQuery.isNotBlank()) {
+                        EmptyState(
+                            icon = Icons.Default.Search,
+                            title = "No matching passwords",
+                            description = "No saved logins match \"$searchQuery\".",
+                        )
+                    } else {
+                        EmptyState(
+                            icon = Icons.Default.Lock,
+                            title = "No saved passwords",
+                            description = "Logins you save will appear here. Add one with the " +
+                                "button below.",
+                        )
+                    }
+
+                    // Capped, not fixed: the Add button below must stay reachable when the
+                    // list is long, but a short list should shrink to fit rather than reserve
+                    // 320dp of empty space above it.
+                    SheetContentPhase.Content -> LazyColumn(
+                        modifier = Modifier.heightIn(max = 320.dp),
+                    ) {
+                        items(filtered, key = { it.guid }) { meta ->
+                            // Swipe end-to-start to delete — opens the confirm dialog (sensitive
+                            // data, so it's confirmed, not immediate); the row springs back until
+                            // confirmed. Keeps only reveal + copy on the row instead of a third
+                            // trash icon.
+                            SwipeToRemoveRow(
+                                onRemove = { showDeleteConfirm = meta.guid },
+                                settleOnRemove = false,
+                            ) {
+                                PasswordRow(
+                                    meta = meta,
+                                    // On-demand, transient decryption: fetch this one record's
+                                    // password only when the row needs it (reveal/copy), never for
+                                    // the whole list.
+                                    fetchPassword = {
+                                        runCatching {
+                                            loginsStorage.get(meta.guid)?.password
+                                        }.getOrNull()
+                                    },
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(8.dp))
+                if (current != SheetContentPhase.Loading) {
+                    Spacer(Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(
-                    onClick = { showAddDialog = true },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Add Password")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = { showAddDialog = true },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Add Password")
+                        }
+                    }
                 }
             }
         }

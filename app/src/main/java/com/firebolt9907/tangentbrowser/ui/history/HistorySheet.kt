@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.ui.components.SheetSearchField
 import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
 import com.firebolt9907.tangentbrowser.ui.components.EmptyState
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentPhase
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentSwitch
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.components.SwipeToRemoveRow
@@ -155,66 +157,74 @@ fun HistorySheet(
             Spacer(Modifier.height(8.dp))
         }
 
-        when {
-            loading -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 40.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator()
+        // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
+        val phase = when {
+            loading -> SheetContentPhase.Loading
+            filtered.isEmpty() -> SheetContentPhase.Empty
+            else -> SheetContentPhase.Content
+        }
+        SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+            when (current) {
+                SheetContentPhase.Loading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 40.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator()
+                    }
                 }
-            }
 
-            filtered.isEmpty() -> {
-                EmptyState(
-                    icon = Icons.Default.History,
-                    title = if (searchQuery.isBlank()) "No history yet" else "No matches",
-                    description = if (searchQuery.isBlank()) {
-                        "Pages you visit will show up here."
-                    } else {
-                        null
-                    },
-                )
-            }
+                SheetContentPhase.Empty -> {
+                    EmptyState(
+                        icon = Icons.Default.History,
+                        title = if (searchQuery.isBlank()) "No history yet" else "No matches",
+                        description = if (searchQuery.isBlank()) {
+                            "Pages you visit will show up here."
+                        } else {
+                            null
+                        },
+                    )
+                }
 
-            else -> {
-                LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                    grouped.forEach { (date, dayVisits) ->
-                        item(key = "header-$date") {
-                            DateSectionHeader(dayLabel(date))
-                        }
-                        items(dayVisits, key = { it.visitTime }) { visit ->
-                            // Swipe end-to-start to remove — keeps rows clean instead of a trash
-                            // icon on every one. See SwipeToRemoveRow.
-                            SwipeToRemoveRow(
-                                onRemove = {
-                                    scope.launch {
-                                        runCatching { historyStorage.deleteVisitsFor(visit.url) }
-                                        reload()
-                                    }
-                                },
-                            ) {
-                                ListItem(
-                                    modifier = Modifier.clickable { onOpenUrl(visit.url) },
-                                    leadingContent = { Favicon(visit.url) },
-                                    headlineContent = {
-                                        Text(
-                                            text = visit.title?.takeIf { it.isNotBlank() } ?: visit.url,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
+                SheetContentPhase.Content -> {
+                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                        grouped.forEach { (date, dayVisits) ->
+                            item(key = "header-$date") {
+                                DateSectionHeader(dayLabel(date))
+                            }
+                            items(dayVisits, key = { it.visitTime }) { visit ->
+                                // Swipe end-to-start to remove — keeps rows clean instead of a trash
+                                // icon on every one. See SwipeToRemoveRow.
+                                SwipeToRemoveRow(
+                                    onRemove = {
+                                        scope.launch {
+                                            runCatching { historyStorage.deleteVisitsFor(visit.url) }
+                                            reload()
+                                        }
                                     },
-                                    supportingContent = {
-                                        Text(
-                                            text = "${visit.url}  ·  ${formatVisitTime(visit.visitTime)}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    },
-                                )
+                                ) {
+                                    ListItem(
+                                        modifier = Modifier.clickable { onOpenUrl(visit.url) },
+                                        leadingContent = { Favicon(visit.url) },
+                                        headlineContent = {
+                                            Text(
+                                                text = visit.title?.takeIf { it.isNotBlank() } ?: visit.url,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        },
+                                        supportingContent = {
+                                            Text(
+                                                text = "${visit.url}  ·  ${formatVisitTime(visit.visitTime)}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        },
+                                    )
+                                }
                             }
                         }
                     }

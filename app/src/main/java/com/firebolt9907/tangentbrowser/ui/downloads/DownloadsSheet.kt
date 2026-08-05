@@ -46,6 +46,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
 import com.firebolt9907.tangentbrowser.ui.components.EmptyState
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentPhase
+import com.firebolt9907.tangentbrowser.ui.components.SheetContentSwitch
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.components.SwipeToRemoveRow
 import kotlinx.coroutines.Dispatchers
@@ -114,38 +116,54 @@ fun DownloadsSheet(
 
         Spacer(Modifier.height(12.dp))
 
-        if (loading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 40.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
-            }
-        } else if (downloads.isEmpty()) {
-            EmptyState(
-                icon = Icons.Default.Download,
-                title = "No downloads yet",
-                description = "Files you download will show up here.",
-            )
-        } else {
-            LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                items(downloads, key = { it.id }) { entry ->
-                    // Swipe end-to-start to remove — no per-row trash icon. See SwipeToRemoveRow.
-                    SwipeToRemoveRow(
-                        onRemove = {
-                            // remove() hits the DownloadManager content provider and can throw;
-                            // guard it so a failure can't crash the sheet. The row is dropped
-                            // from the UI regardless so the action still feels responsive.
-                            runCatching { downloadManager(context)?.remove(entry.id) }
-                            downloads = downloads.filterNot { it.id == entry.id }
-                        },
+        // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
+        val phase = when {
+            loading -> SheetContentPhase.Loading
+            downloads.isEmpty() -> SheetContentPhase.Empty
+            else -> SheetContentPhase.Content
+        }
+        SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+            when (current) {
+                SheetContentPhase.Loading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 40.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        DownloadRow(
-                            entry = entry,
-                            onOpen = { openDownload(context, entry) },
-                        )
+                        CircularProgressIndicator()
+                    }
+                }
+
+                SheetContentPhase.Empty -> {
+                    EmptyState(
+                        icon = Icons.Default.Download,
+                        title = "No downloads yet",
+                        description = "Files you download will show up here.",
+                    )
+                }
+
+                SheetContentPhase.Content -> {
+                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                        items(downloads, key = { it.id }) { entry ->
+                            // Swipe end-to-start to remove — no per-row trash icon.
+                            // See SwipeToRemoveRow.
+                            SwipeToRemoveRow(
+                                onRemove = {
+                                    // remove() hits the DownloadManager content provider and can
+                                    // throw; guard it so a failure can't crash the sheet. The row
+                                    // is dropped from the UI regardless so the action still feels
+                                    // responsive.
+                                    runCatching { downloadManager(context)?.remove(entry.id) }
+                                    downloads = downloads.filterNot { it.id == entry.id }
+                                },
+                            ) {
+                                DownloadRow(
+                                    entry = entry,
+                                    onOpen = { openDownload(context, entry) },
+                                )
+                            }
+                        }
                     }
                 }
             }

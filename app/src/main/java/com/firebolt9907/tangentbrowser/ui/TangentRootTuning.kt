@@ -182,6 +182,13 @@ internal object TangentMotion {
     val PredictiveBackCommit = tween<Float>(durationMillis = PredictiveBackDurationMs, easing = EaseOut)
     val PredictiveBackCancel = tween<Float>(durationMillis = 180, easing = EaseOut)
 
+    // Retraction of an unconsummated pull-to-refresh: the finger let go below the threshold, so the
+    // overscroll line has to travel back to nothing instead of being snapped there. Critically
+    // damped on purpose — the refresh line is *mounted* on `distance > 0`, so an underdamped spring
+    // dipping below zero would unmount and then re-mount it as the spring came back, flickering the
+    // faint track. Pixel-scale value, so the visibility threshold is half a pixel (see [CardSnapBack]).
+    val PullRetract = spring<Float>(dampingRatio = 1f, stiffness = 500f, visibilityThreshold = 0.5f)
+
     // The Custom Tab *close* commit is deliberately the one exception to [PredictiveBackCommit]: the
     // window's own exit animation (`overridePendingTransition`, see AGENTS.md → Custom Tab exit
     // animation) picks up from whatever frame this ends on, so the in-app slide is kept short to

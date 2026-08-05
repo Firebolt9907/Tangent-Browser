@@ -842,6 +842,26 @@ fun TangentRoot(
     val pullRefreshProgressProvider = remember(pullRefreshThresholdPx) {
         { (pullRefreshDistancePx / pullRefreshThresholdPx).coerceIn(0f, 1f) }
     }
+    // Retraction of a released-but-unconsummated pull (see settlePullRefresh). Held so a fresh pull
+    // can pre-empt an in-flight retract instead of fighting it for the distance value.
+    var pullRetractJob by remember { mutableStateOf<Job?>(null) }
+    // The refresh line's own presence, kept separate from whether it has anything to show. Without
+    // it the line pops in at full opacity on the first pull pixel and — worse — vanishes in a single
+    // frame the moment the reload completes, cutting the sweep band off mid-travel. Composition is
+    // gated on a plain bool flipped at the animation's ends so the alpha stays a draw-phase read.
+    val pullLineAlpha = remember { Animatable(0f) }
+    var pullLineComposed by remember { mutableStateOf(false) }
+    val pullLineAlphaProvider = remember { { pullLineAlpha.value } }
+    val pullLineShown = pullRefreshActive || pullRefreshing
+    LaunchedEffect(pullLineShown) {
+        if (pullLineShown) {
+            pullLineComposed = true
+            pullLineAlpha.animateTo(1f, ExpressiveMotion.fastEffectsSpec())
+        } else {
+            pullLineAlpha.animateTo(0f, ExpressiveMotion.defaultEffectsSpec())
+            pullLineComposed = false
+        }
+    }
     val trackedPreviousUrl = selectedTabId?.let(previousObservedUrlByTab::get)
     val previousHistoryUrl = remember(
         selectedTabId,
@@ -1590,8 +1610,28 @@ fun TangentRoot(
     }
 
     fun resetPullRefresh() {
+        pullRetractJob?.cancel()
+        pullRetractJob = null
         pullRefreshDistancePx = 0f
         pullThresholdHapticFired = false
+    }
+
+    // Release below the refresh threshold: the pull tracked the finger 1:1 the whole way down, so
+    // snapping the distance to zero here would end that tracking on a cut. Spring it back instead
+    // (the finger has stopped, so a decelerate-only settle from the current offset is what the
+    // rubber-band already implies), and let the line unmount when it actually reaches nothing.
+    fun settlePullRefresh() {
+        pullThresholdHapticFired = false
+        if (pullRefreshDistancePx <= 0f) return
+        pullRetractJob?.cancel()
+        pullRetractJob = scope.launch {
+            animate(
+                initialValue = pullRefreshDistancePx,
+                targetValue = 0f,
+                animationSpec = TangentMotion.PullRetract,
+            ) { value, _ -> pullRefreshDistancePx = value }
+            pullRefreshDistancePx = 0f
+        }
     }
 
     fun snapBarCollapseProgress(target: Float) {
@@ -2885,6 +2925,12 @@ fun TangentRoot(
                         userScrollInteractionActive = true
                     },
                     onTopOverscrollPull = { distance ->
+                        // A new pull owns the distance value outright — kill any retract still
+                        // running from the previous release before writing to it.
+                        if (pullRetractJob != null) {
+                            pullRetractJob?.cancel()
+                            pullRetractJob = null
+                        }
                         pullRefreshDistancePx = distance.coerceIn(0f, pullRefreshMaxDistancePx)
                         // Buzz exactly once when the pull first crosses the refresh threshold, and
                         // re-arm the haptic if the user drags back below it. Below the threshold, a
@@ -2901,13 +2947,18 @@ fun TangentRoot(
                     },
                     onTopOverscrollRelease = { distance ->
                         pullRamp.reset()
+                        var triggered = false
                         if (distance >= pullRefreshThresholdPx && selectedContent?.loading != true) {
                             selectedTabId?.let {
                                 pullRefreshing = true
+                                triggered = true
                                 components.sessionUseCases.reload.invoke(it)
                             }
                         }
-                        resetPullRefresh()
+                        // A triggered refresh hands the line straight over to its sweeping band, so
+                        // the pull fill is replaced rather than retracted; an untriggered one has to
+                        // travel back.
+                        if (triggered) resetPullRefresh() else settlePullRefresh()
                     },
                     onOpenWindowRequest = { request: WindowRequest ->
                         val preparedSession = request.prepare()
@@ -3593,9 +3644,10 @@ fun TangentRoot(
                 // Arc/Zen-style refresh line: a horizontal primary-coloured line that fills from the
                 // centre as you pull (driven by the live distance from PullRefreshContainer's nested
                 // scroll), snaps bright + buzzes at the threshold, then pulses while the reload runs.
-                if (pullRefreshActive || pullRefreshing) {
+                if (pullLineComposed) {
                     PullRefreshLine(
                         progress = pullRefreshProgressProvider,
+                        alpha = pullLineAlphaProvider,
                         refreshing = pullRefreshing,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier

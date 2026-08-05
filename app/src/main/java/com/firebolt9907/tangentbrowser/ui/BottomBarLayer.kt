@@ -515,10 +515,15 @@ internal fun BottomBarLayer(
  *  - While pulling: a centre-out fill whose width and brightness track [progress]; at the
  *    threshold (progress == 1) it reaches full brightness (the haptic is fired by the caller).
  *  - While [refreshing]: a bright band sweeps horizontally across a faint full-width track.
+ *
+ * [alpha] is the caller's presence fade, applied to every stroke here rather than to a layer so it
+ * stays a draw-phase read: the line arrives and leaves on it instead of cutting in on the first pull
+ * pixel and disappearing mid-sweep the frame the reload finishes.
  */
 @Composable
 internal fun PullRefreshLine(
     progress: () -> Float,
+    alpha: () -> Float,
     refreshing: Boolean,
     color: Color,
     modifier: Modifier = Modifier,
@@ -536,12 +541,13 @@ internal fun PullRefreshLine(
         // Read the live pull magnitude in the draw phase so a pull frame repaints this line without
         // recomposing it (or TangentRoot).
         val progressValue = progress()
+        val presence = alpha().coerceIn(0f, 1f)
         val w = size.width
         val cy = size.height / 2f
         val stroke = size.height
         // Faint full-width track.
         drawLine(
-            color = color.copy(alpha = 0.15f),
+            color = color.copy(alpha = 0.15f * presence),
             start = Offset(0f, cy),
             end = Offset(w, cy),
             strokeWidth = stroke,
@@ -551,7 +557,7 @@ internal fun PullRefreshLine(
             val band = w * 0.35f
             val start = -band + sweep * (w + band)
             drawLine(
-                color = color,
+                color = color.copy(alpha = color.alpha * presence),
                 start = Offset(start.coerceAtLeast(0f), cy),
                 end = Offset((start + band).coerceAtMost(w), cy),
                 strokeWidth = stroke,
@@ -561,7 +567,7 @@ internal fun PullRefreshLine(
             val fill = w * progressValue
             val left = (w - fill) / 2f
             drawLine(
-                color = color.copy(alpha = lerp(0.45f, 1f, progressValue)),
+                color = color.copy(alpha = lerp(0.45f, 1f, progressValue) * presence),
                 start = Offset(left, cy),
                 end = Offset(left + fill, cy),
                 strokeWidth = stroke,

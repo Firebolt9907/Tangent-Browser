@@ -1,6 +1,7 @@
 package com.firebolt9907.tangentbrowser.ui.passwords
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,23 +9,28 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,6 +42,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,81 +74,145 @@ fun AddressesSheet(
 ) {
     val scope = rememberCoroutineScope()
     val haptics = rememberTangentHaptics()
+    val snackbarHostState = remember { SnackbarHostState() }
     var addresses by remember { mutableStateOf<List<Address>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    // A failed read used to fall through to an empty list, so a storage error rendered as the
+    // confident (and wrong) claim "No saved addresses" with no way to retry. Remembered instead.
+    var loadFailed by remember { mutableStateOf(false) }
+    var reloadKey by remember { mutableStateOf(0) }
     var showAddDialog by remember { mutableStateOf(false) }
-    var showDeleteConfirm by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
-        addresses = runCatching { creditCardsStorage.getAllAddresses() }.getOrDefault(emptyList())
+    LaunchedEffect(reloadKey) {
+        loading = true
+        runCatching { creditCardsStorage.getAllAddresses() }
+            .onSuccess {
+                addresses = it
+                loadFailed = false
+            }
+            .onFailure { loadFailed = true }
         loading = false
     }
 
-    TangentModalSheet(onDismissRequest = onDismiss) {
-        SheetHeader(
-            title = "Addresses",
-            leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null) },
+    // Deleting an address is fully reversible: an Address carries every field addAddress() takes,
+    // so the record can be rebuilt verbatim. That makes a snackbar undo the right surface — the
+    // confirm dialog this replaces taxed every delete to protect against a mistake we can just fix.
+    // (No haptics.remove() here — SwipeToRemoveRow already plays it on the gesture that gets here.)
+    suspend fun deleteWithUndo(address: Address) {
+        runCatching {
+            creditCardsStorage.deleteAddress(address.guid)
+            creditCardsStorage.getAllAddresses()
+        }.onSuccess { addresses = it }
+        val result = snackbarHostState.showSnackbar(
+            message = "Address removed",
+            actionLabel = "Undo",
+            duration = SnackbarDuration.Long,
         )
-
-        Spacer(Modifier.height(12.dp))
-
-        // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
-        val phase = when {
-            loading -> SheetContentPhase.Loading
-            addresses.isEmpty() -> SheetContentPhase.Empty
-            else -> SheetContentPhase.Content
+        if (result == SnackbarResult.ActionPerformed) {
+            runCatching {
+                creditCardsStorage.addAddress(address.toUpdatableFields())
+                creditCardsStorage.getAllAddresses()
+            }.onSuccess {
+                addresses = it
+                haptics.create()
+            }
         }
-        SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+    }
+
+    TangentModalSheet(onDismissRequest = onDismiss) {
+        // The snackbar overlays the sheet's content rather than sitting after it in the column, so
+        // a message doesn't shove the list around as it comes and goes.
+        Box(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                when (current) {
-                    SheetContentPhase.Loading -> CircularProgressIndicator(
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .padding(vertical = 24.dp),
-                    )
+                SheetHeader(
+                    title = "Addresses",
+                    leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null) },
+                )
 
-                    SheetContentPhase.Empty -> EmptyState(
-                        icon = Icons.Default.LocationOn,
-                        title = "No saved addresses",
-                        description = "Addresses you save will appear here and can be autofilled " +
-                            "into checkout and profile forms. Add one with the button below.",
-                    )
+                Spacer(Modifier.height(12.dp))
 
-                    // Capped, not fixed: the Add button below must stay reachable when the
-                    // list is long, but a short list should shrink to fit rather than reserve
-                    // 320dp of empty space above it.
-                    SheetContentPhase.Content -> LazyColumn(
-                        modifier = Modifier.heightIn(max = 320.dp),
-                    ) {
-                        items(addresses, key = { it.guid }) { address ->
-                            // Swipe end-to-start to delete → confirm dialog (row springs back
-                            // until confirmed). See SwipeToRemoveRow.
-                            SwipeToRemoveRow(
-                                onRemove = { showDeleteConfirm = address.guid },
-                                settleOnRemove = false,
+                // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
+                val phase = when {
+                    loading -> SheetContentPhase.Loading
+                    addresses.isEmpty() -> SheetContentPhase.Empty
+                    else -> SheetContentPhase.Content
+                }
+                SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        when (current) {
+                            SheetContentPhase.Loading -> CircularProgressIndicator(
+                                modifier = Modifier
+                                    .align(Alignment.CenterHorizontally)
+                                    .padding(vertical = 24.dp),
+                            )
+
+                            SheetContentPhase.Empty -> if (loadFailed) {
+                                EmptyState(
+                                    icon = Icons.Default.LocationOn,
+                                    title = "Couldn't load addresses",
+                                    description = "Your saved addresses are still there — the " +
+                                        "store just didn't answer.",
+                                    action = {
+                                        Button(onClick = { reloadKey++ }) { Text("Try again") }
+                                    },
+                                )
+                            } else {
+                                EmptyState(
+                                    icon = Icons.Default.LocationOn,
+                                    title = "No saved addresses",
+                                    description = "Addresses you save will appear here and can be " +
+                                        "autofilled into checkout and profile forms. Add one with " +
+                                        "the button below.",
+                                )
+                            }
+
+                            // Capped, not fixed: the Add button below must stay reachable when the
+                            // list is long, but a short list should shrink to fit rather than reserve
+                            // 320dp of empty space above it.
+                            SheetContentPhase.Content -> LazyColumn(
+                                modifier = Modifier.heightIn(max = 320.dp),
                             ) {
-                                AddressRow(address = address)
+                                items(addresses, key = { it.guid }) { address ->
+                                    // Swipe end-to-start deletes straight away; the snackbar undo
+                                    // above is the safety net, so the row settles rather than
+                                    // springing back to wait on a dialog.
+                                    SwipeToRemoveRow(
+                                        onRemove = { scope.launch { deleteWithUndo(address) } },
+                                        removeLabel = "Remove address",
+                                    ) {
+                                        AddressRow(address = address)
+                                    }
+                                }
+                            }
+                        }
+
+                        if (current != SheetContentPhase.Loading) {
+                            Spacer(Modifier.height(8.dp))
+
+                            // The one action on this surface, and the reason the sheet exists when
+                            // it is empty — a full-width filled button, not a tonal outline sharing
+                            // a Row with nothing.
+                            Button(
+                                onClick = { showAddDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(
+                                    Icons.Default.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(ButtonDefaults.IconSize),
+                                )
+                                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                                Text("Add Address")
                             }
                         }
                     }
                 }
-
-                if (current != SheetContentPhase.Loading) {
-                    Spacer(Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedButton(
-                            onClick = { showAddDialog = true },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text("Add Address")
-                        }
-                    }
-                }
             }
+
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 
@@ -152,39 +224,34 @@ fun AddressesSheet(
                     runCatching {
                         creditCardsStorage.addAddress(fields)
                         creditCardsStorage.getAllAddresses()
-                    }.onSuccess { addresses = it }
+                    }.onSuccess {
+                        addresses = it
+                        haptics.create()
+                    }.onFailure {
+                        // Silently dropping the save made a failed write look identical to a
+                        // successful one that simply hadn't refreshed yet.
+                        snackbarHostState.showSnackbar("Couldn't save that address")
+                    }
                 }
                 showAddDialog = false
             },
         )
     }
-
-    showDeleteConfirm?.let { guid ->
-        val address = addresses.find { it.guid == guid }
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirm = null },
-            title = { Text("Delete address?") },
-            text = { Text("Remove ${address?.name?.ifBlank { "this address" } ?: "this address"}?") },
-            confirmButton = {
-                TextButton(onClick = {
-                    haptics.remove()
-                    scope.launch {
-                        runCatching {
-                            creditCardsStorage.deleteAddress(guid)
-                            creditCardsStorage.getAllAddresses()
-                        }.onSuccess { addresses = it }
-                    }
-                    showDeleteConfirm = null
-                }) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = null }) { Text("Cancel") }
-            },
-        )
-    }
 }
+
+/** Rebuilds the writable field set from a stored [Address] — the inverse of [addAddress]. */
+private fun Address.toUpdatableFields() = UpdatableAddressFields(
+    name = name,
+    organization = organization,
+    streetAddress = streetAddress,
+    addressLevel3 = addressLevel3,
+    addressLevel2 = addressLevel2,
+    addressLevel1 = addressLevel1,
+    postalCode = postalCode,
+    country = country,
+    tel = tel,
+    email = email,
+)
 
 @Composable
 private fun AddressRow(
@@ -229,6 +296,10 @@ private fun AddAddressDialog(
     var tel by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
 
+    // Nine fields deep; opening the dialog and then having to tap the first one is a wasted step.
+    val nameFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { nameFocus.requestFocus() }
+
     // At least a name or a street line makes for a useful, fillable record.
     val canSave = name.isNotBlank() || street.isNotBlank()
 
@@ -259,7 +330,10 @@ private fun AddAddressDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                AddressField(name, { name = it }, "Full name", ImeAction.Next)
+                AddressField(
+                    name, { name = it }, "Full name", ImeAction.Next,
+                    modifier = Modifier.focusRequester(nameFocus),
+                )
                 AddressField(organization, { organization = it }, "Organization (optional)", ImeAction.Next)
                 AddressField(street, { street = it }, "Street address", ImeAction.Next, singleLine = false)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

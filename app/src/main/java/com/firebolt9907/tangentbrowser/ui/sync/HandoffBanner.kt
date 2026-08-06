@@ -1,7 +1,8 @@
 package com.firebolt9907.tangentbrowser.ui.sync
 
-import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,6 +29,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -38,6 +41,8 @@ import com.firebolt9907.tangentbrowser.ui.BannerStackState
 import com.firebolt9907.tangentbrowser.ui.MorphingBannerHost
 import com.firebolt9907.tangentbrowser.ui.bannerSwipeToDismiss
 import com.firebolt9907.tangentbrowser.ui.shape.SquircleShape
+import com.firebolt9907.tangentbrowser.ui.theme.labelLargeEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.pressMorphCorner
 
 /**
  * Handoff-style banner floating above the bottom bar: offers to continue a tab that was just
@@ -141,51 +146,86 @@ fun OtpPasteBannerHost(
         stackId = "otpPaste",
         stackPriority = BannerPriority.OtpPaste,
     ) {
-        Surface(
-            shape = SquircleShape(28.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-            tonalElevation = 3.dp,
-            shadowElevation = 6.dp,
+        BannerCard(
+            icon = Icons.Default.Sms,
+            title = "Enter code from SMS",
+            subtitle = "Tap to paste the code from your clipboard",
+            dismissDescription = "Dismiss code prompt",
+            onClick = onPaste,
+            onDismiss = onDismiss,
+        )
+    }
+}
+
+/**
+ * The one floating-banner card the four hosts above share. They differ only in glyph and wording, so
+ * the surface, the press morph and the a11y shape live here rather than in four near-copies.
+ *
+ * Expressive detail: the card is an opaque tappable container, so it takes the shape-morph on press
+ * ([pressMorphCorner]) — via the corner radius rather than [pressMorphShape], since these banners are
+ * `SquircleShape` and must stay superelliptical while they compress. The `interactionSource` is
+ * hoisted into both the shape and the row's `clickable`, or the morph never sees the press; passing
+ * one explicitly also means passing `indication`, or the ripple silently goes away.
+ */
+@Composable
+private fun BannerCard(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    dismissDescription: String,
+    onClick: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    Surface(
+        shape = SquircleShape(pressMorphCorner(interactionSource, resting = 28.dp)),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        tonalElevation = 3.dp,
+        shadowElevation = 6.dp,
+        modifier = Modifier
+            .widthIn(max = 480.dp)
+            .bannerSwipeToDismiss(onDismiss),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier
-                .widthIn(max = 480.dp)
-                .bannerSwipeToDismiss(onDismiss),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onPaste)
-                    .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Sms,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp),
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = LocalIndication.current,
+                    role = Role.Button,
+                    onClick = onClick,
                 )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Enter code from SMS",
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "Tap to paste the code from your clipboard",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                IconButton(onClick = onDismiss) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Dismiss",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelLargeEmphasized,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = dismissDescription,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -198,53 +238,14 @@ private fun SendToDeviceCard(
     onSend: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Surface(
-        shape = SquircleShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        tonalElevation = 3.dp,
-        shadowElevation = 6.dp,
-        modifier = Modifier
-            .widthIn(max = 480.dp)
-            .bannerSwipeToDismiss(onDismiss),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onSend)
-                .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
-        ) {
-            Icon(
-                imageVector = deviceIcon(deviceType),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp),
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Link copied",
-                    style = MaterialTheme.typography.labelLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = "Send to $deviceName",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            IconButton(onClick = onDismiss) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Dismiss",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
+    BannerCard(
+        icon = deviceIcon(deviceType),
+        title = "Link copied",
+        subtitle = "Send to $deviceName",
+        dismissDescription = "Dismiss send prompt",
+        onClick = onSend,
+        onDismiss = onDismiss,
+    )
 }
 
 @Composable
@@ -253,53 +254,14 @@ fun HandoffCard(
     onOpen: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Surface(
-        shape = SquircleShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        tonalElevation = 3.dp,
-        shadowElevation = 6.dp,
-        modifier = Modifier
-            .widthIn(max = 480.dp)
-            .bannerSwipeToDismiss(onDismiss),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onOpen)
-                .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
-        ) {
-            Icon(
-                imageVector = deviceIcon(tab.deviceType),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp),
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Continue from ${tab.deviceName}",
-                    style = MaterialTheme.typography.labelLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = tab.title.ifBlank { tab.url },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            IconButton(onClick = onDismiss) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Dismiss handoff",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
+    BannerCard(
+        icon = deviceIcon(tab.deviceType),
+        title = "Continue from ${tab.deviceName}",
+        subtitle = tab.title.ifBlank { tab.url },
+        dismissDescription = "Dismiss handoff",
+        onClick = onOpen,
+        onDismiss = onDismiss,
+    )
 }
 
 /**
@@ -341,53 +303,14 @@ private fun ReceivedTabCard(
     onOpen: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Surface(
-        shape = SquircleShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        tonalElevation = 3.dp,
-        shadowElevation = 6.dp,
-        modifier = Modifier
-            .widthIn(max = 480.dp)
-            .bannerSwipeToDismiss(onDismiss),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onOpen)
-                .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
-        ) {
-            Icon(
-                imageVector = deviceIcon(tab.deviceType),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp),
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Tab from ${tab.deviceName ?: "another device"}",
-                    style = MaterialTheme.typography.labelLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = tab.title.ifBlank { tab.url },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            IconButton(onClick = onDismiss) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Dismiss",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
+    BannerCard(
+        icon = deviceIcon(tab.deviceType),
+        title = "Tab from ${tab.deviceName ?: "another device"}",
+        subtitle = tab.title.ifBlank { tab.url },
+        dismissDescription = "Dismiss received tab",
+        onClick = onOpen,
+        onDismiss = onDismiss,
+    )
 }
 
 // Icon for a synced device. The handoff/received banners pass an inferred label

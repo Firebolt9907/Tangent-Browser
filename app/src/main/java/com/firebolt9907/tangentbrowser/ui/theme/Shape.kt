@@ -48,12 +48,25 @@ fun pressMorphShape(
     interactionSource: InteractionSource,
     resting: Dp,
     pressed: Dp = resting / 2,
-): Shape {
+): Shape = RoundedCornerShape(pressMorphCorner(interactionSource, resting, pressed))
+
+/**
+ * The corner *radius* half of [pressMorphShape], for containers whose outline is not a
+ * [RoundedCornerShape] — notably `SquircleShape`, which the floating banners and the tab cards use.
+ * Feed it straight into that shape's radius so the morph keeps the surface's own corner geometry
+ * instead of flattening it to a circular arc on press.
+ */
+@Composable
+fun pressMorphCorner(
+    interactionSource: InteractionSource,
+    resting: Dp,
+    pressed: Dp = resting / 2,
+): Dp {
     val isPressed by interactionSource.collectIsPressedAsState()
     val corner by animateDpAsState(
         targetValue = if (isPressed) pressed else resting,
         animationSpec = ExpressiveMotion.fastSpatialSpec(),
         label = "pressMorphCorner",
     )
-    return RoundedCornerShape(corner)
+    return corner
 }

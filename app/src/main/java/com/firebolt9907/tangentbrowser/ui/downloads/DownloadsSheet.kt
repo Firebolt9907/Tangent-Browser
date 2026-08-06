@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -100,14 +101,31 @@ fun DownloadsSheet(
     // empty state for the duration of that query and then swaps to the list — the same reason every
     // other library sheet keeps a loading flag.
     var loading by remember { mutableStateOf(true) }
+    // A failed read of the DownloadManager queue used to be indistinguishable from an empty one:
+    // queryDownloads swallowed the null service / null cursor and the sheet then stated "No
+    // downloads yet" — a confident, wrong claim about the user's files, with no way to retry.
+    var loadFailed by remember { mutableStateOf(false) }
+    // Bumping this re-keys the loader, so "Try again" is one state change rather than a second
+    // parallel load path.
+    var reloadKey by remember { mutableStateOf(0) }
 
     // Initial load + poll while anything is still in flight so progress updates live.
     // queryDownloads runs a DownloadManager content-provider query + cursor walk, so keep it off
     // the main thread to avoid jank/ANR during the 1.2s polling loop.
-    LaunchedEffect(Unit) {
+    LaunchedEffect(reloadKey) {
+        loading = true
+        loadFailed = false
         while (true) {
-            downloads = withContext(Dispatchers.IO) { queryDownloads(context) }
+            val loaded = withContext(Dispatchers.IO) { queryDownloads(context) }
             loading = false
+            if (loaded == null) {
+                // Keep whatever the last good poll produced rather than blanking a live list on one
+                // transient provider failure; the error state only shows when there is nothing.
+                loadFailed = true
+                break
+            }
+            loadFailed = false
+            downloads = loaded
             if (downloads.none { it.isActive }) break
             delay(1200)
         }
@@ -158,11 +176,25 @@ fun DownloadsSheet(
                         }
 
                         SheetContentPhase.Empty -> {
-                            EmptyState(
-                                icon = Icons.Default.Download,
-                                title = "No downloads yet",
-                                description = "Files you download will show up here.",
-                            )
+                            // Two very different nothings share this phase: a genuinely empty queue,
+                            // and a queue we couldn't read. Only the latter gets an action.
+                            if (loadFailed) {
+                                EmptyState(
+                                    icon = Icons.Default.ErrorOutline,
+                                    title = "Couldn't load downloads",
+                                    description =
+                                        "Something went wrong reading your downloads.",
+                                    action = {
+                                        Button(onClick = { reloadKey++ }) { Text("Try again") }
+                                    },
+                                )
+                            } else {
+                                EmptyState(
+                                    icon = Icons.Default.Download,
+                                    title = "No downloads yet",
+                                    description = "Files you download will show up here.",
+                                )
+                            }
                         }
 
                         SheetContentPhase.Content -> {
@@ -170,7 +202,10 @@ fun DownloadsSheet(
                                 items(downloads, key = { it.id }) { entry ->
                                     // Swipe end-to-start to remove — no per-row trash icon.
                                     // See SwipeToRemoveRow.
-                                    SwipeToRemoveRow(onRemove = { removeEntry(entry.id) }) {
+                                    SwipeToRemoveRow(
+                                        onRemove = { removeEntry(entry.id) },
+                                        removeLabel = "Remove download",
+                                    ) {
                                         DownloadRow(
                                             entry = entry,
                                             onOpen = {
@@ -223,10 +258,21 @@ fun DownloadsSheet(
             confirmButton = {
                 TextButton(onClick = {
                     showClearConfirm = false
+                    haptics.remove()
                     val dm = downloadManager(context)
                     // remove() can throw; guard the whole sweep so one bad id can't crash the sheet.
-                    runCatching { downloads.forEach { dm?.remove(it.id) } }
+                    // A partial sweep used to be silent — the list emptied either way, so a failure
+                    // looked exactly like a success until the next poll put the rows back.
+                    val cleared = runCatching { downloads.forEach { dm?.remove(it.id) } }
                     downloads = emptyList()
+                    if (cleared.isFailure) {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                message = "Couldn't clear every download",
+                                duration = SnackbarDuration.Short,
+                            )
+                        }
+                    }
                 }) {
                     Text("Clear all", color = MaterialTheme.colorScheme.error)
                 }
@@ -312,10 +358,15 @@ private fun DownloadEntry.progressText(): String =
 private fun downloadManager(context: Context): DownloadManager? =
     context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
 
-private fun queryDownloads(context: Context): List<DownloadEntry> {
-    val dm = downloadManager(context) ?: return emptyList()
+/**
+ * Reads back this app's DownloadManager queue, or `null` if the queue couldn't be read at all —
+ * no download service, no cursor, or a throwing content-provider query. `null` is deliberately not
+ * folded into an empty list: the sheet renders those two cases differently.
+ */
+private fun queryDownloads(context: Context): List<DownloadEntry>? = runCatching {
+    val dm = downloadManager(context) ?: return null
     val result = mutableListOf<DownloadEntry>()
-    val cursor = dm.query(DownloadManager.Query()) ?: return emptyList()
+    val cursor = dm.query(DownloadManager.Query()) ?: return null
     cursor.use { c ->
         val idCol = c.getColumnIndex(DownloadManager.COLUMN_ID)
         val titleCol = c.getColumnIndex(DownloadManager.COLUMN_TITLE)
@@ -337,8 +388,8 @@ private fun queryDownloads(context: Context): List<DownloadEntry> {
         }
     }
     // Most recent first.
-    return result.sortedByDescending { it.lastModified }
-}
+    result.sortedByDescending { it.lastModified }
+}.getOrNull()
 
 /** Outcome of tapping a completed download, so the caller can surface the failure as a snackbar. */
 private enum class OpenResult { Opened, FileMissing, NoHandler }

@@ -1,6 +1,7 @@
 package com.firebolt9907.tangentbrowser.ui.passwords
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,21 +9,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CreditCard
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,6 +40,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,6 +53,7 @@ import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.components.SwipeToRemoveRow
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
+import com.firebolt9907.tangentbrowser.ui.theme.bodyLargeEmphasized
 import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.CreditCard
 import mozilla.components.concept.storage.CreditCardNumber
@@ -64,81 +73,124 @@ fun CreditCardsSheet(
 ) {
     val scope = rememberCoroutineScope()
     val haptics = rememberTangentHaptics()
+    val snackbarHostState = remember { SnackbarHostState() }
     var cards by remember { mutableStateOf<List<CreditCard>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    // A failed read used to fall through to an empty list, so a storage error rendered as the
+    // confident (and wrong) claim "No saved cards" with no way to retry. Remembered instead.
+    var loadFailed by remember { mutableStateOf(false) }
+    var reloadKey by remember { mutableStateOf(0) }
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(Unit) {
-        cards = runCatching { creditCardsStorage.getAllCreditCards() }.getOrDefault(emptyList())
+    LaunchedEffect(reloadKey) {
+        loading = true
+        runCatching { creditCardsStorage.getAllCreditCards() }
+            .onSuccess {
+                cards = it
+                loadFailed = false
+            }
+            .onFailure { loadFailed = true }
         loading = false
     }
 
     TangentModalSheet(onDismissRequest = onDismiss) {
-        SheetHeader(
-            title = "Payment methods",
-            leadingIcon = { Icon(Icons.Default.CreditCard, contentDescription = null) },
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
-        val phase = when {
-            loading -> SheetContentPhase.Loading
-            cards.isEmpty() -> SheetContentPhase.Empty
-            else -> SheetContentPhase.Content
-        }
-        SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+        // The snackbar overlays the sheet's content rather than sitting after it in the column, so
+        // a message doesn't shove the list around as it comes and goes.
+        Box(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                when (current) {
-                    SheetContentPhase.Loading -> CircularProgressIndicator(
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .padding(vertical = 24.dp),
-                    )
+                SheetHeader(
+                    title = "Payment methods",
+                    leadingIcon = { Icon(Icons.Default.CreditCard, contentDescription = null) },
+                )
 
-                    SheetContentPhase.Empty -> EmptyState(
-                        icon = Icons.Default.CreditCard,
-                        title = "No saved cards",
-                        description = "Cards you save will appear here and can be autofilled into " +
-                            "payment forms. Add one with the button below.",
-                    )
+                Spacer(Modifier.height(12.dp))
 
-                    // Capped, not fixed: the Add button below must stay reachable when the
-                    // list is long, but a short list should shrink to fit rather than reserve
-                    // 320dp of empty space above it.
-                    SheetContentPhase.Content -> LazyColumn(
-                        modifier = Modifier.heightIn(max = 320.dp),
-                    ) {
-                        items(cards, key = { it.guid }) { card ->
-                            // Swipe end-to-start to delete → confirm dialog (row springs back until
-                            // confirmed, since payment data is sensitive). See SwipeToRemoveRow.
-                            SwipeToRemoveRow(
-                                onRemove = { showDeleteConfirm = card.guid },
-                                settleOnRemove = false,
+                // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
+                val phase = when {
+                    loading -> SheetContentPhase.Loading
+                    cards.isEmpty() -> SheetContentPhase.Empty
+                    else -> SheetContentPhase.Content
+                }
+                SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        when (current) {
+                            SheetContentPhase.Loading -> CircularProgressIndicator(
+                                modifier = Modifier
+                                    .align(Alignment.CenterHorizontally)
+                                    .padding(vertical = 24.dp),
+                            )
+
+                            SheetContentPhase.Empty -> if (loadFailed) {
+                                EmptyState(
+                                    icon = Icons.Default.CreditCard,
+                                    title = "Couldn't load cards",
+                                    description = "Your saved cards are still there — the store " +
+                                        "just didn't answer.",
+                                    action = {
+                                        Button(onClick = { reloadKey++ }) { Text("Try again") }
+                                    },
+                                )
+                            } else {
+                                EmptyState(
+                                    icon = Icons.Default.CreditCard,
+                                    title = "No saved cards",
+                                    description = "Cards you save will appear here and can be " +
+                                        "autofilled into payment forms. Add one with the button " +
+                                        "below.",
+                                )
+                            }
+
+                            // Capped, not fixed: the Add button below must stay reachable when the
+                            // list is long, but a short list should shrink to fit rather than reserve
+                            // 320dp of empty space above it.
+                            SheetContentPhase.Content -> LazyColumn(
+                                modifier = Modifier.heightIn(max = 320.dp),
                             ) {
-                                CreditCardRow(card = card)
+                                items(cards, key = { it.guid }) { card ->
+                                    // Swipe end-to-start to delete → confirm dialog (row springs
+                                    // back until confirmed). Unlike an address (iter 18) a card is
+                                    // NOT restorable: the PAN is encrypted at rest and is never
+                                    // decrypted for this UI, so an undo could only re-add a card
+                                    // without its number. The dialog stays.
+                                    SwipeToRemoveRow(
+                                        onRemove = { showDeleteConfirm = card.guid },
+                                        settleOnRemove = false,
+                                        removeLabel = "Remove card",
+                                    ) {
+                                        CreditCardRow(card = card)
+                                    }
+                                }
+                            }
+                        }
+
+                        if (current != SheetContentPhase.Loading) {
+                            Spacer(Modifier.height(8.dp))
+
+                            // The one action on this surface, and the reason the sheet exists when
+                            // it is empty — a full-width filled button, not a tonal outline sharing
+                            // a Row with nothing.
+                            Button(
+                                onClick = { showAddDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(
+                                    Icons.Default.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(ButtonDefaults.IconSize),
+                                )
+                                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                                Text("Add Card")
                             }
                         }
                     }
                 }
-
-                if (current != SheetContentPhase.Loading) {
-                    Spacer(Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedButton(
-                            onClick = { showAddDialog = true },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text("Add Card")
-                        }
-                    }
-                }
             }
+
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 
@@ -150,7 +202,13 @@ fun CreditCardsSheet(
                     runCatching {
                         creditCardsStorage.addCreditCard(fields)
                         creditCardsStorage.getAllCreditCards()
-                    }.onSuccess { cards = it }
+                    }.onSuccess {
+                        cards = it
+                        haptics.create()
+                    }.onFailure {
+                        // A failed save was silent, so a card that never landed looked saved.
+                        snackbarHostState.showSnackbar("Couldn't save that card")
+                    }
                 }
                 showAddDialog = false
             },
@@ -171,6 +229,9 @@ fun CreditCardsSheet(
                             creditCardsStorage.deleteCreditCard(guid)
                             creditCardsStorage.getAllCreditCards()
                         }.onSuccess { cards = it }
+                            .onFailure {
+                                snackbarHostState.showSnackbar("Couldn't remove that card")
+                            }
                     }
                     showDeleteConfirm = null
                 }) {
@@ -191,10 +252,13 @@ private fun CreditCardRow(
     ListItem(
         leadingContent = { Icon(Icons.Default.CreditCard, contentDescription = null) },
         headlineContent = {
+            // The masked number IS the row's identity — carry the emphasized weight, not the
+            // supporting text's.
             Text(
                 text = "•••• ${card.cardNumberLast4}",
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyLargeEmphasized,
             )
         },
         supportingContent = {
@@ -259,11 +323,16 @@ private fun AddCardDialog(
         }
     }
 
+    // Four fields plus labels overflow a dialog at large font scales, and the card number is the
+    // only field anyone starts with — so scroll the body and open the keyboard on it.
+    val numberFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { numberFocus.requestFocus() }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Card") },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = number,
                     onValueChange = { number = it },
@@ -273,7 +342,9 @@ private fun AddCardDialog(
                         keyboardType = KeyboardType.Number,
                         imeAction = ImeAction.Next,
                     ),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(numberFocus),
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(

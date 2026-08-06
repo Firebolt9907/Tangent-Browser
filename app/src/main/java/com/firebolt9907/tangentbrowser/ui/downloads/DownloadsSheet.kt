@@ -5,12 +5,9 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,17 +16,19 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -37,13 +36,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
 import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
 import com.firebolt9907.tangentbrowser.ui.components.EmptyState
 import com.firebolt9907.tangentbrowser.ui.components.SheetContentPhase
@@ -52,6 +52,7 @@ import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.components.SwipeToRemoveRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
@@ -86,6 +87,13 @@ fun DownloadsSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val haptics = rememberTangentHaptics()
+    // Failures used to be android.widget.Toast — an unthemed platform surface that draws *outside*
+    // the sheet and can't offer a way out of the failure. A SnackbarHost anchored to the sheet's
+    // own bottom edge is the M3 surface for this, and it can carry the recovery action: a download
+    // whose file is gone is a dead row, so the message offers to remove it.
+    val snackbarHostState = remember { SnackbarHostState() }
     var downloads by remember { mutableStateOf<List<DownloadEntry>>(emptyList()) }
     var showClearConfirm by remember { mutableStateOf(false) }
     // True until the first query comes back. Without it the sheet renders its "No downloads yet"
@@ -105,68 +113,101 @@ fun DownloadsSheet(
         }
     }
 
+    // Drops an entry from both the DownloadManager queue and the list. Shared by the swipe gesture
+    // and the "file is gone" snackbar action.
+    fun removeEntry(id: Long) {
+        // remove() hits the DownloadManager content provider and can throw; guard it so a failure
+        // can't crash the sheet. The row is dropped from the UI regardless so the action still
+        // feels responsive.
+        runCatching { downloadManager(context)?.remove(id) }
+        downloads = downloads.filterNot { it.id == id }
+    }
+
     TangentModalSheet(onDismissRequest = onDismiss, bottomPadding = 12.dp) {
-        SheetHeader("Downloads") {
-            if (downloads.isNotEmpty()) {
-                TextButton(onClick = { showClearConfirm = true }) {
-                    Text("Clear all")
-                }
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
-        val phase = when {
-            loading -> SheetContentPhase.Loading
-            downloads.isEmpty() -> SheetContentPhase.Empty
-            else -> SheetContentPhase.Content
-        }
-        SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
-            when (current) {
-                SheetContentPhase.Loading -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 40.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator()
+        // The snackbar overlays the sheet's own content rather than sitting after it in the column,
+        // so a message doesn't shove the list around as it comes and goes.
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                SheetHeader("Downloads") {
+                    if (downloads.isNotEmpty()) {
+                        TextButton(onClick = { showClearConfirm = true }) {
+                            Text("Clear all")
+                        }
                     }
                 }
 
-                SheetContentPhase.Empty -> {
-                    EmptyState(
-                        icon = Icons.Default.Download,
-                        title = "No downloads yet",
-                        description = "Files you download will show up here.",
-                    )
-                }
+                Spacer(Modifier.height(12.dp))
 
-                SheetContentPhase.Content -> {
-                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                        items(downloads, key = { it.id }) { entry ->
-                            // Swipe end-to-start to remove — no per-row trash icon.
-                            // See SwipeToRemoveRow.
-                            SwipeToRemoveRow(
-                                onRemove = {
-                                    // remove() hits the DownloadManager content provider and can
-                                    // throw; guard it so a failure can't crash the sheet. The row
-                                    // is dropped from the UI regardless so the action still feels
-                                    // responsive.
-                                    runCatching { downloadManager(context)?.remove(entry.id) }
-                                    downloads = downloads.filterNot { it.id == entry.id }
-                                },
+                // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
+                val phase = when {
+                    loading -> SheetContentPhase.Loading
+                    downloads.isEmpty() -> SheetContentPhase.Empty
+                    else -> SheetContentPhase.Content
+                }
+                SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+                    when (current) {
+                        SheetContentPhase.Loading -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 40.dp),
+                                contentAlignment = Alignment.Center,
                             ) {
-                                DownloadRow(
-                                    entry = entry,
-                                    onOpen = { openDownload(context, entry) },
-                                )
+                                CircularProgressIndicator()
+                            }
+                        }
+
+                        SheetContentPhase.Empty -> {
+                            EmptyState(
+                                icon = Icons.Default.Download,
+                                title = "No downloads yet",
+                                description = "Files you download will show up here.",
+                            )
+                        }
+
+                        SheetContentPhase.Content -> {
+                            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                                items(downloads, key = { it.id }) { entry ->
+                                    // Swipe end-to-start to remove — no per-row trash icon.
+                                    // See SwipeToRemoveRow.
+                                    SwipeToRemoveRow(onRemove = { removeEntry(entry.id) }) {
+                                        DownloadRow(
+                                            entry = entry,
+                                            onOpen = {
+                                                when (openDownload(context, entry)) {
+                                                    OpenResult.Opened -> Unit
+                                                    OpenResult.FileMissing -> scope.launch {
+                                                        val result = snackbarHostState.showSnackbar(
+                                                            message = "File no longer on this device",
+                                                            actionLabel = "Remove",
+                                                            duration = SnackbarDuration.Long,
+                                                        )
+                                                        if (result == SnackbarResult.ActionPerformed) {
+                                                            haptics.remove()
+                                                            removeEntry(entry.id)
+                                                        }
+                                                    }
+                                                    OpenResult.NoHandler -> scope.launch {
+                                                        snackbarHostState.showSnackbar(
+                                                            message = "No app can open this file",
+                                                            duration = SnackbarDuration.Short,
+                                                        )
+                                                    }
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
+
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 
@@ -299,23 +340,24 @@ private fun queryDownloads(context: Context): List<DownloadEntry> {
     return result.sortedByDescending { it.lastModified }
 }
 
-private fun openDownload(context: Context, entry: DownloadEntry) {
+/** Outcome of tapping a completed download, so the caller can surface the failure as a snackbar. */
+private enum class OpenResult { Opened, FileMissing, NoHandler }
+
+private fun openDownload(context: Context, entry: DownloadEntry): OpenResult {
     val dm = downloadManager(context)
     val uri: Uri? = dm?.getUriForDownloadedFile(entry.id)
-    if (uri == null) {
-        Toast.makeText(context, "File not available", Toast.LENGTH_SHORT).show()
-        return
-    }
+    if (uri == null) return OpenResult.FileMissing
     val mime = entry.mimeType ?: dm?.getMimeTypeForDownloadedFile(entry.id) ?: "*/*"
     val intent = Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(uri, mime)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    try {
+    return try {
         context.startActivity(intent)
+        OpenResult.Opened
     } catch (_: ActivityNotFoundException) {
-        Toast.makeText(context, "No app can open this file", Toast.LENGTH_SHORT).show()
+        OpenResult.NoHandler
     }
 }
 

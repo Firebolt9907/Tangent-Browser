@@ -1,6 +1,5 @@
 package com.firebolt9907.tangentbrowser.ui.settings
 
-import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,12 +26,15 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.firebolt9907.tangentbrowser.state.GlobalPreferencesStore
 import com.firebolt9907.tangentbrowser.state.PreloadMode
 import com.firebolt9907.tangentbrowser.state.WebDarkModeTrigger
@@ -141,7 +144,28 @@ fun SettingsSheet(
     // power-user toggles. They share all the hoisted state above, so switching is just a branch.
     var showAdvanced by remember { mutableStateOf(false) }
 
-    TangentModalSheet(onDismissRequest = onDismiss, scrollable = true) {
+    // Settings' feedback used to be android.widget.Toast: unthemed, drawn outside the sheet, and on
+    // modern Android often swallowed while a sheet is up. A SnackbarHost keeps it on the surface the
+    // action happened on. Lives in the sheet's overlay slot so showing it can't shove the content.
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    fun notify(message: String) {
+        scope.launch {
+            snackbarHostState.currentSnackbarData?.dismiss()
+            snackbarHostState.showSnackbar(message)
+        }
+    }
+
+    TangentModalSheet(
+        onDismissRequest = onDismiss,
+        scrollable = true,
+        overlay = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 12.dp),
+            )
+        },
+    ) {
         if (showAdvanced) {
             AdvancedSettingsPage(
                 globalPrefsStore = globalPrefsStore,
@@ -226,7 +250,7 @@ fun SettingsSheet(
 
         Spacer(Modifier.height(20.dp))
 
-        DefaultBrowserCard()
+        DefaultBrowserCard(onMessage = ::notify)
 
         Spacer(Modifier.height(20.dp))
 
@@ -379,7 +403,7 @@ fun SettingsSheet(
             )
             if (systemAutofillEnabled) {
                 SheetRowDivider()
-                SystemAutofillServiceRow()
+                SystemAutofillServiceRow(onMessage = ::notify)
             }
             SheetRowDivider()
             SettingsPicker(
@@ -757,7 +781,7 @@ fun SettingsSheet(
                         showClearDialog = false
                         haptics.remove()
                         onClearBrowsingData(history, cookies, cache)
-                        Toast.makeText(context, "Browsing data cleared", Toast.LENGTH_SHORT).show()
+                        notify("Browsing data cleared")
                     },
                 )
             }
@@ -807,11 +831,7 @@ fun SettingsSheet(
                             showClearPermsConfirm = false
                             haptics.remove()
                             onClearSitePermissions()
-                            Toast.makeText(
-                                context,
-                                "Cleared remembered site permissions",
-                                Toast.LENGTH_SHORT,
-                            ).show()
+                            notify("Cleared remembered site permissions")
                         }) {
                             Text("Clear", color = MaterialTheme.colorScheme.error)
                         }
@@ -1335,7 +1355,7 @@ private fun AdvancedSettingsPage(
  * in system settings).
  */
 @Composable
-private fun DefaultBrowserCard() {
+private fun DefaultBrowserCard(onMessage: (String) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var isDefault by remember { mutableStateOf(isDefaultBrowser(context)) }
@@ -1361,7 +1381,7 @@ private fun DefaultBrowserCard() {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { launchDefaultBrowserRequest(context, launcher) }
+                .clickable { launchDefaultBrowserRequest(context, launcher, onMessage) }
                 .padding(vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1407,6 +1427,7 @@ private fun isDefaultBrowser(context: android.content.Context): Boolean {
 private fun launchDefaultBrowserRequest(
     context: android.content.Context,
     launcher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>,
+    onMessage: (String) -> Unit,
 ) {
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
         val rm = context.getSystemService(android.app.role.RoleManager::class.java)
@@ -1420,7 +1441,7 @@ private fun launchDefaultBrowserRequest(
     runCatching {
         launcher.launch(android.content.Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
     }.onFailure {
-        Toast.makeText(context, "Open Settings to change your default browser", Toast.LENGTH_SHORT).show()
+        onMessage("Open Settings to change your default browser")
     }
 }
 
@@ -1431,7 +1452,7 @@ private fun launchDefaultBrowserRequest(
  * the Android Autofill Framework automatically once a service is selected — no in-app credentials.
  */
 @Composable
-private fun SystemAutofillServiceRow() {
+private fun SystemAutofillServiceRow(onMessage: (String) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     // isEnabled() = a device autofill service is selected and usable here (any provider). Distinct
@@ -1458,7 +1479,7 @@ private fun SystemAutofillServiceRow() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { launchAutofillServicePicker(context, launcher) }
+            .clickable { launchAutofillServicePicker(context, launcher, onMessage) }
             .padding(vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1489,6 +1510,7 @@ private fun SystemAutofillServiceRow() {
 private fun launchAutofillServicePicker(
     context: android.content.Context,
     launcher: androidx.activity.result.ActivityResultLauncher<android.content.Intent>,
+    onMessage: (String) -> Unit,
 ) {
     runCatching {
         launcher.launch(android.content.Intent(android.provider.Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE))
@@ -1496,11 +1518,7 @@ private fun launchAutofillServicePicker(
     runCatching {
         launcher.launch(android.content.Intent(android.provider.Settings.ACTION_SETTINGS))
     }.onFailure {
-        Toast.makeText(
-            context,
-            "Open Settings → Passwords & accounts → Autofill service to choose your password manager",
-            Toast.LENGTH_LONG,
-        ).show()
+        onMessage("Open Settings → Passwords & accounts → Autofill service to choose your password manager")
     }
 }
 

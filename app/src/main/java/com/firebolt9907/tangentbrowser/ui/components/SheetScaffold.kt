@@ -3,6 +3,7 @@ package com.firebolt9907.tangentbrowser.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material.icons.filled.Delete
@@ -63,6 +64,10 @@ import androidx.compose.ui.unit.dp
  * used to fix separately), zero window insets, and the standard padded content column.
  * [scrollable] adds a vertical scroll for static-content sheets (Settings); list sheets bring
  * their own LazyColumn. Behavior stays in each sheet — this is just the shared shell.
+ *
+ * [overlay] draws on top of (and outside) the content column — the place for a per-sheet
+ * `SnackbarHost`. A host placed as a trailing child of [content] would shove the sheet's layout on
+ * every show/hide, and in a `scrollable` sheet it would scroll off the screen entirely.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +75,7 @@ fun TangentModalSheet(
     onDismissRequest: () -> Unit,
     bottomPadding: Dp = 28.dp,
     scrollable: Boolean = false,
+    overlay: @Composable BoxScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
     ModalBottomSheet(
@@ -77,14 +83,17 @@ fun TangentModalSheet(
         onDismissRequest = onDismissRequest,
         contentWindowInsets = { WindowInsets(0.dp) },
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-                .padding(horizontal = 20.dp)
-                .padding(bottom = bottomPadding),
-            content = content,
-        )
+        Box {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = bottomPadding),
+                content = content,
+            )
+            overlay()
+        }
     }
 }
 

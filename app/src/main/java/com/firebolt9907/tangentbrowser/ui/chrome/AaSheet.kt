@@ -462,7 +462,9 @@ private fun PageTabContent(
 
     // ---- Shared action handlers (reused by the quick-action tiles and secondary rows) ----
     fun doShare() {
-        shareUrl(context, shareableUrl, pageTitle)
+        // onFeedback lands on the page-level host outside this sheet (iter 23/24), so the
+        // "no share target" message survives the onDismiss() below.
+        shareUrl(context, shareableUrl, pageTitle) { onFeedback(it, null, null) }
         onDismiss()
     }
 

@@ -3,20 +3,22 @@ package com.firebolt9907.tangentbrowser.ui
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.widget.Toast
 import androidx.core.net.toUri
 
 /**
  * Launch a native-app deep link the current page requested (the [Intent] resolved by
  * `TangentRequestInterceptor`). Runs from the application context, so it forces
  * [Intent.FLAG_ACTIVITY_NEW_TASK]. If the app has since vanished, follows the site's declared web
- * [fallbackUrl] via [onFallback] (loading it back in the tab); with no fallback, a brief toast.
+ * [fallbackUrl] via [onFallback] (loading it back in the tab); with no fallback, it reports through
+ * [onMessage] so the caller can raise its themed snackbar (this is a top-level helper — see
+ * [shareUrl] for why a `Toast` here was the wrong channel).
  */
 internal fun launchExternalApp(
     context: Context,
     intent: Intent,
     fallbackUrl: String?,
     onFallback: (String) -> Unit,
+    onMessage: (String) -> Unit,
 ) {
     val toLaunch = Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     try {
@@ -25,7 +27,7 @@ internal fun launchExternalApp(
         if (fallbackUrl != null) {
             onFallback(fallbackUrl)
         } else {
-            Toast.makeText(context, "No app found to open this link", Toast.LENGTH_SHORT).show()
+            onMessage("No app found to open this link")
         }
     }
 }

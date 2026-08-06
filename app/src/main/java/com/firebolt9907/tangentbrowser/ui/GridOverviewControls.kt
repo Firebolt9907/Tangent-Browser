@@ -112,6 +112,8 @@ internal fun ColumnScope.GridOverviewControls(
     onShowCreditCards: () -> Unit,
     onShowAddresses: () -> Unit,
     onShowSettings: () -> Unit,
+    /** Page-level feedback channel: the overflow's home-screen pin reports a refusal through it. */
+    onFeedback: (String) -> Unit,
 ) {
     val handoff = syncState.handoffTab
     AnimatedVisibility(
@@ -347,7 +349,7 @@ internal fun ColumnScope.GridOverviewControls(
                         onClick = {
                             overflowOpen = false
                             selectedTab?.content?.let { c ->
-                                pinPageToHomeScreen(context, c.url, c.title, c.icon)
+                                pinPageToHomeScreen(context, c.url, c.title, c.icon, onFeedback)
                             }
                             haptics.softClick()
                         },

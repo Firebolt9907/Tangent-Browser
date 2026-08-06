@@ -365,6 +365,14 @@ fun TangentRoot(
     // Transient hide after tapping "Open": suppresses the banner for the exact page acted on, but a
     // new tab or a fresh navigation to the site brings it back (unlike dismissedAppHosts).
     var openInAppActedKey by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    // The one page-level feedback channel (see PageFeedback.kt). Created here rather than inside
+    // TangentOverlaySheets because the root's own confirmations — a remote sign-out, a copied link,
+    // a saved blob file, an app link with no app left to open it — need it too; the host that draws
+    // it still lives at the end of the sheets composable, so a message always draws over the
+    // surfaces that raise it.
+    val pageFeedback = rememberPageFeedback(scope)
+
     // A pending offer targets the previously-visible tab; drop it when the tab changes.
     LaunchedEffect(selectedTabId) {
         com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.clear()
@@ -373,9 +381,13 @@ fun TangentRoot(
     LaunchedEffect(requestedLaunch) {
         val req = requestedLaunch ?: return@LaunchedEffect
         if (components.globalPreferencesStore.autoOpenAppLinks) {
-            launchExternalApp(appContext, req.intent, req.fallbackUrl) { fb ->
-                req.tabId?.let { components.tabRepository.loadUrl(fb, it) }
-            }
+            launchExternalApp(
+                context = appContext,
+                intent = req.intent,
+                fallbackUrl = req.fallbackUrl,
+                onFallback = { fb -> req.tabId?.let { components.tabRepository.loadUrl(fb, it) } },
+                onMessage = { pageFeedback.show(it) },
+            )
             com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.clear()
         }
     }
@@ -610,12 +622,6 @@ fun TangentRoot(
         com.firebolt9907.tangentbrowser.ui.content.ClipboardChangeWatcher(appContext)
     }
     var contentSize by remember { mutableStateOf(IntSize.Zero) }
-    val scope = rememberCoroutineScope()
-    // The one page-level feedback channel (see PageFeedback.kt). Created here rather than inside
-    // TangentOverlaySheets because the root's own confirmations — a remote sign-out, a copied link,
-    // a saved blob file — need it too; the host that draws it still lives at the end of the sheets
-    // composable, so a message always draws over the surfaces that raise it.
-    val pageFeedback = rememberPageFeedback(scope)
 
     // Horizontal tab-switch / predictive-back drag gesture (invariant #5) grouped in
     // HorizontalGestureState; local `var x by hdrag.x` delegate aliases keep every site unchanged.
@@ -3614,6 +3620,7 @@ fun TangentRoot(
                             onShowCreditCards = { showCreditCards = true },
                             onShowAddresses = { showAddresses = true },
                             onShowSettings = { showSettings = true },
+                            onFeedback = { pageFeedback.show(it) },
                         )
                     }
                 }
@@ -3891,7 +3898,11 @@ fun TangentRoot(
                         onUrlLongPress = copyCurrentUrl,
                         onForwardTap = { selectedTabId?.let { components.sessionUseCases.goForward.invoke(it, true) } },
                         onShareTap = {
-                            shareUrl(appContext, selectedContent?.url.orEmpty(), selectedContent?.title)
+                            shareUrl(
+                                appContext,
+                                selectedContent?.url.orEmpty(),
+                                selectedContent?.title,
+                            ) { pageFeedback.show(it) }
                         },
                         onBookmarksTap = { showBookmarks = true },
                         onTabsTap = { openGrid(initialVelocityProgressPerSec = 0f) },
@@ -4166,9 +4177,15 @@ fun TangentRoot(
                         onOpen = {
                             val req = requestedLaunch
                             if (req != null) {
-                                launchExternalApp(appContext, req.intent, req.fallbackUrl) { fb ->
-                                    req.tabId?.let { components.tabRepository.loadUrl(fb, it) }
-                                }
+                                launchExternalApp(
+                                    context = appContext,
+                                    intent = req.intent,
+                                    fallbackUrl = req.fallbackUrl,
+                                    onFallback = { fb ->
+                                        req.tabId?.let { components.tabRepository.loadUrl(fb, it) }
+                                    },
+                                    onMessage = { pageFeedback.show(it) },
+                                )
                                 com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.clear()
                             } else {
                                 val app = associatedApp

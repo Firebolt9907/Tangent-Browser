@@ -10,9 +10,10 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
 import com.firebolt9907.tangentbrowser.ui.TangentMotion
+import com.firebolt9907.tangentbrowser.ui.PageFeedbackHost
+import com.firebolt9907.tangentbrowser.ui.rememberPageFeedback
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
@@ -165,6 +166,9 @@ fun CustomTabRoot(
     val components = (context.applicationContext as TangentApplication).components
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
+    // This surface's own feedback channel (see PageFeedback.kt) — the browser root's lives in a
+    // different activity's composition entirely.
+    val feedback = rememberPageFeedback(scope)
 
     val browserState by components.browserState.collectAsStateWithLifecycle()
     // Groups the "Open in Tangent" button can drop this page into (Arc-style). Empty = open directly.
@@ -632,7 +636,11 @@ fun CustomTabRoot(
                                 }
                             }
                         },
-                        onShare = { shareUrl(context, displayUrl, customTab?.content?.title) },
+                        onShare = {
+                            shareUrl(context, displayUrl, customTab?.content?.title) {
+                                feedback.show(it)
+                            }
+                        },
                         onOpenInTangent = {
                             // No groups yet → open straight into the browser (the original behaviour).
                             // Otherwise ask which group to drop the page into, Arc-style.
@@ -704,11 +712,11 @@ fun CustomTabRoot(
                             },
                             onCopy = { u ->
                                 clipboard.setText(AnnotatedString(u))
-                                Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+                                feedback.show("Link copied")
                                 peekUrl = null
                             },
                             onShare = { u ->
-                                shareUrl(context, u)
+                                shareUrl(context, u) { feedback.show(it) }
                                 peekUrl = null
                             },
                             onDismiss = { peekUrl = null },
@@ -729,6 +737,11 @@ fun CustomTabRoot(
                         }
                     )
                 }
+
+                // Page-level feedback, mounted last so it draws over the bar and the link glance
+                // that raise it. The Custom Tab is a separate activity with its own composition, so
+                // it owns its own PageFeedback rather than sharing the browser root's.
+                PageFeedbackHost(feedback, with(density) { barTotalHeightPx.toDp() })
             }
         }
     }

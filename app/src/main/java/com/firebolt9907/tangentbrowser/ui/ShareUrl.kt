@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
-import android.widget.Toast
 
 /**
  * Fires the system share sheet for a page URL — the single share path behind the SafariBar
@@ -12,8 +11,13 @@ import android.widget.Toast
  * becomes the subject line in apps that use one (email, etc.). No-ops on blank/`about:blank` URLs.
  * When [context] is not an Activity (the toolbar passes the application context), the chooser
  * needs `FLAG_ACTIVITY_NEW_TASK` to be allowed to launch.
+ *
+ * This is a top-level helper, so it reports the no-share-target case through [onMessage] rather than
+ * showing UI itself: every caller already owns a themed `PageFeedback` snackbar, and a `Toast` here
+ * would be unthemed, drawn outside the app's surfaces and frequently suppressed while the sheet the
+ * share was triggered from is coming down.
  */
-fun shareUrl(context: Context, url: String, title: String? = null) {
+fun shareUrl(context: Context, url: String, title: String? = null, onMessage: (String) -> Unit) {
     if (url.isBlank() || url == "about:blank") return
     val send = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
@@ -26,7 +30,7 @@ fun shareUrl(context: Context, url: String, title: String? = null) {
     try {
         context.startActivity(chooser)
     } catch (_: ActivityNotFoundException) {
-        Toast.makeText(context, "No app available to share", Toast.LENGTH_SHORT).show()
+        onMessage("No app available to share")
     }
 }
 
@@ -35,6 +39,10 @@ fun shareUrl(context: Context, url: String, title: String? = null) {
  * Web Share carries any combination of title/text/url; we put the title on the subject line and
  * concatenate text + url into the body the way the platform share targets expect. Returns whether
  * the chooser launched, so the caller can resolve the JS promise (onSuccess) or reject it (onFailure).
+ *
+ * Unlike [shareUrl] this one shows the user nothing on failure, deliberately: the return value
+ * rejects `navigator.share()`, and pages that call the Web Share API handle that rejection with
+ * their own message. A snackbar of ours would stack a second, redundant error on top of the page's.
  */
 fun shareWebData(
     context: Context,
@@ -57,7 +65,6 @@ fun shareWebData(
         context.startActivity(chooser)
         true
     } catch (_: ActivityNotFoundException) {
-        Toast.makeText(context, "No app available to share", Toast.LENGTH_SHORT).show()
         false
     }
 }

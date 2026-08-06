@@ -500,7 +500,7 @@ internal fun TangentOverlaySheets(
                 onDismissPeek()
             },
             onShare = { u ->
-                shareUrl(appContext, u)
+                shareUrl(appContext, u) { feedback.show(it) }
                 onDismissPeek()
             },
             onDownload = { u ->
@@ -607,7 +607,7 @@ internal fun TangentOverlaySheets(
                 scope.launch {
                     val ok = com.firebolt9907.tangentbrowser.ui.content.ImageClipboard
                         .shareImage(appContext, u)
-                    if (!ok) shareUrl(appContext, u)
+                    if (!ok) shareUrl(appContext, u) { feedback.show(it) }
                 }
             },
             onDismiss = onDismissImageMenu,

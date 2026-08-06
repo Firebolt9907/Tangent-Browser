@@ -1,6 +1,5 @@
 package com.firebolt9907.tangentbrowser.ui.archive
 
-import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -47,6 +46,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -63,7 +65,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -269,85 +270,116 @@ private fun ArchivePickerModal(
     onDismiss: () -> Unit,
 ) {
     val haptics = rememberTangentHaptics()
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Save Page Now narrates in two beats ("Saving…" → the outcome). showSnackbar queues behind a
+    // mutex, so the outcome would wait out the whole progress line without dismissing it first —
+    // the PageFeedback rule from the page-level feedback host.
+    fun notify(message: String, actionLabel: String? = null, onAction: (() -> Unit)? = null) {
+        snackbarHostState.currentSnackbarData?.dismiss()
+        scope.launch {
+            val result = snackbarHostState.showSnackbar(message, actionLabel = actionLabel)
+            if (result == SnackbarResult.ActionPerformed) onAction?.invoke()
+        }
+    }
+
+    // Declared as a local fun, not an inline lambda, so the failure snackbar's "Try again" can
+    // re-invoke it (a lambda can't reference itself). Safe here: it runs on the modal's own scope,
+    // and the snackbar it's offered from lives inside the same modal.
+    fun savePage() {
+        if (saving) return
+        saving = true
+        notify("Saving to the Internet Archive…")
+        scope.launch {
+            val ok = WaybackManager.instance.savePage(session.originalUrl)
+            saving = false
+            if (ok) {
+                haptics.success()
+                notify("Saved a new snapshot to the Internet Archive")
+            } else {
+                notify(
+                    "Couldn't save right now (rate-limited or offline)",
+                    actionLabel = "Try again",
+                    onAction = ::savePage,
+                )
+            }
+        }
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp),
-        ) {
-            Text(
-                text = "Pick a date",
-                style = MaterialTheme.typography.titleMediumEmphasized,
-                modifier = Modifier.padding(bottom = 4.dp),
-            )
-            Text(
-                text = "Snapshots from the Internet Archive · Wayback Machine",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 10.dp),
-            )
-            // Finding snapshots → the calendar is a ~340dp height change, and the thing being
-            // replaced is a *spinner* — the loudest possible hard cut (see SheetContentSwitch).
-            // Error and Empty share a slot: they're both "one line of text instead of a calendar",
-            // and the session never moves between them.
-            SheetContentSwitch(
-                phase = when (session.phase) {
-                    Phase.Loading -> SheetContentPhase.Loading
-                    Phase.Ready -> SheetContentPhase.Content
-                    else -> SheetContentPhase.Empty
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { phase ->
-                when (phase) {
-                    SheetContentPhase.Loading -> StatusRow(spinner = true, text = "Finding snapshots…")
-                    SheetContentPhase.Empty -> StatusRow(
-                        spinner = false,
-                        text = if (session.phase == Phase.Error) {
-                            "Couldn't reach the Internet Archive"
-                        } else {
-                            "No snapshots for this page"
-                        },
-                    )
-                    SheetContentPhase.Content -> ArchiveCalendarPicker(
-                        session = session,
-                        haptics = haptics,
-                        onSelectYear = onSelectYear,
-                        onSelect = onSelect,
-                    )
+        // The host is a sibling of the content column, not a trailing child of it: a message that
+        // took part in the column's layout would shove the calendar on every show and hide.
+        Box {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 24.dp),
+            ) {
+                Text(
+                    text = "Pick a date",
+                    style = MaterialTheme.typography.titleMediumEmphasized,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+                Text(
+                    text = "Snapshots from the Internet Archive · Wayback Machine",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
+                // Finding snapshots → the calendar is a ~340dp height change, and the thing being
+                // replaced is a *spinner* — the loudest possible hard cut (see SheetContentSwitch).
+                // Error and Empty share a slot: they're both "one line of text instead of a
+                // calendar", and the session never moves between them.
+                SheetContentSwitch(
+                    phase = when (session.phase) {
+                        Phase.Loading -> SheetContentPhase.Loading
+                        Phase.Ready -> SheetContentPhase.Content
+                        else -> SheetContentPhase.Empty
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { phase ->
+                    when (phase) {
+                        SheetContentPhase.Loading -> StatusRow(spinner = true, text = "Finding snapshots…")
+                        SheetContentPhase.Empty -> StatusRow(
+                            spinner = false,
+                            text = if (session.phase == Phase.Error) {
+                                "Couldn't reach the Internet Archive"
+                            } else {
+                                "No snapshots for this page"
+                            },
+                        )
+                        SheetContentPhase.Content -> ArchiveCalendarPicker(
+                            session = session,
+                            haptics = haptics,
+                            onSelectYear = onSelectYear,
+                            onSelect = onSelect,
+                        )
+                    }
+                }
+
+                // Save Page Now — request a fresh capture of the live page so a new snapshot exists.
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = {
+                        haptics.softClick()
+                        savePage()
+                    },
+                    enabled = !saving,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    SaveButtonContent(saving = saving)
                 }
             }
-
-            // Save Page Now — request a fresh capture of the live page so a new snapshot exists.
-            Spacer(Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = {
-                    if (saving) return@OutlinedButton
-                    haptics.softClick()
-                    saving = true
-                    Toast.makeText(context, "Saving to the Internet Archive…", Toast.LENGTH_SHORT).show()
-                    scope.launch {
-                        val ok = WaybackManager.instance.savePage(session.originalUrl)
-                        saving = false
-                        Toast.makeText(
-                            context,
-                            if (ok) "Saved a new snapshot to the Internet Archive"
-                            else "Couldn't save right now (rate-limited or offline)",
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                },
-                enabled = !saving,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                SaveButtonContent(saving = saving)
-            }
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 }

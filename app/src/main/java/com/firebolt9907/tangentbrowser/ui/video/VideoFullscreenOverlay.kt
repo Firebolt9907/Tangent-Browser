@@ -1,8 +1,12 @@
 package com.firebolt9907.tangentbrowser.ui.video
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -34,6 +38,7 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -47,13 +52,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import kotlinx.coroutines.delay
@@ -256,7 +263,9 @@ fun VideoFullscreenOverlay(
                             } else {
                                 Icons.AutoMirrored.Filled.VolumeUp
                             },
-                            contentDescription = "Volume",
+                            // Decorative: the slider beside it carries the "Volume" label, so a
+                            // description here makes TalkBack announce the control twice.
+                            contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(20.dp),
                         )
@@ -279,7 +288,9 @@ fun VideoFullscreenOverlay(
                                 activeTrackColor = Color.White,
                                 inactiveTrackColor = Color.White.copy(alpha = 0.3f),
                             ),
-                            modifier = Modifier.width(100.dp),
+                            modifier = Modifier
+                                .width(100.dp)
+                                .semantics { contentDescription = "Volume" },
                         )
                         OverlayCircleButton(
                             icon = Icons.Filled.PictureInPicture,
@@ -335,13 +346,10 @@ fun VideoFullscreenOverlay(
                         contentDescription = "Back 10 seconds",
                         onClick = { skipBy(-10_000L) },
                     )
-                    OverlayCircleButton(
-                        icon = if (playerState.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-                        contentDescription = if (playerState.paused) "Play" else "Pause",
-                        size = 56.dp,
-                        iconSize = 30.dp,
+                    PlayPauseButton(
+                        paused = playerState.paused,
                         onClick = {
-                            val session = engineSession ?: return@OverlayCircleButton
+                            val session = engineSession ?: return@PlayPauseButton
                             if (playerState.paused) {
                                 VideoPlayerController.play(session)
                                 VideoPlayerManager.setPausedOptimistic(false)
@@ -393,7 +401,8 @@ fun VideoFullscreenOverlay(
                         ),
                         modifier = Modifier
                             .weight(1f)
-                            .padding(horizontal = 8.dp),
+                            .padding(horizontal = 8.dp)
+                            .semantics { contentDescription = "Seek" },
                     )
                     TimeLabel(durationMs)
                 }
@@ -407,7 +416,7 @@ private fun TimeLabel(millis: Long) {
     Text(
         text = formatTime(millis),
         color = Color.White,
-        fontSize = 12.sp,
+        style = MaterialTheme.typography.labelMedium,
         textAlign = TextAlign.Center,
         maxLines = 1,
         softWrap = false,
@@ -417,29 +426,76 @@ private fun TimeLabel(millis: Long) {
     )
 }
 
+/**
+ * A secondary transport control (exit, PiP, ±10s).
+ *
+ * Deliberately takes **no** size: material3's [IconButton] applies
+ * `.size(IconButtonDefaults.smallContainerSize())` *after* the caller's modifier and that function is
+ * `internal` in 1.4.0, so any `Modifier.size(…)` passed in here is silently overridden. (This file
+ * used to pass 44.dp — and 56.dp for play/pause — and got 40.dp for all of them.) The stock button
+ * already clips itself to `standardShape` (a full circle) and already guarantees a 48dp touch target
+ * via `minimumInteractiveComponentSize`, so hand-rolling either of those back in buys nothing.
+ * A control that genuinely needs to be larger has to be a different component — see [PlayPauseButton].
+ */
 @Composable
 private fun OverlayCircleButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
-    size: androidx.compose.ui.unit.Dp = 44.dp,
-    iconSize: androidx.compose.ui.unit.Dp = 22.dp,
 ) {
     IconButton(
         onClick = onClick,
-        modifier = Modifier
-            .size(size)
-            .clip(CircleShape),
         colors = IconButtonDefaults.iconButtonColors(
             containerColor = Color.White.copy(alpha = 0.15f),
             contentColor = Color.White,
         ),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            modifier = Modifier.size(iconSize),
-        )
+        Icon(imageVector = icon, contentDescription = contentDescription)
+    }
+}
+
+/**
+ * The transport's primary control, at 56dp against the 40dp secondaries so the hierarchy the row was
+ * always trying to express actually renders (see [OverlayCircleButton] for why an `IconButton` can't
+ * be that size). A clickable [Surface] is the M3 primitive `IconButton`/FAB are themselves built on,
+ * so it still carries the ripple, the state layer and the 48dp minimum target.
+ *
+ * The glyph swap is an [AnimatedContent] rather than a hard cut: play↔pause is the one control the
+ * user watches while tapping. Scale is spatial (it overshoots, which is the press paying off); alpha
+ * is effects (critically damped — a bouncing opacity reads as a flicker).
+ */
+@Composable
+private fun PlayPauseButton(paused: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .size(56.dp)
+            .semantics { role = Role.Button },
+        shape = CircleShape,
+        color = Color.White.copy(alpha = 0.15f),
+        contentColor = Color.White,
+    ) {
+        AnimatedContent(
+            targetState = paused,
+            transitionSpec = {
+                (
+                    fadeIn(ExpressiveMotion.fastEffectsSpec()) +
+                        scaleIn(ExpressiveMotion.fastSpatialSpec(), initialScale = 0.7f)
+                    ) togetherWith (
+                    fadeOut(ExpressiveMotion.fastEffectsSpec()) +
+                        scaleOut(ExpressiveMotion.fastSpatialSpec(), targetScale = 0.7f)
+                    )
+            },
+            label = "play-pause",
+        ) { isPaused ->
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                    contentDescription = if (isPaused) "Play" else "Pause",
+                    modifier = Modifier.size(30.dp),
+                )
+            }
+        }
     }
 }
 

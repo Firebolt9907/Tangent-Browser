@@ -97,7 +97,24 @@ internal val TabSwitchGap = 64.dp
 internal const val DeckSwipeMinScale = 0.90f
 internal const val DeckSwipeMaxDim = 0.35f
 internal val PullRefreshThreshold = 96.dp
+// Asymptote of the pull's rubber band, NOT a clamp — see rubberBandPull. The indicator approaches
+// this and never arrives, so the pull keeps responding however far the finger travels; the threshold
+// above therefore sits at ~73% of the band, reached after ~171dp of actual finger travel.
 internal val PullRefreshMaxDistance = 132.dp
+// Multi-function overscroll menu (PullActionMenu). The menu fades in from PullMenuRevealDistance so
+// it isn't summoned by an incidental bounce, and each action occupies a PullMenuSlotWidth-wide band
+// of horizontal finger travel measured from where the pull started (centre band = Refresh, i.e. a
+// straight-down pull keeps the plain pull-to-refresh behaviour).
+internal val PullMenuRevealDistance = 36.dp
+internal val PullMenuSlotWidth = 84.dp
+// Gap between the top chrome inset (status bar + refresh line) and the menu, and the distance the
+// menu slides through as it reveals. They are ONE constant on purpose: the slide starts a full gap
+// above the rest position, so at zero reveal the menu sits exactly on the inset and never rides up
+// under the status bar. Two independent numbers drift and the menu clips into the system bar.
+internal val PullMenuTopGap = 16.dp
+// How far the selected chip's blob stretches toward the finger before the selection commits to the
+// next slot. Kept under the 18dp inter-chip spacing so a stretched blob never touches its neighbour.
+internal val PullMenuStretch = 13.dp
 internal const val GridCommitVelocityPxS = 1000f
 // The open spring seeds the finger's release velocity so the settle carries momentum. But a big/fast
 // swipe releases with gridDragProgress ≈ 1 (little range left) AND a high velocity, which rushes

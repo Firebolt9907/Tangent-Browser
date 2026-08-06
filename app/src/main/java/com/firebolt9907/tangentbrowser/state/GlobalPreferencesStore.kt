@@ -396,6 +396,14 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("listenToPageEnabled", false)
         set(value) { prefs.edit { putBoolean("listenToPageEnabled", value) } }
 
+    // When true, pulling down past the top of a page reveals a menu in the overscroll space that the
+    // same finger can slide across horizontally to pick New Tab / Refresh / Reader, Chrome-iOS style.
+    // Refresh is the centre (rest) action, so a plain straight-down pull behaves exactly as it does
+    // with this off — which is why it can default on. See PullActionMenu.kt.
+    var pullMenuEnabled: Boolean
+        get() = prefs.getBoolean("pullMenuEnabled", true)
+        set(value) { prefs.edit { putBoolean("pullMenuEnabled", value) } }
+
     var webFontsEnabled: Boolean
         get() = prefs.getBoolean("webFontsEnabled", true)
         set(value) { prefs.edit { putBoolean("webFontsEnabled", value) } }

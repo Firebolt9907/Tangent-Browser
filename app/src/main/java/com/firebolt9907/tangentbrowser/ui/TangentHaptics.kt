@@ -96,6 +96,21 @@ class TangentHaptics(
     fun step() = play(tick())
 
     /**
+     * A *moving* finger crossed a discrete boundary — the pull menu sliding from one action to the
+     * next. Deliberately heavier than [select] or [step], which fire under a settled fingertip: a
+     * finger already travelling across the glass masks a feather tick almost completely, so the
+     * detent has to carry real weight to register as the selection changing under it at all. Still
+     * short and dry, so a sweep across several slots reads as a row of notches rather than a buzz.
+     */
+    fun detent() = play(
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK)
+        } else {
+            VibrationEffect.createOneShot(14, 150)
+        }
+    )
+
+    /**
      * A binary control flipped. Enabling feels firmer (a click) and disabling is a lighter tick —
      * turning something *on* is the more consequential direction, so it carries more weight.
      */

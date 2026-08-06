@@ -91,8 +91,13 @@ fun ContentHost(
     currentSnapshotRequestId: Int = 0,
     engineRefreshTick: Int = 0,
     onCurrentSnapshotCaptured: (tabId: String, bitmap: android.graphics.Bitmap) -> Unit = { _, _ -> },
-    onTopOverscrollPull: (Float) -> Unit = {},
-    onTopOverscrollRelease: (Float) -> Unit = {},
+    // (pull distance px, horizontal finger travel px since the pull began). The horizontal axis
+    // drives the multi-function overscroll menu; callers that don't offer it ignore it.
+    onTopOverscrollPull: (Float, Float) -> Unit = { _, _ -> },
+    onTopOverscrollRelease: (Float, Float) -> Unit = { _, _ -> },
+    // Asymptote of the pull's rubber band, in px — the distance the indicator approaches but never
+    // reaches however far the finger travels. 0 leaves the container on its linear fallback.
+    pullMaxDistancePx: Float = 0f,
     onOpenWindowRequest: (WindowRequest) -> Unit = {},
     onFullScreenChange: (Boolean) -> Unit = {},
     onFirefoxAuthRedirect: (String) -> Boolean = { false },
@@ -1047,6 +1052,7 @@ fun ContentHost(
         engineView.setActivityContext(context)
         pullContainer.onPull = onTopOverscrollPull
         pullContainer.onRelease = onTopOverscrollRelease
+        pullContainer.maxPullPx = pullMaxDistancePx
         pullContainer.onTouchDown = onPageTouch
         engineView.asView().setOnTouchListener { _, event ->
             predictiveBackVelocityTracker?.addMovement(event)

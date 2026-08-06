@@ -259,6 +259,8 @@ fun TangentRoot(
     // Find-in-page state. The match counts are pushed by the engine session's onFindResult.
     var findInPageActive by remember { mutableStateOf(false) }
     var showBottomToolbar by remember { mutableStateOf(components.globalPreferencesStore.showBottomToolbar) }
+    // Multi-function pull-to-refresh: see pullMenuSelection below. Persisted; Settings → Appearance.
+    var pullMenuEnabled by remember { mutableStateOf(components.globalPreferencesStore.pullMenuEnabled) }
     // When on, the chrome recolors to the current site's declared theme color (see ThemeColorProbe /
     // themeColorsByHost below). Persisted; toggled in Settings → Appearance.
     var matchSiteThemeColor by remember { mutableStateOf(components.globalPreferencesStore.matchSiteThemeColor) }
@@ -580,6 +582,8 @@ fun TangentRoot(
     val tabSwitchGapPx = with(density) { TabSwitchGap.toPx() }
     val pullRefreshThresholdPx = with(density) { PullRefreshThreshold.toPx() }
     val pullRefreshMaxDistancePx = with(density) { PullRefreshMaxDistance.toPx() }
+    val pullMenuRevealPx = with(density) { PullMenuRevealDistance.toPx() }
+    val pullMenuSlotWidthPx = with(density) { PullMenuSlotWidth.toPx() }
     var bottomChromeInsetPx by remember { mutableIntStateOf(0) }
     // Transient "Send to device" prompt shown above the pill after copying a link; null = hidden.
     var sendLinkPrompt by remember { mutableStateOf<SendLinkPrompt?>(null) }
@@ -829,6 +833,23 @@ fun TangentRoot(
     var pullRefreshing by remember { mutableStateOf(false) }
     // One-shot guard so the threshold haptic fires once per crossing, not every drag frame.
     var pullThresholdHapticFired by remember { mutableStateOf(false) }
+    // Multi-function overscroll pull (Chrome-iOS style): once the pull is under way the same finger
+    // can slide sideways to pick New Tab / Refresh / Reader. Refresh is the centre slot, so with the
+    // menu on a plain straight-down pull still just refreshes. Only the discrete selection lives in
+    // state — the horizontal magnitude is consumed as it arrives and never recomposes anything.
+    var pullMenuSelection by remember { mutableStateOf(PullAction.Refresh) }
+    // Live horizontal finger travel since the pull began. Written on the touch hot-path and read
+    // ONLY from draw-phase lambdas (like pullRefreshDistancePx) — the menu's highlight rides this
+    // continuously, while pullMenuSelection above is the discrete, hysteretic commit it snaps to.
+    var pullMenuDxPx by remember { mutableFloatStateOf(0f) }
+    // Recentring of the highlight after a release (see settlePullMenuDx). Held so a fresh pull can
+    // pre-empt an in-flight recentre instead of fighting it for the value.
+    var pullMenuRecentreJob by remember { mutableStateOf<Job?>(null) }
+    // Reader is offered only where it would do something — a page reader can extract, or one already
+    // in reader (so the gesture can leave it). Everywhere else the slot is dimmed and unselectable,
+    // which is why it stays drawn: the menu must not change shape under a finger mid-gesture.
+    val pullMenuReaderAvailable = selectedTabId != null &&
+        (eligibleReaderTabs.contains(selectedTabId) || isReaderActiveOnSelectedTab)
     var newTabThresholdHapticFired by remember { mutableStateOf(false) }
     val pendingPageScrollDelta = remember { floatArrayOf(0f) }
     val recentTabSnapshots = remember { mutableStateMapOf<String, Bitmap>() }
@@ -861,6 +882,33 @@ fun TangentRoot(
     val pullRefreshActive by remember { derivedStateOf { pullRefreshDistancePx > 0f } }
     val pullRefreshProgressProvider = remember(pullRefreshThresholdPx) {
         { (pullRefreshDistancePx / pullRefreshThresholdPx).coerceIn(0f, 1f) }
+    }
+    // Reveal ramp for the overscroll action menu: 0 until the pull clears the reveal distance (so an
+    // incidental bounce doesn't summon it), then 0..1 up to the trigger threshold — where the pull
+    // arms, which is why the menu reads full presence as "releasing now fires this".
+    fun pullMenuRevealFor(distancePx: Float): Float =
+        ((distancePx - pullMenuRevealPx) / (pullRefreshThresholdPx - pullMenuRevealPx))
+            .coerceIn(0f, 1f)
+    // The menu's presence, 0..1 — reveal position, scale and opacity all at once.
+    //
+    // Deliberately its OWN value rather than a read of pullRefreshDistancePx. The distance is reset
+    // in a single frame when a pull fires a refresh (the line hands over to its loading sweep), and
+    // the tab-switch animation takes the screen when it opens a tab — so a menu driven off the pull
+    // state cut out instantly on exactly the gestures that *did* something, while collapsing politely
+    // on the ones that didn't. This is written live while pulling and springs to zero on release
+    // whatever the release did, so the collapse is the same animation every time.
+    var pullMenuPresence by remember { mutableFloatStateOf(0f) }
+    val pullMenuPresenceProvider = remember { { pullMenuPresence } }
+    // Composition gate, flipped false only once the collapse has actually reached zero — so the menu
+    // is fully gone when it's gone, and never unmounts mid-fade.
+    var pullMenuComposed by remember { mutableStateOf(false) }
+    var pullMenuCollapseJob by remember { mutableStateOf<Job?>(null) }
+    val pullMenuVisible = pullMenuEnabled && pullMenuComposed
+    // Continuous highlight position in slot units. Reader availability clamps the upper bound rather
+    // than being checked on release, so the highlight simply stops at Refresh instead of drifting
+    // onto a chip that can't be committed to.
+    val pullMenuPositionProvider = remember(pullMenuSlotWidthPx, pullMenuReaderAvailable) {
+        { pullSelectionPosition(pullMenuDxPx, pullMenuSlotWidthPx, pullMenuReaderAvailable) }
     }
     // Retraction of a released-but-unconsummated pull (see settlePullRefresh). Held so a fresh pull
     // can pre-empt an in-flight retract instead of fighting it for the distance value.
@@ -1625,11 +1673,57 @@ fun TangentRoot(
         scope.launch { barCollapseProgressState.snapTo(0f) }
     }
 
+    // Retract and unmount the overscroll menu. Called on EVERY release, whether or not an action
+    // fired: the collapse is the gesture's ending, not a consolation for a gesture that did nothing.
+    // (A firing pull resets the refresh distance in one frame, so a menu that keyed off it would cut
+    // out instantly on exactly the pulls that mattered.) The composition gate is dropped only once
+    // the spring has actually reached zero, so the menu is never left hanging at partial opacity —
+    // and never unmounted mid-fade either.
+    fun collapsePullMenu() {
+        pullMenuCollapseJob?.cancel()
+        if (pullMenuPresence <= 0f) {
+            pullMenuPresence = 0f
+            pullMenuComposed = false
+            pullMenuCollapseJob = null
+            return
+        }
+        pullMenuCollapseJob = scope.launch {
+            animate(
+                initialValue = pullMenuPresence,
+                targetValue = 0f,
+                animationSpec = TangentMotion.PullRetract,
+            ) { value, _ -> pullMenuPresence = value }
+            pullMenuPresence = 0f
+            pullMenuComposed = false
+            pullMenuCollapseJob = null
+        }
+    }
+
     fun resetPullRefresh() {
         pullRetractJob?.cancel()
         pullRetractJob = null
         pullRefreshDistancePx = 0f
         pullThresholdHapticFired = false
+        // Deliberately does NOT touch the menu. This also runs from the tab-switch and load-complete
+        // cleanups, and the New Tab action switches tabs — collapsing from here would cancel and
+        // restart the menu's spring partway through its own ending. The release handler owns that.
+    }
+
+    // The horizontal axis gets the same treatment as the vertical one on release: it tracked the
+    // finger the whole way across, so snapping it home would end that tracking on a cut while the
+    // menu is still visibly fading out. Springs on the same curve as the vertical retract so both
+    // axes come to rest together.
+    fun settlePullMenuDx() {
+        if (pullMenuDxPx == 0f) return
+        pullMenuRecentreJob?.cancel()
+        pullMenuRecentreJob = scope.launch {
+            animate(
+                initialValue = pullMenuDxPx,
+                targetValue = 0f,
+                animationSpec = TangentMotion.PullRetract,
+            ) { value, _ -> pullMenuDxPx = value }
+            pullMenuDxPx = 0f
+        }
     }
 
     // Release below the refresh threshold: the pull tracked the finger 1:1 the whole way down, so
@@ -2940,7 +3034,8 @@ fun TangentRoot(
                     onPageTouch = {
                         userScrollInteractionActive = true
                     },
-                    onTopOverscrollPull = { distance ->
+                    pullMaxDistancePx = pullRefreshMaxDistancePx,
+                    onTopOverscrollPull = { distance, dx ->
                         // A new pull owns the distance value outright — kill any retract still
                         // running from the previous release before writing to it.
                         if (pullRetractJob != null) {
@@ -2948,6 +3043,32 @@ fun TangentRoot(
                             pullRetractJob = null
                         }
                         pullRefreshDistancePx = distance.coerceIn(0f, pullRefreshMaxDistancePx)
+                        if (pullMenuEnabled) {
+                            // Same ownership rule as the vertical retract above: a live pull owns
+                            // the value outright, so kill any recentre still running from the last
+                            // release rather than letting the two write to it in alternation.
+                            if (pullMenuRecentreJob != null) {
+                                pullMenuRecentreJob?.cancel()
+                                pullMenuRecentreJob = null
+                            }
+                            if (pullMenuCollapseJob != null) {
+                                pullMenuCollapseJob?.cancel()
+                                pullMenuCollapseJob = null
+                            }
+                            pullMenuDxPx = dx
+                            pullMenuPresence = pullMenuRevealFor(pullRefreshDistancePx)
+                            if (pullMenuPresence > 0f) pullMenuComposed = true
+                            val picked = nextPullAction(
+                                current = pullMenuSelection,
+                                dx = dx,
+                                slotWidthPx = pullMenuSlotWidthPx,
+                                readerAvailable = pullMenuReaderAvailable,
+                            )
+                            if (picked != pullMenuSelection) {
+                                pullMenuSelection = picked
+                                tangentHaptics.detent()
+                            }
+                        }
                         // Buzz exactly once when the pull first crosses the refresh threshold, and
                         // re-arm the haptic if the user drags back below it. Below the threshold, a
                         // gently growing rumble tracks the pull so the arm tick feels earned.
@@ -2961,20 +3082,52 @@ fun TangentRoot(
                             pullRamp.update(pullRefreshDistancePx / pullRefreshThresholdPx)
                         }
                     },
-                    onTopOverscrollRelease = { distance ->
+                    onTopOverscrollRelease = { distance, _ ->
                         pullRamp.reset()
+                        // Commit to what was actually highlighted, rather than re-deriving from the
+                        // release position: the hysteretic mapping is path-dependent, so recomputing
+                        // it here could fire a different action than the one under the finger.
+                        val action = if (pullMenuEnabled) pullMenuSelection else PullAction.Refresh
                         var triggered = false
-                        if (distance >= pullRefreshThresholdPx && selectedContent?.loading != true) {
-                            selectedTabId?.let {
-                                pullRefreshing = true
-                                triggered = true
-                                components.sessionUseCases.reload.invoke(it)
+                        if (distance >= pullRefreshThresholdPx) {
+                            when (action) {
+                                PullAction.Refresh ->
+                                    if (selectedContent?.loading != true) {
+                                        selectedTabId?.let {
+                                            pullRefreshing = true
+                                            triggered = true
+                                            components.sessionUseCases.reload.invoke(it)
+                                        }
+                                    }
+                                PullAction.NewTab -> {
+                                    tangentHaptics.create()
+                                    openTabToRight(url = "about:blank", editBlankTab = true)
+                                }
+                                PullAction.Reader -> selectedTabId?.let { tabId ->
+                                    val readerUrl = selectedContent?.url.orEmpty()
+                                    val readerHost = siteHostFromUrl(readerUrl)
+                                    val turnedOn =
+                                        readerManager.toggleReader(tabId, readerUrl, selectedEngineSession)
+                                    components.sitePreferencesStore.setReaderPreferred(readerHost, turnedOn)
+                                    components.sitePreferencesStore.setReaderAutoDisabled(readerHost, !turnedOn)
+                                    tangentHaptics.toggle(turnedOn)
+                                }
                             }
                         }
-                        // A triggered refresh hands the line straight over to its sweeping band, so
-                        // the pull fill is replaced rather than retracted; an untriggered one has to
-                        // travel back.
+                        // Only a consummated *refresh* hands the line over to its sweeping band, so
+                        // the pull fill is replaced rather than retracted. Every other outcome —
+                        // including the two non-refresh actions, which have their own UI response —
+                        // leaves the line to travel back.
                         if (triggered) resetPullRefresh() else settlePullRefresh()
+                        // The menu's own ending, run unconditionally and on the same spring whichever
+                        // branch above was taken — this is the whole point of giving it a presence of
+                        // its own. A pull that fired a refresh and a pull that fired nothing collapse
+                        // identically; the difference is what the page does, not what the menu does.
+                        collapsePullMenu()
+                        // Let the highlight ride back to centre with the retracting menu instead of
+                        // teleporting: the caption re-reads immediately, but the chips travel.
+                        pullMenuSelection = PullAction.Refresh
+                        settlePullMenuDx()
                     },
                     onOpenWindowRequest = { request: WindowRequest ->
                         val preparedSession = request.prepare()
@@ -3674,6 +3827,25 @@ fun TangentRoot(
                             .offset(y = with(density) { topChromeInsetPx.toDp() }),
                     )
                 }
+                // Multi-function pull: the chips the pull reveals under the refresh line, which the
+                // still-down finger slides across to choose between. Composed on the same presence
+                // rule as the line (and, like it, fed live magnitudes as draw-phase lambdas).
+                if (pullMenuVisible && shouldShowUi) {
+                    PullActionMenu(
+                        presence = pullMenuPresenceProvider,
+                        selectionPosition = pullMenuPositionProvider,
+                        selected = pullMenuSelection,
+                        readerAvailable = pullMenuReaderAvailable,
+                        readerActive = isReaderActiveOnSelectedTab,
+                        // The menu's reveal slide travels exactly this gap, so it starts flush with
+                        // the top chrome inset (status bar + refresh line) and never rides up into
+                        // the system bar. One number for the rest position and the travel.
+                        slidePx = with(density) { PullMenuTopGap.toPx() },
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .offset(y = with(density) { topChromeInsetPx.toDp() } + PullMenuTopGap),
+                    )
+                }
                 // Persistent rounded-corner mask: the live GeckoView surface can't be clipped to a
                 // rounded shape directly, so we paint the four corner cut-outs with the background
                 // colour on top of the content. This keeps the browsing viewport's rounded corners
@@ -4259,6 +4431,7 @@ fun TangentRoot(
             onSettingChanged = {
                 components.applyEngineSettings()
                 showBottomToolbar = components.globalPreferencesStore.showBottomToolbar
+                pullMenuEnabled = components.globalPreferencesStore.pullMenuEnabled
                 wideBarLayout = WideBarLayout.fromName(
                     components.globalPreferencesStore.wideBarLayoutName,
                 )

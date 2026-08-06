@@ -125,6 +125,7 @@ fun SettingsSheet(
     var queryParameterStrippingAllowList by remember { mutableStateOf(globalPrefsStore.queryParameterStrippingAllowList) }
     var crliteChannel by remember { mutableStateOf(globalPrefsStore.crliteChannel) }
     var showBottomToolbar by remember { mutableStateOf(globalPrefsStore.showBottomToolbar) }
+    var pullMenuEnabled by remember { mutableStateOf(globalPrefsStore.pullMenuEnabled) }
     var matchSiteThemeColor by remember { mutableStateOf(globalPrefsStore.matchSiteThemeColor) }
     var tintPagesToSystemColor by remember { mutableStateOf(globalPrefsStore.tintPagesToSystemColor) }
     var webDarkModeTrigger by remember { mutableStateOf(globalPrefsStore.webDarkModeTrigger) }
@@ -526,6 +527,18 @@ fun SettingsSheet(
                 onCheckedChange = {
                     showBottomToolbar = it
                     globalPrefsStore.showBottomToolbar = it
+                    onSettingChanged()
+                },
+            )
+            SheetRowDivider()
+            SettingsToggle(
+                title = "Multi-function pull to refresh",
+                subtitle = "Pull down past the top of a page, then slide the same finger sideways to " +
+                    "pick New Tab, Refresh, or Reader. Pulling straight down still just refreshes",
+                checked = pullMenuEnabled,
+                onCheckedChange = {
+                    pullMenuEnabled = it
+                    globalPrefsStore.pullMenuEnabled = it
                     onSettingChanged()
                 },
             )

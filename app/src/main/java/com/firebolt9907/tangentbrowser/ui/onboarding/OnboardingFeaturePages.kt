@@ -21,13 +21,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.Fingerprint
-import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.ManageSearch
 import androidx.compose.material.icons.rounded.OpenInBrowser
@@ -36,17 +34,17 @@ import androidx.compose.material.icons.rounded.PrivacyTip
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.SwapVert
-import androidx.compose.material.icons.rounded.ViewCarousel
-import androidx.compose.material.icons.rounded.ViewColumn
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import com.firebolt9907.tangentbrowser.ui.components.BusyIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -60,7 +58,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -70,6 +67,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.firebolt9907.tangentbrowser.TangentApplication
 import com.firebolt9907.tangentbrowser.state.SearchEngine
 import com.firebolt9907.tangentbrowser.ui.grid.TabViewMode
+import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
+import com.firebolt9907.tangentbrowser.ui.theme.labelLargeEmphasized
 
 /**
  * Three self-contained onboarding pages. Each is a vertically-centred [Column] with a large icon,
@@ -201,12 +200,15 @@ fun PrivacyPage(modifier: Modifier = Modifier) {
  * Interactive appearance page. These are pure UI preferences read live by TangentRoot, so they only
  * need to be persisted — no engine re-apply.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppearancePage(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val store = remember(context) {
         (context.applicationContext as TangentApplication).components.globalPreferencesStore
     }
+
+    val haptics = rememberTangentHaptics()
 
     var bottomToolbar by remember { mutableStateOf(store.showBottomToolbar) }
     var searchSuggestions by remember { mutableStateOf(store.searchSuggestionsEnabled) }
@@ -246,7 +248,7 @@ fun AppearancePage(modifier: Modifier = Modifier) {
             Spacer(Modifier.height(4.dp))
             Text(
                 text = "Tab overview",
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.labelLargeEmphasized,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -257,89 +259,32 @@ fun AppearancePage(modifier: Modifier = Modifier) {
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                TabViewModeOption(
-                    icon = Icons.Rounded.ViewCarousel,
-                    label = "Deck",
-                    selected = tabViewMode == TabViewMode.DECK,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    tabViewMode = TabViewMode.DECK
-                    store.tabViewModeName = TabViewMode.DECK.name
-                }
-                TabViewModeOption(
-                    icon = Icons.Rounded.GridView,
-                    label = "Grid",
-                    selected = tabViewMode == TabViewMode.GRID,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    tabViewMode = TabViewMode.GRID
-                    store.tabViewModeName = TabViewMode.GRID.name
-                }
-                TabViewModeOption(
-                    icon = Icons.Rounded.ViewColumn,
-                    label = "Filmstrip",
-                    selected = tabViewMode == TabViewMode.PIXEL,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    tabViewMode = TabViewMode.PIXEL
-                    store.tabViewModeName = TabViewMode.PIXEL.name
+            // Three mutually exclusive layouts = a segmented button, not three cards competing for
+            // weight. Stock M3 brings the selected-state layer, connected corners, RTL and the
+            // Role.RadioButton semantics the hand-built cards never had. `icon = {}` for the same
+            // reason as the reader font row: with the check slot the third label stops fitting a
+            // phone-width page.
+            val tabViewChoices = listOf(
+                TabViewMode.DECK to "Deck",
+                TabViewMode.GRID to "Grid",
+                TabViewMode.PIXEL to "Filmstrip",
+            )
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                tabViewChoices.forEachIndexed { index, (mode, label) ->
+                    SegmentedButton(
+                        selected = tabViewMode == mode,
+                        onClick = {
+                            haptics.select()
+                            tabViewMode = mode
+                            store.tabViewModeName = mode.name
+                        },
+                        shape = SegmentedButtonDefaults.itemShape(index, tabViewChoices.size),
+                        icon = {},
+                    ) {
+                        Text(label)
+                    }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun TabViewModeOption(
-    icon: ImageVector,
-    label: String,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    Card(
-        modifier = modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.secondaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            },
-        ),
-        border = if (selected) {
-            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-        } else {
-            null
-        },
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                modifier = Modifier.size(26.dp),
-            )
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            )
         }
     }
 }
@@ -421,9 +366,10 @@ private fun ToggleRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    val haptics = rememberTangentHaptics()
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         ),
         // Whole-row toggle (the M3/iOS settings convention) instead of only the small Switch being a
         // tap target. Role.Switch + presentational Switch (onCheckedChange = null) merges semantics so
@@ -433,7 +379,10 @@ private fun ToggleRow(
             .toggleable(
                 value = checked,
                 role = Role.Switch,
-                onValueChange = onCheckedChange,
+                onValueChange = {
+                    haptics.toggle(it)
+                    onCheckedChange(it)
+                },
             ),
     ) {
         Row(
@@ -473,6 +422,7 @@ fun SearchEnginePage(modifier: Modifier = Modifier) {
     val store = remember(context) {
         (context.applicationContext as TangentApplication).components.globalPreferencesStore
     }
+    val haptics = rememberTangentHaptics()
     var selected by remember { mutableStateOf(store.searchEngine) }
 
     OnboardingScaffold(
@@ -500,17 +450,22 @@ fun SearchEnginePage(modifier: Modifier = Modifier) {
                         containerColor = if (isSelected) {
                             MaterialTheme.colorScheme.secondaryContainer
                         } else {
-                            MaterialTheme.colorScheme.surfaceVariant
+                            MaterialTheme.colorScheme.surfaceContainerHigh
                         },
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
+                    // Role.RadioButton on the row + a presentational RadioButton (onClick = null),
+                    // matching ToggleRow above: TalkBack otherwise found an unlabelled row and a
+                    // separate radio, and the radio's own onClick made the same choice twice.
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .selectable(
                                 selected = isSelected,
+                                role = Role.RadioButton,
                                 onClick = {
+                                    haptics.select()
                                     selected = engine
                                     store.searchEngine = engine
                                 },
@@ -519,13 +474,7 @@ fun SearchEnginePage(modifier: Modifier = Modifier) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        RadioButton(
-                            selected = isSelected,
-                            onClick = {
-                                selected = engine
-                                store.searchEngine = engine
-                            },
-                        )
+                        RadioButton(selected = isSelected, onClick = null)
                         Text(
                             text = engine.label,
                             style = MaterialTheme.typography.titleMedium,

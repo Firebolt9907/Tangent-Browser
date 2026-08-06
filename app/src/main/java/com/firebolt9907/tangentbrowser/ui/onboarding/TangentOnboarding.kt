@@ -45,11 +45,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.ui.shape.SquircleShape
 import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
+import com.firebolt9907.tangentbrowser.ui.theme.headlineMediumEmphasized
 import com.firebolt9907.tangentbrowser.ui.theme.TangentBrowserTheme
 import kotlinx.coroutines.launch
 
@@ -287,8 +287,7 @@ private fun OnboardingHero(
         Spacer(modifier = Modifier.height(32.dp))
         Text(
             text = headline,
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.headlineMediumEmphasized,
             color = MaterialTheme.colorScheme.onBackground,
             textAlign = TextAlign.Center,
         )

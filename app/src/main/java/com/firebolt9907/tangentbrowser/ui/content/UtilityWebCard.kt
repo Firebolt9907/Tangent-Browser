@@ -3,6 +3,7 @@ package com.firebolt9907.tangentbrowser.ui.content
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,15 +31,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
+import com.firebolt9907.tangentbrowser.ui.theme.titleSmallEmphasized
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import mozilla.components.concept.engine.Engine
@@ -198,6 +201,15 @@ fun UtilityWebCard(
         }
     }
 
+    // The spinner used to be dropped the frame the load finished, so the hand-off to the rendered
+    // document was a hard cut on top of an otherwise sprung card. Alpha is an effect, so it fades on
+    // the critically damped tier.
+    val spinnerAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (loaded) 0f else 1f,
+        animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+        label = "utilityCardSpinner",
+    )
+
     val cardScale = lerp(0.92f, 1f, appear.value) * lerp(1f, 0.9f, back.value)
     val cardAlpha = fade.value * lerp(1f, 0.6f, back.value)
 
@@ -205,10 +217,13 @@ fun UtilityWebCard(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f * fade.value))
+            // TalkBack otherwise reads the scrim as an unlabelled full-screen button; name the action
+            // it actually performs.
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 enabled = visible,
+                onClickLabel = "Dismiss $title",
                 onClick = onDismiss,
             ),
     ) {
@@ -222,12 +237,11 @@ fun UtilityWebCard(
                     scaleY = cardScale
                     alpha = cardAlpha
                 }
-                // Consume taps on the card so they don't fall through to the dismiss scrim.
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {},
-                ),
+                // Consume taps on the card so they don't fall through to the dismiss scrim. This is
+                // deliberately NOT a `clickable`: an empty clickable publishes a second, do-nothing
+                // "button" spanning the whole card to TalkBack, right on top of the real controls.
+                // `detectTapGestures` consumes the same taps and adds no semantics node.
+                .pointerInput(Unit) { detectTapGestures { } },
             shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 3.dp,
@@ -242,15 +256,16 @@ fun UtilityWebCard(
                 ) {
                     Text(
                         text = title,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleSmallEmphasized,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
                     Spacer(Modifier.width(12.dp))
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
+                        // Name what is being closed: a bare "Close" is ambiguous when the card is
+                        // floating over the page the user was already reading.
+                        Icon(Icons.Default.Close, contentDescription = "Close $title")
                     }
                 }
 
@@ -264,9 +279,17 @@ fun UtilityWebCard(
                         factory = { view.asView() },
                         modifier = Modifier.fillMaxSize(),
                     )
-                    if (!loaded) {
+                    // The spinner used to be dropped the frame the load finished, so the hand-off to
+                    // the rendered document was a hard cut on top of an otherwise sprung card. Alpha
+                    // is an effect, so it fades on the critically damped tier.
+                    // Faded rather than wrapped in AnimatedVisibility so the spinner never joins the
+                    // layout as a sibling of the full-size EngineView; the `> 0f` guard drops it once
+                    // the spring has settled, so the indeterminate animation stops driving frames.
+                    if (spinnerAlpha > 0f) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(28.dp),
+                            modifier = Modifier
+                                .size(28.dp)
+                                .alpha(spinnerAlpha),
                             strokeWidth = 3.dp,
                         )
                     }

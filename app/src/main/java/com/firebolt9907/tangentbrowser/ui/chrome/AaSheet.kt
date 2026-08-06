@@ -4,7 +4,6 @@ import androidx.activity.compose.BackHandler
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Typeface
-import android.widget.Toast
 import androidx.core.net.toUri
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.material.icons.filled.Star
@@ -159,6 +158,11 @@ fun AaSheet(
     globalPrefsStore: GlobalPreferencesStore,
     addonController: AddonController,
     onDismiss: () -> Unit,
+    // Page-level feedback (see ui/PageFeedback.kt). The sheet's confirmations fire *together with*
+    // [onDismiss], so they cannot live in an in-sheet snackbar — the sheet is gone before one would
+    // draw. The host raises them instead, from outside the sheet.
+    onFeedback: (message: String, actionLabel: String?, onAction: (() -> Unit)?) -> Unit =
+        { _, _, _ -> },
     onOpenAddonSettings: (InstalledAddon) -> Unit = {},
     onOpenAddonQuickSettings: (InstalledAddon) -> Unit = {},
     onFindInPage: () -> Unit = {},
@@ -339,6 +343,7 @@ fun AaSheet(
                     globalPrefsStore = globalPrefsStore,
                     onToggleWebDarkMode = onToggleWebDarkMode,
                     onDismiss = onDismiss,
+                    onFeedback = onFeedback,
                     onFindInPage = onFindInPage,
                     onPrint = onPrint,
                     onZapElement = onZapElement,
@@ -389,6 +394,8 @@ private fun PageTabContent(
     globalPrefsStore: GlobalPreferencesStore,
     onToggleWebDarkMode: (Boolean) -> Unit = {},
     onDismiss: () -> Unit,
+    onFeedback: (message: String, actionLabel: String?, onAction: (() -> Unit)?) -> Unit =
+        { _, _, _ -> },
     onFindInPage: () -> Unit = {},
     onPrint: () -> Unit = {},
     // Element zap (tap a page element to hide it for this site). Null hides the row entirely — the
@@ -461,7 +468,7 @@ private fun PageTabContent(
 
     fun doCopy() {
         clipboard.setText(AnnotatedString(shareableUrl))
-        Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+        onFeedback("Link copied", null, null)
         onDismiss()
     }
 
@@ -471,7 +478,7 @@ private fun PageTabContent(
     }
 
     // Shared save-to-bookmarks shell (plain bookmark + reading list): run [saveOp] off the sheet,
-    // buzz + toast the outcome, and close immediately — the write finishes in the background.
+    // buzz + report the outcome, and close immediately — the write finishes in the background.
     fun saveToBookmarks(
         successMessage: String,
         failureMessage: String,
@@ -483,11 +490,7 @@ private fun PageTabContent(
         bookmarkScope.launch {
             val ok = runCatching { saveOp(storage, url, title) }.isSuccess
             if (ok) haptics.create()
-            Toast.makeText(
-                context,
-                if (ok) successMessage else failureMessage,
-                Toast.LENGTH_SHORT,
-            ).show()
+            onFeedback(if (ok) successMessage else failureMessage, null, null)
         }
         onDismiss()
     }
@@ -957,11 +960,12 @@ private fun PageTabContent(
                                 com.firebolt9907.tangentbrowser.state.BlobFileStore
                                     .saveToDownloads(context, blobFile)
                             }
-                            Toast.makeText(
-                                context,
-                                if (saved != null) "Saved $saved to Downloads" else "Couldn't save this file",
-                                Toast.LENGTH_SHORT,
-                            ).show()
+                            onFeedback(
+                                if (saved != null) "Saved $saved to Downloads"
+                                else "Couldn't save this file",
+                                null,
+                                null,
+                            )
                         }
                         onDismiss()
                     },

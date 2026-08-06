@@ -362,6 +362,9 @@ internal fun TangentOverlaySheets(
             store = components.sitePreferencesStore,
             globalPrefsStore = components.globalPreferencesStore,
             addonController = components.addonController,
+            onFeedback = { message, actionLabel, onAction ->
+                feedback.show(message, actionLabel, onAction)
+            },
             sitePermissionController = components.sitePermissionController,
             containers = aaContainers,
             currentContextId = aaCurrentContextId,

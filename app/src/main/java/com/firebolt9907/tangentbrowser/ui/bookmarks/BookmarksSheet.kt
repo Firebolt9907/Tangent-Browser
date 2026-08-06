@@ -16,7 +16,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -72,6 +74,7 @@ fun BookmarksSheet(
     val haptics = rememberTangentHaptics()
     var bookmarks by remember { mutableStateOf<List<BookmarkNode>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    var loadFailed by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     // Deleting a bookmark is the one swipe-remove in the app that is genuinely reversible: the node
     // carries everything addItem() needs to put it back. So it gets a snackbar undo rather than a
@@ -80,20 +83,38 @@ fun BookmarksSheet(
     val snackbarHostState = remember { SnackbarHostState() }
 
     suspend fun reload() {
-        val topLevel = bookmarksStorage.getTree(BookmarkRoot.Mobile.id, recursive = true)
-            .getOrNull()
-            ?.children
-            .orEmpty()
-        val items = topLevel.filter { it.type == BookmarkNodeType.ITEM && !it.url.isNullOrBlank() }
-        // Reading List pages live one folder deep; surface them alongside plain bookmarks so the
-        // relocated "Add to Reading List" action (below) doesn't save into a place nothing shows.
-        val readingListItems = topLevel
-            .firstOrNull { it.type == BookmarkNodeType.FOLDER && it.title == READING_LIST_FOLDER }
-            ?.children
-            ?.filter { it.type == BookmarkNodeType.ITEM && !it.url.isNullOrBlank() }
-            .orEmpty()
-        bookmarks = (items + readingListItems).sortedByDescending { it.dateAdded }
+        // The read is guarded and its failure *remembered* rather than swallowed: a failed tree read
+        // used to fall through to an empty list and render as "No bookmarks yet", which is a
+        // different — and wrong — claim about the user's data, with nothing to press to try again.
+        val tree = runCatching {
+            bookmarksStorage.getTree(BookmarkRoot.Mobile.id, recursive = true).getOrThrow()
+        }
+        loadFailed = tree.isFailure
+        // On failure keep the last good list: a reload runs after every add/delete too, and blanking
+        // a populated sheet because one refresh failed is worse than showing slightly stale rows.
+        tree.getOrNull()?.let { root ->
+            val topLevel = root.children.orEmpty()
+            val items = topLevel.filter { it.type == BookmarkNodeType.ITEM && !it.url.isNullOrBlank() }
+            // Reading List pages live one folder deep; surface them alongside plain bookmarks so the
+            // relocated "Add to Reading List" action (below) doesn't save into a place nothing shows.
+            val readingListItems = topLevel
+                .firstOrNull { it.type == BookmarkNodeType.FOLDER && it.title == READING_LIST_FOLDER }
+                ?.children
+                ?.filter { it.type == BookmarkNodeType.ITEM && !it.url.isNullOrBlank() }
+                .orEmpty()
+            bookmarks = (items + readingListItems).sortedByDescending { it.dateAdded }
+        }
         loading = false
+    }
+
+    fun retry() {
+        loading = true
+        scope.launch { reload() }
+    }
+
+    /** A write that failed used to be indistinguishable from one that worked — the list just didn't change. */
+    suspend fun notifyFailure(message: String) {
+        snackbarHostState.showSnackbar(message = message, duration = SnackbarDuration.Short)
     }
 
     LaunchedEffect(Unit) { reload() }
@@ -140,7 +161,7 @@ fun BookmarksSheet(
                                 scope.launch {
                                     // Guard the write so a storage error can't crash the sheet; reload
                                     // afterward to reflect whatever actually persisted.
-                                    runCatching {
+                                    val saved = runCatching {
                                         bookmarksStorage.addItem(
                                             parentGuid = BookmarkRoot.Mobile.id,
                                             url = currentPageUrl,
@@ -149,6 +170,7 @@ fun BookmarksSheet(
                                         )
                                     }
                                     reload()
+                                    if (saved.isFailure) notifyFailure("Couldn't save that bookmark")
                                 }
                             },
                             modifier = Modifier.weight(1f),
@@ -169,7 +191,7 @@ fun BookmarksSheet(
                             onClick = {
                                 haptics.create()
                                 scope.launch {
-                                    runCatching {
+                                    val saved = runCatching {
                                         val root = bookmarksStorage
                                             .getTree(BookmarkRoot.Mobile.id, recursive = false).getOrNull()
                                         val folderGuid = root?.children
@@ -189,6 +211,7 @@ fun BookmarksSheet(
                                         )
                                     }
                                     reload()
+                                    if (saved.isFailure) notifyFailure("Couldn't save to Reading List")
                                 }
                             },
                             modifier = Modifier.weight(1f),
@@ -237,15 +260,26 @@ fun BookmarksSheet(
                         }
 
                         SheetContentPhase.Empty -> {
-                            EmptyState(
-                                icon = Icons.Outlined.BookmarkBorder,
-                                title = if (searchQuery.isBlank()) "No bookmarks yet" else "No matches",
-                                description = if (searchQuery.isBlank()) {
-                                    "Save a page with \"Add page\" to find it here later."
-                                } else {
-                                    null
-                                },
-                            )
+                            if (loadFailed) {
+                                EmptyState(
+                                    icon = Icons.Default.ErrorOutline,
+                                    title = "Couldn't load bookmarks",
+                                    description = "Something went wrong reading your saved pages.",
+                                    action = {
+                                        Button(onClick = { retry() }) { Text("Try again") }
+                                    },
+                                )
+                            } else {
+                                EmptyState(
+                                    icon = Icons.Outlined.BookmarkBorder,
+                                    title = if (searchQuery.isBlank()) "No bookmarks yet" else "No matches",
+                                    description = if (searchQuery.isBlank()) {
+                                        "Save a page with \"Add page\" to find it here later."
+                                    } else {
+                                        null
+                                    },
+                                )
+                            }
                         }
 
                         SheetContentPhase.Content -> {
@@ -257,8 +291,16 @@ fun BookmarksSheet(
                                     SwipeToRemoveRow(
                                         onRemove = {
                                             scope.launch {
-                                                runCatching { bookmarksStorage.deleteNode(node.guid) }
+                                                val removed =
+                                                    runCatching { bookmarksStorage.deleteNode(node.guid) }
                                                 reload()
+                                                // The row swipes away either way, so a failed delete has
+                                                // to say so — otherwise reload() silently puts the row
+                                                // back under a snackbar claiming it was removed.
+                                                if (removed.isFailure) {
+                                                    notifyFailure("Couldn't remove that bookmark")
+                                                    return@launch
+                                                }
                                                 // Everything addItem() needs survives on the node, so the
                                                 // delete is fully reversible — including for a Reading List
                                                 // item, whose parentGuid puts it back in its own folder.
@@ -268,7 +310,7 @@ fun BookmarksSheet(
                                                     duration = SnackbarDuration.Long,
                                                 )
                                                 if (result == SnackbarResult.ActionPerformed) {
-                                                    runCatching {
+                                                    val restored = runCatching {
                                                         bookmarksStorage.addItem(
                                                             parentGuid = node.parentGuid
                                                                 ?: BookmarkRoot.Mobile.id,
@@ -279,6 +321,9 @@ fun BookmarksSheet(
                                                     }
                                                     haptics.create()
                                                     reload()
+                                                    if (restored.isFailure) {
+                                                        notifyFailure("Couldn't restore that bookmark")
+                                                    }
                                                 }
                                             }
                                         },

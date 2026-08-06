@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Visibility
@@ -99,25 +100,40 @@ fun PasswordsSheet(
     // failure used to look identical to a successful copy of nothing).
     val snackbarHostState = remember { SnackbarHostState() }
     var loading by remember { mutableStateOf(true) }
+    var loadFailed by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf<String?>(null) }
 
     // Re-read storage and project to metadata. The `List<Login>` from list() is not retained past
     // this map, so its decrypted passwords don't linger.
-    suspend fun reload(): List<LoginMeta> =
-        runCatching {
+    // Guarded so a storage/decryption error can't crash this screen (or leave it loading forever).
+    // The failure is remembered rather than swallowed: an unreadable vault used to render as
+    // "No saved passwords", which is a different — and alarming — claim, with no way to retry.
+    // On failure the last good list is kept; only a genuinely empty one reaches the error state.
+    suspend fun refresh() {
+        val result = runCatching {
             loginsStorage.list().map {
                 LoginMeta(it.guid, it.origin, it.username, it.password.length, it.guid.startsWith("bw:"))
             }
-        }.getOrDefault(emptyList())
-
-    LaunchedEffect(Unit) {
-        // Guard against storage/decryption errors so a read failure shows an empty list rather
-        // than crashing this screen (and never clearing the loading state).
-        entries = reload()
+        }
+        loadFailed = result.isFailure
+        result.getOrNull()?.let { entries = it }
         loading = false
     }
+
+    fun retry() {
+        loading = true
+        scope.launch { refresh() }
+    }
+
+    fun notify(message: String) {
+        scope.launch {
+            snackbarHostState.showSnackbar(message = message, duration = SnackbarDuration.Short)
+        }
+    }
+
+    LaunchedEffect(Unit) { refresh() }
 
     TangentModalSheet(onDismissRequest = onDismiss) {
         // The snackbar overlays the sheet's content rather than sitting after it in the column, so a
@@ -135,7 +151,7 @@ fun PasswordsSheet(
                 // below.
                 BitwardenConnectSection(
                     controller = bitwardenController,
-                    onVaultChanged = { scope.launch { entries = reload() } },
+                    onVaultChanged = { scope.launch { refresh() } },
                 )
 
                 Spacer(Modifier.height(12.dp))
@@ -168,7 +184,16 @@ fun PasswordsSheet(
                                     .padding(vertical = 24.dp),
                             )
 
-                            SheetContentPhase.Empty -> if (searchQuery.isNotBlank()) {
+                            SheetContentPhase.Empty -> if (loadFailed) {
+                                EmptyState(
+                                    icon = Icons.Default.ErrorOutline,
+                                    title = "Couldn't load passwords",
+                                    description = "Something went wrong unlocking your saved logins.",
+                                    action = {
+                                        Button(onClick = { retry() }) { Text("Try again") }
+                                    },
+                                )
+                            } else if (searchQuery.isNotBlank()) {
                                 EmptyState(
                                     icon = Icons.Default.Search,
                                     title = "No matching passwords",
@@ -254,9 +279,11 @@ fun PasswordsSheet(
             onSave = { entry ->
                 scope.launch {
                     // Don't let an add failure (e.g. invalid record) crash the screen; refresh
-                    // the list afterward so the UI reflects whatever actually persisted.
-                    runCatching { loginsStorage.add(entry) }
-                    entries = reload()
+                    // the list afterward so the UI reflects whatever actually persisted, and say
+                    // so when nothing did — a rejected record otherwise just never appears.
+                    val saved = runCatching { loginsStorage.add(entry) }
+                    refresh()
+                    if (saved.isFailure) notify("Couldn't save that password")
                 }
                 showAddDialog = false
             },
@@ -275,8 +302,9 @@ fun PasswordsSheet(
                 TextButton(onClick = {
                     haptics.remove()
                     scope.launch {
-                        runCatching { loginsStorage.delete(guid) }
-                        entries = reload()
+                        val deleted = runCatching { loginsStorage.delete(guid) }
+                        refresh()
+                        if (deleted.isFailure) notify("Couldn't delete that password")
                     }
                     showDeleteConfirm = null
                 }) {

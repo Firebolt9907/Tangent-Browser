@@ -25,7 +25,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -38,6 +38,8 @@ import kotlin.math.absoluteValue
 import androidx.compose.foundation.clickable
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
 import com.firebolt9907.tangentbrowser.ui.components.PageIndicatorDot
+import com.firebolt9907.tangentbrowser.ui.theme.titleMediumEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.titleSmallEmphasized
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material3.Icon
@@ -97,7 +99,7 @@ fun SpacesCarousel(
 
                 Text(
                     text = "Tabs in ${space.name}",
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleSmallEmphasized,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
@@ -114,7 +116,7 @@ fun SpacesCarousel(
                         Text(
                             text = "No open tabs in this space",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 24.dp),
@@ -161,7 +163,7 @@ private fun SpaceTabRow(
     onOpen: () -> Unit,
 ) {
     ListItem(
-        modifier = Modifier.clickable { onOpen() },
+        modifier = Modifier.clickable(role = Role.Button) { onOpen() },
         leadingContent = { Favicon(tab.url) },
         headlineContent = {
             Text(
@@ -178,9 +180,11 @@ private fun SpaceTabRow(
             )
         },
         trailingContent = {
+            // Decorative: the whole ListItem is the click target, so labelling the glyph made
+            // TalkBack read a second, unactionable "Open tab" after every row.
             Icon(
                 Icons.AutoMirrored.Filled.OpenInNew,
-                contentDescription = "Open tab",
+                contentDescription = null,
             )
         },
     )
@@ -199,10 +203,12 @@ private fun SpaceCard(
         modifier = Modifier
             .fillMaxWidth()
             .height(148.dp)
+            // Scale only — the fade for the whole page (card *and* its tab list) is applied once by
+            // the caller's graphicsLayer. Repeating it here multiplied the two, so an off-centre
+            // card sat at 0.30 alpha while its own list sat at 0.55 and the deck read as broken.
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
-                alpha = lerp(0.55f, 1f, 1f - offset)
             }
             .clip(RoundedCornerShape(28.dp))
             .background(
@@ -226,8 +232,7 @@ private fun SpaceCard(
             Spacer(Modifier.height(8.dp))
             Text(
                 text = space.name.ifBlank { "Unnamed space" },
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleMediumEmphasized,
                 color = onAccent,
                 textAlign = TextAlign.Center,
                 maxLines = 1,

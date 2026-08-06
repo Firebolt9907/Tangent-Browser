@@ -1,6 +1,5 @@
 package com.firebolt9907.tangentbrowser.ui.passwords
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,14 +21,18 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -44,9 +47,13 @@ import android.content.ClipDescription
 import android.content.Context
 import android.os.Build
 import android.os.PersistableBundle
-import android.widget.Toast
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
 import com.firebolt9907.tangentbrowser.ui.components.SheetSearchField
 import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
@@ -60,6 +67,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.firebolt9907.tangentbrowser.ui.theme.labelSmallEmphasized
 import com.firebolt9907.tangentbrowser.ui.components.EmptyState
 import com.firebolt9907.tangentbrowser.ui.components.SheetContentPhase
 import com.firebolt9907.tangentbrowser.ui.components.SheetContentSwitch
@@ -86,6 +94,10 @@ fun PasswordsSheet(
     // PasswordRow), and is never stashed in long-lived state. This bounds plaintext-in-memory to the
     // one secret the user is actively looking at.
     var entries by remember { mutableStateOf<List<LoginMeta>>(emptyList()) }
+    // Copy/reveal feedback is a themed snackbar anchored inside the sheet, not a Toast: a Toast is
+    // drawn outside the sheet, unthemed, and can't report the failure case at all (a decryption
+    // failure used to look identical to a successful copy of nothing).
+    val snackbarHostState = remember { SnackbarHostState() }
     var loading by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
@@ -108,111 +120,131 @@ fun PasswordsSheet(
     }
 
     TangentModalSheet(onDismissRequest = onDismiss) {
-        SheetHeader(
-            title = "Passwords",
-            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        // Bitwarden as a second login source. Connecting/syncing refreshes the merged list below.
-        BitwardenConnectSection(
-            controller = bitwardenController,
-            onVaultChanged = { scope.launch { entries = reload() } },
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        SheetSearchField(
-            query = searchQuery,
-            onQueryChange = { searchQuery = it },
-            placeholder = "Search passwords...",
-        )
-
-        Spacer(Modifier.height(8.dp))
-
-        val filtered = if (searchQuery.isBlank()) entries else entries.filter {
-            it.origin.contains(searchQuery, ignoreCase = true) ||
-                it.username.contains(searchQuery, ignoreCase = true)
-        }
-
-        // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
-        val phase = when {
-            loading -> SheetContentPhase.Loading
-            filtered.isEmpty() -> SheetContentPhase.Empty
-            else -> SheetContentPhase.Content
-        }
-        SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+        // The snackbar overlays the sheet's content rather than sitting after it in the column, so a
+        // message doesn't shove the list and the Add button around as it comes and goes.
+        Box(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                when (current) {
-                    SheetContentPhase.Loading -> CircularProgressIndicator(
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .padding(vertical = 24.dp),
-                    )
+                SheetHeader(
+                    title = "Passwords",
+                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                )
 
-                    SheetContentPhase.Empty -> if (searchQuery.isNotBlank()) {
-                        EmptyState(
-                            icon = Icons.Default.Search,
-                            title = "No matching passwords",
-                            description = "No saved logins match \"$searchQuery\".",
-                        )
-                    } else {
-                        EmptyState(
-                            icon = Icons.Default.Lock,
-                            title = "No saved passwords",
-                            description = "Logins you save will appear here. Add one with the " +
-                                "button below.",
-                        )
-                    }
+                Spacer(Modifier.height(12.dp))
 
-                    // Capped, not fixed: the Add button below must stay reachable when the
-                    // list is long, but a short list should shrink to fit rather than reserve
-                    // 320dp of empty space above it.
-                    SheetContentPhase.Content -> LazyColumn(
-                        modifier = Modifier.heightIn(max = 320.dp),
-                    ) {
-                        items(filtered, key = { it.guid }) { meta ->
-                            // Swipe end-to-start to delete — opens the confirm dialog (sensitive
-                            // data, so it's confirmed, not immediate); the row springs back until
-                            // confirmed. Keeps only reveal + copy on the row instead of a third
-                            // trash icon.
-                            SwipeToRemoveRow(
-                                onRemove = { showDeleteConfirm = meta.guid },
-                                settleOnRemove = false,
-                            ) {
-                                PasswordRow(
-                                    meta = meta,
-                                    // On-demand, transient decryption: fetch this one record's
-                                    // password only when the row needs it (reveal/copy), never for
-                                    // the whole list.
-                                    fetchPassword = {
-                                        runCatching {
-                                            loginsStorage.get(meta.guid)?.password
-                                        }.getOrNull()
-                                    },
+                // Bitwarden as a second login source. Connecting/syncing refreshes the merged list
+                // below.
+                BitwardenConnectSection(
+                    controller = bitwardenController,
+                    onVaultChanged = { scope.launch { entries = reload() } },
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                SheetSearchField(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    placeholder = "Search passwords...",
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                val filtered = if (searchQuery.isBlank()) entries else entries.filter {
+                    it.origin.contains(searchQuery, ignoreCase = true) ||
+                        it.username.contains(searchQuery, ignoreCase = true)
+                }
+
+                // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
+                val phase = when {
+                    loading -> SheetContentPhase.Loading
+                    filtered.isEmpty() -> SheetContentPhase.Empty
+                    else -> SheetContentPhase.Content
+                }
+                SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        when (current) {
+                            SheetContentPhase.Loading -> CircularProgressIndicator(
+                                modifier = Modifier
+                                    .align(Alignment.CenterHorizontally)
+                                    .padding(vertical = 24.dp),
+                            )
+
+                            SheetContentPhase.Empty -> if (searchQuery.isNotBlank()) {
+                                EmptyState(
+                                    icon = Icons.Default.Search,
+                                    title = "No matching passwords",
+                                    description = "No saved logins match \"$searchQuery\".",
                                 )
+                            } else {
+                                EmptyState(
+                                    icon = Icons.Default.Lock,
+                                    title = "No saved passwords",
+                                    description = "Logins you save will appear here. Add one with " +
+                                        "the button below.",
+                                )
+                            }
+
+                            // Capped, not fixed: the Add button below must stay reachable when the
+                            // list is long, but a short list should shrink to fit rather than
+                            // reserve 320dp of empty space above it.
+                            SheetContentPhase.Content -> LazyColumn(
+                                modifier = Modifier.heightIn(max = 320.dp),
+                            ) {
+                                items(filtered, key = { it.guid }) { meta ->
+                                    // Swipe end-to-start to delete — opens the confirm dialog
+                                    // (sensitive data, so it's confirmed, not immediate); the row
+                                    // springs back until confirmed. Keeps only reveal + copy on the
+                                    // row instead of a third trash icon.
+                                    SwipeToRemoveRow(
+                                        onRemove = { showDeleteConfirm = meta.guid },
+                                        settleOnRemove = false,
+                                    ) {
+                                        PasswordRow(
+                                            meta = meta,
+                                            // On-demand, transient decryption: fetch this one
+                                            // record's password only when the row needs it
+                                            // (reveal/copy), never for the whole list.
+                                            fetchPassword = {
+                                                runCatching {
+                                                    loginsStorage.get(meta.guid)?.password
+                                                }.getOrNull()
+                                            },
+                                            onNotify = { message ->
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(
+                                                        message = message,
+                                                        duration = SnackbarDuration.Short,
+                                                    )
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (current != SheetContentPhase.Loading) {
+                            Spacer(Modifier.height(8.dp))
+
+                            // The sheet's one primary action, so it's a filled Button rather than
+                            // an outlined one, full-width and bottom-anchored — the easiest place
+                            // to reach one-handed.
+                            Button(
+                                onClick = { haptics.softClick(); showAddDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Add Password")
                             }
                         }
                     }
                 }
-
-                if (current != SheetContentPhase.Loading) {
-                    Spacer(Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedButton(
-                            onClick = { showAddDialog = true },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text("Add Password")
-                        }
-                    }
-                }
             }
+
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 
@@ -277,6 +309,7 @@ private data class LoginMeta(
 private fun PasswordRow(
     meta: LoginMeta,
     fetchPassword: suspend () -> String?,
+    onNotify: (String) -> Unit,
 ) {
     // The one place a plaintext password can live in this screen: only while the user is actively
     // revealing THIS row, and cleared the moment they hide it or the row leaves composition. The
@@ -284,6 +317,7 @@ private fun PasswordRow(
     var revealed by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val haptics = rememberTangentHaptics()
 
     ListItem(
         leadingContent = { Favicon(meta.origin) },
@@ -301,7 +335,7 @@ private fun PasswordRow(
                     Spacer(Modifier.width(6.dp))
                     Text(
                         text = "Bitwarden",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmallEmphasized,
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
@@ -326,16 +360,27 @@ private fun PasswordRow(
         },
         trailingContent = {
             Row {
-                IconButton(onClick = {
-                    if (revealed != null) {
-                        revealed = null
-                    } else {
-                        scope.launch { revealed = fetchPassword() }
-                    }
-                }) {
+                // Reveal is a two-state control, so it's an IconToggleButton: TalkBack announces it
+                // as checked/unchecked and it picks up M3's checked state layer, neither of which a
+                // plain IconButton swapping its own icon can offer.
+                IconToggleButton(
+                    checked = revealed != null,
+                    onCheckedChange = { wantVisible ->
+                        haptics.toggle(wantVisible)
+                        if (!wantVisible) {
+                            revealed = null
+                        } else {
+                            scope.launch {
+                                val password = fetchPassword()
+                                if (password != null) revealed = password
+                                else onNotify("Couldn't unlock that password")
+                            }
+                        }
+                    },
+                ) {
                     Icon(
                         if (revealed != null) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = if (revealed != null) "Hide" else "Show",
+                        contentDescription = "Show password",
                     )
                 }
                 IconButton(onClick = {
@@ -344,7 +389,10 @@ private fun PasswordRow(
                         val password = fetchPassword()
                         if (password != null) {
                             copyPasswordToClipboard(context, password)
-                            Toast.makeText(context, "Password copied", Toast.LENGTH_SHORT).show()
+                            haptics.softClick()
+                            onNotify("Password copied")
+                        } else {
+                            onNotify("Couldn't unlock that password")
                         }
                     }
                 }) {
@@ -380,6 +428,10 @@ private fun AddPasswordDialog(
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
+    // Three fields deep in a dialog: focus the first one so the keyboard is already up, rather than
+    // costing a tap before anything can be typed.
+    val originFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { originFocus.requestFocus() }
 
     val canSave = origin.isNotBlank() && password.isNotBlank()
     val save = {
@@ -405,7 +457,9 @@ private fun AddPasswordDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Password") },
         text = {
-            Column {
+            // Scrollable so three text fields plus their labels stay reachable at large font scales
+            // once the IME has eaten half the dialog.
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = origin,
                     onValueChange = { origin = it },
@@ -418,7 +472,9 @@ private fun AddPasswordDialog(
                         capitalization = KeyboardCapitalization.None,
                         imeAction = ImeAction.Next,
                     ),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(originFocus),
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
@@ -445,10 +501,13 @@ private fun AddPasswordDialog(
                         PasswordVisualTransformation()
                     },
                     trailingIcon = {
-                        IconButton(onClick = { showPassword = !showPassword }) {
+                        IconToggleButton(
+                            checked = showPassword,
+                            onCheckedChange = { showPassword = it },
+                        ) {
                             Icon(
                                 if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = if (showPassword) "Hide password" else "Show password",
+                                contentDescription = "Show password",
                             )
                         }
                     },

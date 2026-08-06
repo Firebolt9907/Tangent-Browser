@@ -53,6 +53,8 @@ object ExpressiveMotion {
     private val SlowEffects = spring<Any>(dampingRatio = 1f, stiffness = 800f)
     private val DefaultSpatialPx =
         spring(dampingRatio = 0.8f, stiffness = 380f, visibilityThreshold = 0.5f)
+    private val DefaultEffectsPx =
+        spring(dampingRatio = 1f, stiffness = 1600f, visibilityThreshold = 0.5f)
 
     /** Spatial motion for the common case — a row expanding, a pane sliding in. */
     fun <T> defaultSpatialSpec(): FiniteAnimationSpec<T> = DefaultSpatial.cast()
@@ -75,6 +77,15 @@ object ExpressiveMotion {
 
     /** Non-spatial motion (alpha, colour, elevation) for the common case. */
     fun <T> defaultEffectsSpec(): FiniteAnimationSpec<T> = DefaultEffects.cast()
+
+    /**
+     * [defaultEffectsSpec] for a value measured in **raw pixels** — the elevation case.
+     *
+     * Same rationale as [defaultSpatialPxSpec]: the `Float` default threshold of `0.01` is a
+     * hundredth of a pixel, so a shadow settling from tens of pixels keeps emitting frames well
+     * after it has visually arrived. Still critically damped — an elevation must not bounce.
+     */
+    fun defaultEffectsPxSpec(): FiniteAnimationSpec<Float> = DefaultEffectsPx
 
     /** Non-spatial motion for small, immediate feedback — a press tint, a hover highlight. */
     fun <T> fastEffectsSpec(): FiniteAnimationSpec<T> = FastEffects.cast()

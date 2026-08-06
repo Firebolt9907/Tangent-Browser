@@ -301,13 +301,26 @@ fun MorphingBannerHost(
     // Card-stack geometry: depth 0 = front (full size), deeper = smaller + lifted so it peeks above
     // the front card's top edge. Animated so growing/shrinking the pile springs smoothly. Read in the
     // draw phase below — the target only changes when a banner appears or disappears.
+    //
+    // Unlike the enter/exit morph below, the fan-out is NOT in lockstep with the pill — it fires when
+    // a *sibling* banner arrives or leaves, with nothing else animating alongside it. So it is
+    // app-owned motion and takes the Expressive scale rather than the pill's `BarCollapse`, split by
+    // what each value actually is: scale and lift reshape/move the card, so they get the spatial
+    // spring and its slight overshoot (that settle-with-a-nudge is the Now-Bar feel the near-critical
+    // bar spring flattened out); the drop shadow is an effect, so it gets the critically-damped
+    // effects spring — an elevation that bounces reads as the card wobbling off the page. Peek and
+    // shadow are raw pixels, hence the `…PxSpec` variants: against a pixel quantity the stock 0.01
+    // threshold runs the spring for frames past anything visible.
     val depth = stack?.depthOf(stackId, stackPriority) ?: 0
     val targetScale = (1f - StackScalePerDepth * depth).coerceAtLeast(StackMinScale)
     val targetPeekPx = with(LocalDensity.current) { (StackPeekPerDepth * depth).toPx() }
     val targetShadowPx = with(LocalDensity.current) { (StackShadowBase + StackShadowPerDepth * depth).toPx() }
-    val stackScale = animateFloatAsState(targetScale, TangentMotion.BarCollapse, label = "bannerStackScale")
-    val stackPeek = animateFloatAsState(targetPeekPx, TangentMotion.BarCollapse, label = "bannerStackPeek")
-    val stackShadow = animateFloatAsState(targetShadowPx, TangentMotion.BarCollapse, label = "bannerStackShadow")
+    val stackScale =
+        animateFloatAsState(targetScale, ExpressiveMotion.defaultSpatialSpec(), label = "bannerStackScale")
+    val stackPeek =
+        animateFloatAsState(targetPeekPx, ExpressiveMotion.defaultSpatialPxSpec(), label = "bannerStackPeek")
+    val stackShadow =
+        animateFloatAsState(targetShadowPx, ExpressiveMotion.defaultEffectsPxSpec(), label = "bannerStackShadow")
     val bannerShape = SquircleShape(28.dp)
 
     // Folds the springy enter/exit with the live scroll intent into one progress. Multiplying means

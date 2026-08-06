@@ -4,19 +4,23 @@ import androidx.compose.foundation.clickable
 import com.firebolt9907.tangentbrowser.sync.zen.ZEN_SPACES_TABS_UI_ENABLED
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -41,6 +45,7 @@ import com.firebolt9907.tangentbrowser.sync.FirefoxSyncedDevice
 import com.firebolt9907.tangentbrowser.sync.FirefoxSyncedTab
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
+import com.firebolt9907.tangentbrowser.ui.theme.titleSmallEmphasized
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,7 +98,7 @@ fun SyncedTabsSheet(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = state.accountEmail ?: "Mozilla account",
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.titleSmallEmphasized,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -109,8 +114,14 @@ fun SyncedTabsSheet(
                 ) {
                     Text("Sync Now")
                 }
+                // Sign Out is rare and irreversible-ish next to Sync Now, which is the reason people
+                // open this sheet — so it keeps its space but loses visual weight (demotion, not
+                // removal).
                 TextButton(
                     enabled = !state.isBusy,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
                     onClick = { haptics.remove(); controller.signOut() },
                 ) {
                     Text("Sign Out")
@@ -125,7 +136,7 @@ fun SyncedTabsSheet(
             if (ZEN_SPACES_TABS_UI_ENABLED && state.zenWorkspaces.spaces.isNotEmpty()) {
                 Text(
                     text = "Spaces",
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleSmallEmphasized,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
@@ -144,31 +155,37 @@ fun SyncedTabsSheet(
             if (hasRealUrl && state.targetDevices.isNotEmpty()) {
                 Text(
                     text = "Send this tab to",
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleSmallEmphasized,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(4.dp))
-                state.targetDevices.forEach { device ->
-                    TextButton(
-                        enabled = !state.isBusy,
-                        onClick = {
-                            haptics.create()
-                            controller.sendTab(device.id, currentPageTitle, currentPageUrl)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.Send,
-                                contentDescription = null,
-                                modifier = Modifier.width(18.dp),
-                            )
-                            Text(device.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
+                Spacer(Modifier.height(8.dp))
+                // One send target is one action on a named object — an AssistChip, not a full-width
+                // button. Chips wrap, so a three-device account costs one line instead of three
+                // stacked buttons pushing the synced-tab list off the first screenful. AssistChip
+                // applies the 48dp minimum touch target itself despite its 32dp visual height.
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    state.targetDevices.forEach { device ->
+                        AssistChip(
+                            enabled = !state.isBusy,
+                            onClick = {
+                                haptics.create()
+                                controller.sendTab(device.id, currentPageTitle, currentPageUrl)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(AssistChipDefaults.IconSize),
+                                )
+                            },
+                            label = {
+                                Text(device.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            },
+                        )
                     }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -209,11 +226,29 @@ fun SyncedTabsSheet(
 
         state.message?.takeIf { state.devices.isNotEmpty() || state.isError }?.let { message ->
             Spacer(Modifier.height(10.dp))
-            Text(
-                text = message,
-                color = if (state.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = message,
+                    color = if (state.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
+                )
+                // A sync failure that only states the failure leaves the only way out as closing and
+                // reopening the sheet. Signed-in errors are almost always transient (network, token
+                // refresh), so the retry belongs next to the message.
+                if (state.isError && state.isSignedIn) {
+                    TextButton(
+                        enabled = !state.isBusy,
+                        onClick = { haptics.softClick(); controller.refreshSyncedTabs() },
+                    ) {
+                        Text("Try again")
+                    }
+                }
+            }
         }
     }
 }
@@ -227,7 +262,7 @@ private fun DeviceHeader(device: FirefoxSyncedDevice) {
     ) {
         Text(
             text = device.name,
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.titleSmallEmphasized,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -258,14 +293,18 @@ private fun SyncedTabRow(
         supportingContent = {
             Text(
                 text = tab.url,
+                style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         },
         trailingContent = {
+            // Decorative: the whole row is the click target, so a description here just makes
+            // TalkBack read a second, unactionable "Open tab" element after the row itself.
             Icon(
                 Icons.AutoMirrored.Filled.OpenInNew,
-                contentDescription = "Open tab",
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
     )

@@ -11,9 +11,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -31,7 +33,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.firebolt9907.tangentbrowser.ui.components.SheetSearchField
@@ -42,6 +43,7 @@ import com.firebolt9907.tangentbrowser.ui.components.SheetContentSwitch
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.components.SwipeToRemoveRow
+import com.firebolt9907.tangentbrowser.ui.theme.titleSmallEmphasized
 import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.HistoryStorage
 import mozilla.components.concept.storage.VisitInfo
@@ -64,13 +66,16 @@ fun HistorySheet(
     val scope = rememberCoroutineScope()
     var visits by remember { mutableStateOf<List<VisitInfo>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    var loadFailed by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var showClearConfirm by remember { mutableStateOf(false) }
 
     suspend fun reload() {
         // Guard the read so a storage error shows an empty list instead of crashing the sheet
-        // (and never clearing the loading state).
-        visits = runCatching {
+        // (and never clearing the loading state). The failure is remembered rather than swallowed:
+        // a failed read used to render as "No history yet", which is a different — and wrong —
+        // statement about the user's data, with nothing to press to try again.
+        val result = runCatching {
             historyStorage.getVisitsPaginated(
                 offset = 0,
                 count = 500,
@@ -82,8 +87,15 @@ fun HistorySheet(
                     VisitType.DOWNLOAD,
                 ),
             ).reversed()
-        }.getOrDefault(emptyList())
+        }
+        loadFailed = result.isFailure
+        visits = result.getOrDefault(emptyList())
         loading = false
+    }
+
+    fun retry() {
+        loading = true
+        scope.launch { reload() }
     }
 
     LaunchedEffect(Unit) { reload() }
@@ -177,15 +189,26 @@ fun HistorySheet(
                 }
 
                 SheetContentPhase.Empty -> {
-                    EmptyState(
-                        icon = Icons.Default.History,
-                        title = if (searchQuery.isBlank()) "No history yet" else "No matches",
-                        description = if (searchQuery.isBlank()) {
-                            "Pages you visit will show up here."
-                        } else {
-                            null
-                        },
-                    )
+                    if (loadFailed) {
+                        EmptyState(
+                            icon = Icons.Default.ErrorOutline,
+                            title = "Couldn't load history",
+                            description = "Something went wrong reading your browsing history.",
+                            action = {
+                                Button(onClick = { retry() }) { Text("Try again") }
+                            },
+                        )
+                    } else {
+                        EmptyState(
+                            icon = Icons.Default.History,
+                            title = if (searchQuery.isBlank()) "No history yet" else "No matches",
+                            description = if (searchQuery.isBlank()) {
+                                "Pages you visit will show up here."
+                            } else {
+                                null
+                            },
+                        )
+                    }
                 }
 
                 SheetContentPhase.Content -> {
@@ -194,10 +217,13 @@ fun HistorySheet(
                             item(key = "header-$date") {
                                 DateSectionHeader(dayLabel(date))
                             }
-                            items(dayVisits, key = { it.visitTime }) { visit ->
+                            // Two visits can share a millisecond, and a duplicate key throws out of
+                            // LazyColumn — the URL disambiguates them.
+                            items(dayVisits, key = { "${it.visitTime}-${it.url}" }) { visit ->
                                 // Swipe end-to-start to remove — keeps rows clean instead of a trash
                                 // icon on every one. See SwipeToRemoveRow.
                                 SwipeToRemoveRow(
+                                    removeLabel = "Remove from history",
                                     onRemove = {
                                         scope.launch {
                                             runCatching { historyStorage.deleteVisitsFor(visit.url) }
@@ -285,8 +311,7 @@ private fun dayLabel(date: LocalDate): String {
 private fun DateSectionHeader(label: String) {
     Text(
         text = label,
-        style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.SemiBold,
+        style = MaterialTheme.typography.titleSmallEmphasized,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier
             .fillMaxWidth()

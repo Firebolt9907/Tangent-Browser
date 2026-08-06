@@ -25,6 +25,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.foundation.layout.Column
@@ -173,6 +176,10 @@ fun SheetSearchField(
  * state goes with it. Set [settleOnRemove] false when the swipe should only *trigger* removal
  * (e.g. open a confirmation dialog): [onRemove] still fires, but the row springs back so it isn't
  * left blank if the user cancels — the dialog is then responsible for the actual delete + reload.
+ *
+ * A horizontal drag is not something TalkBack can perform, so removal would otherwise be reachable
+ * by touch only. The row therefore also publishes [removeLabel] as a semantics *custom action*,
+ * which is how the screen reader surfaces an affordance that has no visible control of its own.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -180,6 +187,7 @@ fun SwipeToRemoveRow(
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
     settleOnRemove: Boolean = true,
+    removeLabel: String = "Remove",
     content: @Composable () -> Unit,
 ) {
     val haptics = rememberTangentHaptics()
@@ -196,7 +204,15 @@ fun SwipeToRemoveRow(
     )
     SwipeToDismissBox(
         state = dismissState,
-        modifier = modifier,
+        modifier = modifier.semantics {
+            customActions = listOf(
+                CustomAccessibilityAction(removeLabel) {
+                    haptics.remove()
+                    onRemove()
+                    true
+                },
+            )
+        },
         enableDismissFromStartToEnd = false,
         backgroundContent = {
             val swiping = dismissState.targetValue == SwipeToDismissBoxValue.EndToStart

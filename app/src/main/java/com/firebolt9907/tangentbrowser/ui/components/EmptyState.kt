@@ -27,6 +27,10 @@ import androidx.compose.ui.unit.dp
  * Shared empty-state placeholder used across the bottom sheets (Add-ons, Passwords, etc.)
  * so every "nothing here yet" surface looks and reads consistently: a muted icon, a short
  * title, and an optional one-line hint telling the user what to do next.
+ *
+ * [action] is for the *error* flavour of this surface — a sheet whose load failed looks
+ * identical to one that is genuinely empty, so it must be able to say what went wrong and
+ * offer the way out (a retry) in the same place. Empty states proper leave it null.
  */
 @Composable
 fun EmptyState(
@@ -34,6 +38,7 @@ fun EmptyState(
     title: String,
     modifier: Modifier = Modifier,
     description: String? = null,
+    action: (@Composable () -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
@@ -72,6 +77,10 @@ fun EmptyState(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.widthIn(max = 280.dp),
             )
+        }
+        if (action != null) {
+            Spacer(Modifier.height(10.dp))
+            action()
         }
     }
 }

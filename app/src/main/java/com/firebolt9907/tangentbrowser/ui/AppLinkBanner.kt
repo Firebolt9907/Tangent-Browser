@@ -1,7 +1,15 @@
 package com.firebolt9907.tangentbrowser.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,11 +38,15 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import com.firebolt9907.tangentbrowser.ui.shape.SquircleShape
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
+import com.firebolt9907.tangentbrowser.ui.theme.labelLargeEmphasized
+import com.firebolt9907.tangentbrowser.ui.theme.pressMorphCorner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -103,6 +115,11 @@ fun OpenInAppBannerHost(
     }
 }
 
+/**
+ * Matches the shared floating-banner card in `sync/HandoffBanner.kt` (same surface, elevation, press
+ * morph and a11y shape); it stays a separate composable only because its leading slot is the target
+ * app's real launcher icon rather than a themed glyph.
+ */
 @Composable
 private fun OpenInAppCard(
     appName: String,
@@ -111,8 +128,9 @@ private fun OpenInAppCard(
     onOpen: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
-        shape = SquircleShape(28.dp),
+        shape = SquircleShape(pressMorphCorner(interactionSource, resting = 28.dp)),
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         tonalElevation = 3.dp,
         shadowElevation = 6.dp,
@@ -125,14 +143,19 @@ private fun OpenInAppCard(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onOpen)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = LocalIndication.current,
+                    role = Role.Button,
+                    onClick = onOpen,
+                )
                 .padding(start = 14.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
         ) {
             AppIcon(packageName = packageName)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Open in $appName",
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelLargeEmphasized,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -151,7 +174,7 @@ private fun OpenInAppCard(
             IconButton(onClick = onDismiss) {
                 Icon(
                     imageVector = Icons.Default.Close,
-                    contentDescription = "Dismiss",
+                    contentDescription = "Don't open in $appName",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -164,6 +187,11 @@ private fun OpenInAppCard(
  * "open in new" glyph while loading or if the icon can't be resolved (app uninstalled between
  * resolution and render, restricted access, …). Clipped to a small squircle so a square legacy icon
  * still reads as a rounded app tile.
+ *
+ * The load finishes after the banner is already on screen, so the swap is animated rather than a pop:
+ * scale on [ExpressiveMotion.fastSpatialSpec] (the glyph resizes — spatial) crossfading on
+ * [ExpressiveMotion.fastEffectsSpec] (alpha — critically damped, or it flickers). Both states occupy
+ * the same fixed 30dp slot, so the resolved icon arriving no longer nudges the title sideways.
  */
 @Composable
 private fun AppIcon(packageName: String?) {
@@ -181,24 +209,34 @@ private fun AppIcon(packageName: String?) {
             }
         }
     }
-    val resolved = icon
-    if (resolved != null) {
-        Image(
-            bitmap = resolved,
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .size(30.dp)
-                .clip(SquircleShape(9.dp)),
-        )
-    } else {
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier
-                .padding(start = 2.dp, end = 2.dp)
-                .size(24.dp),
-        )
+    AnimatedContent(
+        targetState = icon,
+        transitionSpec = {
+            (scaleIn(ExpressiveMotion.fastSpatialSpec(), initialScale = 0.7f) +
+                fadeIn(ExpressiveMotion.fastEffectsSpec())) togetherWith
+                (scaleOut(ExpressiveMotion.fastSpatialSpec(), targetScale = 0.7f) +
+                    fadeOut(ExpressiveMotion.fastEffectsSpec()))
+        },
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.size(30.dp),
+        label = "appIcon",
+    ) { resolved ->
+        if (resolved != null) {
+            Image(
+                bitmap = resolved,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(SquircleShape(9.dp)),
+            )
+        } else {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp),
+            )
+        }
     }
 }

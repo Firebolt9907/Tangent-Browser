@@ -1,5 +1,12 @@
 package com.firebolt9907.tangentbrowser.ui.addons
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,7 +24,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -45,6 +54,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
 import com.firebolt9907.tangentbrowser.ui.components.BusyIndicator
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
@@ -165,18 +176,11 @@ internal fun AddonsManagerSheetContent(
             }
         }
 
-        state.message?.let { message ->
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = message,
-                color = if (state.isError) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
+        InstallStatus(
+            message = state.message,
+            isError = state.isError,
+            onRetry = if (installText.isNotBlank() && !state.isBusy) onInstall else null,
+        )
 
         Spacer(Modifier.height(12.dp))
 
@@ -196,6 +200,84 @@ internal fun AddonsManagerSheetContent(
                         onOpenQuickSettings = { onOpenQuickSettings(addon) },
                         onUninstall = { onUninstall(addon.id) },
                     )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The install/enable/remove outcome line. It was a bare coloured `bodySmall` that appeared and
+ * vanished instantly, shoving the add-on list by its own height on every state change, and an
+ * *error* stated the failure with no way out but retyping the input.
+ *
+ * Now a filled status card on the matching container role (`errorContainer` for a failure, a plain
+ * `surfaceContainerHigh` for progress/success), animating in on the Expressive springs — the height
+ * change is spatial, the fade and colour are effects — and carrying **Try again** when the failure
+ * is retryable, i.e. when the field still holds the input that failed and no install is in flight.
+ *
+ * [message] is retained through the exit animation so the card fades out with its own text rather
+ * than blanking a frame early.
+ */
+@Composable
+private fun InstallStatus(
+    message: String?,
+    isError: Boolean,
+    onRetry: (() -> Unit)?,
+) {
+    val haptics = rememberTangentHaptics()
+    var lastShown by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    if (message != null) lastShown = message to isError
+    val shown = lastShown
+
+    AnimatedVisibility(
+        visible = message != null,
+        enter = fadeIn(ExpressiveMotion.defaultEffectsSpec()) +
+            expandVertically(ExpressiveMotion.defaultSpatialSpec()),
+        exit = fadeOut(ExpressiveMotion.defaultEffectsSpec()) +
+            shrinkVertically(ExpressiveMotion.defaultSpatialSpec()),
+    ) {
+        if (shown == null) return@AnimatedVisibility
+        val (text, error) = shown
+        val container by animateColorAsState(
+            targetValue = if (error) {
+                MaterialTheme.colorScheme.errorContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            },
+            animationSpec = ExpressiveMotion.defaultEffectsSpec(),
+            label = "installStatusContainer",
+        )
+        val content = if (error) {
+            MaterialTheme.colorScheme.onErrorContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
+        Row(
+            modifier = Modifier
+                .padding(top = 10.dp)
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.medium)
+                .background(container)
+                .padding(start = 14.dp, end = if (error && onRetry != null) 6.dp else 14.dp)
+                .padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(
+                imageVector = if (error) Icons.Default.ErrorOutline else Icons.Default.Info,
+                contentDescription = null,
+                tint = content,
+            )
+            Text(
+                text = text,
+                modifier = Modifier.weight(1f),
+                color = content,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (error && onRetry != null) {
+                TextButton(onClick = { haptics.softClick(); onRetry() }) {
+                    Text("Try again", color = content)
                 }
             }
         }

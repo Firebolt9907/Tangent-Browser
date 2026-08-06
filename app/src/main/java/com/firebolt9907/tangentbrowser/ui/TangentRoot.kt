@@ -4222,6 +4222,7 @@ fun TangentRoot(
             currentUrl = currentUrl,
             currentPageSnapshot = currentPageSnapshot,
             topChromeInsetPx = topChromeInsetPx,
+            bottomChromeInsetPx = bottomChromeInsetPx,
             showBottomToolbar = showBottomToolbar,
             gridEngaged = gridEngaged,
             onCloseGrid = { animateBack -> closeGrid(animateBack = animateBack) },

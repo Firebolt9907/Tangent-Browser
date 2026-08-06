@@ -1,7 +1,6 @@
 package com.firebolt9907.tangentbrowser.ui
 
 import android.graphics.Bitmap
-import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.geometry.Offset
@@ -60,6 +59,8 @@ internal fun TangentOverlaySheets(
     currentUrl: String?,
     currentPageSnapshot: Bitmap?,
     topChromeInsetPx: Int,
+    // Height of the pill/toolbar chrome at the bottom — the page-feedback snackbar sits above it.
+    bottomChromeInsetPx: Int,
     showBottomToolbar: Boolean,
     gridEngaged: Boolean,
     onCloseGrid: (animateBack: Boolean) -> Unit,
@@ -138,6 +139,9 @@ internal fun TangentOverlaySheets(
     val appContext = LocalContext.current.applicationContext
     val clipboardManager = LocalClipboardManager.current
     val density = LocalDensity.current
+    // Themed replacement for the Toasts the link glance and the image menu used to fire; mounted at
+    // the very end of this composable so it draws over the surfaces that raise it.
+    val feedback = rememberPageFeedback(scope)
     // Containers offered by the link-peek "open in a separate profile" action.
     val peekContainers by components.containerRepository.containers.collectAsStateWithLifecycle()
 
@@ -489,7 +493,7 @@ internal fun TangentOverlaySheets(
             },
             onCopy = { u ->
                 clipboardManager.setText(AnnotatedString(u))
-                Toast.makeText(appContext, "Link copied", Toast.LENGTH_SHORT).show()
+                feedback.show("Link copied")
                 onDismissPeek()
             },
             onShare = { u ->
@@ -507,7 +511,7 @@ internal fun TangentOverlaySheets(
                         )
                     )
                 }
-                Toast.makeText(appContext, "Downloading…", Toast.LENGTH_SHORT).show()
+                feedback.show("Downloading…")
                 onDismissPeek()
             },
             containers = peekContainers,
@@ -522,6 +526,43 @@ internal fun TangentOverlaySheets(
         )
     }
     imageMenuUrl?.let { imageUrl ->
+        // Each of these narrates itself in two beats — a progress line, then the outcome — and the
+        // failure beat offers the retry a Toast never could. They're local funs rather than inline
+        // lambdas so the retry action can re-invoke the very operation that failed.
+        fun copyImage(u: String) {
+            feedback.show("Copying image…")
+            scope.launch {
+                val ok = com.firebolt9907.tangentbrowser.ui.content.ImageClipboard.copy(appContext, u)
+                if (ok) feedback.show("Image copied")
+                else feedback.show("Couldn't copy image", "Try again") { copyImage(u) }
+            }
+        }
+
+        fun saveToPhotos(u: String) {
+            feedback.show("Saving to Photos…")
+            scope.launch {
+                val ok = com.firebolt9907.tangentbrowser.ui.content.ImageClipboard
+                    .saveToPhotos(appContext, u)
+                if (ok) feedback.show("Saved to Photos")
+                else feedback.show("Couldn't save image", "Try again") { saveToPhotos(u) }
+            }
+        }
+
+        fun copyTextFromImage(u: String) {
+            feedback.show("Scanning image for text…")
+            scope.launch {
+                when (com.firebolt9907.tangentbrowser.ui.content.ImageClipboard
+                    .copyTextFromImage(appContext, u)) {
+                    is com.firebolt9907.tangentbrowser.ui.content.ImageClipboard.OcrResult.Text ->
+                        feedback.show("Text copied")
+                    com.firebolt9907.tangentbrowser.ui.content.ImageClipboard.OcrResult.Empty ->
+                        feedback.show("No text found in image")
+                    com.firebolt9907.tangentbrowser.ui.content.ImageClipboard.OcrResult.Failed ->
+                        feedback.show("Couldn't read image", "Try again") { copyTextFromImage(u) }
+                }
+            }
+        }
+
         ImageContextSheet(
             imageUrl = imageUrl,
             onOpenNewTab = { u -> viewModel.onOpenNewTab(url = u, title = "", selectTab = true) },
@@ -543,52 +584,19 @@ internal fun TangentOverlaySheets(
                         )
                     )
                 }
+                // The link glance's identical "download this" dispatch says "Downloading…"; this one
+                // said nothing at all, so saving an image looked like a dead button until the system
+                // notification arrived.
+                feedback.show("Downloading…")
             },
-            onCopyImage = { u ->
-                Toast.makeText(appContext, "Copying image…", Toast.LENGTH_SHORT).show()
-                scope.launch {
-                    val ok = com.firebolt9907.tangentbrowser.ui.content.ImageClipboard
-                        .copy(appContext, u)
-                    Toast.makeText(
-                        appContext,
-                        if (ok) "Image copied" else "Couldn't copy image",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
-            },
+            onCopyImage = ::copyImage,
             onSaveToPhotos = if (com.firebolt9907.tangentbrowser.ui.content.ImageClipboard.canSaveToPhotos) {
-                { u ->
-                    Toast.makeText(appContext, "Saving to Photos…", Toast.LENGTH_SHORT).show()
-                    scope.launch {
-                        val ok = com.firebolt9907.tangentbrowser.ui.content.ImageClipboard
-                            .saveToPhotos(appContext, u)
-                        Toast.makeText(
-                            appContext,
-                            if (ok) "Saved to Photos" else "Couldn't save image",
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                }
+                ::saveToPhotos
             } else null,
-            onCopyText = { u ->
-                Toast.makeText(appContext, "Scanning image for text…", Toast.LENGTH_SHORT).show()
-                scope.launch {
-                    val result = com.firebolt9907.tangentbrowser.ui.content.ImageClipboard
-                        .copyTextFromImage(appContext, u)
-                    val msg = when (result) {
-                        is com.firebolt9907.tangentbrowser.ui.content.ImageClipboard.OcrResult.Text ->
-                            "Text copied"
-                        com.firebolt9907.tangentbrowser.ui.content.ImageClipboard.OcrResult.Empty ->
-                            "No text found in image"
-                        com.firebolt9907.tangentbrowser.ui.content.ImageClipboard.OcrResult.Failed ->
-                            "Couldn't read image"
-                    }
-                    Toast.makeText(appContext, msg, Toast.LENGTH_SHORT).show()
-                }
-            },
+            onCopyText = ::copyTextFromImage,
             onCopy = { u ->
                 clipboardManager.setText(AnnotatedString(u))
-                Toast.makeText(appContext, "Image address copied", Toast.LENGTH_SHORT).show()
+                feedback.show("Image address copied")
             },
             onShare = { u ->
                 // Share the actual image bytes (what "Share image" implies); fall back to sharing the
@@ -602,4 +610,7 @@ internal fun TangentOverlaySheets(
             onDismiss = onDismissImageMenu,
         )
     }
+
+    // Last, so page-level confirmations draw over every surface that raises one.
+    PageFeedbackHost(feedback, with(density) { bottomChromeInsetPx.toDp() })
 }

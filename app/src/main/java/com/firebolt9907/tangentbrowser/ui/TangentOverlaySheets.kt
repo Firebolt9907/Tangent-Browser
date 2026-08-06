@@ -61,6 +61,9 @@ internal fun TangentOverlaySheets(
     topChromeInsetPx: Int,
     // Height of the pill/toolbar chrome at the bottom — the page-feedback snackbar sits above it.
     bottomChromeInsetPx: Int,
+    // Owned by TangentRoot (whose own confirmations use it too); the host is still mounted at the
+    // end of this composable so a message draws over the sheets that raise it.
+    feedback: PageFeedback,
     showBottomToolbar: Boolean,
     gridEngaged: Boolean,
     onCloseGrid: (animateBack: Boolean) -> Unit,
@@ -139,9 +142,6 @@ internal fun TangentOverlaySheets(
     val appContext = LocalContext.current.applicationContext
     val clipboardManager = LocalClipboardManager.current
     val density = LocalDensity.current
-    // Themed replacement for the Toasts the link glance and the image menu used to fire; mounted at
-    // the very end of this composable so it draws over the surfaces that raise it.
-    val feedback = rememberPageFeedback(scope)
     // Containers offered by the link-peek "open in a separate profile" action.
     val peekContainers by components.containerRepository.containers.collectAsStateWithLifecycle()
 

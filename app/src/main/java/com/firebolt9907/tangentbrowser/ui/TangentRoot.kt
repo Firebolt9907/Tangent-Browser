@@ -611,6 +611,11 @@ fun TangentRoot(
     }
     var contentSize by remember { mutableStateOf(IntSize.Zero) }
     val scope = rememberCoroutineScope()
+    // The one page-level feedback channel (see PageFeedback.kt). Created here rather than inside
+    // TangentOverlaySheets because the root's own confirmations — a remote sign-out, a copied link,
+    // a saved blob file — need it too; the host that draws it still lives at the end of the sheets
+    // composable, so a message always draws over the surfaces that raise it.
+    val pageFeedback = rememberPageFeedback(scope)
 
     // Horizontal tab-switch / predictive-back drag gesture (invariant #5) grouped in
     // HorizontalGestureState; local `var x by hdrag.x` delegate aliases keep every site unchanged.
@@ -1030,11 +1035,11 @@ fun TangentRoot(
                     if (!showOnboarding) showSyncedTabs = true
                 }
                 FirefoxSyncEvent.LoggedOutRemotely -> {
-                    android.widget.Toast.makeText(
-                        appContext,
-                        "Firefox Sync was signed out on another device",
-                        android.widget.Toast.LENGTH_LONG,
-                    ).show()
+                    pageFeedback.show(
+                        message = "Firefox Sync was signed out on another device",
+                        actionLabel = "Sign in",
+                        onAction = { showSyncedTabs = true },
+                    )
                 }
             }
         }
@@ -1354,11 +1359,7 @@ fun TangentRoot(
                                 // stylesheet — that, not the picker, is what actually hides it.
                                 tangentHaptics.toggle(true)
                             } else {
-                                android.widget.Toast.makeText(
-                                    appContext,
-                                    "Couldn't hide that element",
-                                    android.widget.Toast.LENGTH_SHORT,
-                                ).show()
+                                pageFeedback.show("Couldn't hide that element")
                             }
                         }
                         com.firebolt9907.tangentbrowser.ui.content.ElementZap.Event.Cancelled -> {
@@ -3808,14 +3809,14 @@ fun TangentRoot(
                         if (currentUrl.isNotBlank() && currentUrl != "about:blank") {
                             clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(currentUrl))
                             // When signed in with a reachable device, surface a transient "Send to
-                            // <device>" banner above the pill instead of only the toast.
+                            // <device>" banner above the pill instead of only the confirmation.
                             if (recentTargetDevice != null) {
                                 sendLinkPrompt = SendLinkPrompt(
                                     url = currentUrl,
                                     title = selectedContent?.title.orEmpty(),
                                 )
                             } else {
-                                android.widget.Toast.makeText(appContext, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
+                                pageFeedback.show("Link copied")
                             }
                         }
                     }
@@ -3967,11 +3968,7 @@ fun TangentRoot(
                             if (code != null) {
                                 com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.deliverCode(code)
                             } else {
-                                android.widget.Toast.makeText(
-                                    appContext,
-                                    "No code found in clipboard",
-                                    android.widget.Toast.LENGTH_SHORT,
-                                ).show()
+                                pageFeedback.show("No code found in clipboard")
                             }
                             otpPasteVisible = false
                         },
@@ -3979,6 +3976,25 @@ fun TangentRoot(
                     )
 
                     // The page on screen is a file we captured out of a blob URL — offer to keep it.
+                    // A local fun, not an inline lambda, so the failure snackbar's "Try again" can
+                    // re-invoke the very save that failed.
+                    fun saveBlobFile(
+                        blob: com.firebolt9907.tangentbrowser.state.BlobFile,
+                    ) {
+                        scope.launch {
+                            val saved = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                com.firebolt9907.tangentbrowser.state.BlobFileStore
+                                    .saveToDownloads(appContext, blob)
+                            }
+                            if (saved != null) {
+                                pageFeedback.show("Saved $saved to Downloads")
+                            } else {
+                                pageFeedback.show("Couldn't save this file", "Try again") {
+                                    saveBlobFile(blob)
+                                }
+                            }
+                        }
+                    }
                     com.firebolt9907.tangentbrowser.ui.content.BlobFileBannerHost(
                         file = currentBlobFile,
                         visible = currentBlobFile != null &&
@@ -3988,18 +4004,7 @@ fun TangentRoot(
                         stack = bannerStack,
                         onSave = { blob ->
                             blobBannerDismissedId = blob.id
-                            scope.launch {
-                                val saved = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                    com.firebolt9907.tangentbrowser.state.BlobFileStore
-                                        .saveToDownloads(appContext, blob)
-                                }
-                                android.widget.Toast.makeText(
-                                    appContext,
-                                    if (saved != null) "Saved $saved to Downloads"
-                                    else "Couldn't save this file",
-                                    android.widget.Toast.LENGTH_SHORT,
-                                ).show()
-                            }
+                            saveBlobFile(blob)
                         },
                         onDismiss = { blobBannerDismissedId = currentBlobFile?.id },
                     )
@@ -4223,6 +4228,7 @@ fun TangentRoot(
             currentPageSnapshot = currentPageSnapshot,
             topChromeInsetPx = topChromeInsetPx,
             bottomChromeInsetPx = bottomChromeInsetPx,
+            feedback = pageFeedback,
             showBottomToolbar = showBottomToolbar,
             gridEngaged = gridEngaged,
             onCloseGrid = { animateBack -> closeGrid(animateBack = animateBack) },

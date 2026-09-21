@@ -1,6 +1,7 @@
 package com.firebolt9907.tangentbrowser.engine
 
 import android.app.Application
+import android.util.Log
 import com.firebolt9907.tangentbrowser.addons.AddonController
 import com.firebolt9907.tangentbrowser.state.GeckoTabRepository
 import com.firebolt9907.tangentbrowser.state.GlobalPreferencesStore
@@ -42,6 +43,7 @@ import org.mozilla.geckoview.GeckoRuntimeSettings
  * repository, snapshot cache, site preferences, and the add-on controller. Constructed
  * lazily by [com.firebolt9907.tangentbrowser.TangentApplication]; see `ARCHITECTURE.md`.
  */
+@OptIn(mozilla.components.ExperimentalAndroidComponentsApi::class)
 class TangentBrowserComponents(application: Application) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val globalPreferencesStore = GlobalPreferencesStore(application)
@@ -66,6 +68,22 @@ class TangentBrowserComponents(application: Application) {
         ),
         runtime,
     )
+    init {
+        engine.getBrowserPrefs(
+            listOf(
+                "security.webauth.webauthn",
+                "security.webauth.webauthn_enable_softtoken",
+                "security.webauth.webauthn_enable_android_fido2",
+            ),
+            onSuccess = { values ->
+                Log.i(
+                    "TangentPasskeys",
+                    "Live Gecko prefs: " + values.joinToString { "${it.pref}=${it.value}" },
+                )
+            },
+            onError = { error -> Log.w("TangentPasskeys", "Could not read live Gecko prefs", error) },
+        )
+    }
     val store = BrowserStore(
         initialState = BrowserState(),
         middleware = EngineMiddleware.create(engine, scope),
@@ -173,6 +191,7 @@ class TangentBrowserComponents(application: Application) {
         creditCardsStorage,
         historyStorage,
         bookmarksStorage,
+        icons = icons,
     )
     val sitePermissionController =
         com.firebolt9907.tangentbrowser.permissions.SitePermissionController(application)
@@ -484,19 +503,25 @@ class TangentBrowserComponents(application: Application) {
                     dataSaverController.onReaderFailed(url)
                 }
             }
-        // Bitwarden-backed passkeys: only when the user picked that mode (softtoken off — see
-        // writeGeckoConfig). The content script overrides navigator.credentials and routes ceremonies
-        // to the vault; the UI (picker + biometric) is driven by PasskeyUiController via PasskeyUiHost.
-        // Not installed in Off/Softtoken so those paths are untouched. See sync/webauthn, invariant #12.
-        if (globalPreferencesStore.passkeyMode == com.firebolt9907.tangentbrowser.state.PasskeyMode.Bitwarden) {
-            com.firebolt9907.tangentbrowser.sync.webauthn.PasskeyExtension.initialize(
-                scope,
+        // System mode routes the page ceremony through Android Credential Manager because GeckoView
+        // 153's legacy privileged-FIDO API rejects third-party browser certificates before the user's
+        // selected provider can apply its own trusted-browser policy. The Bitwarden Vault mode uses
+        // the same isolated content-script transport but keeps its custom vault provider separate.
+        val passkeyProvider = when (globalPreferencesStore.passkeyMode) {
+            com.firebolt9907.tangentbrowser.state.PasskeyMode.Native ->
+                com.firebolt9907.tangentbrowser.sync.webauthn.AndroidCredentialManagerPasskeyProvider()
+            com.firebolt9907.tangentbrowser.state.PasskeyMode.SecurityKey ->
+                com.firebolt9907.tangentbrowser.sync.webauthn.HardwareSecurityKeyPasskeyProvider()
+            com.firebolt9907.tangentbrowser.state.PasskeyMode.Bitwarden ->
                 com.firebolt9907.tangentbrowser.sync.bitwarden.BitwardenPasskeyProvider(
                     controller = bitwardenController,
                     chooseCredential = { com.firebolt9907.tangentbrowser.ui.PasskeyUiController.pick(it) },
                     confirmUser = { com.firebolt9907.tangentbrowser.ui.PasskeyUiController.requestVerify(it) },
-                ),
-            )
+                )
+            else -> null
+        }
+        if (passkeyProvider != null) {
+            com.firebolt9907.tangentbrowser.sync.webauthn.PasskeyExtension.initialize(scope, passkeyProvider)
             com.firebolt9907.tangentbrowser.sync.webauthn.PasskeyExtension.install(engine)
         }
     }
@@ -540,6 +565,7 @@ private fun httpsModeOf(prefs: GlobalPreferencesStore) =
  *   Gecko only reads it for debuggable apps.
  */
 private fun buildRuntime(application: Application, prefs: GlobalPreferencesStore): GeckoRuntime {
+    Log.i("TangentPasskeys", "Creating Gecko runtime with passkey mode=${prefs.passkeyMode.name}")
     val settings = GeckoRuntimeSettings.Builder()
         .lowMemoryDetection(true)
         .consoleOutput(true) // TEMP: archive-reflow diagnostics (revert to false)
@@ -548,12 +574,9 @@ private fun buildRuntime(application: Application, prefs: GlobalPreferencesStore
         .aboutConfigEnabled(false)
         .apply { writeGeckoConfig(application, prefs)?.let { configFilePath(it) } }
         .build()
-    // WebAuthn/passkeys: the platform FIDO2/Credential Manager path needs Tangent on the trusted-
-    // browser allowlist, which we're not on, so it's unavailable. writeGeckoConfig() therefore gates
-    // WebAuthn on the passkeyMode pref (Off/Softtoken/Bitwarden): OFF disables the API (clean password
-    // fallback), Softtoken routes to Gecko's internal softtoken authenticator, Bitwarden enables the API
-    // with softtoken off so the passkey-bridge content script services ceremonies from the vault. Both
-    // active modes are the deliberate, pref-gated exception to AGENTS.md invariant #12.
+    // WebAuthn/passkeys are selected in writeGeckoConfig(): Native routes ceremonies to Android's
+    // provider sheet; SecurityKey talks CTAP to a USB/NFC authenticator; Softtoken uses Gecko's
+    // profile-local authenticator; Bitwarden uses Tangent's isolated bridge to its connected vault.
     return GeckoRuntime.create(application, settings)
 }
 
@@ -585,6 +608,28 @@ private fun buildRuntime(application: Application, prefs: GlobalPreferencesStore
  *   Desktop-only mousewheel/scroll-physics ("Smoothfox") prefs are intentionally excluded — touch
  *   scrolling is driven by APZ and those prefs would fight it.
  */
+internal fun webAuthnGeckoPrefs(mode: com.firebolt9907.tangentbrowser.state.PasskeyMode): String =
+    when (mode) {
+        com.firebolt9907.tangentbrowser.state.PasskeyMode.Native ->
+            "security.webauth.webauthn: true\n" +
+                "          security.webauth.webauthn_enable_softtoken: false\n" +
+                "          security.webauth.webauthn_enable_android_fido2: true"
+        com.firebolt9907.tangentbrowser.state.PasskeyMode.SecurityKey ->
+            "security.webauth.webauthn: true\n" +
+                "          security.webauth.webauthn_enable_softtoken: false\n" +
+                "          security.webauth.webauthn_enable_android_fido2: false"
+        com.firebolt9907.tangentbrowser.state.PasskeyMode.Softtoken ->
+            "security.webauth.webauthn: true\n" +
+                "          security.webauth.webauthn_enable_softtoken: true\n" +
+                "          security.webauth.webauthn_enable_android_fido2: false"
+        com.firebolt9907.tangentbrowser.state.PasskeyMode.Bitwarden ->
+            "security.webauth.webauthn: true\n" +
+                "          security.webauth.webauthn_enable_softtoken: false\n" +
+                "          security.webauth.webauthn_enable_android_fido2: false"
+        com.firebolt9907.tangentbrowser.state.PasskeyMode.Off ->
+            "security.webauth.webauthn: false"
+    }
+
 private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesStore): String? = try {
     val capacityKb = prefs.httpCacheSizeMb.toLong() * 1024L
     val cacheParent = application.cacheDir.absolutePath
@@ -597,23 +642,11 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
     val serviceWorkers = prefs.serviceWorkersEnabled
     val webRtcHideIp = prefs.webRtcIpsHidden
     val sendBeacon = prefs.sendBeaconEnabled
-    // Passkeys: three-way (invariant #12). Softtoken → Gecko's internal authenticator; Bitwarden →
-    // WebAuthn API on but softtoken OFF, so the passkey-bridge content script's navigator.credentials
-    // override is the sole authenticator (native fallback is intentionally inert); Off → API disabled.
+    // Passkeys (invariant #12). Native → Android provider sheet; SecurityKey → direct USB/NFC CTAP;
+    // Softtoken → Gecko's internal authenticator; Bitwarden → isolated vault bridge; Off → disabled.
     // Continuation lines carry an explicit 10-space indent to match surrounding YAML keys (the outer
     // string is .trimIndent()ed, which then shifts everything to the 2-space nesting level).
-    val webauthnPrefs = when (prefs.passkeyMode) {
-        com.firebolt9907.tangentbrowser.state.PasskeyMode.Softtoken ->
-            "security.webauth.webauthn: true\n" +
-                "          security.webauth.webauthn_enable_softtoken: true\n" +
-                "          security.webauth.webauthn_enable_android_fido2: false"
-        com.firebolt9907.tangentbrowser.state.PasskeyMode.Bitwarden ->
-            "security.webauth.webauthn: true\n" +
-                "          security.webauth.webauthn_enable_softtoken: false\n" +
-                "          security.webauth.webauthn_enable_android_fido2: false"
-        com.firebolt9907.tangentbrowser.state.PasskeyMode.Off ->
-            "security.webauth.webauthn: false"
-    }
+    val webauthnPrefs = webAuthnGeckoPrefs(prefs.passkeyMode)
     val file = java.io.File(application.filesDir, "geckoview-config.yaml")
     file.writeText(
         """
@@ -890,8 +923,9 @@ private fun writeGeckoConfig(application: Application, prefs: GlobalPreferencesS
           extensions.formautofill.addresses.supported: "on"
           dom.forms.autocomplete.formautofill: true
           # --- Passkeys / WebAuthn (see GlobalPreferencesStore.passkeyMode) ---
-          # Tangent isn't on the platform trusted-browser allowlist, so the FIDO2/Credential Manager
-          # path rejects our cert. Three modes, chosen by the passkeyMode pref:
+          # Five mutually-exclusive modes, chosen by the passkeyMode pref:
+          #  * Native    → GeckoView hands the ceremony to Android's FIDO2/provider sheet.
+          #  * SecurityKey → Tangent hands the ceremony directly to a USB/NFC FIDO2 authenticator.
           #  * Softtoken → WebAuthn serviced by Gecko's INTERNAL softtoken (no allowlist).
           #  * Bitwarden → WebAuthn on, softtoken OFF; the passkey-bridge content script's
           #                navigator.credentials override services ceremonies from the Bitwarden vault.

@@ -1,10 +1,8 @@
 /*
  * Reader block -> DOM renderer for the STANDARD desktop extension build only.
  *
- * Consumes the exact article model that tangentExtractArticle() produces (the same JSON the Tangent
- * app parses in ReaderExtractor.parseArticleJson) and renders it into a shadow-DOM overlay. The
- * shadow root + inlined TANGENT_READER_CSS keep the page's styles out and ours in. This file is only
- * bundled into the standard target; the Tangent build ships the blocks to native Compose instead.
+ * Consumes the article model produced by tangentExtractArticle() and renders it into a shadow-DOM
+ * overlay. The shadow root + inlined TANGENT_READER_CSS keep the page's styles out and ours in.
  *
  * Block types handled (must stay in step with extractor.core.js): h, p (spans + imath), li, bq, pre,
  * table, hr, img, figure_rich.

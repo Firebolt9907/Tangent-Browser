@@ -11,6 +11,10 @@ package com.firebolt9907.tangentbrowser.sync.webauthn
  * Compose or Android.
  */
 interface PasskeyProvider {
+    /** Whether this provider represents a user-verifying platform authenticator. */
+    val isUserVerifyingPlatformAuthenticatorAvailable: Boolean
+        get() = true
+
     suspend fun getAssertion(request: PasskeyGetRequest): PasskeyOutcome
     suspend fun makeCredential(request: PasskeyCreateRequest): PasskeyOutcome
 }
@@ -23,6 +27,8 @@ data class PasskeyGetRequest(
     val allowCredentialIds: List<String>,
     /** SHA-256 of the page's `clientDataJSON` — what the assertion signature covers. */
     val clientDataHash: ByteArray,
+    /** WebAuthn request-options JSON accepted by Android Credential Manager. */
+    val credentialManagerRequestJson: String? = null,
 )
 
 /** A `navigator.credentials.create()` request, post-validation. */
@@ -33,6 +39,10 @@ data class PasskeyCreateRequest(
     val userId: ByteArray?,
     val userName: String?,
     val userDisplayName: String?,
+    /** SHA-256 of the page's `clientDataJSON`; browser providers must pass this to the authenticator. */
+    val clientDataHash: ByteArray,
+    /** WebAuthn creation-options JSON accepted by Android Credential Manager. */
+    val credentialManagerRequestJson: String? = null,
 )
 
 /** What the user is being asked to confirm, so the gate can show a meaningful prompt. */
@@ -46,6 +56,12 @@ sealed interface PasskeyPrompt {
 
 /** The result the bridge serializes back to the page. */
 sealed interface PasskeyOutcome {
+    /** Credential Manager's standard WebAuthn registration response JSON. */
+    data class CredentialManagerCreated(val responseJson: String) : PasskeyOutcome
+
+    /** Credential Manager's standard WebAuthn authentication response JSON. */
+    data class CredentialManagerAsserted(val responseJson: String) : PasskeyOutcome
+
     /** Registration succeeded; return the new credential to the page. */
     data class Created(
         val credentialId: ByteArray,

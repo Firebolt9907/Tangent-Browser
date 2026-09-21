@@ -10,9 +10,6 @@
  *
  * Re-injection safe: state lives on the DOM (overlay presence + <html> markers), not on script
  * globals, because each injection re-runs this file fresh.
- *
- * The Tangent built-in build swaps this file for glue.tangent.js (native-messaging Port) — the
- * extractor above is identical in both.
  */
 (function () {
   var OVERLAY_ID = 'tangent-reader-overlay-host';

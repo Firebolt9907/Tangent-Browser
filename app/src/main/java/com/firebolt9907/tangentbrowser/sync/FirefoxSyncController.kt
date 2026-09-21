@@ -7,6 +7,8 @@ import android.net.Uri
 import androidx.core.net.toUri
 import com.firebolt9907.tangentbrowser.R
 import com.firebolt9907.tangentbrowser.state.GlobalPreferencesStore
+import com.firebolt9907.tangentbrowser.sync.zen.ZenPhoneSpace
+import com.firebolt9907.tangentbrowser.sync.zen.ZenPhoneTab
 import com.firebolt9907.tangentbrowser.sync.zen.Sync15StorageClient
 import com.firebolt9907.tangentbrowser.sync.zen.ZEN_WORKSPACES_COLLECTION
 import com.firebolt9907.tangentbrowser.sync.zen.ZenWorkspaceRecords
@@ -15,6 +17,7 @@ import com.firebolt9907.tangentbrowser.sync.zen.ZenWorkspacesStorage
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -106,6 +109,7 @@ class FirefoxSyncController(
     private val creditCardsStorage: mozilla.components.service.sync.autofill.AutofillCreditCardsAddressesStorage? = null,
     private val historyStorage: mozilla.components.browser.storage.sync.PlacesHistoryStorage? = null,
     private val bookmarksStorage: mozilla.components.browser.storage.sync.PlacesBookmarksStorage? = null,
+    icons: mozilla.components.browser.icons.BrowserIcons? = null,
 ) {
     // No remote crash reporting (personal build), but don't black-hole the sync stack's caught
     // exceptions — surface them in debug logcat so sync failures are diagnosable during development.
@@ -149,7 +153,13 @@ class FirefoxSyncController(
 
     private val globalPrefs = GlobalPreferencesStore(application)
 
-    private val sync15StorageClient = Sync15StorageClient(HttpURLConnectionClient())
+    private val phoneFavicons = com.firebolt9907.tangentbrowser.sync.zen.ZenPhoneFavicons(icons)
+    private var phoneSpaceJob: Job? = null
+    private var publishedPhoneTabs: List<ZenPhoneTab>? = null
+    private var phoneSpaceRetryAtMs = 0L
+    private var zenAccountGeneration = 0L
+    private val zenRefreshMutex = kotlinx.coroutines.sync.Mutex()
+    private var sync15StorageClient = Sync15StorageClient(HttpURLConnectionClient())
 
     private val remoteTabsStorage = RemoteTabsStorage(application, crashReporter)
     private val syncedTabsStorage = SyncedTabsStorage(
@@ -162,7 +172,10 @@ class FirefoxSyncController(
     private val _state = MutableStateFlow(
         // Seed with the last persisted Zen spaces so they render instantly on cold start, before
         // any network sync has run.
-        FirefoxSyncUiState(zenWorkspaces = ZenWorkspacesStorage.fromJson(globalPrefs.zenWorkspacesJson)),
+        FirefoxSyncUiState(
+            zenWorkspaces = ZenWorkspacesStorage.fromJson(globalPrefs.zenWorkspacesJson),
+            zenPhoneSpaceEnabled = globalPrefs.zenPhoneSpaceEnabled,
+        ),
     )
     val state: StateFlow<FirefoxSyncUiState> = _state.asStateFlow()
 
@@ -230,6 +243,7 @@ class FirefoxSyncController(
         override fun onAuthenticated(account: OAuthAccount, authType: AuthType) {
             // A fresh (or recovered) sign-in clears any prior remote-sign-out latch.
             remoteSignOut = false
+            clearZenWorkspaces()
         }
 
         override fun onProfileUpdated(profile: Profile) = Unit
@@ -506,25 +520,55 @@ class FirefoxSyncController(
         }
     }
 
-    /**
-     * Best-effort read of Zen browser's `workspaces` Sync collection (spaces + containers).
-     * Zen's engine is not in their stable channel yet, so absence of the collection (404 →
-     * empty snapshot) is the common case; failures keep the previous snapshot and are never
-     * surfaced as sync errors.
-     */
-    private suspend fun refreshZenWorkspaces() {
-        val account = accountManager.authenticatedAccount() ?: return
-        // Today Zen's Spaces engine writes only `space` + `container` records to the single `spaces`
-        // collection (Twilight: "sync your Spaces … soon, folders, essentials, split views"). Tab
-        // records aren't on the wire yet, so parsed spaces have no tabs — the parser is forward-compat
-        // and the Spaces UI stays gated (ZEN_SPACES_TABS_UI_ENABLED) until they ship.
+    /** Refresh stable Zen's read-only Spaces projection; retain the last snapshot on failure. */
+    private suspend fun refreshZenWorkspaces() = zenRefreshMutex.withLock {
+        val account = usableAccount() ?: return@withLock
+        val generation = zenAccountGeneration
         runCatching {
-            val spaceRecords = sync15StorageClient.fetchCollection(account, ZEN_WORKSPACES_COLLECTION)
+            val client = sync15StorageClient
+            var spaceRecords = client.fetchCollection(account, ZEN_WORKSPACES_COLLECTION)
+            if (globalPrefs.zenPhoneSpaceEnabled && store.state.tabs.isNotEmpty() &&
+                generation == zenAccountGeneration && !localSignOutInFlight) {
+                val tabs = phoneTabs()
+                val tabIcons = store.state.tabs.associate { it.id to it.content.icon }
+                try {
+                    client.requireZenSpacesV3(account)
+                    val withIcons = phoneFavicons.enrich(tabs, tabIcons)
+                    val writes = ZenPhoneSpace.plan(
+                        globalPrefs.zenPhoneSpaceId, "Tangent · ${android.os.Build.MODEL}", withIcons, spaceRecords,
+                    )
+                    for (write in writes) {
+                        if (generation != zenAccountGeneration || !globalPrefs.zenPhoneSpaceEnabled ||
+                            usableAccount() == null || localSignOutInFlight) break
+                        client.putSpaceRecord(account, write)
+                    }
+                    if (generation == zenAccountGeneration && globalPrefs.zenPhoneSpaceEnabled &&
+                        !localSignOutInFlight && usableAccount() != null) {
+                        publishedPhoneTabs = tabs
+                        phoneSpaceRetryAtMs = 0L
+                        _state.update { it.copy(zenPhoneSpaceError = null) }
+                    }
+                    if (writes.isNotEmpty()) spaceRecords = client.fetchCollection(account, ZEN_WORKSPACES_COLLECTION)
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    if (generation == zenAccountGeneration) {
+                        phoneSpaceRetryAtMs = System.currentTimeMillis() + 30_000L
+                        _state.update { it.copy(zenPhoneSpaceError = error.readableMessage()) }
+                    }
+                }
+            }
             ZenWorkspaceRecords.parse(spaceRecords)
         }.onSuccess { snapshot ->
-            _state.update { it.copy(zenWorkspaces = snapshot) }
+            if (generation != zenAccountGeneration || usableAccount() == null) return@onSuccess
+            _state.update { it.copy(zenWorkspaces = snapshot, zenWorkspacesError = null) }
             // Persist so the spaces render instantly on the next cold start, before any sync runs.
             runCatching { globalPrefs.zenWorkspacesJson = ZenWorkspacesStorage.toJson(snapshot) }
+        }.onFailure { error ->
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            if (generation == zenAccountGeneration && usableAccount() != null) {
+                phoneSpaceRetryAtMs = System.currentTimeMillis() + 30_000L
+                _state.update { it.copy(zenWorkspacesError = "Could not refresh Zen Spaces. Try Sync Now again.") }
+            }
         }
     }
 
@@ -574,6 +618,19 @@ class FirefoxSyncController(
         }
     }
 
+    private fun phoneTabs(): List<ZenPhoneTab> = ZenPhoneSpace.visibleTabs(store.state.tabs.map {
+        ZenPhoneTab(it.id, it.content.url, it.content.title, it.content.`private`,
+            iconRevision = it.content.icon?.generationId)
+    })
+
+    fun setZenPhoneSpaceEnabled(enabled: Boolean) {
+        globalPrefs.zenPhoneSpaceEnabled = enabled
+        publishedPhoneTabs = null
+        phoneSpaceRetryAtMs = 0L
+        _state.update { it.copy(zenPhoneSpaceEnabled = enabled, zenPhoneSpaceError = null) }
+        if (enabled) scope.launch { refreshZenWorkspaces() }
+    }
+
     /**
      * Begin (or reuse) the foreground periodic sync loop. Call from ON_RESUME. Every
      * [ForegroundSyncIntervalMs] it runs a quiet full sync (tabs + passwords + credit cards, no
@@ -582,6 +639,20 @@ class FirefoxSyncController(
      * Idempotent: an already-running loop is left alone. Cancelled by [stopForegroundPeriodicSync].
      */
     fun startForegroundPeriodicSync() {
+        // Compare public tab state without network traffic when unchanged. Finish an upload before
+        // sending a newer state rather than cancelling it on every navigation/title change.
+        if (phoneSpaceJob?.isActive != true) {
+            phoneSpaceJob = scope.launch {
+                while (isActive) {
+                    delay(3_000L)
+                    if (globalPrefs.zenPhoneSpaceEnabled && usableAccount() != null &&
+                        !localSignOutInFlight && System.currentTimeMillis() >= phoneSpaceRetryAtMs &&
+                        phoneTabs() != publishedPhoneTabs) {
+                        refreshZenWorkspaces()
+                    }
+                }
+            }
+        }
         if (foregroundSyncJob?.isActive != true) {
             foregroundSyncJob = scope.launch {
                 while (isActive) {
@@ -612,6 +683,11 @@ class FirefoxSyncController(
 
     /** Stop the foreground sync + command-poll loops. Call from ON_PAUSE. */
     fun stopForegroundPeriodicSync() {
+        phoneSpaceJob?.cancel()
+        phoneSpaceJob = null
+        // Best-effort final publish on background; resume retries if Android stops the process.
+        if (!localSignOutInFlight && usableAccount() != null && globalPrefs.zenPhoneSpaceEnabled &&
+            phoneTabs() != publishedPhoneTabs) scope.launch { refreshZenWorkspaces() }
         foregroundSyncJob?.cancel()
         foregroundSyncJob = null
         foregroundCommandJob?.cancel()
@@ -798,7 +874,8 @@ class FirefoxSyncController(
             remoteSignOut = false
             runCatching {
                 accountManager.logout()
-                _state.value = FirefoxSyncUiState(message = "Signed out")
+                clearZenWorkspaces()
+                _state.value = FirefoxSyncUiState(message = "Signed out", zenPhoneSpaceEnabled = globalPrefs.zenPhoneSpaceEnabled)
             }.onFailure { throwable ->
                 setError("Could not sign out: ${throwable.readableMessage()}")
             }
@@ -806,9 +883,21 @@ class FirefoxSyncController(
         }
     }
 
+    /** Clear the previous account's Spaces snapshot and storage credentials. */
+    private fun clearZenWorkspaces() {
+        zenAccountGeneration++
+        publishedPhoneTabs = null
+        phoneSpaceRetryAtMs = 0L
+        // Replace the client so an in-flight old-account request cannot restore cached credentials.
+        sync15StorageClient = Sync15StorageClient(HttpURLConnectionClient())
+        globalPrefs.zenWorkspacesJson = null
+        _state.update { it.copy(zenWorkspaces = ZenWorkspacesSnapshot.EMPTY, zenWorkspacesError = null, zenPhoneSpaceError = null) }
+    }
+
     /** Clear all account-derived state back to a signed-out shell carrying [message]. */
     private fun resetToSignedOut(message: String) {
-        _state.value = FirefoxSyncUiState(message = message, isError = true)
+        clearZenWorkspaces()
+        _state.value = FirefoxSyncUiState(message = message, isError = true, zenPhoneSpaceEnabled = globalPrefs.zenPhoneSpaceEnabled)
     }
 
     /**
@@ -879,6 +968,9 @@ data class FirefoxSyncUiState(
     /** A tab another device just pushed here via "Send tab"; drives the in-app received-tab banner. */
     val receivedTab: FirefoxReceivedTab? = null,
     val zenWorkspaces: ZenWorkspacesSnapshot = ZenWorkspacesSnapshot.EMPTY,
+    val zenWorkspacesError: String? = null,
+    val zenPhoneSpaceEnabled: Boolean = true,
+    val zenPhoneSpaceError: String? = null,
     val isBusy: Boolean = false,
     val message: String? = null,
     val isError: Boolean = false,

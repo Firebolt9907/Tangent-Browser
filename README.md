@@ -31,13 +31,17 @@ edge-to-edge under the status bar.
 - **Custom Tabs** — links opened from other apps land in a separate slim surface
   (`CustomTabActivity`), not your main tab set; "Open in Tangent" migrates them to a real tab.
 - **Downloads, history, bookmarks** with their own Compose sheets.
-- **Passkeys / WebAuthn** via GeckoView's native FIDO2 / Credential Manager integration.
+- **Passkeys / WebAuthn** via Android Credential Manager, a local authenticator, or genuine
+  roaming FIDO2 security keys connected over USB/NFC.
 - **Video fullscreen** and **per-site preferences** (page zoom, opt-in status-bar top-padding fix).
 
 **Firefox account & sync** (optional; sign in via FxA)
 - **Synced tabs** from your other Firefox devices, plus **Send Tab** receipt via command polling.
 - **Passwords** — encrypted login storage (`PlacesLoginsStorage`) with a management sheet.
-- **Read-only Zen Spaces** sync (Sync 1.5 crypto, decrypted client-side).
+- **Zen Spaces** sync from Zen 1.22.1b: spaces, pinned and unpinned tabs, Essentials,
+  and tabs inside folders/splits (enable normal tab syncing in Zen; encrypted through Mozilla Sync).
+  Phone tabs are mirrored into a dedicated **Tangent · device** space on desktop. A near-full-screen
+  Spaces view replaces the legacy device list when Zen spaces are detected.
 
 **Extensions**
 - Install **Firefox add-ons** from an AMO slug, AMO page URL, direct `.xpi` URL, or the "Add to

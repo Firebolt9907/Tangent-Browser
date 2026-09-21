@@ -254,16 +254,28 @@ once the header set is stable) to bound the steady-state full-document walk.
   skips it); self-heals via a bounded MutationObserver for SPAs that rebuild `<body>`. Re-added after
   being wrongly removed as a double-pad.
 
-### 12. WebAuthn/passkeys — a three-way pref (`passkeyMode`), never a page-world JS shim
+### 12. WebAuthn/passkeys — a five-way pref (`passkeyMode`), never a page-world JS shim
 
 Passkeys would normally use GeckoView's built-in WebAuthn (Play Services FIDO2 / Credential Manager →
 Google Password Manager); the app-side hook is the
 `mozilla.components.concept.engine.activity.ActivityDelegate` that `MainActivity`/`CustomTabActivity`
-register in `onStart`. But Tangent is NOT on the platform trusted-browser allowlist, so that path is
-rejected — hence `GlobalPreferencesStore.passkeyMode` (`Off`/`Softtoken`/`Bitwarden`), emitted by
-`writeGeckoConfig` in `Engine.kt`, migrated from the old `builtInPasskeysEnabled` boolean. The three
+register in `onStart`. Whether a third-party password manager accepts that path depends on its trusted
+browser policy — hence `GlobalPreferencesStore.passkeyMode`
+(`Native`/`SecurityKey`/`Off`/`Softtoken`/`Bitwarden`),
+emitted by `writeGeckoConfig` in `Engine.kt`, migrated from the old `builtInPasskeysEnabled` boolean.
+The five
 modes are **mutually exclusive** (one enum, not independent toggles) — Gecko reads the config once, so
 a change needs a restart:
+- **Native** — WebAuthn on, Gecko softtoken off, Android FIDO2 on. GeckoView opens the Android
+  passkey-provider sheet (Bitwarden, Google Password Manager, etc.). Some providers require Tangent
+  to be explicitly enabled as a trusted browser. This is the default for fresh installs.
+- **SecurityKey** — WebAuthn on with Gecko's Android FIDO2 and softtoken backends off. The isolated
+  bridge routes the browser-validated request and original client-data hash to YubiKit's generic
+  FIDO2 client (`HardwareSecurityKeyPasskeyProvider`), which speaks CTAP directly to a real roaming
+  authenticator over USB or NFC. The SDK name does not make this YubiKey-specific. Its `FidoClient`
+  is activity-owned and must be initialized before `onStart`; never construct it lazily during a
+  ceremony. This mode reports `isUserVerifyingPlatformAuthenticatorAvailable = false` because a
+  roaming key is not a platform authenticator.
 - **Off** — `security.webauth.webauthn: false`; the API is disabled and sites cleanly fall back to
   passwords.
 - **Softtoken** — WebAuthn on, serviced by Gecko's INTERNAL softtoken
@@ -272,7 +284,7 @@ a change needs a restart:
 - **Bitwarden** — WebAuthn on with **softtoken OFF**, and the built-in passkey-bridge extension
   (`assets/extensions/passkey/`, `sync/webauthn/PasskeyExtension`) overrides `navigator.credentials`
   and services ceremonies from the connected Bitwarden vault, biometric-gated. Installed only in this
-  mode (`Engine.init`), so Off/Softtoken paths are untouched.
+  mode (`Engine.init`), so Native/SecurityKey/Off/Softtoken paths are untouched.
 
 **The forbidden thing is a PAGE-WORLD JS shim, not the Bitwarden override.** Do NOT polyfill
 `navigator.credentials` from page-world JS (a previous shim faked credentials in `localStorage`, never
@@ -283,8 +295,8 @@ crypto is real — `sync/webauthn/WebAuthnAuthenticator` produces spec-correct *
 over **real vault key material** (`sync/bitwarden/BitwardenPasskeyStore`), never fabricated values.
 See [[bitwarden-passkeys-progress]] and the `sync/webauthn` + `sync/bitwarden` sources.
 
-Do NOT remove the pref gate or default an active mode on for an allowlisted build — both are fallbacks
-for the blocked native path. If Tangent ever gets allowlisted, prefer the native path.
+Do NOT remove the pref gate. Keep the custom Bitwarden and hardware-key bridges opt-in and separate
+from Native; Native is the preferred route when the selected Android provider trusts Tangent.
 
 **Cross-client interop risk:** whether Tangent can use a passkey created on desktop Bitwarden depends
 on schema details (credentialId GUID vs base64url, `keyValue` base64 variant, .NET mixed-endian byte
@@ -643,8 +655,8 @@ save affordances (`BlobFileBanner` + the aA sheet row).
 The most-violated mistakes are the bolded **do NOT** lines in the invariants above (esp. #1 `render()`
 from `AndroidView.update`, #2 `startDragImmediately = true`, #4 `snapTo` on hot path, #6
 `EngineSession.captureThumbnail`, #11 JS injection without the guard / spacer sizing, #12
-page-world `navigator.credentials` shim (the softtoken AND the isolated-world Bitwarden override are
-sanctioned pref-gated paths — see #12), #17
+page-world `navigator.credentials` shim (Native, softtoken, and the isolated-world Bitwarden override
+are sanctioned pref-gated paths — see #12), #17
 editing the generated `assets/extensions/reader/extractor.js` instead of `extension/src`, #19
 `preventDefault` in the zap picker / hiding from the picker instead of the stylesheet, #20 writing
 from the dark-mode read phase / re-capping the walk / stripping instead of restoring on teardown,

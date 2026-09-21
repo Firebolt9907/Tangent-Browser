@@ -10,6 +10,7 @@ import mozilla.components.service.fxa.manager.SCOPE_SYNC
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URL
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 /** One decrypted BSO from a Sync collection. `modified` is server time in epoch seconds. */
@@ -33,7 +34,7 @@ private data class StorageCredentials(
 private class SyncHttpException(val status: Int, message: String) : Exception(message)
 
 /**
- * Read-only Firefox Sync storage client for collections app-services does not expose.
+ * Firefox Sync storage client for collections app-services does not expose.
  *
  * Handshake: FxA access token + scoped key for the `oldsync` scope → tokenserver (Bearer +
  * X-KeyID) → Hawk credentials for the storage node → fetch and decrypt `crypto/keys` with the
@@ -44,11 +45,12 @@ private class SyncHttpException(val status: Int, message: String) : Exception(me
  * reassignment / token expiry are routine for Sync storage).
  */
 class Sync15StorageClient(private val httpClient: Client) {
+    @Volatile private var backoffUntilMs = 0L
     @Volatile private var credentials: StorageCredentials? = null
     @Volatile private var collectionKeys: CollectionKeys? = null
 
     /**
-     * Fetches every non-tombstone record in [collection], decrypted. Returns an empty list when
+     * Fetches every record (including tombstones for conditional writes) in [collection], decrypted. Returns an empty list when
      * the collection does not exist on the server yet (404) — normal for a collection no client
      * on the account has written.
      */
@@ -73,23 +75,99 @@ class Sync15StorageClient(private val httpClient: Client) {
             collectionKeys = null
         }
         val keys = collectionKeys ?: fetchCryptoKeys(creds).also { collectionKeys = it }
-        val body = storageGet(creds, "/storage/$collection?full=1")
-            ?: return emptyList() // 404: collection never written
         val bundle = keys.forCollection(collection)
-        val bsos = JSONArray(body)
         val records = mutableListOf<Sync15Record>()
-        for (i in 0 until bsos.length()) {
-            val bso = bsos.getJSONObject(i)
-            val payload = JSONObject(bso.getString("payload"))
-            val cleartext = JSONObject(Sync15Crypto.decryptPayload(payload, bundle))
-            if (cleartext.optBoolean("deleted")) continue
-            records += Sync15Record(
-                id = bso.getString("id"),
-                modified = bso.optDouble("modified", 0.0),
-                cleartext = cleartext,
-            )
-        }
+        var offset: String? = null
+        val seenOffsets = mutableSetOf<String>()
+        do {
+            val query = "/storage/$collection?full=1" +
+                (offset?.let { "&offset=" + URLEncoder.encode(it, "UTF-8") } ?: "")
+            val page = storageGetPage(creds, query) ?: if (offset == null) {
+                return emptyList()
+            } else {
+                throw IllegalStateException("Sync collection disappeared during pagination")
+            }
+            val bsos = JSONArray(page.body)
+            for (i in 0 until bsos.length()) {
+                val bso = bsos.getJSONObject(i)
+                val payload = JSONObject(bso.getString("payload"))
+                val cleartext = JSONObject(Sync15Crypto.decryptPayload(payload, bundle))
+                records += Sync15Record(
+                    id = bso.getString("id"),
+                    modified = bso.optDouble("modified", 0.0),
+                    cleartext = cleartext,
+                )
+            }
+            offset = page.nextOffset
+            check(offset == null || seenOffsets.add(offset)) { "Repeated Sync pagination offset" }
+        } while (offset != null)
         return records
+    }
+
+    /** Require Zen's existing engine registration; never bootstrap or overwrite meta/global. */
+    suspend fun requireZenSpacesV3(account: OAuthAccount) = withContext(Dispatchers.IO) {
+        val creds = validCredentials() ?: handshake(account).also {
+            credentials = it
+            collectionKeys = null
+        }
+        val raw = storageGet(creds, "/storage/meta/global")
+            ?: error("Enable Spaces sync in Zen 1.22.1b and sync it once first.")
+        val metadata = JSONObject(JSONObject(raw).getString("payload"))
+        check(metadata.optJSONObject("engines")?.optJSONObject("spaces")?.optInt("version") == 3) {
+            "Enable Spaces sync in Zen 1.22.1b and sync it once first."
+        }
+    }
+
+    /** Encrypted, conditional single-record PUT; a conflict leaves the remote record untouched. */
+    internal suspend fun putSpaceRecord(account: OAuthAccount, write: ZenPhoneWrite) = withContext(Dispatchers.IO) {
+        suspend fun putOnce() {
+            val creds = validCredentials() ?: handshake(account).also {
+                credentials = it
+                collectionKeys = null
+            }
+            val keys = collectionKeys ?: fetchCryptoKeys(creds).also { collectionKeys = it }
+            require(write.id.matches(Regex("[A-Za-z0-9-]{1,64}")))
+            val body = JSONObject().put("id", write.id).put("payload",
+                Sync15Crypto.encryptPayload(write.cleartext.toString(), keys.forCollection("spaces")).toString(),
+            ).toString()
+            val url = URL(creds.apiEndpoint + "/storage/spaces/" + write.id)
+            val request = Request(
+                url = url.toString(), method = Request.Method.PUT,
+                headers = MutableHeaders(
+                    "Authorization" to HawkAuth.authorizationHeader(creds.hawkId, creds.hawkKey, "PUT", url),
+                    "Content-Type" to "application/json",
+                    "X-If-Unmodified-Since" to write.expectedModified.toString(),
+                ),
+                body = Request.Body.fromString(body),
+                connectTimeout = 10L to TimeUnit.SECONDS, readTimeout = 30L to TimeUnit.SECONDS,
+                cookiePolicy = Request.CookiePolicy.OMIT,
+            )
+            fetch(request).use { response ->
+                if (response.status !in 200..299) {
+                    throw SyncHttpException(response.status, "Zen phone space upload returned ${response.status}")
+                }
+            }
+        }
+        try {
+            putOnce()
+        } catch (error: SyncHttpException) {
+            if (error.status != 401) throw error
+            credentials = null
+            collectionKeys = null
+            putOnce()
+        }
+    }
+
+    private fun fetch(request: Request): mozilla.components.concept.fetch.Response {
+        check(System.currentTimeMillis() >= backoffUntilMs) { "Mozilla Sync asked us to wait before retrying." }
+        val response = httpClient.fetch(request)
+        val seconds = listOfNotNull(
+            response.headers["X-Weave-Backoff"]?.toDoubleOrNull(),
+            response.headers["Retry-After"]?.toDoubleOrNull(),
+            if (response.status == 429 || response.status == 503) 60.0 else null,
+        ).filter { it.isFinite() && it > 0 }.maxOrNull()
+        if (seconds != null) backoffUntilMs = System.currentTimeMillis() + (seconds * 1000).toLong()
+        return response
     }
 
     private fun validCredentials(): StorageCredentials? =
@@ -117,7 +195,7 @@ class Sync15StorageClient(private val httpClient: Client) {
             readTimeout = 30L to TimeUnit.SECONDS,
             cookiePolicy = Request.CookiePolicy.OMIT,
         )
-        val json = httpClient.fetch(request).use { response ->
+        val json = fetch(request).use { response ->
             if (response.status !in 200..299) {
                 throw SyncHttpException(response.status, "tokenserver returned ${response.status}")
             }
@@ -144,7 +222,12 @@ class Sync15StorageClient(private val httpClient: Client) {
     }
 
     /** Hawk-authenticated GET against the storage node. Returns null on 404, body otherwise. */
-    private fun storageGet(creds: StorageCredentials, path: String): String? {
+    private fun storageGet(creds: StorageCredentials, path: String): String? =
+        storageGetPage(creds, path)?.body
+
+    private data class StoragePage(val body: String, val nextOffset: String?)
+
+    private fun storageGetPage(creds: StorageCredentials, path: String): StoragePage? {
         val url = URL(creds.apiEndpoint + path)
         val request = Request(
             url = url.toString(),
@@ -161,12 +244,15 @@ class Sync15StorageClient(private val httpClient: Client) {
             readTimeout = 30L to TimeUnit.SECONDS,
             cookiePolicy = Request.CookiePolicy.OMIT,
         )
-        return httpClient.fetch(request).use { response ->
+        return fetch(request).use { response ->
             when {
                 response.status == 404 -> null
                 response.status !in 200..299 ->
                     throw SyncHttpException(response.status, "storage GET $path returned ${response.status}")
-                else -> response.body.string(Charsets.UTF_8)
+                else -> StoragePage(
+                    response.body.string(Charsets.UTF_8),
+                    response.headers["X-Weave-Next-Offset"]?.takeIf { it.isNotBlank() },
+                )
             }
         }
     }

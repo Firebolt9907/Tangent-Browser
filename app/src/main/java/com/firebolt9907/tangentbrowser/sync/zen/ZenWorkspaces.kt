@@ -4,38 +4,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Models + record parsing for Zen browser's Spaces Sync engine
- * (zen-browser/desktop: src/zen/sync/ZenWorkspacesSync.sys.mjs, engine name "Spaces", version 2).
- *
- * **What actually syncs today (Twilight, as of the "Add space and container sync" PR — gh-14471 +
- * the gh-14528 Workspaces→Spaces rename):** exactly two record types live in the single `spaces`
- * server collection — `space` and `container`. That is hard-enforced upstream: the engine's
- * `RECORD_ID_PREFIX_BY_TYPE` only maps `space`→`s`/`container`→`c` (createRecordId throws on
- * anything else), `getAllIDs`/`createRecord`/`applyIncomingBatch` handle only those two, and
- * `allowSkippedRecord = false` means Zen can't be writing unknown records here. The Twilight release
- * note confirms it: *"you can now sync your Spaces between devices. Soon, you will be able to sync
- * your folders, essentials, split views, etc."* So on a real account [ZenSpace.tabs] is **empty**.
- *
- * **Forward-compat (not on the wire yet):** when Zen ships the promised essentials/folder/split
- * sync, tab-like records are expected to carry their owning space uuid (Zen's local pins already
- * store `workspaceUuid`/`zen-workspace-id`), so [parseTab] is written tolerantly to map them onto
- * spaces the moment they appear — both the session-store `entries`/`index` shape and a flat
- * `url`/`title` pin shape, keyed on either `zenWorkspace` or `workspaceUuid`. Dispatch keys on the
- * cleartext `type`, exactly like Zen's applyIncomingBatch. Each space also keeps its raw JSON (Zen
- * merges spaces with object spread) so unknown fields survive for future write support.
- *
- * The Spaces **UI** is gated on [ZEN_SPACES_TABS_UI_ENABLED] (default off) so it stays hidden until
- * tab sync ships; the background sync + parse keep running so the data is ready when it does.
+ * Read-only Zen Spaces Sync projection. Stable Zen 1.22b uses engine version 3:
+ * `spaces` records contain {id, kind, data}. See ZenSpacesSyncModel.sys.mjs upstream.
+ * Legacy flat `type` records remain readable for accounts last synced by Twilight.
  */
-
 const val ZEN_WORKSPACES_COLLECTION = "spaces"
-
-/**
- * Master switch for the Zen Spaces UI (the [ZenSpace] carousel/sheet). Off until Zen's tab/essential
- * sync lands — until then spaces carry no tabs, so the tabs-in-space UI has nothing to show. Flip to
- * true (and rebuild) once tab records appear in the `spaces` collection. Sync/parse are unaffected.
- */
-const val ZEN_SPACES_TABS_UI_ENABLED = false
+const val ZEN_SPACES_TABS_UI_ENABLED = true
 
 data class ZenSyncedTab(
     val title: String,
@@ -50,6 +24,7 @@ data class ZenSyncedTab(
     /** Sidebar position within its window; drives ordering. Null when the writer omitted it. */
     val position: Int? = null,
     val icon: String? = null,
+    val folderName: String? = null,
 )
 
 data class ZenSpace(
@@ -62,6 +37,7 @@ data class ZenSpace(
     /** Full cleartext minus the `id`/`type` sync envelope (Zen's stripSyncFields). */
     val raw: JSONObject,
     val tabs: List<ZenSyncedTab> = emptyList(),
+    val containerGuid: String? = null,
 )
 
 data class ZenContainer(
@@ -69,6 +45,7 @@ data class ZenContainer(
     val name: String,
     val icon: String?,
     val color: String?,
+    val guid: String? = null,
 )
 
 data class ZenWorkspacesSnapshot(
@@ -85,16 +62,17 @@ object ZenWorkspaceRecords {
     fun containerRecordId(userContextId: Int): String = "c~$userContextId"
 
     fun parse(records: List<Sync15Record>): ZenWorkspacesSnapshot {
+        if (records.any { it.cleartext.has("kind") }) return ZenStableRecords.parse(records)
         val spaces = mutableListOf<ZenSpace>()
         val containers = mutableListOf<ZenContainer>()
         val tabs = mutableListOf<ZenSyncedTab>()
         for (record in records) {
             val data = record.cleartext
+            if (data.optBoolean("deleted")) continue
             when (data.optString("type")) {
                 "space" -> parseSpace(data)?.let(spaces::add)
                 "container" -> parseContainer(data)?.let(containers::add)
-                // Forward-compat: no tab-like type is written today. Accept the plausible names Zen
-                // may ship (`tab`/`pin`/`essential`) so tab sync lights up without a code change.
+                // Legacy experimental tab shapes; stable records are handled above.
                 "tab", "pin", "essential" -> parseTab(data)?.let(tabs::add)
                 // folder/split and unknown types: ignored for display, exactly like Zen's dispatch.
             }
@@ -153,17 +131,7 @@ object ZenWorkspaceRecords {
         )
     }
 
-    /**
-     * Parse a tab-like record. **Forward-compat: no such record is on the wire today** (see the file
-     * header) — this is written against the two shapes Zen is most likely to ship so it lights up
-     * without a code change:
-     *  - session-store shape: `entries` (URL/title history) + `index` (1-based) → current entry;
-     *  - flat pin shape: top-level `url`/`title` (Zen's local `zen_pins` row).
-     *
-     * The space link comes from `zenWorkspace` (the tab's `zen-workspace-id`) or its `workspaceUuid`
-     * alias; essentials (`zenEssential`/`isEssential`) carry no workspace and belong to every space.
-     * A record with no usable URL is skipped.
-     */
+    /** Parse legacy experimental flat/session-store tab shapes. */
     private fun parseTab(data: JSONObject): ZenSyncedTab? {
         val entry = data.optJSONArray("entries")?.takeIf { it.length() > 0 }?.let { entries ->
             val index = data.optInt("index", 1)
@@ -237,7 +205,8 @@ object ZenWorkspacesStorage {
                         .put("pinned", tab.pinned)
                         .put("userContextId", tab.userContextId)
                         .put("position", tab.position)
-                        .put("icon", tab.icon),
+                        .put("icon", tab.icon)
+                        .put("folderName", tab.folderName),
                 )
             }
             spaces.put(
@@ -246,6 +215,7 @@ object ZenWorkspacesStorage {
                     .put("name", space.name)
                     .put("icon", space.icon)
                     .put("containerTabId", space.containerTabId)
+                    .put("containerGuid", space.containerGuid)
                     .put("position", space.position)
                     .put("raw", space.raw)
                     .put("tabs", tabs),
@@ -258,7 +228,8 @@ object ZenWorkspacesStorage {
                     .put("userContextId", c.userContextId)
                     .put("name", c.name)
                     .put("icon", c.icon)
-                    .put("color", c.color),
+                    .put("color", c.color)
+                    .put("guid", c.guid),
             )
         }
         return JSONObject().put("spaces", spaces).put("containers", containers).toString()
@@ -285,6 +256,7 @@ object ZenWorkspacesStorage {
                                 userContextId = t.optInt("userContextId", 0),
                                 position = (t.opt("position") as? Number)?.toInt(),
                                 icon = t.optStringOrNull("icon"),
+                                folderName = t.optStringOrNull("folderName"),
                             )
                         }
                     }
@@ -296,6 +268,7 @@ object ZenWorkspacesStorage {
                         position = (s.opt("position") as? Number)?.toInt(),
                         raw = s.optJSONObject("raw") ?: JSONObject(),
                         tabs = tabs,
+                        containerGuid = s.optStringOrNull("containerGuid"),
                     )
                 }
             } ?: emptyList()
@@ -307,6 +280,7 @@ object ZenWorkspacesStorage {
                         name = c.optString("name"),
                         icon = c.optStringOrNull("icon"),
                         color = c.optStringOrNull("color"),
+                        guid = c.optStringOrNull("guid"),
                     )
                 }
             } ?: emptyList()

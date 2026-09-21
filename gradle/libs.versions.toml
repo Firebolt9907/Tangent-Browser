@@ -14,6 +14,7 @@ kotlinxCoroutines = "1.11.0"
 mozillaComponents = "153.0"
 androidxCredentials = "1.6.0"
 androidxBiometric = "1.1.0"
+yubikit = "3.1.0"
 glean = "67.3.1"
 coil = "2.7.0"
 appsearch = "1.1.0"
@@ -79,6 +80,7 @@ mozilla-service-sync-autofill = { group = "org.mozilla.components", name = "serv
 mozilla-telemetry-glean = { group = "org.mozilla.telemetry", name = "glean", version.ref = "glean" }
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "androidxCredentials" }
 androidx-credentials-play-services-auth = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "androidxCredentials" }
+yubikit-fido-android-ui = { group = "com.yubico.yubikit", name = "fido-android-ui", version.ref = "yubikit" }
 play-services-auth-api-phone = { group = "com.google.android.gms", name = "play-services-auth-api-phone", version = "18.1.0" }
 mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version = "16.0.1" }
 mlkit-subject-segmentation = { group = "com.google.android.gms", name = "play-services-mlkit-subject-segmentation", version = "16.0.0-beta1" }

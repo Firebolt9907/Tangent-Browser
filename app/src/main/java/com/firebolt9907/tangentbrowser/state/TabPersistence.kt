@@ -31,7 +31,7 @@ class TabPersistence(context: Context) {
         /** Serialized `EngineSessionState` JSON, or null when none was captured for this tab. */
         val engineStateJson: String? = null,
         /**
-         * Id of the [TangentTabGroup] this tab belonged to, or null. Live tab ids change on restore,
+         * Id of the [TangentTabGroup] this tab belonged to, or null. Older files lack stable tab IDs,
          * so group membership is carried here (per-tab) and re-linked by [GeckoTabRepository]; the
          * group's name/colour live in the separate group registry ([TabGroupsRepository]).
          */
@@ -41,6 +41,8 @@ class TabPersistence(context: Context) {
          * across restarts, so it round-trips directly onto the restored tab to preserve isolation.
          */
         val contextId: String? = null,
+        /** Stable tab identity for the dedicated phone space in Zen. */
+        val id: String? = null,
     )
 
     /** Read persisted tabs, dropping any not accessed within [maxAgeMillis] of [now]. */
@@ -61,6 +63,7 @@ class TabPersistence(context: Context) {
                     engineStateJson = obj.optString("engineState").takeIf { it.isNotBlank() },
                     groupId = obj.optString("groupId").takeIf { it.isNotBlank() },
                     contextId = obj.optString("contextId").takeIf { it.isNotBlank() },
+                    id = obj.optString("id").takeIf { it.isNotBlank() },
                 )
             }
         }.getOrElse { emptyList() }
@@ -76,6 +79,7 @@ class TabPersistence(context: Context) {
                         .put("title", tab.title)
                         .put("lastAccess", tab.lastAccess)
                         .put("selected", tab.selected)
+                        .apply { tab.id?.let { put("id", it) } }
                         .apply { tab.engineStateJson?.let { put("engineState", it) } }
                         .apply { tab.groupId?.let { put("groupId", it) } }
                         .apply { tab.contextId?.let { put("contextId", it) } },

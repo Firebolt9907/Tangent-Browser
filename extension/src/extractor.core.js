@@ -1,29 +1,15 @@
 "use strict";
 /*
- * Tangent reader extractor — runs as an isolated-world content script.
+ * Tangent Reader article extractor — runs in the browser's isolated extension world.
  *
- * This is the Safari/Firefox-Reader model: the page's own JavaScript cannot see or override
- * anything here (separate realm), and the extracted article is handed to the app over a native
- * messaging Port — never via window.prompt or any page-context call. Hostile pages therefore have
- * nothing to intercept, and pages served with a CSP `sandbox` that omits `allow-modals` (which
- * silently disables window.prompt — e.g. TechCrunch) still work, because we never touch prompt().
- * Full DOM + layout is available (getComputedStyle / getBoundingClientRect are real).
+ * Page JavaScript cannot see or override this code. It reads the live DOM and layout, applies a
+ * compact per-site rule set when available, then returns a plain article object containing headings,
+ * paragraphs with links and inline math, lists, blockquotes, code, tables, images, figures, and
+ * equation graphics. The caller decides how to render that object.
  *
- * The extractor is a straight port of the heuristic in ReaderExtractor.buildReaderExtractorScript
- * (the fallback javascript:-URL path): a per-site `include` rule (from reader_rules.json, pushed
- * from the app over the port) names the article container when present, otherwise the article is
- * found by <article>/paragraph scoring; the walk then emits our native ReaderBlock model (headings,
- * paragraphs w/ link spans + inline math, lists, blockquotes, code, tables, images, figures, rich
- * SVG/equation graphics), applying the per-site `strip` selectors and the boilerplate filter. The
- * ONLY reason this content-script path exists (vs the javascript: one) is the transport: it returns
- * data over a Port, so it works where window.prompt is blocked. Keep it behaviourally in step with
- * the Kotlin extractor — when you change one, mirror the other.
- *
- * Protocol (native app <-> content script), port name "TangentReader":
- *   content -> app : { type: "article", article: {...} }   when an article is found
- *                    { type: "none" }                       when the page isn't readable
- *   app -> content : { action: "extract" }                 re-run extraction on demand
- *                    { action: "config", rules: [...] }     push the compact per-site ruleset
+ * The extractor deliberately avoids page-context calls such as window.prompt, so it continues to
+ * work on pages whose CSP sandbox omits `allow-modals`. Full DOM and layout APIs are available here
+ * (including getComputedStyle and getBoundingClientRect).
  */
 
 /* A single sentinel codepoint (Unicode Private Use Area) marks where an inline math glyph sits in a

@@ -1,10 +1,9 @@
 /*
  * Reader overlay styling for the STANDARD desktop extension build only.
  *
- * The Tangent built-in build never uses this — there the article blocks are handed to the native app
- * and rendered by Compose (ui/reader/ReaderView.kt). This sheet is inlined into the standard bundle
- * at build time (as TANGENT_READER_CSS) and injected inside the overlay's shadow root, so no page
- * style can leak in and nothing here leaks out onto the page.
+ * This sheet is inlined into the desktop bundle at build time (as TANGENT_READER_CSS) and injected
+ * inside the overlay's shadow root, so no page style can leak in and nothing here leaks out onto the
+ * page.
  */
 
 :host {

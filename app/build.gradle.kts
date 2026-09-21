@@ -175,6 +175,10 @@ dependencies {
     implementation(libs.mozilla.telemetry.glean)
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services.auth)
+    // Generic roaming FIDO2 security keys over USB/NFC. This is deliberately separate from
+    // Android Credential Manager: third-party browser origin delegation does not reliably expose
+    // external keys, while this client speaks CTAP directly to the authenticator.
+    implementation(libs.yubikit.fido.android.ui)
     // SMS User Consent API (one-time-code / 2FA autofill from incoming SMS, no SMS permission).
     implementation(libs.play.services.auth.api.phone)
     implementation(libs.mlkit.text.recognition)

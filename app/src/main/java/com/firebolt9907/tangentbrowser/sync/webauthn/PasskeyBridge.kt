@@ -41,6 +41,7 @@ class PasskeyBridge(
         val session = port.engineSession ?: return
         ports[session]?.takeIf { it !== port }?.let { runCatching { it.disconnect() } }
         ports[session] = port
+        Log.i(TAG, "Passkey content bridge connected")
     }
 
     override fun onPortDisconnected(port: Port) {
@@ -50,10 +51,14 @@ class PasskeyBridge(
     override fun onPortMessage(message: Any, port: Port) {
         val obj = message as? JSONObject ?: return
         val id = obj.optString("id").takeIf { it.isNotEmpty() } ?: return
+        Log.i(TAG, "Received ${obj.optString("op")} ceremony")
         scope.launch {
             val reply = runCatching { handle(obj) }
                 .getOrElse { failure("UnknownError", it.message) }
-            runCatching { port.postMessage(reply.put("id", id)) }
+            runCatching {
+                Log.i(TAG, "Returning ceremony result ok=${reply.optBoolean("ok")}")
+                port.postMessage(reply.put("id", id))
+            }
                 .onFailure { Log.w(TAG, "postMessage failed", it) }
         }
     }
@@ -65,6 +70,9 @@ class PasskeyBridge(
             ?: return failure("SecurityError", "rpId is not valid for origin")
 
         return when (obj.optString("op")) {
+            "uvpaa" -> JSONObject()
+                .put("ok", true)
+                .put("available", provider.isUserVerifyingPlatformAuthenticatorAvailable)
             "get" -> {
                 val clientDataJSON = obj.optString("clientDataJSON")
                     .takeIf { it.isNotEmpty() } ?: return failure("UnknownError", "missing clientDataJSON")
@@ -73,6 +81,7 @@ class PasskeyBridge(
                     origin = origin,
                     allowCredentialIds = obj.optJSONArray("allowCredentials").toStringList(),
                     clientDataHash = sha256(clientDataJSON.toByteArray(Charsets.UTF_8)),
+                    credentialManagerRequestJson = obj.optString("requestJson").takeIf { it.isNotEmpty() },
                 )
                 reply(provider.getAssertion(request))
             }
@@ -84,6 +93,11 @@ class PasskeyBridge(
                     userId = obj.optString("userId").takeIf { it.isNotEmpty() }?.let { decodeB64Url(it) },
                     userName = obj.optString("userName").takeIf { it.isNotEmpty() },
                     userDisplayName = obj.optString("userDisplayName").takeIf { it.isNotEmpty() },
+                    clientDataHash = obj.optString("clientDataJSON")
+                        .takeIf { it.isNotEmpty() }
+                        ?.let { sha256(it.toByteArray(Charsets.UTF_8)) }
+                        ?: return failure("UnknownError", "missing clientDataJSON"),
+                    credentialManagerRequestJson = obj.optString("requestJson").takeIf { it.isNotEmpty() },
                 )
                 reply(provider.makeCredential(request))
             }
@@ -114,6 +128,12 @@ class PasskeyBridge(
 
         /** Serialize a provider outcome to the wire JSON (the bridge adds the `id`). */
         internal fun reply(outcome: PasskeyOutcome): JSONObject = when (outcome) {
+            is PasskeyOutcome.CredentialManagerCreated -> JSONObject()
+                .put("ok", true)
+                .put("credentialManagerResponse", outcome.responseJson)
+            is PasskeyOutcome.CredentialManagerAsserted -> JSONObject()
+                .put("ok", true)
+                .put("credentialManagerResponse", outcome.responseJson)
             is PasskeyOutcome.Created -> JSONObject()
                 .put("ok", true)
                 .put("credentialId", b64Url(outcome.credentialId))

@@ -321,7 +321,7 @@ build and must not be "fixed" by retrying it.
 - **ABI filter for dev**: `ndk.abiFilters += "arm64-v8a"` unless `-PsingleAbi=false` is passed. Drops APK from ~546 MB → ~200 MB. Native libs are still unstripped — `ndk.debugSymbolLevel = "none"` would shave another ~80 MB but isn't applied yet.
 - No ABI splits configured. For real distribution this should become an AAB.
 
-## Passkeys / WebAuthn (`MainActivity.kt`, `engine/Engine.kt`)
+## Passkeys / WebAuthn (`TangentBrowserActivity.kt`, `engine/Engine.kt`, `sync/webauthn/`)
 
 GeckoView 120+ implements the WebAuthn spec internally — challenge/response crypto, talking to the platform authenticator, and Credential Manager calls all happen inside Gecko without host-app protocol code. The host app's only job is to give GeckoEngine an activity delegate so it can launch credential picker UI and receive the result.
 
@@ -330,7 +330,15 @@ GeckoView 120+ implements the WebAuthn spec internally — challenge/response cr
 - On Android 14+, GeckoView calls `CredentialManager.createCredential` / `getCredential` directly; the registered delegate satisfies the activity-context requirement for those calls too.
 - `androidx.credentials:1.5.0` and `credentials-play-services-auth` are explicit dependencies so CredentialManager classes are on the classpath at runtime for GeckoView's internal use (Play Services FIDO2 is the fallback on Android 8–13).
 
-Passkeys are stored in the Android platform Keystore / Credential Manager and are independent of Firefox Sync's logins database. Sync can add cloud backup of passkeys separately without touching this bridge.
+The `SecurityKey` mode deliberately bypasses Android's provider sheet. Its activity-owned YubiKit
+`FidoClient` discovers generic FIDO2/CTAP authenticators over USB or NFC, handles key/PIN/touch UI,
+and returns standard WebAuthn response JSON through Tangent's existing isolated extension bridge.
+The bridge supplies the original browser-owned client-data hash and rewrites `clientDataJSON` in the
+page-owned response, just as it does for Credential Manager. A roaming key reports UVPAA false; it
+must never be advertised as a platform authenticator merely to pass a site's capability gate.
+
+Passkeys are stored by the selected authenticator and are independent of Firefox Sync's logins
+database. Hardware-key private material never enters Tangent or Bitwarden.
 
 ## Reader mode (`ui/reader/`, `ui/chrome/AaSheet.kt`, `ui/content/ContentHost.kt`)
 
@@ -590,3 +598,99 @@ so dark-mode-off users pay no per-load teardown). `WebDarkModeScriptTest` pins t
 - **`GeckoEngineView.asView().setBackgroundColor()`** to override the grey loading background. Reaches only the Android `FrameLayout` wrapper, not Gecko's compositor. No visible effect. Replaced with a Compose overlay gated on `geckoHasPainted` (see "GeckoView background color" above).
 - **Pre-setting the sticky incoming cover immediately on grid-cell tap** (before `closeGrid`) to prevent a flash between animation-end and deferred tab selection. Removed once `gridWaitingForAfterClose` made it redundant — the grid overlay at `progress=0` already covers the engine, and the sticky cover set in `afterClose()` is the correct hand-off point.
 - **`closeGrid` with `spring(dampingRatio=0.80, stiffness=120)`** for the `animateBack` path. Too slow (~600 ms) and the slight bounce conflicted with the ease-out feel of a "select and close" action. Replaced with `tween(300ms, CubicBezierEasing(0,0,0.2,1))`.
+
+
+## Stable Zen Spaces sync (Zen 1.22.1b / Spaces engine v3)
+
+The integration reads the `spaces` collection using the existing FxA account and Sync 1.5
+client. The verified upstream sources are
+[ZenSpacesSync.sys.mjs](https://github.com/zen-browser/desktop/blob/1.22.1b/src/zen/sync/ZenSpacesSync.sys.mjs)
+and [ZenSpacesSyncModel.sys.mjs](https://github.com/zen-browser/desktop/blob/1.22.1b/src/zen/sync/ZenSpacesSyncModel.sys.mjs).
+Stable records use `{id, kind, data}`, replacing the Twilight `{id, type, ...fields}` shape.
+`ZenStableRecords` handles spaces, GUID-based containers, tabs, folders, splits, and layout records;
+the old parser is retained only for collections with no v3 records.
+
+The layout record orders spaces and Essentials; space/folder `children` arrays and split `tabs`
+arrays order the pin list. Folder/split trees are flattened for mobile, retaining folder names.
+Traversal guards cycles, duplicate references, missing records, and cross-space references; remaining
+valid pins still appear when a concurrent desktop update leaves the child list incomplete. Stable
+pins use `staticLabel` when supplied, and only HTTP(S) URLs can be opened. Container GUIDs are display
+metadata; desktop numeric container IDs are not portable to Android. All Essentials are available in
+every remote-space card: Zen's optional container-specific visibility preference is not part of this
+collection. This does not recreate desktop cookie containers on Android.
+
+Both Synced Tabs and the overview's Spaces gesture use a near-full-screen space browser with
+named space chips and separate Essentials, Pinned, and Tabs sections. When Zen spaces exist, Synced
+Tabs hides the Firefox-compatible device list (the Firefox sync engines still run). Account/sharing
+controls and Send Tab live in the header menu. Tapping a remote item opens an independent local tab;
+remote desktop spaces remain read-only, except for the dedicated phone mirror described below. Zen 1.22.1b adds `pinned: false` records for normal tabs when
+`zen.spaces-sync.normal-tabs` is enabled on desktop (Settings → Sync → Sync your Spaces across devices).
+These records include their owning `workspaceUuid`, so Tangent shows unpinned tabs from every space,
+independently of Firefox's current-space synced-tabs projection. Missing `pinned` defaults to true
+for compatibility with 1.22b; Essentials are always pinned. Normal-tab records can remain on the
+server after the desktop option is turned off: upstream deliberately holds them rather than sending
+tombstones. Tangent displays the server snapshot until a later sync updates/deletes those records. Folder
+and split membership is readable, but live-folder providers and split-pane layouts are not recreated.
+
+Refresh uses existing startup/resume, manual, and foreground sync paths. Full collection reads follow
+server pagination; refresh failures retain the last successful snapshot and show a retry message in
+Synced Tabs. Sign-out clears the persisted snapshot and replaces the credential-caching client;
+an account generation guard prevents a late response from restoring signed-out data. Refreshes are
+serialized. `ZenStableRecordsTest` covers stable fixtures, ordering, persistence, missing/cyclic
+references, deletions, and unsafe URLs; `ZenWorkspacesSyncTest` retains crypto and legacy coverage.
+
+Device verification: sign into the same Mozilla account on Zen and Tangent, enable Spaces in Zen's
+sync settings, enable normal-tab syncing and open both pinned and unpinned tabs in multiple spaces (including folder/split members), sync Zen, then open Tangent's Synced
+Tabs and tap Sync Now. Verify space order, Essentials, opening pins, desktop changes after refresh,
+and signing out/restarting. JVM fixtures cannot establish real-account interoperability by themselves.
+
+
+### Dedicated phone space
+
+`ZenPhoneSpace` projects the phone's normal HTTP(S) tabs into unpinned v3 records in a per-install
+space named `Tangent · <device model>`. Private tabs and Custom Tab sessions are excluded. The
+`zenPhoneSpaceEnabled` preference defaults on for signed-in accounts; writes require an existing
+version-3 Spaces registration in `meta/global`. Tangent never creates or rewrites that metadata,
+`crypto/keys`, or the shared `layout` record. Zen should have normal-tab syncing enabled to receive
+these unpinned records. Sharing can be paused in Spaces → menu → Sync settings, leaving the existing
+desktop copy in place.
+
+The publisher owns only its random space UUID and namespaced tab record IDs (`tg-<space UUID>-<hash>`).
+Tab IDs now persist in `tangent_tabs.json` and are reused on restore (with duplicate-ID protection),
+so relaunching does not recreate every desktop tab. Existing files without IDs migrate on their next
+save. Different installations have separate namespaces, and Mozilla accounts have separate storage.
+Changes update tab URL/title, ordering changes update the space children, and closed phone tabs get
+encrypted tombstones. Desktop space names/themes/icons and non-phone children survive updates.
+Tabs removed from the phone but moved to another space on desktop are not tombstoned there.
+The phone remains authoritative for its currently open mirrored tabs; desktop edits do not change
+phone tabs. Opening a desktop tab on the phone creates an independent phone tab.
+
+The foreground loop compares the public tab projection every three seconds and makes no requests
+when unchanged. A final publish on background is best effort; resume and manual/periodic refresh
+retry. Network failures back off, and the transport honors server backoff. Each encrypted PUT has
+`X-If-Unmodified-Since` from the last fetched BSO (including tombstones); HTTP 412 aborts the pass
+instead of overwriting a concurrent desktop change. Partial uploads are re-read and diffed on retry.
+Sign-out/account-generation guards stop further writes to an old account. All normal Firefox sync
+triggers and Send Tab command polling remain in place. Desktop visibility depends on Zen's sync
+schedule; successful phone upload does not guarantee instant desktop receipt.
+
+`ZenPhoneSpaceTest` checks privacy, stable IDs, update/deletion scope, duplicate URLs, space appearance,
+and v3 reader roundtrips. `ZenSpaceTransportTest` exercises synthetic HTTP responses to verify the
+real encrypted PUT, conflict precondition, unsupported-version refusal, and backoff behavior.
+No test uses real browsing data or account credentials.
+
+
+### Phone-space favicons
+
+Phone-tab records embed `data:image/png;base64,…` in `data.icon`, as accepted by Zen's
+`syncableIconUrl`/`setIcon` path. `ZenPhoneFavicons` prefers the loaded Gecko bitmap, then uses
+Tangent's existing `BrowserIcons` loader (ignoring generated placeholders). Encoding runs off the
+main thread, preserves aspect ratio within 64×64 pixels, caps PNG data at 24 KiB, and caches by page
+URL/bitmap revision. Fallback fetches have four-way concurrency and a five-second total budget;
+missing favicons never block tab publication indefinitely. The icon and URL snapshots are captured
+together before any network suspension. Icon-only changes trigger the next publisher pass.
+
+An unloaded/restored phone tab retains the existing synced icon only when its URL is unchanged.
+Navigation clears that fallback to avoid carrying a previous site's identity onto a different page.
+`hasStaticIcon` stays false so Zen can refresh a live tab's favicon normally; these are site favicons,
+not user-pinned custom icons. Icon bytes travel inside the same encrypted Sync record as the tab.

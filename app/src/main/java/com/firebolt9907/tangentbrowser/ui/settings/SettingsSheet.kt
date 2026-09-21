@@ -408,10 +408,11 @@ fun SettingsSheet(
             }
             SheetRowDivider()
             SettingsPicker(
-                title = "Passkeys (Experimental)",
-                subtitle = "Tangent can't use the system passkey providers. Built-in stores keys in the " +
-                    "browser only (no fingerprint prompt); Bitwarden stores and syncs them in your " +
-                    "connected vault, gated by a fingerprint. Restart to apply.",
+                title = "Passkeys",
+                subtitle = "System opens Android's passkey provider (including Bitwarden when Tangent " +
+                    "is enabled as a trusted browser). USB / NFC security key talks directly to a " +
+                    "FIDO2 key. Built-in stores keys only in this browser; the " +
+                    "experimental Bitwarden Vault option uses Tangent's custom vault client. Restart to apply.",
                 selectedLabel = passkeyMode.label,
                 options = com.firebolt9907.tangentbrowser.state.PasskeyMode.entries.map { mode ->
                     mode.label to {

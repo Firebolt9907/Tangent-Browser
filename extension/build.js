@@ -4,7 +4,10 @@
  *
  *   node build.js tangent            build the built-in extension used by the Tangent Android app
  *   node build.js tangent --check    verify the committed app asset matches src/ (no write; CI guard)
- *   node build.js standard           build the standalone desktop (Chrome/Firefox MV3) extension
+ *   node build.js firefox            build the Firefox MV3 extension
+ *   node build.js chrome             build the Chromium MV3 extension
+ *   node build.js stores             package upload archives for AMO and Chrome Web Store
+ *   node build.js standard           legacy alias for the Firefox build
  *
  * Both targets share ONE extractor (src/extractor.core.js — the pure tangentExtractArticle heuristic).
  * Only the transport glue and manifest differ:
@@ -14,12 +17,14 @@
  *              app's shipping asset app/src/main/assets/extensions/reader/, which is where GeckoView
  *              installs it. Keep it byte-for-behaviour identical to what the app expects.
  *
- *   standard = extractor.core + bundled rules + reader CSS + render.js + glue.standard, injected on a
- *              toolbar click by background.js. Output lands in dist/standard/, loadable unpacked.
+ *   firefox/chrome = extractor.core + bundled rules + reader CSS + render.js + glue.standard,
+ *                    injected on a toolbar click by background.js. The two browsers share all
+ *                    runtime code; only the MV3 background manifest shape differs.
  */
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const ROOT = __dirname;
 const REPO = path.resolve(ROOT, '..');
@@ -90,8 +95,9 @@ function buildTangent(check) {
   console.log(wrote.length ? `  updated: ${wrote.join(', ')}` : '  already up to date (no write)');
 }
 
-function buildStandard() {
-  const outDir = path.join(ROOT, 'dist', 'standard');
+function buildDesktop(target) {
+  if (target !== 'firefox' && target !== 'chrome') throw new Error(`Unknown desktop target: ${target}`);
+  const outDir = path.join(ROOT, 'dist', target);
   fs.mkdirSync(outDir, { recursive: true });
 
   const rules = compactRules();
@@ -113,21 +119,51 @@ function buildStandard() {
 
   writeIfChanged(path.join(outDir, 'reader.bundle.js'), bundle);
   writeIfChanged(path.join(outDir, 'background.js'), banner + read(path.join(SRC, 'background.standard.js')));
-  writeIfChanged(path.join(outDir, 'manifest.json'), read(path.join(SRC, 'manifest.standard.json')));
+  const manifest = read(path.join(SRC, `manifest.${target}.json`));
+  writeIfChanged(path.join(outDir, 'manifest.json'), manifest);
   // Static options page (auto-open setting) copied verbatim.
   writeIfChanged(path.join(outDir, 'options.html'), read(path.join(SRC, 'options.html')));
   writeIfChanged(path.join(outDir, 'options.js'), read(path.join(SRC, 'options.js')));
 
-  console.log(`✓ standard built → ${path.relative(REPO, outDir)}/`);
+  console.log(`✓ ${target} built → ${path.relative(REPO, outDir)}/`);
   console.log(`  reader.bundle.js (${bundle.length} bytes, ${rules.length} site rules), background.js, manifest.json`);
-  console.log('  load in Firefox: about:debugging#/runtime/this-firefox → Load Temporary Add-on → pick manifest.json');
+  console.log(`  load unpacked in ${target === 'firefox' ? 'Firefox' : 'Chrome/Chromium'} by selecting manifest.json`);
+}
+
+/** Create a root-layout ZIP archive, the upload format both browser stores accept. */
+function packageStore(target, extension) {
+  buildDesktop(target);
+  const outDir = path.join(ROOT, 'dist', target);
+  const manifest = JSON.parse(read(path.join(outDir, 'manifest.json')));
+  const safeVersion = String(manifest.version).replace(/[^0-9A-Za-z._-]/g, '-');
+  const archive = path.join(outDir, `tangent-reader-${safeVersion}-${target}.${extension}`);
+  const files = ['manifest.json', 'background.js', 'reader.bundle.js', 'options.html', 'options.js'];
+
+  // The archive is generated output and lives below dist/, so replacing this exact file is safe.
+  fs.rmSync(archive, { force: true });
+  try {
+    execFileSync('zip', ['-X', '-9', archive, ...files], { cwd: outDir, stdio: 'pipe' });
+  } catch (error) {
+    throw new Error(`Could not create ${path.basename(archive)}. Install the standard 'zip' command and retry.`, { cause: error });
+  }
+  console.log(`✓ ${target} store archive → ${path.relative(REPO, archive)}`);
+  return archive;
+}
+
+function packageStores() {
+  const firefox = packageStore('firefox', 'xpi');
+  const chrome = packageStore('chrome', 'zip');
+  console.log('  Upload the .xpi to AMO and the .zip to the Chrome Web Store; each store signs its own upload.');
+  return { firefox, chrome };
 }
 
 const target = process.argv[2];
 const check = process.argv.includes('--check');
 if (target === 'tangent') buildTangent(check);
-else if (target === 'standard') buildStandard();
+else if (target === 'firefox' || target === 'chrome') buildDesktop(target);
+else if (target === 'stores') packageStores();
+else if (target === 'standard') buildDesktop('firefox');
 else {
-  console.error('usage: node build.js <tangent|standard> [--check]');
+  console.error('usage: node build.js <tangent|firefox|chrome|stores|standard> [--check]');
   process.exit(1);
 }

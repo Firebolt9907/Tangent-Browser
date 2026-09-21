@@ -4,43 +4,46 @@ The reader-mode extractor as a standalone browser extension, built from **one sh
 compile-time target switch.
 
 ```
-node build.js standard    # standalone desktop extension (Firefox MV3), in-page reader overlay
+node build.js firefox     # Firefox MV3 extension, in-page reader overlay
+node build.js chrome      # Chromium MV3 extension, in-page reader overlay
+node build.js stores      # AMO .xpi + Chrome Web Store .zip upload archives
 node build.js tangent     # the built-in extension the Tangent Android app ships
 node build.js tangent --check   # CI guard: fail if the committed app asset drifted from src/
 ```
 
-## Why one source, two targets
+## Why one source, multiple targets
 
 `tangentExtractArticle()` (`src/extractor.core.js`) is a pure function: given the compact per-site
 rules, it walks the live DOM and returns the article model (`{ title, byline, url, blocks }`) — the
 same JSON the app parses in `ReaderExtractor.parseArticleJson`. Both targets embed *this exact
 extractor*; they differ only in **transport (the glue) and manifest**:
 
-| | `standard` | `tangent` |
+| | desktop (`firefox` / `chrome`) | `tangent` |
 |---|---|---|
 | Glue | `src/glue.standard.js` — toolbar click toggles an in-page overlay | `src/glue.tangent.js` — posts blocks to the native app over a `connectNative` Port |
 | Renders where | in the page, via `src/render.js` + `src/reader.css` (shadow DOM) | native Compose (`ui/reader/ReaderView.kt`) |
 | Per-site rules | **bundled** at build time (compacted from `reader_rules.json`) | pushed at runtime by `ReaderPortHandler` over the Port |
-| Manifest | `src/manifest.standard.json` — **MV3** (Firefox event page + `action` + `scripting`) | `src/manifest.tangent.json` — MV2 (GeckoView built-in requires it) |
-| Output | `dist/standard/` | `app/src/main/assets/extensions/reader/` (the app's shipping asset) |
+| Manifest | `src/manifest.firefox.json` / `src/manifest.chrome.json` — **MV3** (`action` + `scripting`) | `src/manifest.tangent.json` — MV2 (GeckoView built-in requires it) |
+| Output | `dist/firefox/` or `dist/chrome/` | `app/src/main/assets/extensions/reader/` (the app's shipping asset) |
 
 Because the extractor is shared, a change to extraction behaviour lands in both targets from the one
 file — no more hand-mirroring `extractor.js` against the Kotlin path.
 
 ## Manifest versions
 
-- **`standard` is Manifest V3.** Firefox MV3 shape: non-persistent `background.scripts` event page,
-  `action` toolbar button, on-demand `scripting.executeScript` injection (gated by `activeTab`, so no
-  content script runs until you click).
+- **Desktop targets are Manifest V3.** Firefox uses a non-persistent `background.scripts` event page;
+  Chromium uses a `background.service_worker`. The remaining runtime is shared: toolbar `action`,
+  and on-demand `scripting.executeScript` injection (gated by `activeTab`, so no content script runs
+  until you click).
 - **`tangent` is Manifest V2 — and must stay V2.** GeckoView installs it via
   `installBuiltInWebExtension` with the `geckoViewAddons` + `nativeMessaging` permissions, which are
   MV2-only in this GeckoView. This is not the desktop extension; it never leaves the app.
 
 ## Install the standalone (Firefox-based browsers)
 
-1. `node build.js standard`
+1. `node build.js firefox`
 2. Firefox → `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on** → pick
-   `dist/standard/manifest.json`.
+   `dist/firefox/manifest.json`.
 3. Click the toolbar button on any article: a ~640px reader **sheet slides up from the bottom** over a
    dimmed backdrop. Click again (or the ✕, Esc, or the backdrop) to slide it away. On a page it can't
    read, the click shows a brief failure toast instead. Works the same in LibreWolf / Zen / Floorp /
@@ -55,7 +58,19 @@ Auto-open injects on every completed page, so Firefox requires the extension's *
 data** to be granted (host permission) — the manual toolbar toggle works without it via `activeTab`.
 
 For a persistent (unsigned) install, use a Developer/Nightly/ESR build with
-`xpinstall.signatures.required = false`, or submit `dist/standard/` to AMO for signing.
+`xpinstall.signatures.required = false`, or submit the generated Firefox `.xpi` to AMO for signing.
+
+## Store packages
+
+Run `npm run package:stores` to build both browser variants and produce ready-to-upload archives:
+
+- `dist/firefox/tangent-reader-<version>-firefox.xpi` → upload to [Firefox Add-on Developer Hub](https://addons.mozilla.org/developers/).
+- `dist/chrome/tangent-reader-<version>-chrome.zip` → upload to the Chrome Web Store Developer Dashboard.
+
+The stores validate and sign their respective packages; do not self-sign either archive. Chrome’s
+package deliberately omits the Firefox-only Gecko application ID and uses an MV3 service worker.
+The Firefox manifest declares `data_collection_permissions.required: ["none"]`: page extraction and
+preferences storage remain local to the browser, and the extension sends no data to an external service.
 
 ## Optional: match the Zen space colour (`zen-mod/`)
 
@@ -77,7 +92,8 @@ src/
   reader.css             Sheet + backdrop stylesheet, inlined into the standalone bundle.
   background.standard.js  MV3 event page: toolbar-click inject + auto-open on page load.
   options.html/.js        Preferences page: the auto-open toggle (browser.storage.local).
-  manifest.standard.json  MV3 (Firefox).
+  manifest.firefox.json   MV3 Firefox event-page manifest.
+  manifest.chrome.json    MV3 Chromium service-worker manifest.
   manifest.tangent.json   MV2 (GeckoView built-in).
 build.js                 Target switch (see top).
 test-render.js           Browserless test of render.js across every block type.

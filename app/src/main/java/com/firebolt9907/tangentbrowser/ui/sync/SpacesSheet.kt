@@ -1,5 +1,7 @@
 package com.firebolt9907.tangentbrowser.ui.sync
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
@@ -24,7 +26,8 @@ fun SpacesSheet(
     onDismiss: () -> Unit,
     onOpenTab: (String) -> Unit,
 ) {
-    TangentModalSheet(onDismissRequest = onDismiss) {
+    TangentModalSheet(onDismissRequest = onDismiss, bottomPadding = 12.dp) {
+      Column(Modifier.fillMaxHeight(0.94f)) {
         SheetHeader(
             title = "Spaces",
             leadingIcon = { Icon(Icons.Default.ViewCarousel, contentDescription = null) },
@@ -38,6 +41,7 @@ fun SpacesSheet(
             )
         } else {
             SpacesCarousel(
+                modifier = Modifier.weight(1f),
                 spaces = snapshot.spaces,
                 containers = snapshot.containers,
                 onOpenTab = { url ->
@@ -47,5 +51,6 @@ fun SpacesSheet(
             )
         }
         Spacer(Modifier.height(8.dp))
+      }
     }
 }

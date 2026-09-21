@@ -45,7 +45,7 @@ class GeckoTabRepository(
     // immediately for the next typed search without rebuilding the repository.
     private val searchEngine: () -> SearchEngine = { SearchEngine.DEFAULT },
     // Organizational tab groups. Nullable so tests can omit it. Membership is persisted per-tab
-    // (group ids are stable; live tab ids are not) and re-linked on restore via [assignRestored].
+    // (older persisted tabs may be assigned new live IDs) and re-linked on restore via [assignRestored].
     private val tabGroups: TabGroupsRepository? = null,
 ) : TabRepository {
 
@@ -131,8 +131,10 @@ class GeckoTabRepository(
         var selectedId: String? = null
         // Collected while mapping so group membership can be re-linked once the tabs exist in the store.
         val groupAssignments = mutableListOf<Pair<String, String>>()
+        val restoredIds = mutableSetOf<String>()
         val recoverables = persisted.mapIndexed { index, tab ->
-            val id = java.util.UUID.randomUUID().toString()
+            val id = tab.id?.takeIf { restoredIds.add(it) }
+                ?: java.util.UUID.randomUUID().toString().also(restoredIds::add)
             if (tab.selected) selectedId = id
             lastAccessById[id] = tab.lastAccess
             tab.groupId?.let { groupAssignments += id to it }
@@ -228,6 +230,7 @@ class GeckoTabRepository(
                             engineStateJson = tab.engineState.engineSessionState?.let(::engineStateToJson),
                             groupId = groupIdByTab[tab.id],
                             contextId = tab.contextId,
+                            id = tab.id,
                         )
                     }
                 persistence.save(snapshot)

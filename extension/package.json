@@ -5,6 +5,9 @@
   "description": "Tangent reader-mode extractor as a standalone Firefox extension and the app's built-in extension, from one shared source.",
   "scripts": {
     "build:standard": "node build.js standard",
+    "build:firefox": "node build.js firefox",
+    "build:chrome": "node build.js chrome",
+    "package:stores": "node build.js stores",
     "build:tangent": "node build.js tangent",
     "check:tangent": "node build.js tangent --check",
     "test": "node test-render.js"

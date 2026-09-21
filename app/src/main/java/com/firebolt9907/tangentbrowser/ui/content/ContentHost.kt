@@ -357,9 +357,9 @@ fun ContentHost(
                 // the extension finishes installing; triggerInitialReaderCheck re-registers per load,
                 // so a session that renders before install completes still gets wired up.
                 com.firebolt9907.tangentbrowser.ui.reader.ReaderExtension.registerFor(session, tabId)
-                // Route this session's passkey-bridge Port too (no-op unless Bitwarden passkey mode
-                // installed the extension). Lets the content script's navigator.credentials override
-                // reach the vault.
+                // Route this session's passkey-bridge Port too. Native system-provider and Bitwarden
+                // vault modes install it; registration is safely deferred if installation is still
+                // completing.
                 com.firebolt9907.tangentbrowser.sync.webauthn.PasskeyExtension.registerFor(session)
             }
         }

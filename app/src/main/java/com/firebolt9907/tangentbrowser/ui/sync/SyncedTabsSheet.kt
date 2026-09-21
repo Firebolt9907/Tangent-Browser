@@ -67,6 +67,11 @@ fun SyncedTabsSheet(
         if (state.isSignedIn) controller.loadCachedSyncedTabs()
     }
 
+    if (state.isSignedIn && ZEN_SPACES_TABS_UI_ENABLED && state.zenWorkspaces.spaces.isNotEmpty()) {
+        ZenSpacesSyncSheet(state, controller, onDismiss, onOpenTab, currentPageUrl, currentPageTitle)
+        return
+    }
+
     TangentModalSheet(onDismissRequest = onDismiss) {
         SheetHeader(
             title = "Firefox Sync",
@@ -129,27 +134,6 @@ fun SyncedTabsSheet(
             }
 
             Spacer(Modifier.height(12.dp))
-
-            // Zen browser spaces synced on this account (read-only; empty unless a Zen client with
-            // space sync has written the `spaces` collection). Arc-style swipeable deck. Gated off
-            // until Zen ships tab-in-space sync (spaces carry no tabs today) — see ZenWorkspaces.kt.
-            if (ZEN_SPACES_TABS_UI_ENABLED && state.zenWorkspaces.spaces.isNotEmpty()) {
-                Text(
-                    text = "Spaces",
-                    style = MaterialTheme.typography.titleSmallEmphasized,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(8.dp))
-                SpacesCarousel(
-                    spaces = state.zenWorkspaces.spaces,
-                    containers = state.zenWorkspaces.containers,
-                    onOpenTab = { url ->
-                        onOpenTab(url)
-                        onDismiss()
-                    }
-                )
-                Spacer(Modifier.height(16.dp))
-            }
 
             val hasRealUrl = currentPageUrl.isNotBlank() && currentPageUrl != "about:blank"
             if (hasRealUrl && state.targetDevices.isNotEmpty()) {

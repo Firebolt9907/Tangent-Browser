@@ -197,6 +197,17 @@ class GlobalPreferencesStore(context: Context) {
             }
         }
 
+    var zenPhoneSpaceEnabled: Boolean
+        get() = prefs.getBoolean("zenPhoneSpaceEnabled", true)
+        set(value) { prefs.edit { putBoolean("zenPhoneSpaceEnabled", value) } }
+
+    /** Per-install identity; accounts have separate Sync storage namespaces. */
+    val zenPhoneSpaceId: String
+        get() = prefs.getString("zenPhoneSpaceId", null) ?: java.util.UUID.randomUUID().toString().also {
+            // Persist before the first upload, including abrupt process death.
+            check(prefs.edit().putString("zenPhoneSpaceId", it).commit())
+        }
+
     // Reader-view appearance, persisted so the user's choices survive app restarts. Theme is stored
     // by enum name; an unknown/missing value falls back to the caller's default.
     var readerThemeName: String?
@@ -357,9 +368,11 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("systemAutofillEnabled", true)
         set(value) { prefs.edit { putBoolean("systemAutofillEnabled", value) } }
 
-    // Passkeys / WebAuthn provider. Tangent isn't on the platform trusted-browser allowlist, so the
-    // normal FIDO2/Credential Manager path is rejected — hence a three-way choice (AGENTS.md invariant
-    // #12), NOT two independent toggles (the softtoken and Bitwarden paths are mutually exclusive):
+    // Passkeys / WebAuthn provider. These are mutually exclusive because Gecko chooses one
+    // authenticator route per ceremony (AGENTS.md invariant #12):
+    //   Native    — GeckoView's Android FIDO2 route, which opens the system/provider passkey sheet
+    //               (Bitwarden, Google Password Manager, etc.). Some providers require Tangent to be
+    //               explicitly enabled as a trusted browser.
     //   Off       — WebAuthn API disabled (clean password fallback).
     //   Softtoken — WebAuthn re-enabled and serviced by Gecko's INTERNAL softtoken authenticator (no
     //               allowlist; spec-correct assertions, but keys live in the Gecko profile, no biometric).
@@ -367,10 +380,12 @@ class GlobalPreferencesStore(context: Context) {
     //               navigator.credentials and services ceremonies from the Bitwarden vault (sync/webauthn,
     //               sync/bitwarden), with a real biometric gate. Keys live in (and sync via) the vault.
     // Read in writeGeckoConfig + init (Engine.kt); Gecko reads the config once at startup, so a change
-    // needs a restart. Migrates the old boolean `builtInPasskeysEnabled` (true→Softtoken, false→Off).
+    // needs a restart. Fresh installs use Native. Existing installs with the old boolean retain its
+    // meaning (`builtInPasskeysEnabled`: true→Softtoken, false→Off).
     var passkeyMode: PasskeyMode
         get() {
             prefs.getString("passkeyMode", null)?.let { return PasskeyMode.fromName(it) }
+            if (!prefs.contains("builtInPasskeysEnabled")) return PasskeyMode.Native
             return if (prefs.getBoolean("builtInPasskeysEnabled", true)) PasskeyMode.Softtoken else PasskeyMode.Off
         }
         set(value) { prefs.edit { putString("passkeyMode", value.name) } }
@@ -529,9 +544,11 @@ class GlobalPreferencesStore(context: Context) {
  */
 /** Passkey/WebAuthn provider. See [GlobalPreferencesStore.passkeyMode]. */
 enum class PasskeyMode(val label: String) {
-    Off("Off"),
+    Native("System"),
+    SecurityKey("USB / NFC security key"),
     Softtoken("Built-in"),
-    Bitwarden("Bitwarden");
+    Bitwarden("Bitwarden Vault (Experimental)"),
+    Off("Off");
 
     companion object {
         fun fromName(name: String?): PasskeyMode = entries.firstOrNull { it.name == name } ?: Off

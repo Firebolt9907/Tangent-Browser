@@ -1,5 +1,6 @@
 package com.firebolt9907.tangentbrowser
 
+import android.app.Activity
 import android.app.PictureInPictureParams
 import android.app.assist.AssistContent
 import android.content.Intent
@@ -9,6 +10,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.util.Rational
+import android.util.Log
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.IntentSenderRequest
@@ -45,6 +47,13 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
     var isVideoFullscreen by mutableStateOf(false)
         private set
 
+    // The security-key client registers an Activity Result launcher when it is constructed, so it
+    // must be initialized before onStart. It remains activity-owned even though ceremonies enter
+    // through the engine-owned WebAuthn provider.
+    private val hardwareSecurityKeyClient by lazy(LazyThreadSafetyMode.NONE) {
+        com.yubico.yubikit.fido.android.ui.FidoClient(this)
+    }
+
     // Captures file downloads from the engine and hands them to the system DownloadManager
     // (notification + storage handled by the OS). Started/stopped with the activity lifecycle.
     private val downloadsFeature by lazy {
@@ -68,8 +77,10 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
     private val intentSenderLauncher = registerForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
-        pendingIntentSenderResult?.invoke(result.data)
+        val callback = pendingIntentSenderResult
         pendingIntentSenderResult = null
+        Log.i("TangentPasskeys", "Provider activity returned resultCode=${result.resultCode}")
+        callback?.invoke(result.data.takeIf { result.resultCode == Activity.RESULT_OK })
     }
 
     // Bridges Gecko app-permission requests (camera/mic/location) to the OS runtime dialog.
@@ -85,6 +96,11 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        if (app.components.globalPreferencesStore.passkeyMode ==
+            com.firebolt9907.tangentbrowser.state.PasskeyMode.SecurityKey
+        ) {
+            hardwareSecurityKeyClient
+        }
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
@@ -145,12 +161,24 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
 
     override fun onStart() {
         super.onStart()
+        com.firebolt9907.tangentbrowser.sync.webauthn.SystemPasskeyActivityRegistry.attach(this)
+        if (app.components.globalPreferencesStore.passkeyMode ==
+            com.firebolt9907.tangentbrowser.state.PasskeyMode.SecurityKey
+        ) {
+            com.firebolt9907.tangentbrowser.sync.webauthn.HardwareSecurityKeyClientRegistry.attach(
+                this,
+                hardwareSecurityKeyClient,
+            )
+        }
         app.components.engine.registerActivityDelegate(this)
+        Log.i("TangentPasskeys", "Registered activity delegate: ${javaClass.simpleName}")
         downloadsFeature.start()
     }
 
     override fun onStop() {
         super.onStop()
+        com.firebolt9907.tangentbrowser.sync.webauthn.SystemPasskeyActivityRegistry.detach(this)
+        com.firebolt9907.tangentbrowser.sync.webauthn.HardwareSecurityKeyClientRegistry.detach(this)
         app.components.engine.unregisterActivityDelegate()
         downloadsFeature.stop()
     }
@@ -167,11 +195,18 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
     }
 
     override fun startIntentSenderForResult(intent: IntentSender, onResult: (Intent?) -> Unit) {
+        if (pendingIntentSenderResult != null) {
+            Log.w("TangentPasskeys", "Rejected overlapping provider activity")
+            onResult(null)
+            return
+        }
+        Log.i("TangentPasskeys", "Launching provider activity")
         pendingIntentSenderResult = onResult
         runCatching {
             intentSenderLauncher.launch(IntentSenderRequest.Builder(intent).build())
         }.onFailure {
             pendingIntentSenderResult = null
+            Log.w("TangentPasskeys", "Failed to launch provider activity", it)
             onResult(null)
         }
     }

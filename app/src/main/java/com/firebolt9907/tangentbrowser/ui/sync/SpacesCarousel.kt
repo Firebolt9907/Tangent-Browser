@@ -1,59 +1,32 @@
 package com.firebolt9907.tangentbrowser.ui.sync
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.lerp
-import androidx.compose.ui.unit.sp
 import com.firebolt9907.tangentbrowser.sync.zen.ZenContainer
 import com.firebolt9907.tangentbrowser.sync.zen.ZenSpace
 import com.firebolt9907.tangentbrowser.sync.zen.ZenSyncedTab
-import kotlin.math.absoluteValue
-import androidx.compose.foundation.clickable
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
-import com.firebolt9907.tangentbrowser.ui.components.PageIndicatorDot
-import com.firebolt9907.tangentbrowser.ui.theme.titleMediumEmphasized
 import com.firebolt9907.tangentbrowser.ui.theme.titleSmallEmphasized
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
+import kotlinx.coroutines.launch
+import java.net.URI
 
-/**
- * Arc-style horizontal deck of Zen [ZenSpace]s: one accent-coloured card per space, swipeable, with
- * neighbours peeking at the edges and non-centred cards scaled + faded so the focused space reads as
- * the current one. A dot indicator tracks the pager position. Read-only: each space lists the tabs
- * Zen synced for it (`zenWorkspace`-tagged records), tapping one opens it here — not a live switcher.
- *
- * Shared by [SyncedTabsSheet] (the Firefox Sync modal) and [SpacesSheet] (the tab-switcher swipe-up
- * summon) so both surfaces show identical cards.
- */
+/** Full-height remote space browser. Named chips replace the oversized decorative card deck. */
 @Composable
 fun SpacesCarousel(
     spaces: List<ZenSpace>,
@@ -62,226 +35,128 @@ fun SpacesCarousel(
     modifier: Modifier = Modifier,
 ) {
     if (spaces.isEmpty()) return
-    val pagerState = rememberPagerState(pageCount = { spaces.size })
+    val pager = rememberPagerState(pageCount = { spaces.size })
+    val scope = rememberCoroutineScope()
+    val chipScroll = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(pager.currentPage) { chipScroll.animateScrollToItem(pager.currentPage) }
 
-    Column(modifier = modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxWidth()) {
+        LazyRow(
+            state = chipScroll,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(vertical = 8.dp),
+        ) {
+            items(spaces, key = { it.uuid }) { space ->
+                val index = spaces.indexOf(space)
+                val accent = spaceAccent(space, containers)
+                FilterChip(
+                    selected = pager.currentPage == index,
+                    onClick = { scope.launch { pager.animateScrollToPage(index) } },
+                    label = { Text(space.name.ifBlank { "Unnamed space" }, maxLines = 1) },
+                    leadingIcon = { Text(spaceGlyph(space)) },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = accent.copy(alpha = 0.20f),
+                        selectedLabelColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+                )
+            }
+        }
         HorizontalPager(
-            state = pagerState,
-            // Symmetric padding so the neighbouring cards peek at both edges, telegraphing that the
-            // deck scrolls. pageSpacing keeps a gutter between adjacent cards mid-swipe.
-            contentPadding = PaddingValues(horizontal = 36.dp),
-            pageSpacing = 12.dp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(420.dp),
+            state = pager,
+            key = { spaces[it].uuid },
+            pageSpacing = 16.dp,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
         ) { page ->
             val space = spaces[page]
-            // 0 for the centred page, growing toward 1 as a card moves off-centre; drives both the
-            // scale-down and the fade so off-focus spaces recede.
-            val offset = ((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction)
-                .absoluteValue.coerceIn(0f, 1f)
-            
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .graphicsLayer {
-                        alpha = lerp(0.55f, 1f, 1f - offset)
-                    }
+            val essentials = space.tabs.filter { it.essential }
+            val pins = space.tabs.filter { it.pinned && !it.essential }
+            val normal = space.tabs.filter { !it.pinned && !it.essential }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                SpaceCard(
-                    space = space,
-                    accent = spaceAccent(space, containers),
-                    container = containers.firstOrNull { it.userContextId == space.containerTabId },
-                    offset = offset,
-                )
-
-                Spacer(Modifier.height(16.dp))
-
-                Text(
-                    text = "Tabs in ${space.name}",
-                    style = MaterialTheme.typography.titleSmallEmphasized,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-
-                Spacer(Modifier.height(8.dp))
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    if (space.tabs.isEmpty()) {
-                        Text(
-                            text = "No open tabs in this space",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 24.dp),
-                            textAlign = TextAlign.Center
-                        )
-                    } else {
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            space.tabs.forEach { tab ->
-                                SpaceTabRow(
-                                    tab = tab,
-                                    onOpen = { onOpenTab(tab.url) }
-                                )
-                            }
+                if (space.tabs.isEmpty()) {
+                    item {
+                        Column(Modifier.fillMaxWidth().padding(vertical = 40.dp)) {
+                            Text("Nothing in this space yet", style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(8.dp))
+                            Text("Enable normal tab syncing in Zen to include unpinned tabs.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            for (index in spaces.indices) {
-                PageIndicatorDot(
-                    selected = index == pagerState.currentPage,
-                    activeColor = MaterialTheme.colorScheme.primary,
-                    inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                )
+                if (essentials.isNotEmpty()) {
+                    item { SpaceSectionHeader("Essentials", essentials.size) }
+                    items(essentials) { SpaceTabRow(it, compact = true, onOpen = { onOpenTab(it.url) }) }
+                }
+                if (pins.isNotEmpty()) {
+                    item { SpaceSectionHeader("Pinned", pins.size) }
+                    items(pins) { SpaceTabRow(it, compact = true, onOpen = { onOpenTab(it.url) }) }
+                }
+                if (normal.isNotEmpty()) {
+                    item { SpaceSectionHeader("Tabs", normal.size) }
+                    items(normal) { SpaceTabRow(it, compact = false, onOpen = { onOpenTab(it.url) }) }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun SpaceTabRow(
-    tab: ZenSyncedTab,
-    onOpen: () -> Unit,
-) {
-    ListItem(
-        modifier = Modifier.clickable(role = Role.Button) { onOpen() },
-        leadingContent = { Favicon(tab.url) },
-        headlineContent = {
-            Text(
-                text = tab.title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        supportingContent = {
-            Text(
-                text = tab.url,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        trailingContent = {
-            // Decorative: the whole ListItem is the click target, so labelling the glyph made
-            // TalkBack read a second, unactionable "Open tab" after every row.
-            Icon(
-                Icons.AutoMirrored.Filled.OpenInNew,
-                contentDescription = null,
-            )
-        },
-    )
-}
-
-@Composable
-private fun SpaceCard(
-    space: ZenSpace,
-    accent: Color,
-    container: ZenContainer?,
-    offset: Float,
-) {
-    val onAccent = if (accent.luminance() > 0.5f) Color.Black else Color.White
-    val scale = lerp(0.88f, 1f, 1f - offset)
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(148.dp)
-            // Scale only — the fade for the whole page (card *and* its tab list) is applied once by
-            // the caller's graphicsLayer. Repeating it here multiplied the two, so an off-centre
-            // card sat at 0.30 alpha while its own list sat at 0.55 and the deck read as broken.
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .clip(RoundedCornerShape(28.dp))
-            .background(
-                Brush.verticalGradient(
-                    listOf(accent, androidx.compose.ui.graphics.lerp(accent, Color.Black, 0.30f)),
-                ),
-            ),
-        contentAlignment = Alignment.Center,
+private fun SpaceSectionHeader(title: String, count: Int) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 8.dp, start = 8.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                text = spaceGlyph(space),
-                fontSize = 44.sp,
-                color = onAccent,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = space.name.ifBlank { "Unnamed space" },
-                style = MaterialTheme.typography.titleMediumEmphasized,
-                color = onAccent,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            container?.name?.takeIf { it.isNotBlank() }?.let { name ->
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = onAccent.copy(alpha = 0.75f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+        Text(title, style = MaterialTheme.typography.titleSmallEmphasized,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(count.toString(), style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f))
+    }
+}
+
+@Composable
+private fun SpaceTabRow(tab: ZenSyncedTab, compact: Boolean, onOpen: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (compact) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.045f) else Color.Transparent)
+            .clickable(role = Role.Button, onClickLabel = "Open tab in Tangent", onClick = onOpen)
+            .heightIn(min = if (compact) 50.dp else 60.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Favicon(tab.url)
+        Column(Modifier.weight(1f)) {
+            Text(tab.title, style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val subtitle = if (compact) tab.folderName else listOfNotNull(tab.folderName,
+                runCatching { URI(tab.url).host?.removePrefix("www.") }.getOrNull()).joinToString(" · ")
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(subtitle, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
 }
 
-/** Zen space icons are emoji or internal `chrome://`/SVG URLs; only emoji render meaningfully. */
-private fun spaceGlyph(space: ZenSpace): String {
-    val icon = space.icon
-    if (icon != null && icon.length <= 4 && !icon.startsWith("chrome") && !icon.contains("/")) {
-        return icon
-    }
-    return space.name.trim().firstOrNull()?.uppercase() ?: "▢"
-}
+private fun spaceGlyph(space: ZenSpace): String = space.icon
+    ?.takeIf { it.length <= 6 && !it.contains('/') && !it.contains(':') }
+    ?: space.name.trim().firstOrNull()?.uppercase() ?: "▢"
 
-/**
- * Accent colour for a space: the associated container's colour when the space is bound to one,
- * otherwise a stable hue derived from the space id so every space stays visually distinct even
- * without container/theme metadata.
- */
 private fun spaceAccent(space: ZenSpace, containers: List<ZenContainer>): Color {
-    containers.firstOrNull { it.userContextId == space.containerTabId }
-        ?.color
-        ?.let(::parseContainerColor)
-        ?.let { return it }
-    val seed = space.uuid.ifEmpty { space.name }
-    val hue = seed.hashCode().mod(360).toFloat()
-    return Color.hsl(hue, 0.52f, 0.52f)
-}
-
-/** Parse a Zen/Firefox container colour: a `#rrggbb`/`#rgb` hex, or a Firefox identity colour name. */
-private fun parseContainerColor(raw: String): Color? {
-    val value = raw.trim()
-    if (value.startsWith("#")) {
-        return runCatching { Color(android.graphics.Color.parseColor(value)) }.getOrNull()
-    }
-    return when (value.lowercase()) {
+    val color = containers.firstOrNull {
+        if (space.containerGuid != null) it.guid == space.containerGuid
+        else space.containerTabId > 0 && it.userContextId == space.containerTabId
+    }?.color
+    val named = when (color) {
         "blue" -> Color(0xFF37ADFF)
         "turquoise" -> Color(0xFF00C79A)
         "green" -> Color(0xFF51CD00)
@@ -290,7 +165,9 @@ private fun parseContainerColor(raw: String): Color? {
         "red" -> Color(0xFFFF613D)
         "pink" -> Color(0xFFFF4BDA)
         "purple" -> Color(0xFFAF51F5)
-        "toolbar" -> Color(0xFF7C7C7D)
         else -> null
     }
+    return named ?: color?.takeIf { it.startsWith('#') }
+        ?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() }
+        ?: Color.hsl(space.uuid.hashCode().mod(360).toFloat(), 0.52f, 0.52f)
 }

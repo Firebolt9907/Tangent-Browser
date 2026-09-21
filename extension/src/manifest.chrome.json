@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Tangent Reader",
+  "description": "One-click distraction-free reader view. Click the toolbar button to toggle a clean overlay of the article; click again to dismiss.",
+  "version": "1.0",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Toggle Reader view"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+R",
+        "mac": "Command+Shift+R"
+      }
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "permissions": ["scripting", "activeTab", "storage"],
+  "host_permissions": ["<all_urls>"]
+}

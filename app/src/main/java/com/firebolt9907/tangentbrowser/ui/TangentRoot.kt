@@ -8,7 +8,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animate
+import com.firebolt9907.tangentbrowser.ui.motion.rememberBrowserMotionEngine
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.spring
@@ -368,6 +368,7 @@ fun TangentRoot(
     // new tab or a fresh navigation to the site brings it back (unlike dismissedAppHosts).
     var openInAppActedKey by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val motionEngine = rememberBrowserMotionEngine()
     // The one page-level feedback channel (see PageFeedback.kt). Created here rather than inside
     // TangentOverlaySheets because the root's own confirmations — a remote sign-out, a copied link,
     // a saved blob file, an app link with no app left to open it — need it too; the host that draws
@@ -1688,7 +1689,7 @@ fun TangentRoot(
             return
         }
         pullMenuCollapseJob = scope.launch {
-            animate(
+            motionEngine.animate("pull-presence", 
                 initialValue = pullMenuPresence,
                 targetValue = 0f,
                 animationSpec = TangentMotion.PullRetract,
@@ -1717,7 +1718,7 @@ fun TangentRoot(
         if (pullMenuDxPx == 0f) return
         pullMenuRecentreJob?.cancel()
         pullMenuRecentreJob = scope.launch {
-            animate(
+            motionEngine.animate("pull-x", 
                 initialValue = pullMenuDxPx,
                 targetValue = 0f,
                 animationSpec = TangentMotion.PullRetract,
@@ -1735,7 +1736,7 @@ fun TangentRoot(
         if (pullRefreshDistancePx <= 0f) return
         pullRetractJob?.cancel()
         pullRetractJob = scope.launch {
-            animate(
+            motionEngine.animate("pull-distance", 
                 initialValue = pullRefreshDistancePx,
                 targetValue = 0f,
                 animationSpec = TangentMotion.PullRetract,
@@ -1894,7 +1895,7 @@ fun TangentRoot(
         if (readerBarHidden == target) return
         readerBarSettleJob?.cancel()
         readerBarSettleJob = scope.launch {
-            animate(
+            motionEngine.animate("reader-bar", 
                 initialValue = readerBarHidden,
                 targetValue = target,
                 animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
@@ -2065,7 +2066,7 @@ fun TangentRoot(
             incomingSnapshotTopPadPx = with(density) { incomingPadDp.toPx() }.toInt()
             incomingSnapshotTabId = pinnedIncomingTabId
             leavingSnapshotJob = scope.launch {
-                animate(
+                motionEngine.animate("tab-switch", 
                     initialValue = current,
                     targetValue = target,
                     initialVelocity = velocity,
@@ -2089,7 +2090,7 @@ fun TangentRoot(
             }
         } else {
             switchAnimationJob = scope.launch {
-                animate(
+                motionEngine.animate("tab-switch", 
                     initialValue = current,
                     targetValue = 0f,
                     initialVelocity = velocity,
@@ -2161,7 +2162,7 @@ fun TangentRoot(
         incomingSnapshotTopPadPx = 0
         incomingSnapshotTabId = newTabId
         leavingSnapshotJob = scope.launch {
-            animate(
+            motionEngine.animate("tab-switch", 
                 initialValue = 0f,
                 targetValue = -pageStride,
                 initialVelocity = 0f,
@@ -2567,7 +2568,7 @@ fun TangentRoot(
                 // and a slow drag eases in — the continuity that makes iOS back-swipe feel connected,
                 // instead of a fixed-duration tween that ignores how hard you flung. Barely-damped so
                 // it lands crisply on the page edge without a visible bounce past it.
-                animate(
+                motionEngine.animate("back", 
                     current,
                     width,
                     initialVelocity = velocity,
@@ -2582,7 +2583,7 @@ fun TangentRoot(
             } else {
                 // Cancel: spring back to rest with the same velocity continuity (critically damped so
                 // any residual outward momentum settles without oscillating).
-                animate(
+                motionEngine.animate("back", 
                     current,
                     0f,
                     initialVelocity = velocity,
@@ -2795,7 +2796,7 @@ fun TangentRoot(
                 val tabId = selectedTabId
                 val targetUrl = previousHistoryUrl
                 if (width > 0f && tabId != null) {
-                    animate(
+                    motionEngine.animate("back", 
                         predictiveBackOffsetPx,
                         width,
                         animationSpec = TangentMotion.PredictiveBackCommit,
@@ -2813,7 +2814,7 @@ fun TangentRoot(
                 val current = predictiveBackOffsetPx
                 try {
                     if (current > 0f) {
-                        animate(
+                        motionEngine.animate("back", 
                             current,
                             0f,
                             animationSpec = TangentMotion.PredictiveBackCancel,

@@ -17,13 +17,7 @@ import org.junit.Test
 import java.net.URL
 import java.util.Base64
 
-/**
- * Locks in the sync15/Zen-workspaces wire protocol. Zen's workspace engine is not in their
- * stable channel yet, so there is no live client to test against — these tests pin the
- * protocol-critical behaviors (Hawk MAC, the HMAC-over-base64-string quirk, kSync splitting,
- * Zen's exact record skip/ordering rules) against known vectors and the upstream source
- * (zen-browser/desktop src/zen/sync/ZenWorkspacesSync.sys.mjs).
- */
+/** Sync 1.5 crypto vectors and legacy Twilight records; stable v3 fixtures are in ZenStableRecordsTest. */
 class ZenWorkspacesSyncTest {
 
     private fun testBundle(): KeyBundle = KeyBundle(ByteArray(32) { 1 }, ByteArray(32) { 2 })
@@ -287,9 +281,7 @@ class ZenWorkspacesSyncTest {
         assertNull(snapshot.spaces.single().icon)
     }
 
-    // --- Tab -> space mapping (FORWARD-COMPAT: no `tab` record ships today; the Twilight release
-    // note promises essentials/folders/splits "soon". These pin the parser against the shapes Zen is
-    // expected to write so it lights up without a code change. See ZenWorkspaces.kt header.) ---
+    // --- Legacy experimental tab shapes (stable v3 uses kind/data instead). ---
 
     @Test
     fun `flat pin-shape tab record maps via workspaceUuid alias`() {

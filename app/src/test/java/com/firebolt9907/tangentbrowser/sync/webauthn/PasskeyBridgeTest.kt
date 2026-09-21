@@ -60,4 +60,13 @@ class PasskeyBridgeTest {
         assertFalse(failed.getBoolean("ok"))
         assertEquals("NotAllowedError", failed.getString("error"))
     }
+
+    @Test fun reply_preserves_credential_manager_response_json() {
+        val response = """{"id":"credential-id","type":"public-key"}"""
+        val created = PasskeyBridge.reply(PasskeyOutcome.CredentialManagerCreated(response))
+        val asserted = PasskeyBridge.reply(PasskeyOutcome.CredentialManagerAsserted(response))
+
+        assertEquals(response, created.getString("credentialManagerResponse"))
+        assertEquals(response, asserted.getString("credentialManagerResponse"))
+    }
 }

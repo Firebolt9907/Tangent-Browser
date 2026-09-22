@@ -7,11 +7,11 @@ import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.Spring
+import com.firebolt9907.tangentbrowser.ui.motion.MotionInterruptedException
+import com.firebolt9907.tangentbrowser.ui.motion.BrowserPhysics
 import com.firebolt9907.tangentbrowser.ui.motion.rememberBrowserMotionEngine
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -118,6 +118,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.first
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -925,9 +927,9 @@ fun TangentRoot(
     LaunchedEffect(pullLineShown) {
         if (pullLineShown) {
             pullLineComposed = true
-            pullLineAlpha.animateTo(1f, ExpressiveMotion.fastEffectsSpec())
+            motionEngine.animate(pullLineAlpha, 1f, ExpressiveMotion.fastEffectsSpec())
         } else {
-            pullLineAlpha.animateTo(0f, ExpressiveMotion.defaultEffectsSpec())
+            motionEngine.animate(pullLineAlpha, 0f, ExpressiveMotion.defaultEffectsSpec())
             pullLineComposed = false
         }
     }
@@ -1310,6 +1312,24 @@ fun TangentRoot(
         }
     }
 
+    // Count only continuous foreground viewing. Opening the overview or leaving this activity
+    // cancels the dwell; selection changes also cancel it. Never move cards during a visible
+    // gesture/cover transition, and never reselect/rebind the page just to update recency.
+    LaunchedEffect(selectedTabIdFromStore, lifecycleOwner, gridEngaged) {
+        val viewedId = selectedTabIdFromStore ?: return@LaunchedEffect
+        if (gridEngaged) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            kotlinx.coroutines.delay(com.firebolt9907.tangentbrowser.state.TAB_RECENCY_DWELL_MS)
+            androidx.compose.runtime.snapshotFlow {
+                !gridEngaged && offsetX == 0f && !predictiveBackActive &&
+                    pendingGeckoSelectTabId == null && pendingActiveBarState == null &&
+                    leavingSnapshotBitmap == null && incomingSnapshotBitmap == null &&
+                    stickyIncomingSnapshot == null && stickyBackCoverSnapshot == null
+            }.first { it }
+            components.tabRepository.promoteViewedTab(viewedId)
+        }
+    }
+
     // While browsing (grid closed), the active Space follows the selected tab so the switcher always
     // opens onto the space that contains the current tab — even when a tab is selected outside the
     // grid (a received/handoff tab, an "open in new tab" link, a synced-tab open). While the grid is
@@ -1670,8 +1690,12 @@ fun TangentRoot(
         barCollapseDragActive = false
         barCollapseDragPx = 0f
         barCollapseProgressTarget = 0f
-        barCollapseProgress = 0f
-        scope.launch { barCollapseProgressState.snapTo(0f) }
+        motionEngine.interrupt(barCollapseProgressState)
+        barCollapseAnimationJob = scope.launch {
+            motionEngine.animate(barCollapseProgressState, 0f, TangentMotion.BarCollapse) {
+                barCollapseProgress = value
+            }
+        }
     }
 
     // Retract and unmount the overscroll menu. Called on EVERY release, whether or not an action
@@ -1689,7 +1713,7 @@ fun TangentRoot(
             return
         }
         pullMenuCollapseJob = scope.launch {
-            motionEngine.animate("pull-presence", 
+            motionEngine.animate("pull-presence",
                 initialValue = pullMenuPresence,
                 targetValue = 0f,
                 animationSpec = TangentMotion.PullRetract,
@@ -1718,7 +1742,7 @@ fun TangentRoot(
         if (pullMenuDxPx == 0f) return
         pullMenuRecentreJob?.cancel()
         pullMenuRecentreJob = scope.launch {
-            motionEngine.animate("pull-x", 
+            motionEngine.animate("pull-x",
                 initialValue = pullMenuDxPx,
                 targetValue = 0f,
                 animationSpec = TangentMotion.PullRetract,
@@ -1736,7 +1760,7 @@ fun TangentRoot(
         if (pullRefreshDistancePx <= 0f) return
         pullRetractJob?.cancel()
         pullRetractJob = scope.launch {
-            motionEngine.animate("pull-distance", 
+            motionEngine.animate("pull-distance",
                 initialValue = pullRefreshDistancePx,
                 targetValue = 0f,
                 animationSpec = TangentMotion.PullRetract,
@@ -1758,7 +1782,7 @@ fun TangentRoot(
         barCollapseAnimationJob?.cancel()
         barCollapseAnimationJob = scope.launch {
             barCollapseProgressState.snapTo(barCollapseProgress)
-            barCollapseProgressState.animateTo(
+            motionEngine.animate(barCollapseProgressState,
                 targetValue = target,
                 animationSpec = TangentMotion.BarCollapse,
             ) {
@@ -1768,7 +1792,7 @@ fun TangentRoot(
     }
 
     fun handlePageScrollDelta(delta: Float) {
-        if (!userScrollInteractionActive) return
+        if (isReaderActiveOnSelectedTab || !userScrollInteractionActive) return
         // Accumulate scroll into a hysteresis window clamped to [0, snap]. Crossing a threshold
         // springs the pill to the opposite state; within the band we show a small morph "preview"
         // that tracks scroll and flows straight into that spring (see BarCollapsePreviewMax).
@@ -1836,6 +1860,7 @@ fun TangentRoot(
     }
 
     fun enqueuePageScrollDelta(delta: Float) {
+        if (isReaderActiveOnSelectedTab) return
         pendingPageScrollDelta[0] += delta
         // Track scroll velocity for input prediction (Chrome Input Prediction equivalent).
         // Keep the last 3 samples in a ring buffer for a velocity estimate that's resilient to
@@ -1895,19 +1920,32 @@ fun TangentRoot(
         if (readerBarHidden == target) return
         readerBarSettleJob?.cancel()
         readerBarSettleJob = scope.launch {
-            motionEngine.animate("reader-bar", 
+            motionEngine.animate("reader-bar",
                 initialValue = readerBarHidden,
                 targetValue = target,
-                animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMediumLow),
+                animationSpec = BrowserPhysics.Progress,
             ) { value, _ -> readerBarHidden = value }
         }
     }
 
-    // Always reveal the pill when entering or leaving reader mode (or switching tabs in reader).
+    // Reader owns its own hide/reveal gesture. Discard the webpage's pending scroll and
+    // collapse state at the handoff, including automatic reader entry on a scrolled page.
     LaunchedEffect(isReaderActiveOnSelectedTab, selectedTabId) {
         readerBarSettleJob?.cancel()
         readerBarSettleJob = null
-        readerBarHidden = 0f
+        motionEngine.interrupt("reader-bar")
+        if (isReaderActiveOnSelectedTab) {
+            pageScrollFrameJob?.cancel()
+            pageScrollFrameJob = null
+            pendingPageScrollDelta[0] = 0f
+            userScrollInteractionActive = false
+            scrollVelocitySampleCount = 0
+            expandUrlBar()
+        }
+        readerBarSettleJob = scope.launch {
+            motionEngine.animate("reader-bar", readerBarHidden, 0f,
+                animationSpec = BrowserPhysics.Progress) { value, _ -> readerBarHidden = value }
+        }
     }
 
     val onPrimaryUrlTap: () -> Unit = {
@@ -2066,11 +2104,11 @@ fun TangentRoot(
             incomingSnapshotTopPadPx = with(density) { incomingPadDp.toPx() }.toInt()
             incomingSnapshotTabId = pinnedIncomingTabId
             leavingSnapshotJob = scope.launch {
-                motionEngine.animate("tab-switch", 
+                motionEngine.animate("tab-switch",
                     initialValue = current,
                     targetValue = target,
                     initialVelocity = velocity,
-                    animationSpec = switchSpring(velocity, Spring.StiffnessMediumLow),
+                    animationSpec = BrowserPhysics.Pixels,
                 ) { v, _ ->
                     leavingSnapshotOffsetX = v
                     incomingSnapshotOffsetX = v - side * pageStride
@@ -2090,11 +2128,11 @@ fun TangentRoot(
             }
         } else {
             switchAnimationJob = scope.launch {
-                motionEngine.animate("tab-switch", 
+                motionEngine.animate("tab-switch",
                     initialValue = current,
                     targetValue = 0f,
                     initialVelocity = velocity,
-                    animationSpec = switchSpring(velocity, Spring.StiffnessMedium),
+                    animationSpec = BrowserPhysics.Pixels,
                 ) { v, _ -> offsetX = v }
                 snap.resetTabSwitchSnapshot()
                 switchAnimationJob = null
@@ -2162,14 +2200,11 @@ fun TangentRoot(
         incomingSnapshotTopPadPx = 0
         incomingSnapshotTabId = newTabId
         leavingSnapshotJob = scope.launch {
-            motionEngine.animate("tab-switch", 
+            motionEngine.animate("tab-switch",
                 initialValue = 0f,
                 targetValue = -pageStride,
                 initialVelocity = 0f,
-                animationSpec = spring(
-                    dampingRatio = 0.92f,
-                    stiffness = Spring.StiffnessMediumLow,
-                ),
+                animationSpec = BrowserPhysics.Pixels,
             ) { v, _ ->
                 leavingSnapshotOffsetX = v
                 incomingSnapshotOffsetX = v + pageStride
@@ -2210,8 +2245,8 @@ fun TangentRoot(
                 // so carousel→columns stays locked to the vertical progress, same as openGrid.
                 val anim = TangentMotion.GridClose
                 coroutineScope {
-                    launch { gridProgressState.animateTo(0f, animationSpec = anim) }
-                    launch { gridXProgressState.animateTo(0f, animationSpec = anim) }
+                    launch { motionEngine.animate(gridProgressState, 0f, animationSpec = anim) }
+                    launch { motionEngine.animate(gridXProgressState, 0f, animationSpec = anim) }
                 }
             } else {
                 gridProgressState.snapTo(0f)
@@ -2227,7 +2262,34 @@ fun TangentRoot(
         }
     }
 
-    fun openGrid(initialVelocityProgressPerSec: Float, fromProgress: Float = 0f) {
+    fun openGrid(initialVelocityProgressPerSec: Float, fromProgress: Float? = null) {
+        // Button entry has no finger-release pose. Capture the visible carousel instead, so
+        // snapshots and captions use the same hero/fan-in path as swipe entry, including when
+        // the button interrupts a horizontal switch. Never request a bitmap on the first frame.
+        val buttonEntry = fromProgress == null && gridProgressState.value <= 0.001f && !gridGestureActive
+        if (buttonEntry) {
+            val stride = contentSize.width.toFloat() + tabSwitchGapPx
+            val midSwitch = leavingSnapshotJob != null
+            val selectedX = if (midSwitch) incomingSnapshotOffsetX else offsetX
+            val selectedIndex = tabsList.indexOfFirst { it.id == selectedTabId }.coerceAtLeast(0)
+            gridCommitFromPositions = tabsList.mapIndexed { index, tab ->
+                val x = if (midSwitch && tab.id == leavingSnapshotTabId) leavingSnapshotOffsetX
+                    else selectedX + (index - selectedIndex) * stride
+                Triple(x, 0f, 1f)
+            }
+            gridCommitFromProgress = 0.0001f // enables release geometry; its independent spring starts at 0
+            gridCancelFromProgress = 0f
+            tabSwitchCurrentSnapshot = if (midSwitch) incomingSnapshotBitmap
+                ?: snapshotFor(selectedTabId, currentUrl) else currentPageSnapshot
+            switchAnimationJob?.cancel()
+            switchAnimationJob = null
+            cancelLeavingSnapshot()
+            offsetX = 0f
+            gridHandoffSelectedTabId = null
+            gridHandoffLeavingTabId = null
+            gridHandoffSelectedOffsetX = 0f
+            gridHandoffLeavingOffsetX = 0f
+        }
         gridAnimationJob?.cancel()
         gridGestureActive = false
         gridOpen = true
@@ -2235,27 +2297,33 @@ fun TangentRoot(
         gridWaitingForAfterClose = false
         gridAnimationJob = scope.launch {
             // Seed the spring from the finger's release position so there's no pop.
-            gridProgressState.snapTo(fromProgress)
-            // x always starts from carousel positions (0) regardless of any interrupted animation.
-            gridXProgressState.snapTo(0f)
+            // Only a finger release supplies a new pose. A button reversing a close keeps
+            // both rendered axes and lets the engine inherit their individual velocities.
+            if (buttonEntry) {
+                gridProgressState.snapTo(0f)
+                gridXProgressState.snapTo(0f)
+            } else if (fromProgress != null) {
+                gridProgressState.snapTo(fromProgress)
+                gridXProgressState.snapTo(0f)
+            }
             // Smooth, lightly-damped deceleration that carries the finger's release velocity —
             // closer to Safari's settle than a stiff snap. Crucially, the X (carousel→columns)
-            // spring gets the SAME spec and initial velocity as the vertical progress so the two
-            // axes stay locked together; desynced axes are what made the motion feel robotic.
-            val launchVelocity = initialVelocityProgressPerSec.coerceAtLeast(0f)
+            // spring gets the same spec and normalized velocity: X travels 0→1 while Y only
+            // travels fromProgress→1. Equal raw velocities would make their phases drift.
+            val launchVelocity = if (buttonEntry) 0f else fromProgress?.let { initialVelocityProgressPerSec }
             val s = TangentMotion.GridOpen
             coroutineScope {
                 launch {
-                    gridProgressState.animateTo(
+                    motionEngine.animate(gridProgressState,
                         1f,
                         initialVelocity = launchVelocity,
                         animationSpec = s,
                     )
                 }
                 launch {
-                    gridXProgressState.animateTo(
+                    motionEngine.animate(gridXProgressState,
                         1f,
-                        initialVelocity = launchVelocity,
+                        initialVelocity = if (buttonEntry) 0f else launchVelocity?.let { it / (1f - fromProgress!!).coerceAtLeast(0.0001f) },
                         animationSpec = s,
                     )
                 }
@@ -2281,8 +2349,8 @@ fun TangentRoot(
             if (fromProgress > 0f) gridProgressState.snapTo(fromProgress)
             val s = TangentMotion.GridSettle
             coroutineScope {
-                launch { gridProgressState.animateTo(target, animationSpec = s) }
-                launch { gridXProgressState.animateTo(target, animationSpec = s) }
+                launch { motionEngine.animate(gridProgressState, target, animationSpec = s) }
+                launch { motionEngine.animate(gridXProgressState, target, animationSpec = s) }
             }
             gridDragProgress = 0f
             gridAnimationJob = null
@@ -2293,6 +2361,17 @@ fun TangentRoot(
     // vertical-up motion simultaneously drives gridDragPx → gridProgressState. Both run together
     // so the user can blend swipe-to-switch and swipe-up-to-grid without an axis lock.
     val onPillDragStart: () -> Unit = {
+        motionEngine.interrupt("tab-switch")
+        switchAnimationJob?.cancel()
+        switchAnimationJob = null
+        motionEngine.interrupt(gridProgressState)
+        motionEngine.interrupt(gridXProgressState)
+        gridWaitingForAfterClose = false
+        if (gridNewTabSelected) {
+            // The new tab is created only after close completes; a re-grab cancels that action.
+            gridNewTabSelected = false
+            pendingActiveBarState = null
+        }
         gridAnimationJob?.cancel()
         gridAnimationJob = null
         gridAxisLockedHorizontal = false
@@ -2308,6 +2387,10 @@ fun TangentRoot(
             gridHandoffSelectedTabId = incomingSnapshotTabId ?: selectedTabId
             gridHandoffSelectedOffsetX = incomingSnapshotOffsetX
             gridHandoffSelectedTopPadPx = incomingSnapshotTopPadPx
+            // Continue horizontal dragging in the incoming tab's coordinate system too.
+            offsetX = incomingSnapshotOffsetX
+            tabSwitchCurrentSnapshot = incomingSnapshotBitmap
+                ?: snapshotFor(incomingSnapshotTabId, tabsList.firstOrNull { it.id == incomingSnapshotTabId }?.content?.url)
             commitPendingGeckoSelection()
             leavingSnapshotJob?.cancel()
             leavingSnapshotJob = null
@@ -2508,11 +2591,11 @@ fun TangentRoot(
                 if (cancelFromProgress > 0f) {
                     val travelPx = gridTravelPx()
                     val initialVelocityProgressPerSec =
-                        if (travelPx > 0f) (-velocity.y / travelPx).coerceAtLeast(0f) else 0f
+                        if (travelPx > 0f) (-velocity.y / travelPx) else 0f
                     gridProgressState.snapTo(cancelFromProgress)
                     gridXProgressState.snapTo(0f)
                     val s = TangentMotion.GridSettle
-                    gridProgressState.animateTo(
+                    motionEngine.animate(gridProgressState,
                         0f,
                         initialVelocity = initialVelocityProgressPerSec,
                         animationSpec = s,
@@ -2568,11 +2651,11 @@ fun TangentRoot(
                 // and a slow drag eases in — the continuity that makes iOS back-swipe feel connected,
                 // instead of a fixed-duration tween that ignores how hard you flung. Barely-damped so
                 // it lands crisply on the page edge without a visible bounce past it.
-                motionEngine.animate("back", 
+                motionEngine.animate("back",
                     current,
                     width,
                     initialVelocity = velocity,
-                    animationSpec = spring(dampingRatio = 0.95f, stiffness = Spring.StiffnessMedium),
+                    animationSpec = BrowserPhysics.Pixels,
                 ) { value, _ ->
                     predictiveBackOffsetPx = value
                 }
@@ -2583,11 +2666,11 @@ fun TangentRoot(
             } else {
                 // Cancel: spring back to rest with the same velocity continuity (critically damped so
                 // any residual outward momentum settles without oscillating).
-                motionEngine.animate("back", 
+                motionEngine.animate("back",
                     current,
                     0f,
                     initialVelocity = velocity,
-                    animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
+                    animationSpec = BrowserPhysics.Pixels,
                 ) { value, _ ->
                     predictiveBackOffsetPx = value
                 }
@@ -2790,13 +2873,14 @@ fun TangentRoot(
                     snap.clearStickyCover()
                     snap.clearPredictiveBackCover()
                     predictiveBackOffsetPx = (backEvent.progress.coerceIn(0f, 1f) * width)
+                    motionEngine.track("back", predictiveBackOffsetPx)
                 }
 
                 val width = contentSize.width.toFloat()
                 val tabId = selectedTabId
                 val targetUrl = previousHistoryUrl
                 if (width > 0f && tabId != null) {
-                    motionEngine.animate("back", 
+                    motionEngine.animate("back",
                         predictiveBackOffsetPx,
                         width,
                         animationSpec = TangentMotion.PredictiveBackCommit,
@@ -2810,11 +2894,12 @@ fun TangentRoot(
                 } else {
                     resetPredictiveBackGesture()
                 }
-            } catch (_: CancellationException) {
+            } catch (cancelled: CancellationException) {
+                if (cancelled is MotionInterruptedException) throw cancelled
                 val current = predictiveBackOffsetPx
                 try {
                     if (current > 0f) {
-                        motionEngine.animate("back", 
+                        motionEngine.animate("back",
                             current,
                             0f,
                             animationSpec = TangentMotion.PredictiveBackCancel,
@@ -2847,11 +2932,16 @@ fun TangentRoot(
             try {
                 gridAnimationJob?.cancel()
                 gridAnimationJob = null
+                motionEngine.interrupt(gridProgressState)
+                motionEngine.interrupt(gridXProgressState)
+                val startY = gridProgressState.value
+                val startX = gridXProgressState.value
                 progress.collect { backEvent ->
                     val p = backEvent.progress.coerceIn(0f, 1f)
-                    val target = 1f - (1f - gridBackPreviewFloor) * p
-                    gridProgressState.snapTo(target)
-                    gridXProgressState.snapTo(target)
+                    // A back gesture can start while overview opening is still settling.
+                    val remaining = 1f - (1f - gridBackPreviewFloor) * p
+                    gridProgressState.snapTo(startY * remaining)
+                    gridXProgressState.snapTo(startX * remaining)
                 }
                 // Committed: finish the zoom into the selected card (closeGrid springs from the
                 // current preview position down to 0 and re-selects the live tab).
@@ -2863,8 +2953,8 @@ fun TangentRoot(
                 gridAnimationJob = scope.launch {
                     val s = TangentMotion.GridOpen
                     coroutineScope {
-                        launch { gridProgressState.animateTo(1f, animationSpec = s) }
-                        launch { gridXProgressState.animateTo(1f, animationSpec = s) }
+                        launch { motionEngine.animate(gridProgressState, 1f, animationSpec = s) }
+                        launch { motionEngine.animate(gridXProgressState, 1f, animationSpec = s) }
                     }
                     gridAnimationJob = null
                 }
@@ -3291,7 +3381,7 @@ fun TangentRoot(
                                 // Linear between discrete Gecko progress reports so the bar advances
                                 // at constant velocity; FastOutSlowIn would re-accelerate on every
                                 // update and stutter.
-                                loadBarProgress.animateTo(
+                                motionEngine.animate(loadBarProgress,
                                     target,
                                     tween(PageLoadStepMs, easing = LinearEasing),
                                 )
@@ -3299,7 +3389,7 @@ fun TangentRoot(
                         }
                         loadBarShown -> {
                             if (loadBarProgress.value < 1f) {
-                                loadBarProgress.animateTo(
+                                motionEngine.animate(loadBarProgress,
                                     1f,
                                     tween(PageLoadFinishMs, easing = LinearEasing),
                                 )
@@ -3983,7 +4073,7 @@ fun TangentRoot(
                     val recentTargetDevice = remember(firefoxSyncState.targetDevices) {
                         firefoxSyncState.targetDevices.maxByOrNull { it.lastAccessTime ?: Long.MIN_VALUE }
                     }
-                    // Shared fast-copy action: bottom-toolbar Copy button + address-pill long-press.
+                    // Shared copy action: bottom-toolbar button and pill shortcut menu.
                     val copyCurrentUrl = {
                         val currentUrl = selectedContent?.url.orEmpty()
                         if (currentUrl.isNotBlank() && currentUrl != "about:blank") {
@@ -4066,9 +4156,6 @@ fun TangentRoot(
                         onSelectNextTab = { commitHorizontalRelease(0f, forceDirection = 1) },
                         showBottomToolbar = showBottomToolbar,
                         onCopyTap = copyCurrentUrl,
-                        // Long-press the address pill copies the URL — same fast-copy action as the
-                        // bottom-toolbar Copy button, reachable without the toolbar enabled.
-                        onUrlLongPress = copyCurrentUrl,
                         onForwardTap = { selectedTabId?.let { components.sessionUseCases.goForward.invoke(it, true) } },
                         onShareTap = {
                             shareUrl(

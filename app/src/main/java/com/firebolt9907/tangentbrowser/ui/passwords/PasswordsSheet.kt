@@ -57,7 +57,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
 import com.firebolt9907.tangentbrowser.ui.components.SheetSearchField
-import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
+import com.firebolt9907.tangentbrowser.ui.components.TangentFullScreenPage
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.components.SwipeToRemoveRow
 import androidx.compose.ui.platform.LocalContext
@@ -135,16 +135,11 @@ fun PasswordsSheet(
 
     LaunchedEffect(Unit) { refresh() }
 
-    TangentModalSheet(onDismissRequest = onDismiss) {
+    TangentFullScreenPage(title = "Passwords", onBack = onDismiss, scrollable = true) {
         // The snackbar overlays the sheet's content rather than sitting after it in the column, so a
         // message doesn't shove the list and the Add button around as it comes and goes.
         Box(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                SheetHeader(
-                    title = "Passwords",
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                )
-
                 Spacer(Modifier.height(12.dp))
 
                 // Bitwarden as a second login source. Connecting/syncing refreshes the merged list

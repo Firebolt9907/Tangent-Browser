@@ -69,7 +69,7 @@ class TabPersistence(context: Context) {
         }.getOrElse { emptyList() }
     }
 
-    fun save(tabs: List<PersistedTab>) {
+    fun save(tabs: List<PersistedTab>, throwOnFailure: Boolean = false) {
         runCatching {
             val array = JSONArray()
             tabs.forEach { tab ->
@@ -97,6 +97,7 @@ class TabPersistence(context: Context) {
         }.onFailure {
             // Best-effort cleanup of a stale temp file so it doesn't accumulate.
             runCatching { File(file.parentFile, "${file.name}.tmp").delete() }
+            if (throwOnFailure) throw it
         }
     }
 }

@@ -139,7 +139,7 @@ fun TabGridOverlay(
     /**
      * Non-zero during the commit spring (finger released, deck opening). The spring animates
      * [progress] from this value to 1. Tabs lerp from [releasePositions] to deck slots using
-     * a normalized t = (progress − commitFromProgress) / (1 − commitFromProgress).
+     * the independent xProgress release spring (0→1), even when progress is already 1.
      */
     commitFromProgress: Float = 0f,
     /**
@@ -582,7 +582,7 @@ fun TabGridOverlay(
             // title + host text. Rendered after the cards so it paints on top; suppressed while the
             // finger is down (captions appear only after release).
             if (!isGesture) {
-                tabs.forEach { tab ->
+                tabs.forEachIndexed { index, tab ->
                     key(tab.id) {
                         val p = tab.recencyRank - scrollBucket
                         if (p >= -1 && p <= 2) {
@@ -593,6 +593,11 @@ fun TabGridOverlay(
                                 // Compose the text for the near-centre cards so it can cross-fade;
                                 // the actual alpha tracks distance-to-centre in the draw phase.
                                 textCandidate = p >= -1 && p <= 1,
+                                commitFromProgress = commitFromProgress,
+                                cancelFromProgress = cancelFromProgress,
+                                releasePosition = releasePositions?.getOrNull(index),
+                                xProgress = xProgressFwd,
+                                carouselShift = carouselShiftFwd,
                                 containerW = containerW,
                                 progress = progressFwd,
                                 stackScroll = stackScrollFwd,
@@ -742,33 +747,20 @@ private fun GridTabCard(
                             tab.slotDelta * pageStridePx * liveScale
                         ty = fingerY - containerH * liveScale
                     }
-                    commitFromProgress > 0f -> {
-                        val from = releasePosition ?: Triple(0f, 0f, 1f)
-                        val t = if (commitFromProgress < 1f) {
-                            ((p - commitFromProgress) / (1f - commitFromProgress)).coerceIn(0f, 1f)
-                        } else {
-                            1f
-                        }
-                        val slot = slotProvider(tab.recencyRank - stackScroll() + closeShift)
-                        scale = lerp(from.third, slot.scale, t)
-                        tx = lerp(from.first, slot.tx, t)
-                        ty = lerp(from.second, slot.ty, t)
-                        deckAlpha = lerp(1f, slot.alpha, t)
-                    }
-                    cancelFromProgress > 0f -> {
-                        val from = releasePosition ?: Triple(0f, 0f, 1f)
-                        val t = (1f - p / cancelFromProgress).coerceIn(0f, 1f)
-                        scale = lerp(from.third, 1f, t)
-                        tx = lerp(from.first, tab.browseBaseX + carouselShift(), t)
-                        ty = lerp(from.second, 0f, t)
-                    }
                     else -> {
-                        // Static open / close morph: browse fullscreen ↔ deck slot by progress.
-                        val slot = slotProvider(tab.recencyRank - stackScroll() + closeShift)
-                        scale = lerp(1f, slot.scale, p)
-                        tx = lerp(tab.browseBaseX + carouselShift(), slot.tx, xProgress())
-                        ty = lerp(0f, slot.ty, p)
-                        deckAlpha = lerp(1f, slot.alpha, p)
+                        val pose = overviewCardPose(
+                            slot = slotProvider(tab.recencyRank - stackScroll() + closeShift),
+                            browseX = tab.browseBaseX + carouselShift(),
+                            progress = p,
+                            releaseProgress = xProgress(),
+                            commitFromProgress = commitFromProgress,
+                            cancelFromProgress = cancelFromProgress,
+                            releasePosition = releasePosition,
+                        )
+                        scale = pose.scale
+                        tx = pose.tx
+                        ty = pose.ty
+                        deckAlpha = pose.alpha
                     }
                 }
                 // Swipe-to-close: an upward Y offset, read in the draw phase so dragging a card up
@@ -876,6 +868,7 @@ private fun GridTabCard(
                                 animate(
                                     initialValue = offset,
                                     targetValue = -containerH,
+                                    initialVelocity = vY,
                                     animationSpec = TangentMotion.CardDismiss
                                 ) { value, _ -> swipeOffsets[tab.id] = value }
                                 onCloseTab(tab.id)
@@ -1114,6 +1107,11 @@ private fun GridCellChrome(
     icon: Bitmap?,
     containerColor: Color?,
     textCandidate: Boolean,
+    commitFromProgress: Float,
+    cancelFromProgress: Float,
+    releasePosition: Triple<Float, Float, Float>?,
+    xProgress: () -> Float,
+    carouselShift: () -> Float,
     containerW: Float,
     progress: () -> Float,
     stackScroll: () -> Float,
@@ -1142,9 +1140,18 @@ private fun GridCellChrome(
                 val swipeOffset = swipeOffsets[tab.id] ?: 0f
                 // Left edge at the card's left edge; the box bottom sits a small gap above the card
                 // top so the bottom-aligned content hugs the top-left corner. Rides up on a swipe.
-                translationX = slot.tx
-                translationY = slot.ty + swipeOffset - boxHeightDp.toPx() - 6.dp.toPx()
-                alpha = progress().coerceIn(0f, 1f) * slot.alpha
+                val pose = overviewCardPose(
+                    slot, tab.browseBaseX + carouselShift(), progress(), xProgress(),
+                    commitFromProgress, cancelFromProgress, releasePosition,
+                )
+                val captionScale = pose.scale / slot.scale
+                transformOrigin = TransformOrigin(0f, 0f)
+                scaleX = captionScale
+                scaleY = captionScale
+                translationX = pose.tx
+                translationY = pose.ty + swipeOffset - (boxHeightDp.toPx() + 6.dp.toPx()) * captionScale
+                val reveal = if (commitFromProgress > 0f) xProgress() else progress()
+                alpha = reveal.coerceIn(0f, 1f) * pose.alpha
             }
             .width(labelWidthDp)
             .height(boxHeightDp),

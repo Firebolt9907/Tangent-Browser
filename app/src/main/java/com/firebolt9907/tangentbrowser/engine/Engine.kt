@@ -192,6 +192,7 @@ class TangentBrowserComponents(application: Application) {
         historyStorage,
         bookmarksStorage,
         icons = icons,
+        tabRepository = tabRepository,
     )
     val sitePermissionController =
         com.firebolt9907.tangentbrowser.permissions.SitePermissionController(application)

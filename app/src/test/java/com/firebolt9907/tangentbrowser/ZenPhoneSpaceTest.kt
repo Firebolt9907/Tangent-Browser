@@ -19,9 +19,19 @@ class ZenPhoneSpaceTest {
         assertTrue(writes.all { it.expectedModified == 0.0 && it.id.length <= 64 })
         val parsed = ZenWorkspaceRecords.parse(remote(writes)).spaces.single()
         assertEquals("Tangent · Pixel", parsed.name)
-        assertEquals(tabs.map { it.url }, parsed.tabs.map { it.url })
+        assertEquals(tabs.asReversed().map { it.url }, parsed.tabs.map { it.url })
         assertTrue(parsed.tabs.none { it.pinned || it.essential })
         assertTrue(ZenPhoneSpace.plan(space, "Tangent · Pixel", tabs, remote(writes)).isEmpty())
+    }
+
+    @Test fun `reopening an older tab only rewrites newest first space order`() {
+        val before = remote(ZenPhoneSpace.plan(space, "Phone", tabs, emptyList()))
+        val writes = ZenPhoneSpace.plan(space, "Phone", tabs.reversed(), before)
+        assertEquals(listOf(space), writes.map { it.id })
+        val children = writes.single().cleartext.getJSONObject("data").getJSONArray("children")
+        assertEquals(tabs.map { ZenPhoneSpace.tabRecordId(space, it.id) },
+            (0 until children.length()).map(children::getString))
+        assertEquals(12.5, writes.single().expectedModified, 0.0)
     }
 
     @Test fun `privacy filter excludes private tabs and non web URLs`() {

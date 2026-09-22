@@ -7,7 +7,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animate
+import com.firebolt9907.tangentbrowser.ui.motion.MotionInterruptedException
+import com.firebolt9907.tangentbrowser.ui.motion.rememberBrowserMotionEngine
 import androidx.compose.animation.core.spring
 import com.firebolt9907.tangentbrowser.ui.TangentMotion
 import com.firebolt9907.tangentbrowser.ui.PageFeedbackHost
@@ -166,6 +167,7 @@ fun CustomTabRoot(
     val components = (context.applicationContext as TangentApplication).components
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
+    val motionEngine = rememberBrowserMotionEngine()
     // This surface's own feedback channel (see PageFeedback.kt) — the browser root's lives in a
     // different activity's composition entirely.
     val feedback = rememberPageFeedback(scope)
@@ -423,14 +425,14 @@ fun CustomTabRoot(
                     closeTouchDy = backEvent.touchY - startTouchY
                     closeSlide = backEvent.progress.coerceIn(0f, 1f)
                 }
-                animate(closeSlide, 1f, animationSpec = TangentMotion.CustomTabCloseCommit) { v, _ -> closeSlide = v }
+                motionEngine.animate("close", closeSlide, 1f, animationSpec = TangentMotion.CustomTabCloseCommit) { v, _ -> closeSlide = v }
                 // Leave closeSlide at 1: the window's exit animation continues from this frame,
                 // resetting it would flash the full-size page before the window fades.
                 onClose()
             } catch (_: CancellationException) {
                 val cancelSlide = closeSlide
                 val cancelDy = closeTouchDy
-                animate(1f, 0f, animationSpec = TangentMotion.PredictiveBackCancel) { v, _ ->
+                motionEngine.animate("close-cancel", 1f, 0f, animationSpec = TangentMotion.PredictiveBackCancel) { v, _ ->
                     closeSlide = cancelSlide * v
                     closeTouchDy = cancelDy * v
                 }
@@ -449,12 +451,16 @@ fun CustomTabRoot(
         // while reader is up, so Back there falls through to the system → native exit to the caller.
         PredictiveBackHandler(enabled = canGoBack && !readerActive && !isVideoFullscreen) { progress ->
             try {
-                progress.collect { backEvent -> backSlide = backEvent.progress.coerceIn(0f, 1f) }
-                animate(backSlide, 1f, animationSpec = TangentMotion.PredictiveBackCommit) { v, _ -> backSlide = v }
+                progress.collect { backEvent ->
+                    backSlide = backEvent.progress.coerceIn(0f, 1f)
+                    motionEngine.track("back", backSlide)
+                }
+                motionEngine.animate("back", backSlide, 1f, animationSpec = TangentMotion.PredictiveBackCommit) { v, _ -> backSlide = v }
                 customTabId?.let { components.sessionUseCases.goBack.invoke(it) }
                 backSlide = 0f
-            } catch (_: CancellationException) {
-                animate(backSlide, 0f, animationSpec = TangentMotion.PredictiveBackCancel) { v, _ -> backSlide = v }
+            } catch (cancelled: CancellationException) {
+                if (cancelled is MotionInterruptedException) throw cancelled
+                motionEngine.animate("back", backSlide, 0f, animationSpec = TangentMotion.PredictiveBackCancel) { v, _ -> backSlide = v }
                 backSlide = 0f
             }
         }

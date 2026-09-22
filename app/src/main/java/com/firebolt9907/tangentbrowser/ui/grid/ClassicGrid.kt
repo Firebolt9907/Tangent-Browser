@@ -131,7 +131,7 @@ fun ClassicTabGridOverlay(
     /**
      * Non-zero during the commit spring (finger released, grid opening). The spring animates
      * [progress] from this value to 1. Tabs lerp from [releasePositions] to grid cells using
-     * a normalized t = (progress − commitFromProgress) / (1 − commitFromProgress).
+     * the independent xProgress release spring (0→1), even when progress is already 1.
      */
     commitFromProgress: Float = 0f,
     /**
@@ -682,11 +682,7 @@ private fun GridTabCard(
                     }
                     commitFromProgress > 0f -> {
                         val from = releasePosition ?: Triple(0f, 0f, 1f)
-                        val t = if (commitFromProgress < 1f) {
-                            ((p - commitFromProgress) / (1f - commitFromProgress)).coerceIn(0f, 1f)
-                        } else {
-                            1f
-                        }
+                        val t = xProgress().coerceIn(0f, 1f)
                         scale = lerp(from.third, cellScale, t)
                         tx = lerp(from.first, cell.left, t)
                         ty = lerp(from.second + scrollOffset, cell.top, t)

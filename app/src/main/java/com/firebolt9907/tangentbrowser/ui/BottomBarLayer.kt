@@ -31,6 +31,9 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
@@ -108,7 +111,6 @@ internal fun BottomBarLayer(
     onSelectNextTab: () -> Unit = {},
     showBottomToolbar: Boolean = false,
     onCopyTap: () -> Unit = {},
-    onUrlLongPress: () -> Unit = {},
     onForwardTap: () -> Unit = {},
     onShareTap: () -> Unit = {},
     onBookmarksTap: () -> Unit = {},
@@ -407,10 +409,15 @@ internal fun BottomBarLayer(
         }
         val activeEligible = selectedTabId != null && eligibleReaderTabs.contains(selectedTabId)
         val activeActive = selectedTabId != null && activeReaderTabs.contains(selectedTabId)
+        var pillMenuOpen by remember(selectedTabId, activeState.pageUrl) { mutableStateOf(false) }
+        LaunchedEffect(controlsEnabled, activeState.mode) {
+            if (!controlsEnabled || activeState.mode == BarMode.Editing) pillMenuOpen = false
+        }
+        Box(Modifier.align(Alignment.BottomCenter)) {
         SafariBar(
             state = activeState,
             onUrlTap = onPrimaryUrlTap,
-            onUrlLongPress = onUrlLongPress,
+            onUrlLongPress = { pillMenuOpen = true },
             onAaTap = onAaTap,
             onAaLongPress = onAaLongPress,
             onEditingTextChange = callbacks.onEditingTextChange,
@@ -449,6 +456,24 @@ internal fun BottomBarLayer(
             // Reader mode owns the pill color, so the site tint only applies outside reader view.
             tintColor = if (activeReaderActive) null else barTintColor,
         )
+        DropdownMenu(
+            expanded = pillMenuOpen,
+            onDismissRequest = { pillMenuOpen = false },
+            modifier = Modifier.width(240.dp),
+        ) {
+            fun runAction(action: () -> Unit) {
+                pillMenuOpen = false
+                action()
+            }
+            DropdownMenuItem(text = { Text("Edit address") }, onClick = { runAction(callbacks.onUrlTap) })
+            DropdownMenuItem(text = { Text("Copy link") }, onClick = { runAction(onCopyTap) })
+            DropdownMenuItem(text = { Text("Share link") }, onClick = { runAction(onShareTap) })
+            DropdownMenuItem(text = { Text("Reload page") }, onClick = { runAction(onReload) })
+            DropdownMenuItem(text = { Text("Page options") }, onClick = { runAction(onAaTap) })
+            DropdownMenuItem(text = { Text("All tabs") }, onClick = { runAction(onTabsTap) })
+            DropdownMenuItem(text = { Text("Bookmarks") }, onClick = { runAction(onBookmarksTap) })
+        }
+        }
         } // end band container
 
         // SPLIT: the action buttons live in a cluster to the LEFT of the pill band (toolbar beside

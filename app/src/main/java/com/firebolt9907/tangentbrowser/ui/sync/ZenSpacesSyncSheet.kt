@@ -77,11 +77,11 @@ internal fun ZenSpacesSyncSheet(
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Text(state.accountEmail ?: "Mozilla account", style = MaterialTheme.typography.bodyMedium)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Share phone tabs", modifier = Modifier.weight(1f))
+                        Text("Sync phone tabs", modifier = Modifier.weight(1f))
                         Switch(checked = state.zenPhoneSpaceEnabled, onCheckedChange = controller::setZenPhoneSpaceEnabled)
                     }
                     Text(if (state.zenPhoneSpaceEnabled)
-                        "Your phone tabs appear in a dedicated Tangent space on your computer. Enable normal tab syncing in Zen to receive them. Private tabs aren't shared."
+                        "Sync tabs with your dedicated Tangent space on the computer. Tabs added there open on your phone at the next sync; tabs deleted there close here. Enable normal tab syncing in Zen. Private tabs aren't shared."
                     else "Updates are paused. The existing desktop copy stays available.",
                         style = MaterialTheme.typography.bodySmall)
                     state.zenPhoneSpaceError?.let {

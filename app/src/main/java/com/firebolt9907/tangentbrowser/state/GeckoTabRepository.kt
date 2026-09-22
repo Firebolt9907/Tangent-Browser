@@ -6,6 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,6 +83,7 @@ class GeckoTabRepository(
     /** Last time each tab was the selected/foreground tab, keyed by tab id. */
     private val lastAccessById = mutableMapOf<String, Long>()
     private var persistJob: Job? = null
+    private val persistenceMutex = Mutex()
 
     private val storeSubscription = store.observeManually { state ->
         _tabs.value = state.toTangentTabs()
@@ -204,38 +207,53 @@ class GeckoTabRepository(
 
     private fun schedulePersist() {
         val scope = scope ?: return
-        val persistence = persistence ?: return
+        if (persistence == null) return
         persistJob?.cancel()
         persistJob = scope.launch {
             delay(500)
-            // Snapshot store state + access times on the store/main thread, then serialize and write
-            // on IO. EngineSessionState.writeTo can be non-trivial for pages with deep history, so it
-            // must not run on the main thread; the immutable BrowserState snapshot is safe to read off it.
-            val state = store.state
-            val selected = state.selectedTabId
-            val now = System.currentTimeMillis()
-            val tabs = state.tabs
-            val accessById = HashMap(lastAccessById)
-            // Snapshot group membership on the store thread; groupIdForTab reads the groups StateFlow.
-            val groupIdByTab = tabs.associate { it.id to tabGroups?.groupIdForTab(it.id) }
-            withContext(Dispatchers.IO) {
-                val snapshot = tabs
-                    .filter { it.content.url.isNotBlank() && it.content.url != "about:blank" }
-                    .map { tab ->
-                        TabPersistence.PersistedTab(
-                            url = tab.content.url,
-                            title = tab.content.title,
-                            lastAccess = accessById[tab.id] ?: now,
-                            selected = tab.id == selected,
-                            engineStateJson = tab.engineState.engineSessionState?.let(::engineStateToJson),
-                            groupId = groupIdByTab[tab.id],
-                            contextId = tab.contextId,
-                            id = tab.id,
-                        )
-                    }
-                persistence.save(snapshot)
-            }
+            persistCurrentTabs()
         }
+    }
+
+    // Serialize writes so a cancelled debounce cannot finish after a newer sync checkpoint.
+    private suspend fun persistCurrentTabs(strict: Boolean = false) = persistenceMutex.withLock {
+        val persistence = persistence ?: return@withLock
+        val state = store.state
+        val selected = state.selectedTabId
+        val now = System.currentTimeMillis()
+        val tabs = state.tabs
+        val accessById = HashMap(lastAccessById)
+        // Snapshot group membership on the store thread; groupIdForTab reads the groups StateFlow.
+        val groupIdByTab = tabs.associate { it.id to tabGroups?.groupIdForTab(it.id) }
+        withContext(Dispatchers.IO) {
+            val snapshot = tabs
+                .filter { it.content.url.isNotBlank() && it.content.url != "about:blank" }
+                .map { tab ->
+                    TabPersistence.PersistedTab(
+                        url = tab.content.url,
+                        title = tab.content.title,
+                        lastAccess = accessById[tab.id] ?: now,
+                        selected = tab.id == selected,
+                        engineStateJson = tab.engineState.engineSessionState?.let(::engineStateToJson),
+                        groupId = groupIdByTab[tab.id],
+                        contextId = tab.contextId,
+                        id = tab.id,
+                    )
+                }
+            persistence.save(snapshot, throwOnFailure = strict)
+        }
+    }
+
+    /** Persist inbound sync changes before recording their remote identities. */
+    suspend fun persistForSync() {
+        persistJob?.cancel()
+        persistJob = null
+        persistCurrentTabs(strict = true)
+    }
+
+    /** Called after foreground dwell, only while overview/transition surfaces are hidden. */
+    fun promoteViewedTab(id: String) {
+        recentTabMove(store.state, id)?.let { store.dispatch(it) }
     }
 
     override fun selectTab(id: String) {

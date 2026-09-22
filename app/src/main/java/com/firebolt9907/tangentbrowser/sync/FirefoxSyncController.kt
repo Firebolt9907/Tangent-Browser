@@ -7,6 +7,8 @@ import android.net.Uri
 import androidx.core.net.toUri
 import com.firebolt9907.tangentbrowser.R
 import com.firebolt9907.tangentbrowser.state.GlobalPreferencesStore
+import com.firebolt9907.tangentbrowser.sync.zen.ZenPhoneMerge
+import com.firebolt9907.tangentbrowser.sync.zen.ZenPhoneLink
 import com.firebolt9907.tangentbrowser.sync.zen.ZenPhoneSpace
 import com.firebolt9907.tangentbrowser.sync.zen.ZenPhoneTab
 import com.firebolt9907.tangentbrowser.sync.zen.Sync15StorageClient
@@ -110,6 +112,7 @@ class FirefoxSyncController(
     private val historyStorage: mozilla.components.browser.storage.sync.PlacesHistoryStorage? = null,
     private val bookmarksStorage: mozilla.components.browser.storage.sync.PlacesBookmarksStorage? = null,
     icons: mozilla.components.browser.icons.BrowserIcons? = null,
+    private val tabRepository: com.firebolt9907.tangentbrowser.state.GeckoTabRepository? = null,
 ) {
     // No remote crash reporting (personal build), but don't black-hole the sync stack's caught
     // exceptions — surface them in debug logcat so sync failures are diagnosable during development.
@@ -153,6 +156,7 @@ class FirefoxSyncController(
 
     private val globalPrefs = GlobalPreferencesStore(application)
 
+    private val phoneMergePrefs = application.getSharedPreferences("zen_phone_merge", android.content.Context.MODE_PRIVATE)
     private val phoneFavicons = com.firebolt9907.tangentbrowser.sync.zen.ZenPhoneFavicons(icons)
     private var phoneSpaceJob: Job? = null
     private var publishedPhoneTabs: List<ZenPhoneTab>? = null
@@ -529,13 +533,45 @@ class FirefoxSyncController(
             var spaceRecords = client.fetchCollection(account, ZEN_WORKSPACES_COLLECTION)
             if (globalPrefs.zenPhoneSpaceEnabled && store.state.tabs.isNotEmpty() &&
                 generation == zenAccountGeneration && !localSignOutInFlight) {
-                val tabs = phoneTabs()
-                val tabIcons = store.state.tabs.associate { it.id to it.content.icon }
                 try {
                     client.requireZenSpacesV3(account)
+                    val repo = tabRepository ?: error("Phone tab repository is unavailable")
+                    val spaceId = globalPrefs.zenPhoneSpaceId
+                    val accountId = accountManager.accountProfile()?.uid ?: error("Account profile is unavailable")
+                    val mergeKey = "$accountId:$spaceId"
+                    var links = ZenPhoneMerge.decode(phoneMergePrefs.getString(mergeKey, "[]") ?: "[]")
+                    fun stillCurrent() = generation == zenAccountGeneration &&
+                        globalPrefs.zenPhoneSpaceEnabled && !localSignOutInFlight && usableAccount() != null
+                    if (!stillCurrent()) return@withLock
+                    // Read local state AFTER the fetch; local changes during network I/O are newer.
+                    val inbound = ZenPhoneMerge.inbound(spaceId, phoneTabs(), spaceRecords, links)
+                    inbound.additions.forEach { addition ->
+                        val id = repo.addPreparedTab(addition.url, addition.title, selectTab = false, parentId = null)
+                        links = links + ZenPhoneLink(id, addition.recordId, addition.url)
+                    }
+                    repo.closeTabs(inbound.closeIds)
+                    // Store actions are asynchronous. Wait until they have been reduced before
+                    // taking the upload snapshot or persisting identities.
+                    kotlinx.coroutines.withTimeout(10_000L) {
+                        while (links.takeLast(inbound.additions.size).any { link -> store.state.tabs.none { it.id == link.localId } } ||
+                            inbound.closeIds.any { id -> store.state.tabs.any { it.id == id } }) {
+                            kotlinx.coroutines.delay(10)
+                        }
+                    }
+                    if (store.state.tabs.isEmpty()) {
+                        val blank = repo.addPreparedTab("about:blank", "New Tab", selectTab = true, parentId = null)
+                        kotlinx.coroutines.withTimeout(10_000L) {
+                            while (store.state.tabs.none { it.id == blank }) kotlinx.coroutines.delay(10)
+                        }
+                    }
+                    repo.persistForSync()
+                    if (!stillCurrent()) return@withLock
+                    check(phoneMergePrefs.edit().putString(mergeKey, ZenPhoneMerge.encode(links)).commit())
+                    val tabs = phoneTabs()
+                    val tabIcons = store.state.tabs.associate { it.id to it.content.icon }
                     val withIcons = phoneFavicons.enrich(tabs, tabIcons)
                     val writes = ZenPhoneSpace.plan(
-                        globalPrefs.zenPhoneSpaceId, "Tangent · ${android.os.Build.MODEL}", withIcons, spaceRecords,
+                        globalPrefs.zenPhoneSpaceId, "Tangent · ${android.os.Build.MODEL}", withIcons, spaceRecords, links,
                     )
                     for (write in writes) {
                         if (generation != zenAccountGeneration || !globalPrefs.zenPhoneSpaceEnabled ||
@@ -544,6 +580,14 @@ class FirefoxSyncController(
                     }
                     if (generation == zenAccountGeneration && globalPrefs.zenPhoneSpaceEnabled &&
                         !localSignOutInFlight && usableAccount() != null) {
+                        // Advance the common baseline only after every conditional upload succeeds.
+                        // Snapshot IDs, not URLs, keep duplicate pages independent.
+                        val ids = links.associate { it.localId to it.recordId }
+                        val remoteById = spaceRecords.sortedBy { it.modified }.associateBy { it.id }
+                        val agreed = tabs.map {
+                            ZenPhoneLink(it.id, ZenPhoneSpace.resolvedRecordId(spaceId, it.id, ids[it.id], remoteById), it.url)
+                        }
+                        check(phoneMergePrefs.edit().putString(mergeKey, ZenPhoneMerge.encode(agreed)).commit())
                         publishedPhoneTabs = tabs
                         phoneSpaceRetryAtMs = 0L
                         _state.update { it.copy(zenPhoneSpaceError = null) }

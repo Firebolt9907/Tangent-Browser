@@ -1,9 +1,9 @@
 package com.firebolt9907.tangentbrowser.ui
 
+import com.firebolt9907.tangentbrowser.ui.motion.BrowserPhysics
 import android.view.animation.Interpolator
 import android.view.animation.PathInterpolator
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.unit.IntOffset
@@ -94,8 +94,9 @@ internal const val PredictiveBackDurationMs = 220
 internal val TabSwitchGap = 64.dp
 // Depth card-stack swipe (wide screens): how far the leaving/incoming page panes shrink at the
 // extremes of a swipe, and the peak darkening applied to whichever pane is receding.
-internal const val DeckSwipeMinScale = 0.90f
-internal const val DeckSwipeMaxDim = 0.35f
+// Keep depth subtle: the page should feel attached to the finger, not shrink into a dark tile.
+internal const val DeckSwipeMinScale = 0.93f
+internal const val DeckSwipeMaxDim = 0.22f
 internal val PullRefreshThreshold = 96.dp
 // Asymptote of the pull's rubber band, NOT a clamp — see rubberBandPull. The indicator approaches
 // this and never arrives, so the pull keeps responding however far the finger travels; the threshold
@@ -125,30 +126,13 @@ internal const val GridCommitVelocityPxS = 1000f
 // gentler/longer open, higher = snappier.
 internal const val GridOpenMaxVelocityPerRange = 5f
 
-// Safari-style motion for the tab-overview (grid) transitions. iOS springs are authored as a
-// "response" (seconds to settle) + damping fraction; Compose's stiffness maps as
-// stiffness = (2*PI / response)^2. Safari's overview zoom is a soft, lightly-damped settle that
-// carries the finger's release velocity rather than snapping. Tuned to iOS's grace: response
-// ~0.46s (softer/longer than a snappy Material spring) with a lively-but-controlled damping so the
-// motion eases in and settles crisply rather than crawling to rest. Centralised here so the
-// open/settle/cancel/close phases stay one coherent feel.
+// App-owned movement shares one physical response. Named aliases describe destinations, not
+// independent tuning; changing destination must not change the spring's physical properties.
 internal object TangentMotion {
-    // Overview zoom-in (carousel → grid). response ~0.46s. Damping 0.8 gives the barely-there
-    // overshoot-and-settle that reads as "iOS smooth" instead of a hard stop.
-    val GridOpen = spring<Float>(dampingRatio = 0.8f, stiffness = 190f)
-    // Settle to a target and cancel-return. Same softness, a hair more damped so a cancel doesn't
-    // visibly bounce back into the chrome.
-    val GridSettle = spring<Float>(dampingRatio = 0.85f, stiffness = 200f)
-    // Overview zoom-out (grid → fullscreen tab): tap-to-select / back / new-tab exit. Symmetric
-    // softness with GridOpen so entry and exit feel like one motion. Damping 0.9 keeps it crisp
-    // (no dead critical-damping crawl at the end) — the render clamps progress to [0,1], so the
-    // sub-percent undershoot a light damping produces can't show as an overshoot past the tab.
-    val GridClose = spring<Float>(dampingRatio = 0.9f, stiffness = 200f)
-    // Toolbar collapse/expand — the single spring that drives both directions (Safari-style). No
-    // finger-tracking preview: crossing the scroll threshold animates the pill smoothly between the
-    // expanded and compact states with this one spring, so up and down feel identical. Near-critical
-    // damping (0.9) + a medium-low stiffness give a quick, smooth glide with no visible bounce.
-    val BarCollapse = spring<Float>(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow)
+    val GridOpen = BrowserPhysics.Progress
+    val GridSettle = BrowserPhysics.Progress
+    val GridClose = BrowserPhysics.Progress
+    val BarCollapse = BrowserPhysics.Progress
 
     // Material 3's ModalBottomSheet does NOT animate on a tween — it springs, and asymmetrically:
     // show (and drag-release settle) uses the motion scheme's "default spatial" spring, hide uses
@@ -174,37 +158,13 @@ internal object TangentMotion {
     val SheetHideOffset =
         spring<IntOffset>(dampingRatio = 1f, stiffness = 3800f, visibilityThreshold = IntOffset(1, 1))
 
-    // Release of a swipe-to-close on an overview card (deck/pixel up-swipe, classic-grid side-swipe).
-    // Both outcomes take over from a finger that is still moving, so neither may ease *in* — and the
-    // default FastOutSlowIn does exactly that: its curve leaves the origin at zero velocity, so the
-    // card stalls for a frame at the instant the finger lifts and then re-accelerates. That hitch is
-    // the whole reason [EaseOut] exists (its comment already names "grid dismiss"); the grid just
-    // wasn't using it.
-    //
-    // Dismiss rides EaseOut — the card is leaving the screen, so a fixed decelerate-only slide is
-    // predictable and can't overshoot. Snap-back springs instead, seeded by the caller with the
-    // finger's release velocity where a tracker is available, so a card still travelling keeps
-    // travelling and settles rather than replaying a fixed 200 ms ramp from a standstill.
-    // visibilityThreshold is half a pixel because the animated value is a raw pixel offset: the
-    // Float default of 0.01 would keep the spring emitting frames long past anything visible.
-    val CardDismiss = tween<Float>(durationMillis = 200, easing = EaseOut)
-    val CardSnapBack = spring<Float>(dampingRatio = 0.82f, stiffness = 420f, visibilityThreshold = 0.5f)
-
-    // Release of a predictive-back drag, for BOTH activities' back gestures. Same reason as the card
-    // specs above: the finger is mid-travel when the system hands the gesture over, so the settle
-    // must be decelerate-only. These exist mainly to keep MainActivity and CustomTabActivity in
-    // sync — the same back-swipe used to commit over 220 ms in one and 180 ms in the other, on two
-    // different curves, so going back felt like a different gesture depending on how the page had
-    // been opened.
-    val PredictiveBackCommit = tween<Float>(durationMillis = PredictiveBackDurationMs, easing = EaseOut)
-    val PredictiveBackCancel = tween<Float>(durationMillis = 180, easing = EaseOut)
-
-    // Retraction of an unconsummated pull-to-refresh: the finger let go below the threshold, so the
-    // overscroll line has to travel back to nothing instead of being snapped there. Critically
-    // damped on purpose — the refresh line is *mounted* on `distance > 0`, so an underdamped spring
-    // dipping below zero would unmount and then re-mount it as the spring came back, flickering the
-    // faint track. Pixel-scale value, so the visibility threshold is half a pixel (see [CardSnapBack]).
-    val PullRetract = spring<Float>(dampingRatio = 1f, stiffness = 500f, visibilityThreshold = 0.5f)
+    // Dismiss, commit and cancel carry momentum through the same spring. Critical damping
+    // keeps opaque page edges and mounted-on-positive-distance indicators from bouncing open.
+    val CardDismiss = BrowserPhysics.Pixels
+    val CardSnapBack = BrowserPhysics.Pixels
+    val PredictiveBackCommit = BrowserPhysics.Progress
+    val PredictiveBackCancel = BrowserPhysics.Progress
+    val PullRetract = BrowserPhysics.Pixels
 
     // The Custom Tab *close* commit is deliberately the one exception to [PredictiveBackCommit]: the
     // window's own exit animation (`overridePendingTransition`, see AGENTS.md → Custom Tab exit
@@ -235,14 +195,14 @@ internal object TangentMotion {
     //  - Every expressive spatial tier is under-damped (dampingRatio 0.8). On a surface that covers
     //    the screen the overshoot carries the slide *past* offset 0, which uncovers a strip of the
     //    web page along the bottom edge at the end of the enter — the one place the expressive
-    //    bounce is not free. Critically damped, at the slow tier's stiffness.
+    //    bounce is not free. Critically damped, using the shared browser response.
     //  - The takeover is a slide, NOT a cross-fade. Both call sites used to pair this with
     //    `fadeIn()`/`fadeOut()`, which held the reader translucent over the live page for the whole
     //    transition, so the article text and the page it was extracted from were legible through
     //    each other. An opaque card that moves needs no opacity change; the slide alone reads as
     //    one surface replacing another instead of two documents ghosting.
     val TakeoverSlide =
-        spring<IntOffset>(dampingRatio = 1f, stiffness = 200f, visibilityThreshold = IntOffset(1, 1))
+        BrowserPhysics.spring(visibilityThreshold = IntOffset(1, 1))
 
     // A card appearing INSIDE a stack that other layout is measured against — today the Firefox-Sync
     // handoff card in the tab overview's bottom controls. Animating only the card's own fade/slide is
@@ -255,20 +215,13 @@ internal object TangentMotion {
     //
     // Critically damped deliberately: an expressive spatial's 0.8 damping overshoots, and overshoot
     // on a *size* means the container grows taller than its content and flashes a gap before
-    // settling — the same reason [TakeoverSlide] is damped flat. Collapse is stiffer than expand,
-    // matching the show/hide asymmetry of [SheetShow]/[SheetHide]: arriving is deliberate, leaving
-    // should get out of the way.
+    // settling — the same reason [TakeoverSlide] is damped flat. Both directions share the
+    // browser response so a reversal feels like the same surface changing direction.
     val RevealExpand =
-        spring<IntSize>(dampingRatio = 1f, stiffness = 380f, visibilityThreshold = IntSize(1, 1))
+        BrowserPhysics.spring(visibilityThreshold = IntSize(1, 1))
     val RevealCollapse =
-        spring<IntSize>(dampingRatio = 1f, stiffness = 900f, visibilityThreshold = IntSize(1, 1))
+        BrowserPhysics.spring(visibilityThreshold = IntSize(1, 1))
 }
-
-// Horizontal tab-switch commit spring: damping scales with the finger's release velocity (fast
-// flicks settle looser for a livelier feel) while stiffness varies by destination — softer when
-// committing to the adjacent tab, snappier when snapping back to the current one.
-internal fun switchSpring(velocity: Float, stiffness: Float) =
-    spring<Float>(dampingRatio = dampingForVelocity(velocity), stiffness = stiffness)
 
 /** Fraction of a raw drag applied at the very edge of an overscroll; falls to 0 as you pull further. */
 internal const val EdgeRubberBandTension = 0.55f
@@ -286,19 +239,4 @@ internal fun rubberBand(current: Float, delta: Float, dimension: Float): Float {
     if (!outward) return current + delta // returning toward rest: 1:1 finger tracking
     val pulled = (abs(current) / dimension).coerceIn(0f, 1f)
     return current + delta * (1f - pulled) * EdgeRubberBandTension
-}
-
-internal fun dampingForVelocity(velocity: Float): Float {
-    val v = abs(velocity)
-    return when {
-        v < 400f -> 1.0f
-        v >= 1500f -> 0.82f
-        else -> {
-            // Linearly ease from critically damped (slow flicks) to a light 0.82 settle at the
-            // fast-flick threshold. Target must match the >=1500 branch so damping stays continuous
-            // across the boundary — a mismatch there makes the tab-switch spring visibly jump feel.
-            val t = (v - 400f) / 1100f
-            1.0f + (0.82f - 1.0f) * t
-        }
-    }
 }

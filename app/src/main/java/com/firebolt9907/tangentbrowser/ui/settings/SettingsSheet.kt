@@ -50,7 +50,8 @@ import com.firebolt9907.tangentbrowser.state.SearchEngine
 import com.firebolt9907.tangentbrowser.ui.BiometricGate
 import com.firebolt9907.tangentbrowser.ui.chrome.WideBarLayout
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
-import com.firebolt9907.tangentbrowser.ui.components.TangentModalSheet
+import com.firebolt9907.tangentbrowser.ui.components.TangentFullScreenPage
+import androidx.compose.foundation.rememberScrollState
 import com.firebolt9907.tangentbrowser.ui.components.SheetCard
 import com.firebolt9907.tangentbrowser.ui.components.SheetHeader
 import com.firebolt9907.tangentbrowser.ui.components.SheetRowDivider
@@ -144,6 +145,8 @@ fun SettingsSheet(
     // The sheet has two pages: a curated main page and an "Advanced" page holding the long tail of
     // power-user toggles. They share all the hoisted state above, so switching is just a branch.
     var showAdvanced by remember { mutableStateOf(false) }
+    val mainScroll = rememberScrollState()
+    val advancedScroll = rememberScrollState()
 
     // Settings' feedback used to be android.widget.Toast: unthemed, drawn outside the sheet, and on
     // modern Android often swallowed while a sheet is up. A SnackbarHost keeps it on the surface the
@@ -157,9 +160,11 @@ fun SettingsSheet(
         }
     }
 
-    TangentModalSheet(
-        onDismissRequest = onDismiss,
+    TangentFullScreenPage(
+        title = if (showAdvanced) "Advanced settings" else "Settings",
+        onBack = { if (showAdvanced) showAdvanced = false else onDismiss() },
         scrollable = true,
+        scrollState = if (showAdvanced) advancedScroll else mainScroll,
         overlay = {
             SnackbarHost(
                 hostState = snackbarHostState,
@@ -172,7 +177,6 @@ fun SettingsSheet(
                 globalPrefsStore = globalPrefsStore,
                 haptics = haptics,
                 onSettingChanged = onSettingChanged,
-                onBack = { haptics.softClick(); showAdvanced = false },
                 globalPrivacyControl = globalPrivacyControl,
                 onGlobalPrivacyControlChange = { globalPrivacyControl = it },
                 cookieBehaviorOptInPartitioning = cookieBehaviorOptInPartitioning,
@@ -244,10 +248,9 @@ fun SettingsSheet(
                 httpCacheSizeMb = httpCacheSizeMb,
                 onHttpCacheSizeMbChange = { httpCacheSizeMb = it },
             )
-            return@TangentModalSheet
+            return@TangentFullScreenPage
         }
 
-        SheetHeader("Settings")
 
         Spacer(Modifier.height(20.dp))
 
@@ -962,7 +965,6 @@ private fun AdvancedSettingsPage(
     globalPrefsStore: GlobalPreferencesStore,
     haptics: com.firebolt9907.tangentbrowser.ui.TangentHaptics,
     onSettingChanged: () -> Unit,
-    onBack: () -> Unit,
     globalPrivacyControl: Boolean,
     onGlobalPrivacyControlChange: (Boolean) -> Unit,
     cookieBehaviorOptInPartitioning: Boolean,
@@ -1037,21 +1039,6 @@ private fun AdvancedSettingsPage(
     // Read/written directly against the store (not hoisted through SettingsSheet) — this toggle
     // has no engine-side effect, it only gates whether "Listen to Page" appears in the aA sheet.
     var listenToPageEnabled by remember { mutableStateOf(globalPrefsStore.listenToPageEnabled) }
-    SheetHeader(
-        title = "Advanced",
-        // IconButton, matching every other in-sheet Back (Add-ons, aA): a bare clickable Icon here
-        // was only a 20dp target — well under the 48dp minimum — and used a different glyph.
-        leadingIcon = {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        },
-    )
-
     Spacer(Modifier.height(20.dp))
 
     SheetSectionHeader("Anti-tracking & fingerprinting")

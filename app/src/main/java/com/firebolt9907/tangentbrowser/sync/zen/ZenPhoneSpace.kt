@@ -31,6 +31,13 @@ internal object ZenPhoneSpace {
     fun tabRecordId(spaceId: String, tabId: String): String = prefix(spaceId) +
         UUID.nameUUIDFromBytes(tabId.toByteArray(Charsets.UTF_8)).toString().replace("-", "").take(20)
 
+    internal fun resolvedRecordId(spaceId: String, localId: String, linked: String?, existing: Map<String, Sync15Record>): String {
+        val data = linked?.let { existing[it]?.cleartext?.optJSONObject("data") }
+        // A desktop move out of the dedicated space ends ownership of the original record.
+        return if (linked != null && (data == null || data.optString("workspaceUuid") == spaceId)) linked
+        else tabRecordId(spaceId, localId)
+    }
+
     // Android's org.json lacks JSONObject.similar; compare objects with stable key order.
     private fun canonical(value: Any?): String = when (value) {
         is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(",", "{", "}") {
@@ -42,10 +49,15 @@ internal object ZenPhoneSpace {
         else -> value.toString()
     }
 
-    fun plan(spaceId: String, name: String, tabs: List<ZenPhoneTab>, remote: List<Sync15Record>): List<ZenPhoneWrite> {
+    fun plan(spaceId: String, name: String, tabs: List<ZenPhoneTab>, remote: List<Sync15Record>, links: List<ZenPhoneLink> = emptyList()): List<ZenPhoneWrite> {
         val prefix = prefix(spaceId)
-        val existing = remote.associateBy { it.id }
-        val current = visibleTabs(tabs).associateBy { tabRecordId(spaceId, it.id) }
+        val existing = remote.sortedBy { it.modified }.associateBy { it.id }
+        val linkedIds = links.associate { it.localId to it.recordId }
+        val managedIds = links.mapTo(mutableSetOf()) { it.recordId }
+        // Tangent stores oldest-first; Zen displays the first child at the top.
+        val current = visibleTabs(tabs).asReversed().associateBy { tab ->
+            resolvedRecordId(spaceId, tab.id, linkedIds[tab.id], existing)
+        }
         val writes = mutableListOf<ZenPhoneWrite>()
         fun write(id: String, kind: String, data: JSONObject) {
             val cleartext = JSONObject().put("id", id).put("kind", kind).put("data", data)
@@ -60,26 +72,34 @@ internal object ZenPhoneSpace {
             // for the exact same page; navigation must not carry another site's favicon forward.
             val icon = tab.icon ?: previous?.takeIf { it.optString("url") == tab.url }
                 ?.optString("icon").orEmpty()
-            write(id, "tab", JSONObject()
-                .put("tabId", id).put("url", tab.url).put("title", tab.title)
-                .put("icon", icon).put("containerGuid", JSONObject.NULL)
+            // Imported desktop tabs retain pin/folder/container metadata and their record identity.
+            val data = if (!id.startsWith(prefix) && previous != null) JSONObject(previous.toString()) else JSONObject()
+                .put("tabId", id).put("containerGuid", JSONObject.NULL)
                 .put("essential", false).put("pinned", false).put("workspaceUuid", spaceId)
                 .put("folderId", JSONObject.NULL).put("staticLabel", JSONObject.NULL)
-                .put("hasStaticIcon", false).put("defaultContainer", false))
+                .put("hasStaticIcon", false).put("defaultContainer", false)
+            write(id, "tab", data
+                .put("tabId", id).put("url", tab.url).put("title", tab.title)
+                .put("icon", icon))
         }
         val previousSpace = existing[spaceId]?.cleartext?.optJSONObject("data")
         val space = previousSpace?.let { JSONObject(it.toString()) } ?: JSONObject()
             .put("uuid", spaceId).put("name", name).put("icon", "📱")
             .put("theme", JSONObject.NULL).put("containerGuid", JSONObject.NULL)
-        // Keep desktop-added children and user-chosen space appearance; the phone owns its own tabs.
+        // Linked desktop tabs at the space root participate in phone recency order too. Tabs in
+        // folders keep their desktop placement; unrelated desktop children retain their order.
+        val rootTabs = current.keys.filter { id ->
+            val folder = existing[id]?.cleartext?.optJSONObject("data")?.opt("folderId") as? String
+            id.startsWith(prefix) || folder.isNullOrBlank()
+        }
         val extraChildren = previousSpace?.optJSONArray("children")?.let { children ->
             (0 until children.length()).mapNotNull { children.opt(it) as? String }
-                .filterNot { it.startsWith(prefix) }
+                .filterNot { it.startsWith(prefix) || it in rootTabs || (it in managedIds && it !in current) }
         }.orEmpty()
-        space.put("children", JSONArray(current.keys.toList() + extraChildren))
+        space.put("children", JSONArray((rootTabs + extraChildren).distinct()))
         write(spaceId, "space", space)
-        remote.filter { record ->
-            record.id.startsWith(prefix) && record.id !in current &&
+        existing.values.filter { record ->
+            (record.id.startsWith(prefix) || record.id in managedIds) && record.id !in current &&
                 record.cleartext.optString("kind") == "tab" &&
                 record.cleartext.optJSONObject("data")?.optString("workspaceUuid") == spaceId
         }.forEach { record ->

@@ -662,8 +662,21 @@ save. Different installations have separate namespaces, and Mozilla accounts hav
 Changes update tab URL/title, ordering changes update the space children, and closed phone tabs get
 encrypted tombstones. Desktop space names/themes/icons and non-phone children survive updates.
 Tabs removed from the phone but moved to another space on desktop are not tombstoned there.
-The phone remains authoritative for its currently open mirrored tabs; desktop edits do not change
-phone tabs. Opening a desktop tab on the phone creates an independent phone tab.
+The dedicated phone space reconciles tab additions and explicit deletion tombstones in both
+directions. `ZenPhoneMerge` imports desktop-created records as normal unselected Personal tabs and
+retains their remote identity, so duplicate URLs stay distinct and retries do not duplicate tabs.
+Account UID + phone-space UUID scope a persisted identity/URL checkpoint. A missing linked local
+tab is a local close, not a new desktop addition. Desktop tombstones close matching phone tabs
+unless their URL changed locally since the last agreed checkpoint (local navigation wins).
+Missing records/children are not deletion evidence: desktop publication and collection resets can
+temporarily omit records. Other spaces and Essentials never import through this path; private and
+non-web tabs are excluded. Desktop URL edits to existing tabs are not pulled by this merge.
+Imported records keep their desktop pin/folder/container metadata; moving one out of this space
+ends write ownership of that record. Inbound changes are persisted before checkpointing identities;
+storage errors fail the sync rather than recording an import that has not been saved. Each upload
+still uses the server's conditional-write precondition, and checkpoints advance only after every
+write succeeds. The foreground poll, background baseline, and command-receipt paths are unchanged.
+Opening a tab manually from the read-only desktop-space viewer still creates an independent tab.
 
 The foreground loop compares the public tab projection every three seconds and makes no requests
 when unchanged. A final publish on background is best effort; resume and manual/periodic refresh
@@ -694,3 +707,14 @@ An unloaded/restored phone tab retains the existing synced icon only when its UR
 Navigation clears that fallback to avoid carrying a previous site's identity onto a different page.
 `hasStaticIcon` stays false so Zen can refresh a live tab's favicon normally; these are site favicons,
 not user-pinned custom icons. Icon bytes travel inside the same encrypted Sync record as the tab.
+
+### Tab recency and Zen ordering
+
+TangentRoot waits for 15 seconds of continuous foreground viewing before promoting a tab to the
+end of BrowserStore's oldest-first list (the top of Tangent's stack). Changing tabs, opening the
+overview, or pausing the activity cancels the dwell. Promotion waits until gestures and snapshot
+transitions are hidden and only moves the tab; it never selects it again or rebinds the engine.
+Background additions and page updates do not promote tabs. The shared store order is persisted and
+used by every overview mode and the pill switcher. ZenPhoneSpace reverses the public projection at
+publication, putting the most recently viewed tab first in the space children; linked desktop root
+tabs participate, while folder placement and unrelated desktop children are preserved.

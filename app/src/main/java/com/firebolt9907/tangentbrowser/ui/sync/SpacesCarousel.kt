@@ -18,6 +18,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import com.firebolt9907.tangentbrowser.state.GlobalPreferencesStore
+import com.firebolt9907.tangentbrowser.ui.components.EmptyState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ViewCarousel
 import com.firebolt9907.tangentbrowser.sync.zen.ZenContainer
 import com.firebolt9907.tangentbrowser.sync.zen.ZenSpace
 import com.firebolt9907.tangentbrowser.sync.zen.ZenSyncedTab
@@ -34,7 +39,27 @@ fun SpacesCarousel(
     onOpenTab: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (spaces.isEmpty()) return
+    val context = LocalContext.current
+    val phoneSpaceId = remember(context) { GlobalPreferencesStore(context).zenPhoneSpaceId }
+    val remoteSpaces = remember(spaces, phoneSpaceId) { spaces.filterNot { it.uuid == phoneSpaceId } }
+    if (remoteSpaces.isEmpty()) {
+        EmptyState(
+            icon = Icons.Default.ViewCarousel,
+            title = "No other synced spaces yet",
+            description = "Spaces from your computer will appear here. Your phone's own space is hidden.",
+        )
+        return
+    }
+    RemoteSpacesCarousel(remoteSpaces, containers, onOpenTab, modifier)
+}
+
+@Composable
+private fun RemoteSpacesCarousel(
+    spaces: List<ZenSpace>,
+    containers: List<ZenContainer>,
+    onOpenTab: (String) -> Unit,
+    modifier: Modifier,
+) {
     val pager = rememberPagerState(pageCount = { spaces.size })
     val scope = rememberCoroutineScope()
     val chipScroll = androidx.compose.foundation.lazy.rememberLazyListState()

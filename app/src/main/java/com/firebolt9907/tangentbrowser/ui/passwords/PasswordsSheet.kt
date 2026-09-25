@@ -73,8 +73,6 @@ import com.firebolt9907.tangentbrowser.ui.components.EmptyState
 import com.firebolt9907.tangentbrowser.ui.components.SheetContentPhase
 import com.firebolt9907.tangentbrowser.ui.components.SheetContentSwitch
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
-import com.firebolt9907.tangentbrowser.sync.bitwarden.BitwardenController
-import com.firebolt9907.tangentbrowser.ui.bitwarden.BitwardenConnectSection
 import kotlinx.coroutines.launch
 import mozilla.components.concept.storage.LoginsStorage
 
@@ -82,7 +80,6 @@ import mozilla.components.concept.storage.LoginsStorage
 @Composable
 fun PasswordsSheet(
     loginsStorage: LoginsStorage,
-    bitwardenController: BitwardenController,
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -114,7 +111,7 @@ fun PasswordsSheet(
     suspend fun refresh() {
         val result = runCatching {
             loginsStorage.list().map {
-                LoginMeta(it.guid, it.origin, it.username, it.password.length, it.guid.startsWith("bw:"))
+                LoginMeta(it.guid, it.origin, it.username, it.password.length)
             }
         }
         loadFailed = result.isFailure
@@ -140,15 +137,6 @@ fun PasswordsSheet(
         // message doesn't shove the list and the Add button around as it comes and goes.
         Box(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Spacer(Modifier.height(12.dp))
-
-                // Bitwarden as a second login source. Connecting/syncing refreshes the merged list
-                // below.
-                BitwardenConnectSection(
-                    controller = bitwardenController,
-                    onVaultChanged = { scope.launch { refresh() } },
-                )
-
                 Spacer(Modifier.height(12.dp))
 
                 SheetSearchField(
@@ -325,7 +313,6 @@ private data class LoginMeta(
     val origin: String,
     val username: String,
     val passwordLength: Int,
-    val isBitwarden: Boolean = false,
 )
 
 @Composable
@@ -354,14 +341,6 @@ private fun PasswordRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                if (meta.isBitwarden) {
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = "Bitwarden",
-                        style = MaterialTheme.typography.labelSmallEmphasized,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
             }
         },
         supportingContent = {

@@ -254,16 +254,16 @@ once the header set is stable) to bound the steady-state full-document walk.
   skips it); self-heals via a bounded MutationObserver for SPAs that rebuild `<body>`. Re-added after
   being wrongly removed as a double-pad.
 
-### 12. WebAuthn/passkeys — a five-way pref (`passkeyMode`), never a page-world JS shim
+### 12. WebAuthn/passkeys — a four-way pref (`passkeyMode`), never a page-world JS shim
 
 Passkeys would normally use GeckoView's built-in WebAuthn (Play Services FIDO2 / Credential Manager →
 Google Password Manager); the app-side hook is the
 `mozilla.components.concept.engine.activity.ActivityDelegate` that `MainActivity`/`CustomTabActivity`
 register in `onStart`. Whether a third-party password manager accepts that path depends on its trusted
 browser policy — hence `GlobalPreferencesStore.passkeyMode`
-(`Native`/`SecurityKey`/`Off`/`Softtoken`/`Bitwarden`),
+(`Native`/`SecurityKey`/`Off`/`Softtoken`),
 emitted by `writeGeckoConfig` in `Engine.kt`, migrated from the old `builtInPasskeysEnabled` boolean.
-The five
+The four
 modes are **mutually exclusive** (one enum, not independent toggles) — Gecko reads the config once, so
 a change needs a restart:
 - **Native** — WebAuthn on, Gecko softtoken off, Android FIDO2 on. GeckoView opens the Android
@@ -281,26 +281,9 @@ a change needs a restart:
 - **Softtoken** — WebAuthn on, serviced by Gecko's INTERNAL softtoken
   (`..._enable_softtoken = true` + `..._enable_android_fido2 = false`). Spec-correct assertions, no
   allowlist, but keys live in the Gecko profile (not GPM/vault) and there is no biometric prompt.
-- **Bitwarden** — WebAuthn on with **softtoken OFF**, and the built-in passkey-bridge extension
-  (`assets/extensions/passkey/`, `sync/webauthn/PasskeyExtension`) overrides `navigator.credentials`
-  and services ceremonies from the connected Bitwarden vault, biometric-gated. Installed only in this
-  mode (`Engine.init`), so Native/SecurityKey/Off/Softtoken paths are untouched.
-
-**The forbidden thing is a PAGE-WORLD JS shim, not the Bitwarden override.** Do NOT polyfill
-`navigator.credentials` from page-world JS (a previous shim faked credentials in `localStorage`, never
-reached a real authenticator, and produced raw-r‖s ECDSA signatures RPs reject — WebAuthn needs DER).
-The Bitwarden path is categorically different and sanctioned: the override is installed from an
-**isolated content script** via Firefox Xray/`exportFunction` (page CSP can't touch it), and the
-crypto is real — `sync/webauthn/WebAuthnAuthenticator` produces spec-correct **DER** ES256 assertions
-over **real vault key material** (`sync/bitwarden/BitwardenPasskeyStore`), never fabricated values.
-See [[bitwarden-passkeys-progress]] and the `sync/webauthn` + `sync/bitwarden` sources.
-
-Do NOT remove the pref gate. Keep the custom Bitwarden and hardware-key bridges opt-in and separate
-from Native; Native is the preferred route when the selected Android provider trusts Tangent.
-
-**Cross-client interop risk:** whether Tangent can use a passkey created on desktop Bitwarden depends
-on schema details (credentialId GUID vs base64url, `keyValue` base64 variant, .NET mixed-endian byte
-order) that unit tests only prove self-consistent — confirm on-device against a real vault.
+**Do not install a page-world JS shim** for `navigator.credentials`. Native uses Android's
+system provider (including the installed Bitwarden app when selected), SecurityKey uses the isolated
+bridge, and Softtoken uses Gecko's internal authenticator. Keep the modes mutually exclusive.
 
 ### 13. Compact bar — tap to expand, no horizontal swipe
 
@@ -448,16 +431,6 @@ JSON** (it logs `tangentRulesRepo/TANGENT_RULES_REPO not set; keeping checked-in
 env/property in a shared config — it would replace the bundled rules with the external repo's copy on
 every build. Bump `version` on any edit and raise the floor in `ReaderBundledRulesTest`.
 
-`ui/content/DarkCutoutAssets.kt` is generated the same way (from `tools/dark-cutout-wasm/` via
-`build.sh`) and carries the base64 WASM cutout kernel — the one unreadable blob we ship. Edit
-`src/lib.rs`/`worker.js`/`driver.js`, never the `.kt`. It is kept auditable deliberately, and the
-three guards are load-bearing: `DarkCutoutAssetsTest` pins the wasm sha256 + the **absence of an
-import section** (no imports = the kernel cannot reach the host at all) + the export list;
-`./build.sh --check` rebuilds from Rust and fails on drift (the build is byte-reproducible);
-`gen.js` refuses to emit a kernel that gained imports. Changing the kernel means a reviewed
-one-line `EXPECTED_WASM_SHA256` diff — do NOT "fix" a failing pin by pasting in the new hash without
-knowing why the bytes moved.
-
 ### 18. Data saver blocks REQUESTS — never `setAllowJavascript(false)`
 
 When the OS Data Saver is restricting us **on a metered connection** (`state/DataSaverPolicy.kt`
@@ -516,59 +489,6 @@ Tap-to-hide (`ui/content/ElementZap.kt` + `state/ZappedElementsStore.kt`, entere
   must never survive, and `html`/`body`/`*` are rejected outright (they'd blank the site). Pinned by
   `ElementZapTest`.
 
-### 19a. Web dark mode — the already-dark detector is ONE shared block, in three places
-
-`darkDetectJs` in `WebDarkMode.kt` decides whether Tier 1 (the site's own dark theme, honored via the
-forced `prefers-color-scheme: dark`) already handled the page. A false negative inverts an
-already-dark page — the most visible way the feature breaks. It is inlined into `buildApplyScript`
-**and** `buildDynamicScript`, and hand-mirrored in `assets/extensions/darkmode/darkmode.js` (a
-document_start content script cannot import it); `WebDarkModeScriptTest` pins that all three agree,
-thresholds included. Four load-bearing properties, each reproduced in `tools/dark-mode-harness`
-(`node detect.js`; four of seven fixtures fail against the pre-change revision):
-
-- **Sample the PAINTED surface, not just `body`/`html`.** Sites overwhelmingly leave the document
-  background at the light default and paint their real surface on a full-bleed wrapper, so the
-  declared background reads light however dark the page looks. `paintedLum` hit-tests five viewport
-  points and walks up to the first opaque background at each.
-- **That probe returns the LIGHTEST surface found, never the average.** It encodes unanimity: a light
-  page with a dark hero filling the viewport must still be inverted. Do NOT "improve" it to a mean —
-  that leaves light sites light with dark mode on.
-- **No opaque background does NOT mean white.** Under `color-scheme: dark` (or `light dark`, which the
-  forced preference resolves to dark) the *UA* paints the canvas dark. `schemeIsDark` reads the CSS
-  property and the `<meta>`; this is how a large share of sites ship dark mode.
-- **Measure with our own class OFF** (`pageIsDark` removes `tangent-dark-fallback` and restores it in
-  a `finally`). The class puts an opaque `#fafafa` background and `color-scheme:dark` on `<html>`, so
-  measuring with it on reads our own output back and the filter latches on forever.
-
-### 20. Web dark mode's dynamic tier — read/write split, resumable walk, exact teardown
-
-`ui/content/WebDarkMode.kt`'s `buildDynamicScript` recolors per element. Four properties are
-load-bearing; each was a real "some elements stay light" or "won't turn off without a refresh" bug,
-and each is pinned by `WebDarkModeScriptTest` **and** reproduced end-to-end in
-`tools/dark-mode-harness` (all seven fixtures fail against the pre-rewrite revision — replay with
-`WEBDARKMODE_KT=<old file> node run.js`):
-
-- **`visit()` must never write.** It only appends `(element, property, value)` triples that `flush()`
-  applies after the chunk. Interleaving a `getComputedStyle` read with a `style.setProperty` write
-  forces a style recalc per element — the single biggest cost in the tier.
-- **The walk is resumable and frame-budgeted, NOT capped per pass.** Do NOT reintroduce
-  `Math.min(all.length, CAP)`: the old form restarted at index 0 every pass, so everything past
-  element 8000 was *never* darkened however many passes ran.
-- **Coverage means shadow roots and same-origin iframes too** (`adoptRoot`/`adoptFrame`), plus
-  re-reading elements on `class`/`style` mutation — a first-visit-only latch keeps a stale recolor
-  forever when a site swaps classes after load. Our own writes are counted in `__lumDynPend` so the
-  observer can tell them from the page's and not loop.
-- **Teardown restores, it does not strip.** Every write records the element's prior inline value
-  (`__lumDynOrig`, registered in `window.__lumDyn.touched`) and `buildRemoveScript` puts exactly that
-  back. Do NOT go back to blanket-`removeProperty` over `getElementsByTagName('*')` — it wiped colors
-  the *site* set inline, so the page stayed visibly wrong until a reload (and it never saw inside
-  shadow roots). The brute-force sweep remains only as a fallback for pages injected by an older build.
-
-Color math is memoized by color string; that is where a "port it to WASM for speed" instinct should
-go instead. The DOM/CSSOM calls that dominate this walk have no WASM equivalent, so a port could only
-take the arithmetic while adding a crossing per element to do it — see `tools/dark-mode-harness/README.md`
-for the measured numbers.
-
 ### 21. SSO chain hops are infrastructure, not destinations — but they are NOT skippable
 
 `state/SsoFlow.kt` recognises the transient hops of a federated sign-in chain (`login.microsoftonline.com`
@@ -587,17 +507,7 @@ injectors on them.
   `injectLoginDetector` exist for (#15, #16). Gating them off with the rest is what makes autofill
   look dead mid-login. Conversely form-field memory must **never** run on an auth hop.
 - **A settled auth hop still gets `injectSpacer()`** (#11). Only the *transient* FCP path skips it;
-  an interactive sign-in page that renders under the status bar is a worse bug than the injection
-  cost. It gets it with `suppressDarkMode = true`: the document_start pre-paint extension (#20)
-  inverts every page before we know what it is, so on a chain that reads as a burst of half-recolored
-  IdP pages. The live dark-mode `LaunchedEffect` in `ContentHost` guards on the same predicate and is
-  deliberately **not** keyed on `pageUrl` — keying it there re-runs Tier-2 on every navigation.
-  **Dark mode is suppressed only while a hop is TRANSIENT.** `scheduleAuthDarkModeSettle` in
-  `ContentHost` re-applies it once the hop has stayed put for `AuthSettleDarkModeDelayMs` (just under
-  the cover's own `SettleGraceMs`, so the recolor lands *under* the cover) and records the URL in
-  `SsoSettledPage`, which the live `LaunchedEffect` also honours so a tab swap doesn't strip it. A
-  password prompt left glaring white in a dark browser is the one place the suppression trade-off
-  inverts — do NOT re-broaden the guard to all auth URLs.
+  an interactive sign-in page that renders under the status bar is a worse bug than the injection cost.
 - **The "Completing sign-in" cover uncovers on a SETTLED document, never on a host match.**
   `ui/content/SsoChainOverlay.kt` hides the chain's churn, but a chain is not uniformly transient:
   the password prompt and the Microsoft Authenticator number-matching screen *stop and ask*, and the
@@ -655,11 +565,9 @@ save affordances (`BlobFileBanner` + the aA sheet row).
 The most-violated mistakes are the bolded **do NOT** lines in the invariants above (esp. #1 `render()`
 from `AndroidView.update`, #2 `startDragImmediately = true`, #4 `snapTo` on hot path, #6
 `EngineSession.captureThumbnail`, #11 JS injection without the guard / spacer sizing, #12
-page-world `navigator.credentials` shim (Native, softtoken, and the isolated-world Bitwarden override
-are sanctioned pref-gated paths — see #12), #17
+page-world `navigator.credentials` shim (see #12), #17
 editing the generated `assets/extensions/reader/extractor.js` instead of `extension/src`, #19
-`preventDefault` in the zap picker / hiding from the picker instead of the stylesheet, #20 writing
-from the dark-mode read phase / re-capping the walk / stripping instead of restoring on teardown,
+`preventDefault` in the zap picker / hiding from the picker instead of the stylesheet,
 #21 gating the credential detectors off on auth hops / trying to skip or renew an SSO chain).
 
 ## Testing

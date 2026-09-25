@@ -139,7 +139,6 @@ import com.firebolt9907.tangentbrowser.ui.groups.swatch
 import com.firebolt9907.tangentbrowser.state.GlobalPreferencesStore
 import com.firebolt9907.tangentbrowser.state.compactHost
 import com.firebolt9907.tangentbrowser.state.hostFromUrl
-import com.firebolt9907.tangentbrowser.state.SiteDarkMode
 import com.firebolt9907.tangentbrowser.state.SitePreferences
 import com.firebolt9907.tangentbrowser.state.SitePreferencesStore
 import com.firebolt9907.tangentbrowser.ui.archive.siteHostFromUrl
@@ -184,10 +183,6 @@ fun AaSheet(
     dataSaverExempt: Boolean = false,
     dataSaverBlockedCount: Int = 0,
     onToggleDataSaverExempt: (exempt: Boolean) -> Unit = {},
-    // Flips the global high-performance web dark mode (see WebDarkMode.kt). Routed through the host so
-    // Tier 1 (engine.preferredColorScheme via applyEngineSettings) and the live-page Tier-2 injection
-    // both update. Reflected locally for instant switch feedback.
-    onToggleWebDarkMode: (Boolean) -> Unit = {},
     pageUrl: String = "",
     pageTitle: String = "",
     tabId: String? = null,
@@ -321,7 +316,6 @@ fun AaSheet(
                     store = store,
                     pageUrl = pageUrl,
                     engineSession = engineSession,
-                    globalWebDarkEnabled = globalPrefsStore.webDarkModeTrigger.resolve(isSystemInDarkTheme()),
                     trackingProtectionEnabledGlobally = trackingProtectionEnabledGlobally,
                     siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
                     onToggleSiteTrackingProtection = onToggleSiteTrackingProtection,
@@ -341,7 +335,6 @@ fun AaSheet(
                     host = host,
                     store = store,
                     globalPrefsStore = globalPrefsStore,
-                    onToggleWebDarkMode = onToggleWebDarkMode,
                     onDismiss = onDismiss,
                     onFeedback = onFeedback,
                     onFindInPage = onFindInPage,
@@ -392,7 +385,6 @@ private fun PageTabContent(
     host: String,
     store: SitePreferencesStore,
     globalPrefsStore: GlobalPreferencesStore,
-    onToggleWebDarkMode: (Boolean) -> Unit = {},
     onDismiss: () -> Unit,
     onFeedback: (message: String, actionLabel: String?, onAction: (() -> Unit)?) -> Unit =
         { _, _, _ -> },
@@ -423,7 +415,6 @@ private fun PageTabContent(
 ) {
     val context = LocalContext.current
     val haptics = rememberTangentHaptics()
-    val systemDark = isSystemInDarkTheme()
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
     val bookmarkScope = rememberCoroutineScope()
@@ -711,25 +702,6 @@ private fun PageTabContent(
                     QuickActionTile(action = action, modifier = Modifier.weight(1f))
                 }
             }
-        }
-
-        // ---------- 2b. Dark mode for every website (global, high-performance) ----------
-        if (hasRealUrl) {
-            var webDark by remember {
-                mutableStateOf(globalPrefsStore.webDarkModeTrigger.resolve(systemDark))
-            }
-            Spacer(Modifier.height(14.dp))
-            AaToggleRow(
-                title = "Dark mode",
-                subtitle = "Darken every website — uses each site's own dark theme when it has one",
-                checked = webDark,
-                enabled = true,
-                onToggle = {
-                    webDark = !webDark
-                    onToggleWebDarkMode(webDark)
-                    haptics.toggle(webDark)
-                },
-            )
         }
 
         // ---------- 3. Reader ----------
@@ -1421,7 +1393,6 @@ private fun PageSettingsPaneContent(
     store: SitePreferencesStore,
     pageUrl: String,
     engineSession: mozilla.components.concept.engine.EngineSession?,
-    globalWebDarkEnabled: Boolean,
     trackingProtectionEnabledGlobally: Boolean,
     siteTrackingProtectionDisabled: Boolean,
     onToggleSiteTrackingProtection: (disable: Boolean) -> Unit,
@@ -1436,15 +1407,13 @@ private fun PageSettingsPaneContent(
     val initial = remember(host) { store.get(host) }
     var topPaddingFix by remember(host) { mutableStateOf(initial.topPaddingFix) }
     var desktopMode by remember(host) { mutableStateOf(initial.desktopMode) }
-    var darkMode by remember(host) { mutableStateOf(initial.darkMode) }
 
     fun persist(
         top: Boolean = topPaddingFix,
         desktop: Boolean = desktopMode,
-        dark: SiteDarkMode = darkMode,
     ) {
         if (!canEdit) return
-        store.set(host, store.get(host).copy(topPaddingFix = top, desktopMode = desktop, darkMode = dark))
+        store.set(host, store.get(host).copy(topPaddingFix = top, desktopMode = desktop))
     }
 
     Column(
@@ -1541,26 +1510,5 @@ private fun PageSettingsPaneContent(
 
         Spacer(Modifier.height(16.dp))
 
-        // Per-site dark-mode override. "Checked" = this site is darkened; the effective state folds
-        // in the global "Dark mode for every website" toggle (SiteDarkMode.Default follows it). The
-        // toggle pins an explicit On/Off for this host — the escape hatch for a site that looks bad
-        // inverted, or one to darken even with the global switch off. Applies live (no reload): the
-        // host re-derives currentSitePrefs on the store update and re-injects / removes the filter.
-        val darkChecked = darkMode.resolve(globalWebDarkEnabled)
-        AaToggleRow(
-            title = "Dark mode on this site",
-            subtitle = if (globalWebDarkEnabled) {
-                "Turn off for sites that look wrong when darkened"
-            } else {
-                "Darken just this site (global dark mode is off)"
-            },
-            checked = darkChecked,
-            enabled = canEdit,
-            onToggle = {
-                darkMode = if (darkChecked) SiteDarkMode.Off else SiteDarkMode.On
-                persist(dark = darkMode)
-                haptics.toggle(darkMode == SiteDarkMode.On)
-            },
-        )
     }
 }

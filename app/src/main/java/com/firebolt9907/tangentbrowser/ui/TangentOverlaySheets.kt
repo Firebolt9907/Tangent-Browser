@@ -122,7 +122,6 @@ internal fun TangentOverlaySheets(
     onSiteTrackingProtectionDisabledChange: (Boolean) -> Unit,
     // Flips the global high-performance web dark mode from the aA sheet. The host persists the pref,
     // re-applies engine settings (Tier 1), and updates its live-injection state var (Tier 2).
-    onToggleWebDarkMode: (Boolean) -> Unit,
     // Standalone add-on/sign-in web card
     utilityWeb: UtilityWebRequest?,
     onDismissUtilityWeb: () -> Unit,
@@ -273,10 +272,6 @@ internal fun TangentOverlaySheets(
         addressAutofillEnabled = components.globalPreferencesStore.addressAutofillEnabled,
     )
 
-    // Bitwarden-backed passkeys: credential picker + biometric gate for navigator.credentials
-    // ceremonies routed via PasskeyUiController (inert unless a ceremony is in flight).
-    PasskeyUiHost()
-
     // Proactive login autofill: offer the saved-password picker before the user taps a login field,
     // so the keyboard never appears when a credential is already saved (see ProactiveLoginAutofill).
     ProactiveLoginAutofill(
@@ -289,7 +284,6 @@ internal fun TangentOverlaySheets(
     if (showPasswords) {
         PasswordsSheet(
             loginsStorage = components.loginsStorage,
-            bitwardenController = components.bitwardenController,
             onDismiss = onDismissPasswords,
         )
     }
@@ -422,7 +416,6 @@ internal fun TangentOverlaySheets(
                 ?.takeIf { it.startsWith("http", ignoreCase = true) }
                 ?.let { { onOpenArchive() } },
             trackingProtectionEnabledGlobally = components.globalPreferencesStore.trackingProtection,
-            onToggleWebDarkMode = onToggleWebDarkMode,
             siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
             onToggleSiteTrackingProtection = { disable ->
                 selectedTabId?.let { id ->

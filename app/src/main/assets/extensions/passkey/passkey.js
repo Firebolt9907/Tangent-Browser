@@ -1,7 +1,7 @@
 /* Tangent passkey bridge — content script (GeckoView isolated world).
  *
  * Overrides navigator.credentials.create/get IN THE PAGE'S MAIN WORLD and routes the WebAuthn
- * ceremony to the native side (Bitwarden vault) over a connectNative Port. Doing the override from
+ * ceremony to the selected native passkey provider over a connectNative Port. Doing the override from
  * the isolated content script — via Firefox's Xray `wrappedJSObject` + `exportFunction`/`cloneInto`
  * — means we never inject a page-world <script>, so the page's CSP `script-src` cannot block us
  * (the reason a naive shim fails on Google/GitHub). See AGENTS.md invariant #12 and

@@ -360,7 +360,7 @@ Reader mode extracts article content from the live page via JavaScript and rende
 
 ### Two transports (Port primary, prompt fallback)
 
-1. **Content-script Port (primary).** The built-in reader extension (`assets/extensions/reader/`, content script `extractor.js`, native-messaging port `TangentReader`) runs the extractor in an **isolated world** and returns the article over a `Port` — never `window.prompt`. This is the *only* path that works on pages served with a CSP `sandbox` directive that omits `allow-modals` (which silently no-ops `prompt()` — e.g. TechCrunch). `ReaderExtension` (see `ui/reader/`) installs it once from `Engine.init` (mirrors `WebDarkModeExtension`) and owns the shared `ReaderPortHandler`. `ContentHost` calls `ReaderExtension.registerFor(session, tabId)` to route a session's port to its tab; `ReaderPortHandler.onPortConnected` pushes the compact `ReaderRules` over the port (`{action:"config", rules}`), and `onPortMessage` routes `{type:"article"}` → `ReaderManager.setReaderEligible`. `extractor.js` auto-extracts at `document_end` (+ a bounded re-extract as late content lands) and on `{action:"extract"}`.
+1. **Content-script Port (primary).** The built-in reader extension (`assets/extensions/reader/`, content script `extractor.js`, native-messaging port `TangentReader`) runs the extractor in an **isolated world** and returns the article over a `Port` — never `window.prompt`. This is the *only* path that works on pages served with a CSP `sandbox` directive that omits `allow-modals` (which silently no-ops `prompt()` — e.g. TechCrunch). `ReaderExtension` (see `ui/reader/`) installs it once from `Engine.init` and owns the shared `ReaderPortHandler`. `ContentHost` calls `ReaderExtension.registerFor(session, tabId)` to route a session's port to its tab; `ReaderPortHandler.onPortConnected` pushes the compact `ReaderRules` over the port (`{action:"config", rules}`), and `onPortMessage` routes `{type:"article"}` → `ReaderManager.setReaderEligible`. `extractor.js` auto-extracts at `document_end` (+ a bounded re-extract as late content lands) and on `{action:"extract"}`.
 2. **`javascript:` prompt bridge (fallback).** `ReaderExtractor.extractReaderContent(engineSession, tabId)` injects a `javascript:` URL that walks the DOM and calls `window.prompt("tangent-reader", JSON.stringify(articleData))`. Used only when the extension isn't installed yet or a session has no live port. `ReaderExtractor.registerPromptDelegate` wraps `GeckoSession.promptDelegate` with `ReaderPromptDelegate`, which intercepts `TextPrompt` where `prompt.message == "tangent-reader"` (data in `prompt.defaultValue`); guard `if (oldDelegate is ReaderPromptDelegate) return` prevents double-wrapping. `ReaderPromptDelegate` also carries all the *other* `tangent-*` bridge probes, so it is registered regardless of transport.
 
 Both `triggerInitialReaderCheck` (per-load, in `ContentHost`) and `toggleReader` (manual "Show Reader") try `ReaderExtension.requestExtract(session)` first and fall back to `extractReaderContent` only when it returns false.
@@ -540,66 +540,6 @@ Each toggle writes to `GlobalPreferencesStore` and immediately calls `TangentBro
 `TangentRoot` derives `currentSitePrefs` from the active host through the store, and `sitePrefsVersion` bumps on every `sitePrefsStore.updates` emission (not just the current host) so prefs changes for inactive tabs are reactive too. `ContentHost` accepts `topPaddingFixActive` and `pageZoomFactor`. When `topPaddingFixActive` is true the `EngineView` is wrapped with `Modifier.padding(top = topChromeInsetPx.toDp())` so it does not draw under the status bar, and `injectViewportSpacers` is called with `topPx = 0` and `skipHeaderInsets = true` — the JS still installs bottom spacing but does not add a second document-flow top spacer or run the fixed/sticky header walker. This makes the aA per-site switch a native viewport fallback for sites whose own header/layout scripts fight the injected safe-area edits. `injectPageZoom(factor)` sets `document.documentElement.style.zoom` (or empty string for 1.0) via a `javascript:` URL, called on FCP, load-complete, and through a `LaunchedEffect(pageZoomFactor)` so live changes from the sheet apply without a navigation.
 
 The top padding is bound to *each rendered view*, not just the live engine. A `topPadDpFor(url)` helper in `TangentRoot` resolves any URL's host through the store and returns the inset in dp. Every transition snapshot (`adjacentSnapshot`, `movingCurrentSnapshot`, `incomingSnapshotBitmap`, `leavingSnapshotBitmap`, `stickyIncomingSnapshot`) applies `Modifier.padding(top = pad)` *before* its `graphicsLayer { translationX = … }` so the bitmap occupies the same lower region during a swipe that the live `EngineView` would, with `clip(switchPaneShape)` rounding the corners of that smaller area. The commit-time padding amounts are captured into `leavingSnapshotTopPadPx` / `incomingSnapshotTopPadPx` / `stickyIncomingTopPadPx` so the post-release slide uses the leaving and incoming tabs' actual settings even if the user has since navigated. Without this, tabs with the fix on showed a vertically-stretched or top-aligned bitmap at the start of every drag — the snapshot was captured at `screenH − topChromeInsetPx` but rendered at full screen height.
-
-## Web dark mode (`ui/content/WebDarkMode.kt`, `engine/Engine.kt`, `ui/content/ContentHost.kt`)
-
-"Dark mode for every website" — DarkReader-level coverage at a fraction of DarkReader *dynamic*
-mode's cost. DarkReader dynamic parses every stylesheet, computes a dark equivalent for every declared
-color, analyzes background-image pixels, and re-runs that on every DOM mutation via a `MutationObserver`
-— high quality, but measurable jank and steady CPU/memory. We split the problem into a **native tier**
-and a **GPU-composited fallback tier** so most sites cost nothing and the rest cost one filter pass:
-
-- **Tier 1 — native `prefers-color-scheme`.** `applyEngineSettings` sets
-  `engine.settings.preferredColorScheme` (MC, runtime-settable, no restart). Only the explicit **On**
-  trigger forces `Dark`; **Auto** and **Off** stay `System` — so under Auto, Gecko already flips the
-  `prefers-color-scheme: dark` media query whenever the device is dark, and any site with a real dark
-  theme renders it authored-quality for free. No injection.
-- **Tier 2 — filter-invert fallback (`WebDarkMode.buildApplyScript`).** For pages that stay *light*
-  under Tier 1, one class on `<html>` applies `filter: invert(1) hue-rotate(180deg) contrast(0.9)`
-  (the `contrast(0.9)` softens pure black/white to DarkReader-comfortable grays). Media
-  (`img`/`video`/`canvas`/`iframe`/inline-bg) is re-inverted by a static CSS selector with the
-  *inverse* `contrast(1.1111)` so photos net ≈ `contrast(1.0)` and stay crisp. "Light vs dark" is one
-  `getComputedStyle` luminance read (`pageIsDark`); a directly-viewed image/video/PDF (`isMediaDoc`,
-  via `document.contentType`) is excluded so it isn't turned into a negative. Newly-added nodes need no
-  JS — the selector engine keeps them correct.
-
-**Opt-in aggressive sub-mode** (`webDarkModeAggressive`, off by default) closes the one gap the cheap
-tier leaves — class-based (non-inline) CSS background images inverting into negatives — far more
-cheaply than DarkReader dynamic: a bounded (≤4000-element) `getComputedStyle` walk *tags* elements with
-a `url(...)` background (`[data-tangent-dark-bg]`, added to the re-invert selector) plus a rAF-batched
-`MutationObserver` that tags only newly-added subtrees. It tags once instead of recomputing every color
-on every mutation; gradients are left alone; the observer is disconnected on removal.
-
-**Wiring.** Injected like `SiteTint` — per-load in `ContentHost.injectSpacer` (behind
-`suppressJavascriptLoadCallback`) and via a `LaunchedEffect(webDarkModeEnabled, webDarkModeAggressive)`
-for live toggles/tab-swaps. The global trigger is `WebDarkModeTrigger {Off, On, Auto}` (migrates the
-legacy boolean); `Auto` resolves against `isSystemInDarkTheme()` in the UI layer. A per-site override
-`SiteDarkMode {Default, On, Off}` (in `SitePreferences`, aA → Page Settings) resolves over the global
-value, so a site that looks wrong inverted can be excluded (or one force-darkened). The effective
-boolean feeds `ContentHost`'s existing `webDarkModeEnabled` param at both call sites (`TangentRoot`,
-`CustomTabRoot`). Controls: Settings picker (Off/On/Match system) + aggressive sub-toggle, aA quick
-toggle, aA Page-Settings per-site override. Pure script builders are JVM-tested (`WebDarkMode*Test`).
-
-**No white flash — the `document_start` pre-paint extension** (`assets/extensions/darkmode/`,
-`WebDarkModeExtension.kt`). Tier 2 injects at first-contentful-paint / load-complete — *after* a
-light-only page has already painted white — so those pages flashed white before darkening, and a
-`javascript:` URL has no earlier hook. A built-in WebExtension content script (`darkmode.js`,
-`run_at: document_start`, `<all_urls>`) applies the **same** filter class/id/contrast as Tier 2
-*before* the first paint, so a light page's first frame is already dark. It then re-decides on the
-first `requestAnimationFrame` (which fires **before** that frame's paint, by which point
-render-blocking CSS — hence a site's own dark theme under Tier 1 — has applied) and *removes* the
-invert for pages that turn out genuinely dark or are media documents, so those never flash *light*
-either; `getComputedStyle` reports real colors regardless of the CSS filter, so `pageIsDark` still
-works with the filter on. Reusing the Tier-2 class/id means the native FCP injection takes over
-seamlessly (no double-invert); the dynamic tier strips the pre-paint filter first (so a page isn't
-both inverted *and* recolored). Installed **once** at startup (`TangentBrowserComponents.init`) and
-enabled/disabled via `enable/disableWebExtension` to track the **global** resolved state
-(`TangentRoot` `LaunchedEffect(webDarkModeActive)`) — the content script matches every page, so it
-must only run while dark mode is globally on; it costs nothing when off. A per-site-Off page (dark
-mode globally on) still gets the pre-paint invert, so `injectSpacer` strips it per-load with a
-lightweight `removeWebDarkModePrePaint` (gated on `webDarkModeGloballyActive && !webDarkModeEnabled`,
-so dark-mode-off users pay no per-load teardown). `WebDarkModeScriptTest` pins the content script to
-`document_start` and cross-checks its class/id/contrast against `buildApplyScript` so they can't drift.
 
 ## Tried and reverted
 

@@ -1,14 +1,9 @@
 package com.firebolt9907.tangentbrowser.sync.webauthn
 
 /**
- * The vault-facing half of the passkey bridge: given a validated WebAuthn ceremony request (rpId
- * already checked against the page origin by [PasskeyBridge]), decide whether to service it and, if
- * so, run the crypto ([WebAuthnAuthenticator]) against stored key material.
- *
- * Kept as an interface so [PasskeyBridge] (pure transport + protocol) is testable without a live
- * vault, and so the concrete [com.firebolt9907.tangentbrowser.sync.bitwarden.BitwardenPasskeyProvider]
- * can inject its own UI (credential picker + biometric gate) without the bridge knowing about
- * Compose or Android.
+ * Provider behind the isolated WebAuthn bridge. Native mode forwards ceremonies to Android
+ * Credential Manager, including the user's chosen password manager app. SecurityKey mode uses
+ * a roaming USB/NFC authenticator.
  */
 interface PasskeyProvider {
     /** Whether this provider represents a user-verifying platform authenticator. */

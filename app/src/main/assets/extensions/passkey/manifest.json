@@ -6,7 +6,7 @@
     }
   },
   "name": "Tangent Passkey Bridge",
-  "description": "Routes WebAuthn navigator.credentials calls to the user's Bitwarden vault over native messaging, from an isolated content script that the page cannot observe or intercept.",
+  "description": "Routes WebAuthn navigator.credentials calls to the selected Android passkey provider or a security key over native messaging from an isolated content script.",
   "version": "1.0",
   "content_scripts": [
     {

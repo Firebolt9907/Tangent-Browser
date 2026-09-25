@@ -17,7 +17,7 @@ class WebAuthnGeckoPrefsTest {
 
     @Test
     fun nonNativeModesCannotFallThroughToAndroidFido2() {
-        listOf(PasskeyMode.Softtoken, PasskeyMode.Bitwarden).forEach { mode ->
+        listOf(PasskeyMode.Softtoken, PasskeyMode.SecurityKey).forEach { mode ->
             assertTrue(
                 "$mode must keep the Android route disabled",
                 webAuthnGeckoPrefs(mode).contains(

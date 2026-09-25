@@ -98,48 +98,6 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("tintPagesToSystemColor", false)
         set(value) { prefs.edit { putBoolean("tintPagesToSystemColor", value) } }
 
-    // "Dark mode for every website" — a high-performance two-tier dark mode (see
-    // ui/content/WebDarkMode.kt). Tier 1 flips the native `prefers-color-scheme: dark` media query
-    // for all content (engine.settings.preferredColorScheme, applied in Engine.applyEngineSettings)
-    // so sites with a real dark theme render it for free; Tier 2 injects a GPU-composited
-    // filter-invert only on pages that stay light. Off by default; toggled in the aA sheet /
-    // Settings → Appearance. Far cheaper than a DarkReader-style per-element dynamic recolor.
-    // Trigger for the global "dark mode for every website" feature: Off, On (always), or Auto (follow
-    // the device's system dark-mode setting). Migrates the legacy boolean pref on first read. Resolved
-    // to a concrete on/off where the system theme is known (the UI layer) via
-    // WebDarkModeTrigger.resolve(systemDark). See ui/content/WebDarkMode.kt.
-    var webDarkModeTrigger: WebDarkModeTrigger
-        get() {
-            val raw = prefs.getString("webDarkModeTrigger", null)
-            if (raw != null) return WebDarkModeTrigger.fromName(raw)
-            // Legacy migration: the old boolean pref maps On/Off.
-            return if (prefs.getBoolean("webDarkModeEnabled", false)) {
-                WebDarkModeTrigger.On
-            } else {
-                WebDarkModeTrigger.Off
-            }
-        }
-        set(value) { prefs.edit { putString("webDarkModeTrigger", value.name) } }
-
-    // Opt-in "aggressive" sub-mode for web dark mode (only meaningful when webDarkModeEnabled). When
-    // on, the Tier-2 fallback also detects class-based (non-inline) CSS background images at runtime
-    // and re-inverts them, closing the one quality gap the cheap filter tier leaves (hero/banner
-    // photos rendering as negatives). Costs a bounded getComputedStyle scan + incremental observer,
-    // so it's OFF by default — the default path stays the pure high-performance filter. See
-    // ui/content/WebDarkMode.kt.
-    var webDarkModeAggressive: Boolean
-        get() = prefs.getBoolean("webDarkModeAggressive", false)
-        set(value) { prefs.edit { putBoolean("webDarkModeAggressive", value) } }
-
-    // Experimental Tier-3 image classification for web dark mode (only meaningful when
-    // webDarkModeEnabled). When on, images the cheap Tier-2 structural classifier can't decide are
-    // classified photo-vs-graphic from their actual pixels (16x16 canvas decode, cached by URL) so
-    // each is darkened correctly. Heavier (a per-pixel loop; CORS-tainted images fall back to
-    // "photo"), so it's OFF by default and exposed as a testing toggle. See ui/content/WebDarkMode.kt.
-    var webDarkModeImageAnalysis: Boolean
-        get() = prefs.getBoolean("webDarkModeImageAnalysis", false)
-        set(value) { prefs.edit { putBoolean("webDarkModeImageAnalysis", value) } }
-
     // When off, the "Continue from <device>" handoff banner (a tab recently active on another
     // Firefox Sync device) is never surfaced. Read by FirefoxSyncController when picking a handoff
     // candidate. On by default. Does not affect received "Send tab" pushes or synced-tab lists.
@@ -343,14 +301,6 @@ class GlobalPreferencesStore(context: Context) {
         get() = prefs.getBoolean("loginAutofillEnabled", true)
         set(value) { prefs.edit { putBoolean("loginAutofillEnabled", value) } }
 
-    // When a Bitwarden account is connected, whether newly saved logins (from the save doorhanger)
-    // are written to the Bitwarden vault (true, default) or the local/Firefox store (false). Has no
-    // effect until Bitwarden is connected and unlocked — MergedLoginsStorage falls back to the local
-    // store otherwise.
-    var bitwardenSaveTargetIsBitwarden: Boolean
-        get() = prefs.getBoolean("bitwardenSaveTargetIsBitwarden", true)
-        set(value) { prefs.edit { putBoolean("bitwardenSaveTargetIsBitwarden", value) } }
-
     // When true, filling a saved login requires biometric/device-credential confirmation. Default
     // on (secure). Flipping this off in Settings is itself gated behind BiometricGate so an attacker
     // with an unlocked-but-glanced-at phone can't quietly disable the protection.
@@ -376,9 +326,6 @@ class GlobalPreferencesStore(context: Context) {
     //   Off       — WebAuthn API disabled (clean password fallback).
     //   Softtoken — WebAuthn re-enabled and serviced by Gecko's INTERNAL softtoken authenticator (no
     //               allowlist; spec-correct assertions, but keys live in the Gecko profile, no biometric).
-    //   Bitwarden — WebAuthn enabled with softtoken OFF; the passkey-bridge content script overrides
-    //               navigator.credentials and services ceremonies from the Bitwarden vault (sync/webauthn,
-    //               sync/bitwarden), with a real biometric gate. Keys live in (and sync via) the vault.
     // Read in writeGeckoConfig + init (Engine.kt); Gecko reads the config once at startup, so a change
     // needs a restart. Fresh installs use Native. Existing installs with the old boolean retain its
     // meaning (`builtInPasskeysEnabled`: true→Softtoken, false→Off).
@@ -536,38 +483,14 @@ class GlobalPreferencesStore(context: Context) {
     }
 }
 
-/**
- * How the global web dark mode is triggered. [Auto] follows the device's system dark-mode setting;
- * [On]/[Off] force it. Resolved to a concrete boolean by [resolve] where the current system theme is
- * known (the Compose UI layer). Note Tier 1 (Gecko `preferredColorScheme`) handles [Auto] for free by
- * staying on `System` — only Tier 2 (the injected filter) needs this resolved boolean.
- */
 /** Passkey/WebAuthn provider. See [GlobalPreferencesStore.passkeyMode]. */
 enum class PasskeyMode(val label: String) {
     Native("System"),
     SecurityKey("USB / NFC security key"),
     Softtoken("Built-in"),
-    Bitwarden("Bitwarden Vault (Experimental)"),
     Off("Off");
 
     companion object {
         fun fromName(name: String?): PasskeyMode = entries.firstOrNull { it.name == name } ?: Off
-    }
-}
-
-enum class WebDarkModeTrigger(val label: String) {
-    Off("Off"),
-    On("On"),
-    Auto("Match system");
-
-    fun resolve(systemDark: Boolean): Boolean = when (this) {
-        Off -> false
-        On -> true
-        Auto -> systemDark
-    }
-
-    companion object {
-        fun fromName(name: String?): WebDarkModeTrigger =
-            entries.firstOrNull { it.name == name } ?: Off
     }
 }

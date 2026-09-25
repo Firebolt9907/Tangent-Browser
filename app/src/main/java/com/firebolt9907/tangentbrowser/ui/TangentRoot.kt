@@ -128,7 +128,6 @@ import com.firebolt9907.tangentbrowser.state.BarMode
 import com.firebolt9907.tangentbrowser.state.BarUiState
 import com.firebolt9907.tangentbrowser.state.TangentViewModel
 import com.firebolt9907.tangentbrowser.state.SitePreferences
-import com.firebolt9907.tangentbrowser.state.WebDarkModeTrigger
 import com.firebolt9907.tangentbrowser.state.addressBarLabel
 import com.firebolt9907.tangentbrowser.state.hostFromUrl
 import com.firebolt9907.tangentbrowser.ui.archive.siteHostFromUrl
@@ -268,27 +267,6 @@ fun TangentRoot(
     var matchSiteThemeColor by remember { mutableStateOf(components.globalPreferencesStore.matchSiteThemeColor) }
     // When on, web page content is tinted toward the system accent color (Arc-boost style). Persisted.
     var tintPagesToSystemColor by remember { mutableStateOf(components.globalPreferencesStore.tintPagesToSystemColor) }
-    // When on, the high-performance "dark mode for every website" is active (native
-    // prefers-color-scheme override + filter-invert fallback). Persisted; toggled in the aA sheet /
-    // Settings → Appearance. See WebDarkMode.kt.
-    var webDarkModeTrigger by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeTrigger) }
-    // Resolved on/off for the global feature, folding in the system theme for the "Match system"
-    // trigger. Per-site overrides (currentSitePrefs.darkMode) resolve against this.
-    val webDarkModeActive = webDarkModeTrigger.resolve(isSystemInDarkTheme())
-    // Gate the document_start pre-paint dark-mode extension (the white-flash fix) on the global
-    // resolved state: its content script runs on every page, so it must be enabled only while web dark
-    // mode is actually on. Per-site overrides / filter-vs-dynamic are reconciled by the native FCP
-    // injection, not the extension. See WebDarkModeExtension / darkmode.js.
-    LaunchedEffect(webDarkModeActive) {
-        com.firebolt9907.tangentbrowser.ui.content.WebDarkModeExtension.setEnabled(
-            components.engine,
-            webDarkModeActive,
-        )
-    }
-    // Opt-in aggressive sub-mode (re-invert class-based background images). Persisted.
-    var webDarkModeAggressive by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeAggressive) }
-    // Experimental Tier-3 image classification (pixel-content photo-vs-graphic). Persisted.
-    var webDarkModeImageAnalysis by remember { mutableStateOf(components.globalPreferencesStore.webDarkModeImageAnalysis) }
     // When on, a search-results page shows the typed query in the bar instead of the engine's host.
     // Persisted; toggled in Settings. Paired with the current search engine for label resolution.
     var showSearchTermsInBar by remember { mutableStateOf(components.globalPreferencesStore.showSearchTermsInBar) }
@@ -1529,23 +1507,6 @@ fun TangentRoot(
             com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.codeFiller = null
             com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.onFieldDetected = null
         }
-    }
-    // Web dark mode's ML-Kit image cutout (DarkImageSegmenter) returns a finished mask on a background
-    // thread; inject it onto the tab that asked, but only while that tab is still foreground (so a mask
-    // can't land on the wrong page after a tab switch). Marshalled to main for the GeckoSession call.
-    val maskTabId by rememberUpdatedState(actualSelectedTabId)
-    val maskSession by rememberUpdatedState(selectedEngineSession)
-    DisposableEffect(Unit) {
-        com.firebolt9907.tangentbrowser.ui.content.DarkImageSegmenter.maskApplier = { tabId, id, uri, natW, natH ->
-            scope.launch {
-                if (maskTabId == tabId) {
-                    maskSession?.loadJavascriptUrl(
-                        com.firebolt9907.tangentbrowser.ui.content.WebDarkMode.buildApplyMaskScript(id, uri, natW, natH),
-                    )
-                }
-            }
-        }
-        onDispose { com.firebolt9907.tangentbrowser.ui.content.DarkImageSegmenter.maskApplier = null }
     }
     // Live clipboard-change signal: while foreground, an in-app copy (or a paste from another app
     // that surfaces here) flips the banner on if an OTP field is present. No contents are read — the
@@ -3302,11 +3263,6 @@ fun TangentRoot(
                     topPaddingFixActive = currentSitePrefs.topPaddingFix,
                     themeColorSamplingEnabled = matchSiteThemeColor,
                     siteTintColor = siteTintColor,
-                    // Per-site override (aA → Page Settings) wins over the global toggle.
-                    webDarkModeEnabled = currentSitePrefs.darkMode.resolve(webDarkModeActive),
-                    webDarkModeAggressive = webDarkModeAggressive,
-                    webDarkModeImageAnalysis = webDarkModeImageAnalysis,
-                    webDarkModeGloballyActive = webDarkModeActive,
                     pageZoomFactor = currentSitePrefs.zoomFactor,
                     barCollapseProgress = barCollapseProgressProvider,
                     tabIsLoading = actualSelectedContent?.loading == true,
@@ -4547,9 +4503,6 @@ fun TangentRoot(
                 barSearchEngine = components.globalPreferencesStore.searchEngine
                 matchSiteThemeColor = components.globalPreferencesStore.matchSiteThemeColor
                 tintPagesToSystemColor = components.globalPreferencesStore.tintPagesToSystemColor
-                webDarkModeTrigger = components.globalPreferencesStore.webDarkModeTrigger
-                webDarkModeAggressive = components.globalPreferencesStore.webDarkModeAggressive
-                webDarkModeImageAnalysis = components.globalPreferencesStore.webDarkModeImageAnalysis
                 viewModel.refreshDisplayPrefs()
             },
             onReplayOnboarding = {
@@ -4615,17 +4568,6 @@ fun TangentRoot(
             },
             siteTrackingProtectionDisabled = siteTrackingProtectionDisabled,
             onSiteTrackingProtectionDisabledChange = { siteTrackingProtectionDisabled = it },
-            onToggleWebDarkMode = { enabled ->
-                // The aA quick toggle is a simple on/off; it sets an explicit On/Off trigger (the
-                // "Match system" option lives in Settings). Tier 2 live-injection follows the state
-                // var below via ContentHost's LaunchedEffect.
-                val trigger = if (enabled) WebDarkModeTrigger.On else WebDarkModeTrigger.Off
-                webDarkModeTrigger = trigger
-                components.globalPreferencesStore.webDarkModeTrigger = trigger
-                // Tier 1 (native prefers-color-scheme override) is an engine setting; re-apply it now
-                // so it flips without a restart.
-                components.applyEngineSettings()
-            },
             utilityWeb = utilityWeb,
             onDismissUtilityWeb = { utilityWeb = null },
             peekUrl = peekUrl,

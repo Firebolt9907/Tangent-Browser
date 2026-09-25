@@ -45,7 +45,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import com.firebolt9907.tangentbrowser.state.GlobalPreferencesStore
 import com.firebolt9907.tangentbrowser.state.PreloadMode
-import com.firebolt9907.tangentbrowser.state.WebDarkModeTrigger
 import com.firebolt9907.tangentbrowser.state.SearchEngine
 import com.firebolt9907.tangentbrowser.ui.BiometricGate
 import com.firebolt9907.tangentbrowser.ui.chrome.WideBarLayout
@@ -98,7 +97,6 @@ fun SettingsSheet(
     var fontSizeFactor by remember { mutableStateOf(globalPrefsStore.fontSizeFactor) }
     var loginAutofillEnabled by remember { mutableStateOf(globalPrefsStore.loginAutofillEnabled) }
     var biometricAutofillEnabled by remember { mutableStateOf(globalPrefsStore.biometricAutofillEnabled) }
-    var bitwardenSaveTargetIsBitwarden by remember { mutableStateOf(globalPrefsStore.bitwardenSaveTargetIsBitwarden) }
     var systemAutofillEnabled by remember { mutableStateOf(globalPrefsStore.systemAutofillEnabled) }
     var passkeyMode by remember { mutableStateOf(globalPrefsStore.passkeyMode) }
     var creditCardAutofillEnabled by remember { mutableStateOf(globalPrefsStore.creditCardAutofillEnabled) }
@@ -129,9 +127,6 @@ fun SettingsSheet(
     var pullMenuEnabled by remember { mutableStateOf(globalPrefsStore.pullMenuEnabled) }
     var matchSiteThemeColor by remember { mutableStateOf(globalPrefsStore.matchSiteThemeColor) }
     var tintPagesToSystemColor by remember { mutableStateOf(globalPrefsStore.tintPagesToSystemColor) }
-    var webDarkModeTrigger by remember { mutableStateOf(globalPrefsStore.webDarkModeTrigger) }
-    var webDarkModeAggressive by remember { mutableStateOf(globalPrefsStore.webDarkModeAggressive) }
-    var webDarkModeImageAnalysis by remember { mutableStateOf(globalPrefsStore.webDarkModeImageAnalysis) }
     var handoffEnabled by remember { mutableStateOf(globalPrefsStore.handoffEnabled) }
     var blockAllAutoplay by remember { mutableStateOf(globalPrefsStore.blockAllAutoplay) }
     var webNotificationsEnabled by remember { mutableStateOf(globalPrefsStore.webNotificationsEnabled) }
@@ -380,18 +375,6 @@ fun SettingsSheet(
                         )
                     },
                 )
-                SheetRowDivider()
-                SettingsToggle(
-                    title = "Save New Logins to Bitwarden",
-                    subtitle = "When a Bitwarden account is connected, save newly captured passwords " +
-                        "to your vault instead of this device",
-                    checked = bitwardenSaveTargetIsBitwarden,
-                    onCheckedChange = {
-                        bitwardenSaveTargetIsBitwarden = it
-                        globalPrefsStore.bitwardenSaveTargetIsBitwarden = it
-                        onSettingChanged()
-                    },
-                )
             }
             SheetRowDivider()
             SettingsToggle(
@@ -414,8 +397,7 @@ fun SettingsSheet(
                 title = "Passkeys",
                 subtitle = "System opens Android's passkey provider (including Bitwarden when Tangent " +
                     "is enabled as a trusted browser). USB / NFC security key talks directly to a " +
-                    "FIDO2 key. Built-in stores keys only in this browser; the " +
-                    "experimental Bitwarden Vault option uses Tangent's custom vault client. Restart to apply.",
+                    "FIDO2 key. Built-in stores keys only in this browser. Restart to apply.",
                 selectedLabel = passkeyMode.label,
                 options = com.firebolt9907.tangentbrowser.state.PasskeyMode.entries.map { mode ->
                     mode.label to {
@@ -568,46 +550,6 @@ fun SettingsSheet(
                     onSettingChanged()
                 },
             )
-            SheetRowDivider()
-            SettingsPicker(
-                title = "Dark mode for every website",
-                subtitle = "Use each site's dark theme when it has one, and darken the rest — fast, unlike heavy page recolorers",
-                selectedLabel = webDarkModeTrigger.label,
-                options = WebDarkModeTrigger.entries.map { trigger ->
-                    trigger.label to {
-                        webDarkModeTrigger = trigger
-                        globalPrefsStore.webDarkModeTrigger = trigger
-                        onSettingChanged()
-                    }
-                },
-                haptics = haptics,
-            )
-            if (webDarkModeTrigger != WebDarkModeTrigger.Off) {
-                SheetRowDivider()
-                SettingsToggle(
-                    title = "Adaptive recoloring",
-                    subtitle = "Recolor each section instead of inverting the whole page. Keeps photos true and preserves sections a site already made dark. Heavier on complex pages",
-                    checked = webDarkModeAggressive,
-                    onCheckedChange = {
-                        webDarkModeAggressive = it
-                        globalPrefsStore.webDarkModeAggressive = it
-                        onSettingChanged()
-                    },
-                )
-                if (!webDarkModeAggressive) {
-                    SheetRowDivider()
-                    SettingsToggle(
-                        title = "Analyze image content (experimental)",
-                        subtitle = "Sample image pixels to tell photos from icons and logos, so each is darkened correctly. Heavier; for testing",
-                        checked = webDarkModeImageAnalysis,
-                        onCheckedChange = {
-                            webDarkModeImageAnalysis = it
-                            globalPrefsStore.webDarkModeImageAnalysis = it
-                            onSettingChanged()
-                        },
-                    )
-                }
-            }
         }
 
         Spacer(Modifier.height(20.dp))

@@ -182,9 +182,6 @@ dependencies {
     // SMS User Consent API (one-time-code / 2FA autofill from incoming SMS, no SMS permission).
     implementation(libs.play.services.auth.api.phone)
     implementation(libs.mlkit.text.recognition)
-    // On-device semantic subject cutout for web dark mode (keeps a light-on-light product whole where
-    // the flood-fill fallback can't). Model downloads via Play Services on first use. See DarkImageSegmenter.
-    implementation(libs.mlkit.subject.segmentation)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

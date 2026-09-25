@@ -53,13 +53,6 @@ import kotlin.coroutines.resume
 // Delay the theme-color probe until a same-document route has had a chance to render.
 private const val SpaThemeProbeDelayMs = 350L
 
-/**
- * How long a finished sign-in hop must stay put before it counts as interactive and gets web dark
- * mode. Deliberately a little under the "Completing sign-in" cover's own [SettleGraceMs], so the
- * recolor completes while the cover is still up rather than flashing light-to-dark once it lifts.
- */
-private const val AuthSettleDarkModeDelayMs = SettleGraceMs - 120L
-
 @SuppressLint("ClickableViewAccessibility")
 @Composable
 fun ContentHost(
@@ -108,22 +101,6 @@ fun ContentHost(
     // When non-null, the "Tint pages to my system color" boost overlays this color on every page
     // (mix-blend-mode: color). Null disables/removes the boost. See SiteTint.kt.
     siteTintColor: androidx.compose.ui.graphics.Color? = null,
-    // When true, the high-performance web dark mode's Tier-2 filter-invert fallback is injected on
-    // pages that stay light under the native prefers-color-scheme override. Tier 1 (the native
-    // override itself) is an engine setting applied in Engine.applyEngineSettings. See WebDarkMode.kt.
-    webDarkModeEnabled: Boolean = false,
-    // When true (and webDarkModeEnabled), uses the dynamic per-section recoloring engine instead of
-    // the composited filter — the DarkReader-dynamic path that fixes mixed light/dark pages. Ignores
-    // webDarkModeImageAnalysis (a filter-tier concept). See WebDarkMode.kt.
-    webDarkModeAggressive: Boolean = false,
-    // Filter-tier only (dynamic mode ignores it): enables experimental Tier-3 pixel-content image
-    // classification (photo-vs-graphic from a canvas decode). See WebDarkMode.kt.
-    webDarkModeImageAnalysis: Boolean = false,
-    // The GLOBAL resolved dark-mode state (before the per-site override folds in). When this is true
-    // but webDarkModeEnabled is false, the site is per-site-Off while dark mode is globally on: the
-    // document_start pre-paint extension (installed globally) still inverted this page, so its
-    // provisional filter must be stripped per-load. See injectSpacer / WebDarkModeExtension.
-    webDarkModeGloballyActive: Boolean = false,
     // CSS selectors the user has zapped (tap-to-hide) on this page's host, from ZappedElementsStore.
     // Re-applied as a `display:none` stylesheet on every load and whenever the list changes, so a zap
     // takes effect without a reload and "Restore hidden elements" un-hides just as immediately.
@@ -334,7 +311,7 @@ fun ContentHost(
                 // the extension finishes installing; triggerInitialReaderCheck re-registers per load,
                 // so a session that renders before install completes still gets wired up.
                 com.firebolt9907.tangentbrowser.ui.reader.ReaderExtension.registerFor(session, tabId)
-                // Route this session's passkey-bridge Port too. Native system-provider and Bitwarden
+                // Route this session's passkey-bridge Port too. Native system-provider and security-key
                 // vault modes install it; registration is safely deferred if installation is still
                 // completing.
                 com.firebolt9907.tangentbrowser.sync.webauthn.PasskeyExtension.registerFor(session)
@@ -503,26 +480,7 @@ fun ContentHost(
                 spaSettleRunnable = runnable
                 hostView.postDelayed(runnable, SpaThemeProbeDelayMs)
             }
-            /**
-             * @param suppressDarkMode strip the provisional inversion instead of applying web dark
-             *   mode. Used on sign-in hops: the document_start pre-paint extension inverts every page
-             *   before we know what it is, and on a chain that means a burst of half-recolored IdP
-             *   pages flashing dark-then-light. Leaving those pages in their native light rendering
-             *   is both cheaper and steadier, and it is what the "Completing sign-in" cover is
-             *   drawn over. Not a per-site preference — nothing is persisted.
-             */
-            fun applyWebDarkMode() {
-                DarkImageSegmenter.enabled = webDarkModeAggressive
-                if (webDarkModeAggressive) DarkImageSegmenter.warmup()
-                with(WebDarkMode) {
-                    engineSession.injectWebDarkMode(
-                        dynamic = webDarkModeAggressive,
-                        analyze = webDarkModeImageAnalysis,
-                        mlReady = DarkImageSegmenter.modelReady,
-                    )
-                }
-            }
-            fun injectSpacer(force: Boolean = false, suppressDarkMode: Boolean = false) {
+            fun injectSpacer(force: Boolean = false) {
                 if (topChromeInsetCssPx <= 0 && bottomChromeInsetCssPx <= 0) return
                 if (injectedForCurrentLoad && !force) return
                 injectedForCurrentLoad = true
@@ -537,21 +495,6 @@ fun ContentHost(
                 // overlay yet. The LaunchedEffect below covers the already-loaded page and tab swaps.
                 if (siteTintColor != null) {
                     engineSession.injectSiteTint(siteTintColor)
-                }
-                // Re-apply the web-dark-mode Tier-2 fallback on every load (fresh DOM). The
-                // LaunchedEffect below covers the already-loaded page and tab swaps.
-                if (suppressDarkMode) {
-                    // Undo the document_start pre-paint inversion; do not run the Tier-2 recolor.
-                    if (webDarkModeEnabled || webDarkModeGloballyActive) {
-                        with(WebDarkMode) { engineSession.removeWebDarkModePrePaint() }
-                    }
-                } else if (webDarkModeEnabled) {
-                    applyWebDarkMode()
-                } else if (webDarkModeGloballyActive) {
-                    // Site is per-site-Off but dark mode is globally on: the document_start pre-paint
-                    // extension inverted this page before we could tell. Strip its provisional filter
-                    // (lightweight — no dynamic recolors to undo on a freshly loaded page).
-                    with(WebDarkMode) { engineSession.removeWebDarkModePrePaint() }
                 }
             }
             fun injectAmoInstaller(url: String, force: Boolean = false) {
@@ -646,26 +589,6 @@ fun ContentHost(
             // dark browser is worse than the flicker the suppression exists to avoid. Same settle rule
             // the "Completing sign-in" cover uncovers on, run slightly early so the recolor happens
             // underneath the cover instead of in front of the user.
-            var authDarkModeRunnable: Runnable? = null
-            fun cancelAuthDarkModeSettle() {
-                authDarkModeRunnable?.let(hostView::removeCallbacks)
-                authDarkModeRunnable = null
-            }
-            fun scheduleAuthDarkModeSettle() {
-                cancelAuthDarkModeSettle()
-                if (!webDarkModeEnabled) return
-                val settlingUrl = currentUrl
-                val runnable = Runnable {
-                    authDarkModeRunnable = null
-                    // A redirect, a new load, or a tab swap between scheduling and firing cancels this;
-                    // the URL check catches anything that slipped past those.
-                    if (settlingUrl != currentUrl) return@Runnable
-                    SsoSettledPage.url = settlingUrl
-                    applyWebDarkMode()
-                }
-                authDarkModeRunnable = runnable
-                hostView.postDelayed(runnable, AuthSettleDarkModeDelayMs)
-            }
             fun installAddonRequest(url: String): Boolean {
                 val handled = addonController?.installFromPageRequest(url) == true
                 if (handled) engineSession.stopLoading()
@@ -706,10 +629,6 @@ fun ContentHost(
                     if (handleFirefoxAuthRedirect(url)) return
                     if (!url.startsWith("javascript:", ignoreCase = true)) {
                         val navigatedAway = url != currentUrl
-                        if (navigatedAway) {
-                            cancelAuthDarkModeSettle()
-                            if (SsoSettledPage.isSettled(currentUrl)) SsoSettledPage.url = null
-                        }
                         // Location has already changed; an async capture here can contain the
                         // arriving page. Preserve the proactively captured outgoing frame.
                         if (navigatedAway) snapshotState.navigate(url)
@@ -780,9 +699,7 @@ fun ContentHost(
                         realLoadInProgress = true
                         snapshotState.invalidate()
                         // The chain is moving again — whatever settled is no longer on screen.
-                        cancelAuthDarkModeSettle()
-                        if (SsoSettledPage.isSettled(currentUrl)) SsoSettledPage.url = null
-                        injectedForCurrentLoad = false
+                                injectedForCurrentLoad = false
                         amoInstallerInjectedForCurrentLoad = false
                         readerExtractedForCurrentLoad = false
                         otpDetectorInjectedForCurrentLoad = false
@@ -799,13 +716,10 @@ fun ContentHost(
                         // is typed on an identity provider), reader extraction, zaps, or a thumbnail
                         // capture (single-use URLs would just churn the v2 snapshot cache).
                         realLoadInProgress = false
-                        injectSpacer(suppressDarkMode = true)
+                        injectSpacer()
                         injectOtpDetector()
                         injectLoginDetector()
                         injectThemeColorProbe()
-                        // ...and, if it is still here a beat later, recolor it: see
-                        // scheduleAuthDarkModeSettle.
-                        scheduleAuthDarkModeSettle()
                         notifyPainted()
                     } else {
                         realLoadInProgress = false
@@ -942,7 +856,6 @@ fun ContentHost(
             triggerInitialReaderCheck()
             onDispose {
                 spaSettleRunnable?.let(hostView::removeCallbacks)
-                cancelAuthDarkModeSettle()
                 engineSession.unregister(observer)
                 BridgeGuard.forget(tabId)
             }
@@ -958,7 +871,7 @@ fun ContentHost(
     // takes effect the instant it's stored and a restore un-hides without a reload. An empty list
     // still injects — that's the removal path. Skipped entirely when there is nothing to do (no zaps
     // now and none a moment ago), so ordinary browsing never pays for this. Per-load re-application
-    // on a new DOM is injectZaps() above; same split as the site-tint / web-dark-mode effects.
+    // on a new DOM is injectZaps() above; same split as the site-tint effect.
     var hadZaps by remember(tabId) { mutableStateOf(false) }
     LaunchedEffect(engineSession, zappedSelectors, tabId) {
         if (engineSession == null) return@LaunchedEffect
@@ -974,36 +887,6 @@ fun ContentHost(
         if (engineSession == null) return@LaunchedEffect
         if (siteTintColor != null) engineSession.injectSiteTint(siteTintColor)
         else engineSession.removeSiteTint()
-    }
-
-    // Web dark mode Tier-2 fallback: apply to the current page immediately when toggled on / tab
-    // changes, and remove it when toggled off. Per-load re-application (new DOM) is handled in
-    // injectSpacer above. Mirrors the system-color boost effect. Tier 1 (the native
-    // prefers-color-scheme override) is an engine-wide setting and needs no per-tab injection.
-    LaunchedEffect(engineSession, webDarkModeEnabled, webDarkModeAggressive, webDarkModeImageAnalysis, tabId) {
-        if (engineSession == null) return@LaunchedEffect
-        // TRANSIENT sign-in hops opt out of dark mode (see injectSpacer's suppressDarkMode):
-        // recoloring a chain of IdP pages that each live a few hundred ms is visible churn for no
-        // benefit, and this effect would otherwise re-apply it behind the per-load suppression. A hop
-        // that SETTLED is the exception — it is a page the user is reading (the password prompt), so
-        // it keeps the dark mode ContentHost's settle pass gave it rather than having it stripped here
-        // on the next tab swap. Deliberately NOT keyed on pageUrl — that would re-run the whole Tier-2
-        // injection on every navigation, paying invariant #20's dynamic walk a second time on top of
-        // the per-load path in injectSpacer. Read once at launch as a guard instead; the page the
-        // chain lands on gets dark mode from that per-load path.
-        val darkModeForThisPage = webDarkModeEnabled &&
-            (!com.firebolt9907.tangentbrowser.state.SsoFlow.isAuthUrl(pageUrl) ||
-                SsoSettledPage.isSettled(pageUrl))
-        DarkImageSegmenter.enabled = darkModeForThisPage && webDarkModeAggressive
-        if (darkModeForThisPage && webDarkModeAggressive) DarkImageSegmenter.warmup()
-        with(WebDarkMode) {
-            if (darkModeForThisPage) engineSession.injectWebDarkMode(
-                dynamic = webDarkModeAggressive,
-                analyze = webDarkModeImageAnalysis,
-                mlReady = DarkImageSegmenter.modelReady,
-            )
-            else engineSession.removeWebDarkMode()
-        }
     }
 
     // When a web-content keyboard is showing, shrink the EngineView so its bottom edge sits at the

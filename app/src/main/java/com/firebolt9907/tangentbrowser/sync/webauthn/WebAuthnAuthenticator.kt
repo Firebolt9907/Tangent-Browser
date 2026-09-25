@@ -17,8 +17,7 @@ import java.security.spec.PKCS8EncodedKeySpec
  * allowlist (see [[passkeys-blocked-on-gpm-allowlist]]). Vault-agnostic: it only turns key material
  * + ceremony inputs into the exact byte structures WebAuthn requires (authenticatorData, a "none"
  * attestationObject, and an ES256 DER assertion signature). The private keys themselves are supplied
- * and persisted by the caller — [com.firebolt9907.tangentbrowser.sync.bitwarden] stores them as
- * Bitwarden `fido2Credentials`.
+ * and returned to the caller for persistence.
  *
  * Correctness notes (the two things a prior JS shim got wrong — AGENTS.md invariant #12):
  *  - Signatures are ES256 (ECDSA-P256-SHA256) in **ASN.1 DER**, which is what RPs verify. We sign via

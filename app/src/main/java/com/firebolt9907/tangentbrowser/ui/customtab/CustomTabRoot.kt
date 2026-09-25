@@ -517,18 +517,6 @@ fun CustomTabRoot(
                         sitePermissionController = components.sitePermissionController,
                         sitePreferencesStore = components.sitePreferencesStore,
                         onFirefoxAuthRedirect = components.firefoxSyncController::handleOAuthRedirect,
-                        // Web dark mode: Tier 1 (native prefers-color-scheme) already applies
-                        // engine-wide, so Custom Tabs get real site dark themes for free; thread the
-                        // flag so the Tier-2 filter-invert fallback also engages on light pages here.
-                        webDarkModeEnabled = components.sitePreferencesStore.get(hostFromUrl(url))
-                            .darkMode.resolve(
-                                components.globalPreferencesStore.webDarkModeTrigger
-                                    .resolve(isSystemInDarkTheme()),
-                            ),
-                        webDarkModeAggressive = components.globalPreferencesStore.webDarkModeAggressive,
-                        webDarkModeImageAnalysis = components.globalPreferencesStore.webDarkModeImageAnalysis,
-                        webDarkModeGloballyActive = components.globalPreferencesStore.webDarkModeTrigger
-                            .resolve(isSystemInDarkTheme()),
                         onPageScrollDelta = ::onPageScrollDelta,
                         // Drive the engine's vertical clipping from the bar's slide-off progress so the
                         // strip the pill vacates becomes LIVE, interactive web surface (not a stale
@@ -581,9 +569,6 @@ fun CustomTabRoot(
                     creditCardAutofillEnabled = components.globalPreferencesStore.creditCardAutofillEnabled,
                     addressAutofillEnabled = components.globalPreferencesStore.addressAutofillEnabled,
                 )
-
-                // Bitwarden-backed passkey picker + biometric gate (inert unless a ceremony is running).
-                com.firebolt9907.tangentbrowser.ui.PasskeyUiHost()
 
                 if (shouldShowUi) {
                     AnimatedVisibility(

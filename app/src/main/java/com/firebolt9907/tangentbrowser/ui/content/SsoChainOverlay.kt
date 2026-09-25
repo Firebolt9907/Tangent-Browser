@@ -64,29 +64,6 @@ private const val LandingGraceMs = 2_500L
 private const val MaxVisibleMs = 20_000L
 
 /**
- * The sign-in hop that has **settled** — i.e. stopped loading and stayed, so it is asking the user for
- * something (the password prompt, the number-matching screen) rather than redirecting onward.
- *
- * Sign-in hops opt out of web dark mode while they are transient: the document_start pre-paint
- * extension inverts every page before we know what it is, so a chain would otherwise read as a burst
- * of half-recolored IdP pages. But a hop that stops and asks is a page the user *reads*, and leaving
- * exactly those pages glaring white in a dark browser is the one place that trade-off inverts. So
- * `ContentHost` marks a settled hop here and recolors it, using the same settle rule (and slightly
- * less than the same grace, so the recolor lands under the cover rather than after it lifts) that
- * [rememberSsoChainState] uses to uncover.
- *
- * A plain volatile field, matching [SsoAutofillHold]: only one browser activity is ever foreground,
- * and the readers sample it at launch rather than reacting to it.
- */
-object SsoSettledPage {
-    @Volatile
-    var url: String? = null
-
-    fun isSettled(candidate: String?): Boolean =
-        !candidate.isNullOrBlank() && candidate == url
-}
-
-/**
  * Raised by `ProactiveLoginAutofill` around an unattended ("Always autofill") credential fill, so the
  * cover stays up while the fields populate and the form submits instead of uncovering on the settle
  * rule below and showing the user a form filling itself.

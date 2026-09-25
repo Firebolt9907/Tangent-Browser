@@ -79,7 +79,7 @@ Why not two live engine views? GeckoView only supports one rendered session at a
 
 ## Snapshot cache (`state/TabSnapshotCache.kt`, `ui/content/ContentHost.kt`)
 
-- `TabSnapshotCache` — memory LRU backed by files in `cacheDir/tab_snapshots`, capped at 16 entries.
+- `TabSnapshotCache` — memory LRU backed by files in `cacheDir/tab_snapshots`, capped at 24 resident entries and 256 disk entries.
 - Disk keys use the page URL when available and fall back to tab id for URL-less pages. This lets seeded/restored tabs reuse screenshots after a process restart even if the runtime tab id changes.
 - Capture goes through **`EngineView.captureThumbnail`**, not `EngineSession.captureThumbnail` (the latter doesn't exist — it was the first compile failure).
 - `TabSnapshotCache` exposes a version `StateFlow`; Compose collects it so a newly captured bitmap can appear during a drag without waiting for unrelated UI state to change. `_version` is only incremented when the key or bitmap identity actually changes — redundant `put()` calls (same key, same bitmap reference) do not trigger recomposition.
@@ -87,18 +87,13 @@ Why not two live engine views? GeckoView only supports one rendered session at a
 - Captures are compressed as JPEG on an IO coroutine. Before compression, bitmaps wider than 1080 px are scaled down proportionally (with OOM fallback to the original) — grid cells display at ~40% width so full-resolution storage wasted memory and encode time.
 - `pruneDisk()` is throttled to at most once every 5 s. Without that, the 4–5 captures per page load × N tabs each listed and sorted the entire snapshot directory.
 - Snapshot keys are versioned (`v2:` prefix) to ignore older cache files written before URL capture timing was tightened.
-- `ContentHost` deduplicates capture calls: the 600 ms post-bind delay, `onFirstContentfulPaint`, and `onLoadingStateChange(loading=false)` share a 750 ms `(tabId, url)` window — if the same key was captured within 750 ms, the call is skipped. The `onDispose` and `currentSnapshotRequestId`-driven captures are never deduplicated since they must always run.
-- `ContentHost` reports every successful capture to `TangentRoot`, which keeps a small in-memory URL-to-bitmap map for immediate predictive-back use before disk/cache flow timing catches up.
-- `TangentRoot` also keeps a tab-id keyed in-memory `recentTabSnapshots` map. Transition lookup goes through `snapshotFor(tabId, url)`, preferring latest tab bitmap → latest URL bitmap → `TabSnapshotCache`. This covers rapid visual tab changes where the disk cache has not decoded yet and URL-keyed lookup is ambiguous or stale.
-- The Gecko observer in `ContentHost` is keyed by session/insets/tab, not by `pageUrl`, so it stays registered across URL changes and can reliably capture the outgoing page before `currentUrl` advances.
-- Capture sites in `ContentHost`:
-  - one delayed post-bind capture at ~600 ms after a session is rendered, keyed only on `tabId` — covers already-loaded / fast-painting pages whose Gecko callbacks may have fired before observer registration.
-  - `onFirstContentfulPaint` — early warm-up.
-  - `onLoadingStateChange(loading=false)` — final state of the page.
-  - outgoing-page capture on `onLoadRequest` / `onLocationChange` before `currentUrl` is updated — warms the page being left for browser-history back gestures.
-  - explicit current-page capture when `TangentRoot` starts a predictive-back or tab-switch gesture — produces a gesture-local bitmap at the current scroll position.
-  - `DisposableEffect` `onDispose` when the session is about to unbind — best-effort, may race with GeckoView surface teardown but worth trying.
-- The `DisposableEffect(engineView, engineSession, tabId)` is the **single** rebind site. The `AndroidView` `update` lambda intentionally does not call `engineView.render(session)` — when both did it, the applier rebound the engine to the incoming session before the leaving `DisposableEffect`'s `onDispose` ran, so the leaving-tab `captureThumbnail` sampled the new session and stored it under the old tab's cache key. Every tab switch overwrote the leaving tab's snapshot with a transitional frame of the incoming tab.
+- `ContentHost` waits until the current URL has been idle for 600 ms, then captures again 1200 ms later for hydration/images. This covers real loads, restored tabs, and SPA routes. FCP no longer writes an early loading frame that suppresses the finished capture through deduplication.
+- `SnapshotCaptureState` binds each capture to its session binding, URL, navigation generation and request sequence. Checks run after capture and after background conversion: navigation, reload, unbind and newer accepted captures invalidate stale results. Uniform compositor clear frames are rejected off main.
+- Gesture captures are checked off main before replacing the moving overlay: black, near-black noise, transparent and uniform clear frames preserve the usable cache seed. One retry after 80 ms handles a briefly cleared compositor. The suspending capture is cancelled when the request/binding changes; only settled captures enter the history cache. A URL update does not replay a previous gesture request. The same quality check rejects/deletes old blank disk snapshots during decode, so they cannot seed the switcher after restart.
+- Outgoing `onLoadRequest` capture is best effort while still settled. `javascript:` injections are ignored. Location-change and disposal no longer capture: their async results can already contain arriving-page pixels. Previously settled frames remain available instead.
+- Disk operations run serially so JPEG writes/pruning cannot race on temporary files. A fresh put/remove invalidates any pending decode for that key, preventing disk pixels from replacing a newer memory capture.
+- `ContentHost` reports accepted captures to `TangentRoot`'s immediate URL and tab maps. Back previews use only the target URL; tab-switch lookup prefers URL snapshots, with a tab fallback.
+- The `DisposableEffect(engineView, engineSession, tabId)` remains the **single** rebind site; `AndroidView.update` must never render a session.
 - Recent tab/url bitmaps live in heap; older retained snapshots live in the app cache partition and may be evicted by Android under storage pressure.
 
 ## Predictive back gesture (`ui/TangentRoot.kt`, `ui/content/ContentHost.kt`)
@@ -130,6 +125,29 @@ External links open in `CustomTabActivity` (own task); its close has two paths �
 
 ## Page-level injection (`ui/content/PageBottomSpacer.kt`)
 
+**JavaScript URL transport:** `loadJavascriptUrl` percent-encodes the source after `javascript:`.
+Gecko decodes that URL before evaluating it: raw `%360` in gradient modulo arithmetic becomes `60`,
+making the entire top-inset script fail to parse before it creates a spacer. Literal percent escapes
+inside strings are vulnerable too. Keep encoding in the shared transport helper, and test an actual
+JavaScript URL (`tools/top-padding-harness/transportTest.js`); direct `page.evaluate` skips this step
+and previously let the all-sites failure pass every layout test.
+
+**Visual contract:** a top header's background must continue upward into the camera-cutout/status-bar
+area, with the header's text, icons, and controls entirely below that area. Clearing the band by
+moving the complete header down and exposing the page background is insufficient. Verify both
+geometry and painted pixels, including after scrolling when the ordinary document spacer is gone.
+The viewport fill is conditional: only a visible fixed/stuck header touching the safe-area edge
+owns it. A static header, an unpinned sticky header, or an off-screen/hidden header must not leave
+an opaque viewport band. The in-flow spacer still scrolls away normally. `pinnedFillTest.js`
+checks painted pixels after scroll, hide/return transitions, inset changes and disable.
+
+Header declarations that still match our applied inset are retained across rescans, including
+while dropdowns animate. Do not restore/reapply those declarations just to measure candidates:
+that restarts CSS transitions and measures intermediate heights. Drain our synchronous mutation
+records after reconciliation so our own writes do not schedule another reconciliation. During
+scroll/transition frames, only the small paint-owner list is checked, not the document-wide scan.
+The replacement design and acceptance matrix are in [`docs/TOP_INSET_PLAN.md`](docs/TOP_INSET_PLAN.md).
+
 `EngineSession.injectViewportSpacers(topPx, bottomPx, skipHeaderInsets)` injects:
 
 - A `<style>` with `scroll-padding-top` / `scroll-padding-bottom` so anchor jumps don't land under the status bar or the floating bottom bar.
@@ -139,15 +157,11 @@ External links open in `CustomTabActivity` (own task); its close has two paths �
 
 The top and bottom spacer `<div>`s use `display: block; visibility: hidden; pointer-events: none` — `clear: both` was removed because it is a float-clearance mechanism that is a no-op in flex/grid layouts and can unexpectedly shift content in float-based layouts.
 
-Triggered on FCP and load-complete. `injectedForCurrentLoad` debounces, and a `suppressJavascriptLoadCallback` guard prevents the `javascript:` URL itself from re-triggering injection. The header pass restores Tangent's own previous inline edits before each scan, chooses ancestor header candidates before nested children to avoid compounding padding in complex navs, and reruns from a `MutationObserver`, resize, scroll, and delayed timers for late-rendered site shells.
+Triggered on FCP and load-complete. `injectedForCurrentLoad` debounces, and a `suppressJavascriptLoadCallback` guard prevents the `javascript:` URL itself from re-triggering injection. The header pass retains intact insets, reconciles changed ones, chooses ancestor header candidates before nested children to avoid compounding padding in complex navs, and reruns from a `MutationObserver`, resize, and delayed timers for late-rendered site shells.
 
-The MutationObserver has two guards to prevent it from firing on its own style mutations:
-- `window.__tangentApplyingHeaderInsets` is set to `true` during the `applyFixed`/`applySticky` write pass and cleared after; the observer callback returns immediately when this flag is set.
-- If all mutated targets have `dataset.tangentSafeTopApplied != null` (i.e. any value Tangent has written, either `'true'` from the apply pass or `'false'` from the restore pass), the observer skips scheduling. The check was previously `=== 'true'` only, which caused restore mutations to be misidentified as external site changes and trigger spurious `schedule()` calls.
+The MutationObserver drains records generated by a completed reconciliation and ignores changes confined to Tangent's paint/spacer elements. Site changes on managed headers are still checked for overwritten inset declarations. A pending-frame flag coalesces callbacks; existing listeners and delayed callbacks dispatch to the current injection closure, so inset changes and disabling cannot revive stale values.
 
-`applyHeaderInsets` throttles itself to at most one run per 500 ms via a time check against `window.__tangentLastHeaderInsetMs`. This check is performed **before** any DOM work so that a throttled call exits immediately without first stripping the insets — the previous restore-then-check order was the source of the scroll-triggered top-padding flicker. The element-identity dedupe (`window.__tangentLastChosenKey`) was removed; the time check alone is sufficient since `requestAnimationFrame` in `schedule()` already coalesces rapid triggers to one call per frame.
-
-The restore step only touches the elements Tangent previously inset, tracked in `window.__tangentInsetedEls`. Earlier it called `collect(document, [])` and iterated every DOM element, of which only 1–3 would have `tangentSafeTopApplied === 'true'`. The candidate scan still walks every element for `getComputedStyle`, but `getBoundingClientRect` (which forces a synchronous layout reflow) is now guarded behind a `position !== fixed/sticky` early return.
+Full scans use a 500–2000 ms adaptive cooldown, with bypasses for overwritten declarations and returning headers. Retained elements are excluded from candidate measurement and duplicate descendant offsets. Scroll and animation paint updates only check the managed header list and never reset its padding or height.
 
 The setTimeout cascade is three timers: 1 s, 3 s, 10 s. The 250 ms timer was removed — with the 500 ms throttle gate, it was always a no-op. These guards collectively prevent the self-firing restyle loop that previously caused `captureThumbnail` to land on transitional frames and fill the snapshot cache with dark bitmaps.
 

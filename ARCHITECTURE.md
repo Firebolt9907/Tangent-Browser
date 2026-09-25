@@ -94,20 +94,15 @@ Everything else in `TangentRoot` is animation plumbing for those three things. [
 
 ## The capture pipeline
 
-Tab switching and predictive back both rely on having a recent bitmap for every tab. `ContentHost` captures at six different moments:
+Tab switching and predictive back use settled-page bitmaps from `ContentHost`. It captures 600 ms after an idle URL/binding change and refreshes 1200 ms later for delayed content. This includes SPA routes that do not fire load callbacks. A best-effort pre-navigation capture refreshes the outgoing page; explicit gesture requests also capture the current scroll position immediately.
 
-1. **Delayed post-bind** (~600 ms after a session is rendered, keyed on `tabId`) — catches already-loaded fast-painting pages.
-2. **First contentful paint** — early warm-up.
-3. **Load complete** (`onLoadingStateChange(loading=false)`).
-4. **Outgoing-page capture** on `onLoadRequest` / `onLocationChange` — warms the page being left.
-5. **Gesture-start** (predictive back or tab swipe) — gesture-local snapshot at the current scroll position.
-6. **`onDispose`** when the session is about to unbind — best-effort.
+`SnapshotCaptureState` checks binding, URL, navigation generation and request order before publishing an asynchronous result. Loading/gesture-only frames and uniform compositor clears cannot replace settled history previews. Location-change and unbind callbacks retain existing snapshots rather than capturing a surface that may already show the next page.
 
-Captures go through `EngineView.captureThumbnail` (not `EngineSession.captureThumbnail` — that doesn't exist), then into `TabSnapshotCache` keyed by URL (or tab id for URL-less pages). The cache exposes a `version: StateFlow<Int>` so a freshly arrived bitmap can show up mid-drag.
+Captures go through `EngineView.captureThumbnail`, then into `TabSnapshotCache` keyed by URL (or tab id for URL-less pages). The cache exposes a `version: StateFlow<Int>` so a freshly arrived bitmap can show up mid-drag. Disk reads and writes are serialized; pending decodes cannot overwrite fresh captures.
 
 ## The single rebind point
 
-`AndroidView`'s `update` lambda inside `ContentHost` does **not** call `engineView.render(session)`. The session is rebound in one `DisposableEffect(engineView, engineSession, tabId)` block. The `onDispose` runs the leaving-tab capture *before* rebind, so the bitmap stored for the outgoing tab is its actual final frame and not a transitional frame of the incoming tab. This is the single most load-bearing constraint in the code — see "Tried and reverted" in [`IMPLEMENTATION.md`](IMPLEMENTATION.md).
+`AndroidView.update` never calls `engineView.render(session)`. The only render call is in `DisposableEffect(engineView, engineSession, tabId)`. Disposal invalidates pending captures before the next session is bound, preventing incoming pixels from being stored under the outgoing URL.
 
 ## Gesture choreography
 

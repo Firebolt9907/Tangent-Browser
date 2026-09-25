@@ -16,7 +16,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -36,6 +35,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.firebolt9907.tangentbrowser.addons.AddonController
 import com.firebolt9907.tangentbrowser.ui.reader.ReaderManager
+import com.firebolt9907.tangentbrowser.state.hasSnapshotDetail
 import com.firebolt9907.tangentbrowser.state.TabSnapshotCache
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -47,11 +47,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
-// How long to wait after an SPA (pushState) navigation before re-arming `isSafeToSnapshot`. Short
-// enough that on-demand captures (grid open / tab-switch) work almost immediately, long enough that
-// the re-arm lands after the transitional (outgoing) frame is gone rather than during it.
-private const val SpaSettleCaptureDelayMs = 350L
+// Delay the theme-color probe until a same-document route has had a chance to render.
+private const val SpaThemeProbeDelayMs = 350L
 
 /**
  * How long a finished sign-in hop must stay put before it counts as interactive and gets web dark
@@ -155,16 +155,6 @@ fun ContentHost(
     // checkerboard fill must not be translucent).
     val compositorClearColor = (backgroundColor.tintedForSite(siteTintColor).toArgb()) or 0xFF000000.toInt()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    var isSafeToSnapshot by remember(tabId, engineSession) { mutableStateOf(!tabIsLoading && engineSession != null) }
-    // Recovery net: the callback-driven toggles below can leave this stuck `false` even though the
-    // page is fully loaded — e.g. when a load-complete callback is swallowed by the
-    // `javascript:`-spacer suppression, or when re-binding a tab that finished loading in the
-    // background (no fresh FCP / load-complete callback ever fires). That would block every future
-    // snapshot for the tab. The store's `tabIsLoading` is the authoritative "done" signal, so
-    // whenever it reports the tab is idle, snapshots are safe again.
-    LaunchedEffect(tabId, tabIsLoading, engineSession) {
-        if (!tabIsLoading && engineSession != null) isSafeToSnapshot = true
-    }
     val touchSlopPx = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     val predictiveBackEdgeWidthPx = with(density) { 24.dp.toPx() }
     val topChromeInsetCssPx = with(density) {
@@ -211,52 +201,38 @@ fun ContentHost(
     var predictiveBackProgressPx by remember { mutableFloatStateOf(0f) }
     var predictiveBackVelocityTracker by remember { mutableStateOf<VelocityTracker?>(null) }
 
-    // Dedupe state for url-driven capture sites (post-bind delay, FCP, load-complete).
-    // Tracks the last "$tabId|$url" key and timestamp so repeated captures within 750 ms are skipped.
-    var lastCaptureKey: String? by remember { mutableStateOf(null) }
-    var lastCaptureMs: Long by remember { mutableLongStateOf(0L) }
+    // One capture lifetime per binding. Observer callbacks update the URL immediately, before
+    // Compose receives BrowserStore state; asynchronous pixels must never outlive that identity.
+    val snapshotState = remember(tabId, engineSession) { SnapshotCaptureState(pageUrl) }
     val captureScope = rememberCoroutineScope()
 
-    /**
-     * Converts the ~10 MB ARGB_8888 capture to the resident RGB_565 config off the main thread,
-     * then delivers it to the cache and callback back on main. Doing the copy inline on the
-     * capture callback cost 10–20 ms of main-thread time per capture (and captures cluster
-     * around tab switches), which read as hitches during swipes. The cache and the snapshot
-     * maps both store 565, so converting once here means neither converts again.
-     */
-    fun storeSnapshotAsync(id: String, capturingUrl: String, bitmap: android.graphics.Bitmap) {
+    fun storeSnapshotAsync(
+        id: String,
+        ticket: SnapshotCaptureState.Ticket,
+        bitmap: android.graphics.Bitmap,
+    ) {
         val cache = snapshotCache ?: return
         captureScope.launch(Dispatchers.Default) {
+            // A compositor clear frame must not replace a useful history preview.
+            if (!bitmap.hasSnapshotDetail()) return@launch
             val resident = bitmap.toResident565()
             withContext(Dispatchers.Main) {
-                cache.put(id, resident, capturingUrl)
-                onSnapshotCaptured(id, capturingUrl, resident)
+                if (snapshotState.accept(ticket)) {
+                    cache.put(id, resident, ticket.url)
+                    onSnapshotCaptured(id, ticket.url, resident)
+                }
             }
         }
     }
 
-    /**
-     * @param deduped When true, skips the capture if the same (tabId, url) was captured
-     *   less than 750 ms ago. Set to false (default) for captures that must always run
-     *   (onDispose and currentSnapshotRequestId-driven captures).
-     */
-    fun captureSnapshot(
-        capturingId: String? = tabId,
-        capturingUrl: String = pageUrl,
-        deduped: Boolean = false,
-    ) {
-        if (engineSession == null || !isSafeToSnapshot) return
-        val id = capturingId ?: return
-        if (snapshotCache == null) return
-        if (deduped) {
-            val key = "$id|$capturingUrl"
-            val now = System.currentTimeMillis()
-            if (key == lastCaptureKey && (now - lastCaptureMs) < 750L) return
-            lastCaptureKey = key
-            lastCaptureMs = now
-        }
+    fun captureSnapshot() {
+        val id = tabId ?: return
+        if (engineSession == null || snapshotCache == null) return
+        val ticket = snapshotState.request() ?: return
         engineView.captureThumbnail { bitmap: android.graphics.Bitmap? ->
-            if (bitmap != null) storeSnapshotAsync(id, capturingUrl, bitmap)
+            if (bitmap != null && snapshotState.isCurrent(ticket)) {
+                storeSnapshotAsync(id, ticket, bitmap)
+            }
         }
     }
 
@@ -344,6 +320,7 @@ fun ContentHost(
     }
 
     DisposableEffect(engineView, engineSession, tabId) {
+        snapshotState.active = true
         engineSession?.let { session ->
             engineView.render(session)
             // Before this session paints its first frame, GeckoView covers the surface with a solid
@@ -364,7 +341,8 @@ fun ContentHost(
             }
         }
         onDispose {
-            if (engineSession != null) captureSnapshot(tabId)
+            // Capturing during unbind races the next render; retain the last settled frame.
+            snapshotState.active = false
         }
     }
 
@@ -377,28 +355,46 @@ fun ContentHost(
         findGeckoView(engineView.asView())?.session?.compositorController?.setClearColor(compositorClearColor)
     }
 
-    LaunchedEffect(engineView, engineSession, tabId) {
-        if (engineSession == null || tabId == null || snapshotCache == null) return@LaunchedEffect
+    LaunchedEffect(engineView, engineSession, tabId, pageUrl, tabIsLoading) {
+        if (engineSession == null || tabId == null) return@LaunchedEffect
+        if (tabIsLoading) {
+            // BrowserStore also guards loads whose callbacks were consumed by JS suppression.
+            snapshotState.invalidate()
+            return@LaunchedEffect
+        }
+        // FCP and load-complete precede final layout/paint. Do not let their loading frames
+        // suppress a later capture. Also handles restored tabs and pushState (no load callbacks).
+        val generation = snapshotState.generation
         delay(600)
-        captureSnapshot(tabId, pageUrl, deduped = true)
+        if (!snapshotState.settle(pageUrl, generation)) return@LaunchedEffect
+        captureSnapshot()
+        // Hydration and images can land after load-complete. Refresh once, without polling.
+        delay(1200)
+        if (snapshotState.settle(pageUrl, generation)) captureSnapshot()
     }
 
-    LaunchedEffect(engineView, currentSnapshotRequestId, tabId, pageUrl, engineSession) {
-        // Deliberately NOT gated on `isSafeToSnapshot`: this fires only for explicit, user-initiated
-        // requests (predictive-back start, tab-switch drag, grid open) that need a snapshot of
-        // exactly what is on screen right now. After a same-document (SPA) navigation
-        // `isSafeToSnapshot` sits false until the delayed re-arm, and gating here on it meant the
-        // current page's live capture was skipped — so the gesture/grid cover fell back to the tab's
-        // previous (stale) bitmap, showing the previous page as if it were the current one.
+    LaunchedEffect(engineView, currentSnapshotRequestId, tabId, engineSession) {
         if (currentSnapshotRequestId <= 0 || tabId == null || engineSession == null) return@LaunchedEffect
-        val capturedUrl = pageUrl
-        engineView.captureThumbnail { bitmap: android.graphics.Bitmap? ->
-            if (bitmap != null) {
-                // The gesture cover needs the bitmap immediately (a drag is already in flight),
-                // and keeps the full ARGB copy; the cache/map copies convert in the background.
-                onCurrentSnapshotCaptured(tabId, bitmap)
-                storeSnapshotAsync(tabId, capturedUrl, bitmap)
+        val generation = snapshotState.generation
+        val ticket = snapshotState.request()
+        repeat(2) { attempt ->
+            val bitmap = suspendCancellableCoroutine<android.graphics.Bitmap?> { continuation ->
+                engineView.captureThumbnail { captured ->
+                    if (continuation.isActive) continuation.resume(captured)
+                }
             }
+            val usable = bitmap != null && withContext(Dispatchers.Default) { bitmap.hasSnapshotDetail() }
+            if (!snapshotState.active || snapshotState.generation != generation) return@LaunchedEffect
+            if (usable) {
+                // Validate BEFORE replacing the cache-seeded gesture image. Previously a black
+                // compositor frame reached the switcher even though the cache rejected it later.
+                onCurrentSnapshotCaptured(tabId, bitmap)
+                if (ticket != null) storeSnapshotAsync(tabId, ticket, bitmap)
+                return@LaunchedEffect
+            }
+            // A freshly rebound surface may be clear for one frame. Keep the usable seed and
+            // try once more; the effect cancels this retry when the gesture/binding changes.
+            if (attempt == 0) delay(80)
         }
     }
 
@@ -466,11 +462,9 @@ fun ContentHost(
             var archiveMobilifyInjectedForCurrentLoad = false
             var themeColorProbedForCurrentLoad = false
             var blobCaptureInjectedForCurrentLoad = false
-            var currentUrl = pageUrl
+            var currentUrl = snapshotState.url
             var capturedLeavingUrl: String? = null
-            // True while a genuine document load is in flight (real navigation), so the delayed
-            // SPA-settle pass below can tell a pushState navigation apart from a real load and stay
-            // out of the latter's way. Set by onLoadRequest / onLoadingStateChange.
+            // Keep the delayed SPA theme probe out of a genuine document load.
             var realLoadInProgress = false
             val hostView = engineView.asView()
             var spaSettleRunnable: Runnable? = null
@@ -478,7 +472,7 @@ fun ContentHost(
                 if (currentUrl.isBlank() || currentUrl == "about:blank") return
                 if (capturedLeavingUrl == currentUrl) return
                 capturedLeavingUrl = currentUrl
-                captureSnapshot(capturingUrl = currentUrl)
+                captureSnapshot()
             }
             // Sample the page's declared theme-color AND the real background behind the status bar
             // (Safari-style). Deliberately NOT injected at first-contentful-paint like the viewport
@@ -495,29 +489,19 @@ fun ContentHost(
                 suppressJavascriptLoadCallback = true
                 engineSession.loadJavascriptUrl(ThemeColorProbe.buildScript())
             }
-            // Re-arm snapshotting after an SPA (history.pushState) navigation. Such navigations fire
-            // ONLY onLocationChange — no loading-state toggle, no FCP — so nothing else flips
-            // `isSafeToSnapshot` back to true; left stuck false it would block the NEXT leaving-page
-            // capture and break the predictive-back chain, and block the on-demand current-page
-            // capture the grid/tab-switch relies on. We deliberately do NOT capture the arriving page
-            // proactively here: the client-side route often hasn't repainted yet, so a speculative
-            // capture stores the OUTGOING page's pixels under the new URL (the current tab then shows
-            // the previous page's thumbnail). The current page is instead captured live, on demand,
-            // when it's actually needed — grid open / tab-switch — by which point it has rendered.
-            // Skips when a real load is in flight; that path re-arms via its own callbacks.
-            fun scheduleSpaSnapshotRearm() {
+            // pushState has no load-complete callback; sample its final theme after a short delay.
+            fun scheduleSpaThemeProbe() {
                 spaSettleRunnable?.let(hostView::removeCallbacks)
                 val runnable = Runnable {
                     spaSettleRunnable = null
                     if (!realLoadInProgress) {
-                        isSafeToSnapshot = true
                         // The SPA route has settled (no loading-state toggle fires for pushState navs),
                         // so re-sample the top color for the new route's final paint.
                         injectThemeColorProbe()
                     }
                 }
                 spaSettleRunnable = runnable
-                hostView.postDelayed(runnable, SpaSettleCaptureDelayMs)
+                hostView.postDelayed(runnable, SpaThemeProbeDelayMs)
             }
             /**
              * @param suppressDarkMode strip the provisional inversion instead of applying web dark
@@ -726,13 +710,9 @@ fun ContentHost(
                             cancelAuthDarkModeSettle()
                             if (SsoSettledPage.isSettled(currentUrl)) SsoSettledPage.url = null
                         }
-                        // Capture the page being left NOW, before `currentUrl` moves and before
-                        // `isSafeToSnapshot` is cleared. For an SPA (pushState) navigation this is the
-                        // only callback that fires, so it is the sole chance to snapshot the outgoing
-                        // page under its own URL — without it the previous history entry has no snapshot
-                        // and predictive-back reveals a blank cover (e.g. navigating through reddit web).
-                        if (navigatedAway) captureLeavingPage()
-                        isSafeToSnapshot = false
+                        // Location has already changed; an async capture here can contain the
+                        // arriving page. Preserve the proactively captured outgoing frame.
+                        if (navigatedAway) snapshotState.navigate(url)
                         currentUrl = url
                         // Keep the form-memory origin binding in step with client-side (pushState)
                         // navigations: the already-injected script survives them and keeps querying.
@@ -756,12 +736,11 @@ fun ContentHost(
                                 com.firebolt9907.tangentbrowser.ui.reader.ReaderManager.instance.clearReaderState(tabId)
                             }
                         }
-                        scheduleSpaSnapshotRearm()
+                        scheduleSpaThemeProbe()
                     }
                 }
 
                 override fun onFirstContentfulPaint() {
-                    isSafeToSnapshot = true
                     // Transient sign-in hop: arm only the two credential detectors and let the rest
                     // wait for load-complete. The detectors stay because the pages a chain actually
                     // *stops* on are precisely the password prompt and the MFA-code prompt they
@@ -784,7 +763,6 @@ fun ContentHost(
                     injectLoginDetector()
                     injectFormFieldMemory()
                     injectBlobCapture()
-                    captureSnapshot(capturingUrl = currentUrl, deduped = true)
                     notifyPainted()
                     if (tabId != null) {
                         suppressJavascriptLoadCallback = true
@@ -800,11 +778,10 @@ fun ContentHost(
                     }
                     if (loading) {
                         realLoadInProgress = true
-                        isSafeToSnapshot = false
+                        snapshotState.invalidate()
                         // The chain is moving again — whatever settled is no longer on screen.
                         cancelAuthDarkModeSettle()
                         if (SsoSettledPage.isSettled(currentUrl)) SsoSettledPage.url = null
-                        captureLeavingPage()
                         injectedForCurrentLoad = false
                         amoInstallerInjectedForCurrentLoad = false
                         readerExtractedForCurrentLoad = false
@@ -822,7 +799,6 @@ fun ContentHost(
                         // is typed on an identity provider), reader extraction, zaps, or a thumbnail
                         // capture (single-use URLs would just churn the v2 snapshot cache).
                         realLoadInProgress = false
-                        isSafeToSnapshot = true
                         injectSpacer(suppressDarkMode = true)
                         injectOtpDetector()
                         injectLoginDetector()
@@ -833,7 +809,6 @@ fun ContentHost(
                         notifyPainted()
                     } else {
                         realLoadInProgress = false
-                        isSafeToSnapshot = true
                         injectZaps()
                         injectSpacer()
                         injectAmoInstaller(currentUrl)
@@ -846,7 +821,6 @@ fun ContentHost(
                         // Sample the status-bar / top-strip color now that the load has finished, so it
                         // reflects the page's final painted top rather than a transient mid-load color.
                         injectThemeColorProbe()
-                        captureSnapshot(capturingUrl = currentUrl, deduped = true)
                         notifyPainted()
                         if (tabId != null) {
                             suppressJavascriptLoadCallback = true
@@ -886,6 +860,8 @@ fun ContentHost(
                     triggeredByRedirect: Boolean,
                     triggeredByWebContent: Boolean,
                 ) {
+                    // Our injections are not document navigation or leaving-page opportunities.
+                    if (url.startsWith("javascript:", ignoreCase = true)) return
                     if (handleFirefoxAuthRedirect(url)) return
                     if (!triggeredByRedirect && currentUrl.isNotBlank() && currentUrl != url) {
                         realLoadInProgress = true

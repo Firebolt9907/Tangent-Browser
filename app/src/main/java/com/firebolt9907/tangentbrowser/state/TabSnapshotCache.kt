@@ -33,7 +33,8 @@ class TabSnapshotCache(
     private val maxMemoryEntries: Int = 24,
 ) {
     private val directory = File(cacheDir, "tab_snapshots")
-    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Serialize JPEG writes, reads, removals and pruning: they share target/temp files.
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 
     private val _version = MutableStateFlow(0)
     val version: StateFlow<Int> = _version.asStateFlow()
@@ -43,7 +44,8 @@ class TabSnapshotCache(
             return size > maxMemoryEntries
         }
     }
-    private val pendingDiskLoads = HashSet<String>()
+    private val pendingDiskLoads = HashMap<String, Long>()
+    private var nextDiskLoadId = 0L
     private val missedDiskKeys = HashSet<String>()
     private var lastPruneAtMs = 0L
     private val pruneIntervalMs = 5_000L
@@ -70,6 +72,7 @@ class TabSnapshotCache(
         // so store the resident copy as RGB_565 to halve heap use; the caller keeps its own ARGB
         // reference for the immediate cover, which is GC'd once the transition ends.
         val stored = bitmap.toResidentConfig()
+        pendingDiskLoads.remove(key)
         memoryCache[key] = stored
         missedDiskKeys.remove(key)
         // Only bump version when the bitmap is a new instance for this key, to avoid
@@ -98,15 +101,27 @@ class TabSnapshotCache(
     }
 
     private fun scheduleDiskLoad(key: String) {
-        if (!pendingDiskLoads.add(key)) return
+        if (key in pendingDiskLoads) return
+        val loadId = ++nextDiskLoadId
+        pendingDiskLoads[key] = loadId
         ioScope.launch {
             val bitmap = runCatching {
                 val opts = BitmapFactory.Options().apply {
                     inPreferredConfig = Bitmap.Config.RGB_565
                 }
-                BitmapFactory.decodeFile(fileForKey(key).absolutePath, opts)
+                BitmapFactory.decodeFile(fileForKey(key).absolutePath, opts)?.let { decoded ->
+                    // Old app versions persisted compositor clears. Validate on IO before those
+                    // files can seed the tab overview or a tab-switch gesture after restart.
+                    if (decoded.hasSnapshotDetail()) decoded else {
+                        decoded.recycle()
+                        fileForKey(key).delete()
+                        null
+                    }
+                }
             }.getOrNull()
             synchronized(this@TabSnapshotCache) {
+                // A decode started before a fresh capture/remove must never resurrect old pixels.
+                if (pendingDiskLoads[key] != loadId) return@synchronized
                 pendingDiskLoads.remove(key)
                 if (bitmap != null) {
                     memoryCache[key] = bitmap
@@ -121,6 +136,7 @@ class TabSnapshotCache(
     @Synchronized
     fun remove(id: String, url: String = "") {
         val key = snapshotKey(id, url)
+        pendingDiskLoads.remove(key)
         if (memoryCache.remove(key) != null) {
             _version.value = _version.value + 1
         }

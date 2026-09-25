@@ -10,7 +10,10 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.firebolt9907.tangentbrowser.ui.grid.FlickReleaseArc
 import kotlinx.coroutines.Job
 
 /**
@@ -59,3 +62,16 @@ internal class GridGestureState {
 /** Remembers a single [GridGestureState] for the lifetime of the host composable. */
 @Composable
 internal fun rememberGridGestureState(): GridGestureState = remember { GridGestureState() }
+
+/**
+ * Non-null only for a fast upward velocity commit; bends the release into the deck.
+ *
+ * Held in a process-global object (match for `SsoSettledPage`) so the huge gesture/overlay lambdas in
+ * [TangentRoot] reference it by NAME (a static reference adds zero captured registers) instead of
+ * capturing another [MutableState]. Every extra captured register pushes D8's single-call lambda
+ * unboxing over a fragile boundary and the app launches with an unverifiable dex —
+ * `VerifyError: $r8$lambda$… expected 0 argument registers, method signature has 1 or more`.
+ */
+object GridFlickArc {
+    var arc: FlickReleaseArc? by mutableStateOf<FlickReleaseArc?>(null)
+}

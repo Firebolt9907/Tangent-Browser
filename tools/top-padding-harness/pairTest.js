@@ -20,8 +20,9 @@ const topPx = parseInt(process.argv[3] || '48', 10);
 const bottomPx = parseInt(process.argv[4] || '64', 10);
 const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36';
 
-// A settled page should need only the occasional pass. More than this over the sample window means
-// the two scripts are feeding each other rather than reacting to the page.
+// A settled page should not keep writing. Count observable DOM mutations rather than a controller
+// timestamp: the controller is free to change its internal scheduler without invalidating this
+// battery/regression check.
 const WALK_BUDGET = 12;
 const SAMPLE_MS = 6000;
 
@@ -41,20 +42,21 @@ const SAMPLE_MS = 6000;
     await page.evaluate(buildBottomSpacerScript(bottomPx).replace(/^javascript:/, ''));
     await new Promise(r => setTimeout(r, 2500)); // let both settle past their cooldowns
 
-    // Count passes of each script over a quiet window, by watching the globals each one bumps.
+    // The fixture is intentionally quiet. Any sustained style/child mutation after settling means
+    // the two injected observers are responding to each other's writes.
     await page.evaluate(`(() => {
-      window.__pair = { top: 0, bottom: 0 };
-      let lastTop = window.__tangentLastHeaderInsetMs || 0;
-      const bs = document.getElementById('tangent-bottom-scroll-spacer');
-      // The bottom script has no timestamp global, so observe its own writes instead.
-      if (bs) new MutationObserver(() => { window.__pair.bottom++; }).observe(bs, { attributes: true });
-      window.__pairTick = setInterval(() => {
-        const t = window.__tangentLastHeaderInsetMs || 0;
-        if (t !== lastTop) { lastTop = t; window.__pair.top++; }
-      }, 25);
+      window.__pair = { mutations: 0, styles: 0, children: 0 };
+      window.__pairObserver = new MutationObserver(records => {
+        window.__pair.mutations += records.length;
+        records.forEach(r => {
+          if (r.type === 'attributes' && r.attributeName === 'style') window.__pair.styles++;
+          if (r.type === 'childList') window.__pair.children++;
+        });
+      });
+      window.__pairObserver.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
     })()`);
     await new Promise(r => setTimeout(r, SAMPLE_MS));
-    const counts = await page.evaluate('(() => { clearInterval(window.__pairTick); return window.__pair; })()');
+    const counts = await page.evaluate('(() => { window.__pairObserver.disconnect(); return window.__pair; })()');
 
     const state = await page.evaluate(`(() => {
       const sp = document.getElementById('tangent-top-scroll-spacer');
@@ -75,7 +77,7 @@ const SAMPLE_MS = 6000;
     console.log(`\n=== ${url}  topPx=${topPx} bottomPx=${bottomPx} ===`);
     console.log(`  top inset: spacer=${state.topH} hostPad=${state.hostPad}  scroll-padding-top=${state.spt}`);
     console.log(`  bottom spacer: h=${state.bottomH} last-child=${state.bottomIsLast} ignored-by-top-walk=${state.bottomIgnored}  scroll-padding-bottom=${state.spb}`);
-    console.log(`  passes over ${SAMPLE_MS}ms — top walk: ${counts.top}, bottom re-apply: ${counts.bottom}`);
+    console.log(`  quiet ${SAMPLE_MS}ms — DOM mutations: ${counts.mutations}, style writes: ${counts.styles}, child-list writes: ${counts.children}`);
 
     const bad = [];
     const applied = Math.max(state.topH, state.hostPad);
@@ -86,8 +88,7 @@ const SAMPLE_MS = 6000;
     // AGENTS.md invariant #11: the top script must never set scroll-padding-bottom; that belongs to
     // the bottom script alone. If both are writing it they are fighting over one property.
     if (state.bottomIgnored !== 'true') bad.push('bottom spacer is not marked tangentIgnoreSafeTop, so the top walk will fight it');
-    if (counts.top > WALK_BUDGET) bad.push(`top walk ran ${counts.top}x on a settled page (budget ${WALK_BUDGET}) — observer feedback`);
-    if (counts.bottom > WALK_BUDGET) bad.push(`bottom re-applied ${counts.bottom}x on a settled page (budget ${WALK_BUDGET}) — observer feedback`);
+    if (counts.mutations > WALK_BUDGET) bad.push(`${counts.mutations} DOM mutations on a settled page (budget ${WALK_BUDGET}) — observer feedback`);
 
     console.log(`\nRESULT: ${bad.length ? `FAIL ❌ ${bad.join('; ')}` : 'PASS ✅ both insets land and neither observer drives the other'}`);
   } finally {

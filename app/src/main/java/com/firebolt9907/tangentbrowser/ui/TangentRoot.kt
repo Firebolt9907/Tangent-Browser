@@ -2234,6 +2234,7 @@ fun TangentRoot(
         gridCommitFromPositions = null
         gridCommitFromProgress = 0f
         gridCancelFromProgress = 0f
+        GridFlickArc.arc = null
         // Keep gridEngaged true past the end of the animation so the tab cards (at progress=0,
         // fullscreen position, scale=1) cover the live Gecko view during the gap between the
         // animation finishing and the deferred tab selection in afterClose.
@@ -2279,6 +2280,7 @@ fun TangentRoot(
             }
             gridCommitFromProgress = 0.0001f // enables release geometry; its independent spring starts at 0
             gridCancelFromProgress = 0f
+            GridFlickArc.arc = null
             tabSwitchCurrentSnapshot = if (midSwitch) incomingSnapshotBitmap
                 ?: snapshotFor(selectedTabId, currentUrl) else currentPageSnapshot
             switchAnimationJob?.cancel()
@@ -2332,6 +2334,7 @@ fun TangentRoot(
             gridCommitFromProgress = 0f
             gridCancelFromProgress = 0f
             gridCommitFromPositions = null
+            GridFlickArc.arc = null
             // captureThumbnail() can allocate/upload a full viewport bitmap. Do this only after
             // the overview spring has settled: requesting it at the release boundary competed
             // directly with the first grid frames and was visible as slow bitmap uploads.
@@ -2547,6 +2550,19 @@ fun TangentRoot(
             gridCommitFromPositions = captureGridReleasePositions()
             gridCommitFromProgress = gridDragProgress
             gridCancelFromProgress = 0f
+            // A velocity-only commit used to travel in a nearly straight line from a barely-lifted
+            // card. Make a quick flick visibly throw higher, shrink below the resting deck size,
+            // then curve and grow into its slot. The release curve itself stays in Grid.kt so the
+            // gesture hot path remains direct-state only (invariant #4).
+            GridFlickArc.arc = if (pastGridVelocity) {
+                val intensity = ((upwardVelocity - GridCommitVelocityPxS) / 2_200f).coerceIn(0f, 1f)
+                com.firebolt9907.tangentbrowser.ui.grid.FlickReleaseArc(
+                    heightPx = contentSize.height * (0.28f + 0.18f * intensity),
+                    scaleDip = 0.15f + 0.12f * intensity,
+                )
+            } else {
+                null
+            }
             // Vertical wins: open grid. Snap any horizontal carousel motion back to 0 so the
             // selected tab stays selected — Safari's behavior.
             offsetX = 0f
@@ -2582,6 +2598,7 @@ fun TangentRoot(
                 gridCommitFromPositions = cancelFromPositions
                 gridCommitFromProgress = 0f
                 gridCancelFromProgress = cancelFromProgress
+                GridFlickArc.arc = null
             }
             gridGestureActive = false
             gridDragPx = 0f
@@ -2602,6 +2619,7 @@ fun TangentRoot(
                     )
                     gridCommitFromPositions = null
                     gridCancelFromProgress = 0f
+                    GridFlickArc.arc = null
                 } else {
                     // No grid progress accumulated — clear any stale animation state.
                     gridProgressState.snapTo(0f)
@@ -2609,6 +2627,7 @@ fun TangentRoot(
                     gridCommitFromPositions = null
                     gridCommitFromProgress = 0f
                     gridCancelFromProgress = 0f
+                    GridFlickArc.arc = null
                 }
                 gridAnimationJob = null
             }
@@ -3762,6 +3781,7 @@ fun TangentRoot(
                             commitFromProgress = if (gridGestureActive) 0f else gridCommitFromProgress,
                             cancelFromProgress = if (gridGestureActive) 0f else gridCancelFromProgress,
                             releasePositions = gridCommitFromPositions,
+                            flickReleaseArc = GridFlickArc.arc,
                             snapshotVersion = snapshotCacheVersionState,
                             snapshotProvider = gridSnapshotProvider,
                             themeColorProvider = gridThemeColorProvider,

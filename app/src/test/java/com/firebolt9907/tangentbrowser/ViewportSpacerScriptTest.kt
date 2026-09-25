@@ -126,7 +126,8 @@ class ViewportSpacerScriptTest {
         val s = script()
         assertTrue(s.contains("__tangentStickyIO"))
         assertTrue(s.contains("new IntersectionObserver"))
-        assertFalse("must not reintroduce a per-scroll listener", s.contains("addEventListener('scroll'"))
+        assertFalse("scroll must not trigger the full inset walk", s.contains("addEventListener('scroll',schedule"))
+        assertTrue("scroll updates only the pinned fill", s.contains("addEventListener('scroll',queuePaint"))
     }
 
     @Test
@@ -214,14 +215,10 @@ class ViewportSpacerScriptTest {
     @Test
     fun `stuck sticky header paints the status-bar strip its own bg color (iter 36)`() {
         val s = script()
-        // A stuck sticky sits at top=topPx, leaving the strip above it transparent; a solid
-        // upward box-shadow in the header's own backgroundColor fills that strip so page content
-        // isn't visible above the header.
-        assertTrue("reads the header's own bg", s.contains("cs.backgroundColor"))
-        assertTrue("paints an upward strip via box-shadow", s.contains("box-shadow"))
-        assertTrue("strip height matches the top inset", s.contains("'0 -'+topPx+'px 0 0 '"))
-        assertTrue("skips transparent headers", s.contains("rgba(0, 0, 0, 0)"))
-        assertTrue("original shadow is saved for restore", s.contains("tangentOrigShadow"))
+        // Paint/lifecycle behavior is exercised with screenshots in pinnedFillTest.js.
+        assertTrue(s.contains("function updateHeaderFill()"))
+        assertTrue(s.contains("tangent-pinned-header-fill"))
+        assertTrue("remove fill without a pinned owner", s.contains("if(!owner){if(fill)fill.remove();return}"))
     }
 
     @Test
@@ -602,7 +599,7 @@ class ViewportSpacerScriptTest {
         val s = script()
         assertTrue(
             "schedule guards on a pending flag so it can't be re-cancelled forever",
-            s.contains("function schedule(){if(window.__tangentHeaderInsetPending)return;window.__tangentHeaderInsetPending=true;"),
+            s.contains("if(window.__tangentHeaderInsetPending)return;window.__tangentHeaderInsetPending=true;"),
         )
         assertTrue(
             "the queued frame clears the pending flag before running the pass",
@@ -787,7 +784,7 @@ class ViewportSpacerScriptTest {
         val s = script()
         assertTrue(
             "every inline inset we apply is recorded so a clobber is detectable",
-            s.contains("function want(el,prop,val){el.style.setProperty(prop,val,'important');(el.__tangentWant=el.__tangentWant||{})[prop]=val}"),
+            s.contains("(el.__tangentWant=el.__tangentWant||{})[prop]=val"),
         )
         assertTrue(
             "the header inset paths go through want(), not raw setProperty",

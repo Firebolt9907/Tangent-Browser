@@ -1,0 +1,50 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  *{box-sizing:border-box} html,body{margin:0;min-height:100%;font:16px/1.2 system-ui,sans-serif}
+  #flow{height:2200px;padding:96px 12px;background:#f4f4f4}.bar{background:#174a7c;color:white;z-index:20}
+  .bar>span{display:block;padding:16px 12px;font-weight:700}.side{background:#754;color:white;z-index:30}
+</style>
+<body><main id="flow">ordinary document flow</main>
+<script>
+/* A deterministic page factory. matrixTest.js opens one fresh document per case. */
+const q=new URLSearchParams(location.search), kind=q.get('case')||'fixedViewport';
+const flow=document.querySelector('#flow');
+function node(tag,id,css,label='label'){const e=document.createElement(tag);e.id=id;e.className='bar';e.style.cssText=css;e.innerHTML='<span>'+label+'</span>';document.body.append(e);return e}
+function fixed(id,top=0,height=56,extra='',label=id){return node('header',id,`position:fixed;top:${top}px;left:0;width:100%;height:${height}px;${extra}`,label)}
+function sticky(id,top=0,height=56,extra='',label=id){const e=node('header',id,`position:sticky;top:${top}px;height:${height}px;${extra}`,label);document.body.insertBefore(e,flow);return e}
+function transformed(kind){
+  // The wrapper stays in normal flow at the top. The injected flow spacer moves the containing
+  // block as one unit; changing #contained itself would double the visual inset.
+  const wrap=document.createElement('div');wrap.id='containing';wrap.style.cssText=kind+';position:relative;height:1px';
+  const h=document.createElement('header');h.id='contained';h.className='bar';h.style.cssText='position:fixed;top:0;left:0;width:100%;height:56px';h.innerHTML='<span>contained fixed</span>';
+  wrap.append(h);document.body.insertBefore(wrap,flow);
+}
+const cases={
+ flowOnly(){},
+ fixedViewport(){fixed('header',0,56,'padding-top:3px!important;box-sizing:border-box','viewport fixed')},
+ fixedPositive(){fixed('header',20,56,'padding-top:3px!important','positive fixed')},
+ stickyPositive(){sticky('header',12,56,'padding-top:3px!important','positive sticky')},
+ gradient(){fixed('header',0,56,'background:linear-gradient(90deg,rgb(10,30,70),rgb(80,130,200));box-sizing:border-box','gradient')},
+ transparent(){fixed('header',0,56,'background:transparent;color:#174a7c;box-sizing:border-box','transparent')},
+ // Each author bar has enough height for its own controls.  The matrix verifies that the
+ // correction preserves this intentional stack rather than treating a pre-existing clipped
+ // child (a malformed 40px bar with 51px of padding) as an inset regression.
+ stacked(){fixed('promo',0,56,'box-sizing:border-box','promo');fixed('nav',56,56,'box-sizing:border-box','nav')},
+ absoluteChild(){const h=fixed('header',0,56,'position:fixed;box-sizing:border-box','');h.innerHTML='<div id="absoluteChild" style="position:absolute;top:0;left:0;height:32px;padding:8px 12px">absolute child</div>'},
+ transformed(){transformed('transform:translateZ(0)')},
+ contained(){transformed('contain:paint')},
+ willChange(){transformed('will-change:transform')},
+ narrowControl(){const e=node('button','control','position:fixed;top:8px;right:8px;width:34px;height:30px;z-index:40','');e.textContent='×'},
+ nestedSafe(){const s=document.createElement('section');s.id='scroller';s.style.cssText='position:fixed;top:64px;left:0;right:0;height:300px;overflow:auto;background:#eee';const h=document.createElement('header');h.id='header';h.className='bar';h.style.cssText='position:sticky;top:0;height:56px';h.innerHTML='<span>safe nested sticky</span>';s.append(h,document.createElement('div'));document.body.append(s)},
+ nestedUnsafe(){const s=document.createElement('section');s.id='scroller';s.style.cssText='position:fixed;top:0;left:0;right:0;height:300px;overflow:auto;background:#eee';const h=document.createElement('header');h.id='header';h.className='bar';h.style.cssText='position:sticky;top:0;height:56px';h.innerHTML='<span>unsafe nested sticky</span>';s.append(h,document.createElement('div'));document.body.append(s)},
+ shadow(){const host=document.createElement('div');host.id='shadowHost';const root=host.attachShadow({mode:'open'});const h=document.createElement('header');h.id='header';h.style.cssText='position:fixed;top:0;left:0;width:100%;height:56px;background:#174a7c;color:#fff';h.innerHTML='<span style="display:block;padding:16px 12px;font-weight:700">shadow header</span>';root.append(h);document.body.append(host)},
+ late(){window.mountLate=()=>fixed('header',0,56,'box-sizing:border-box','late mounted')},
+ promoteStyle(){const h=node('header','header','height:56px;box-sizing:border-box','stylesheet promoted');document.body.insertBefore(h,flow);window.promoteToFixed=()=>{const s=document.createElement('style');s.textContent='#header{position:fixed;top:0;left:0;width:100%}';document.head.append(s)}},
+ hiddenAuto(){const h=fixed('header',0,56,'display:none;box-sizing:border-box','revealed');window.reveal=()=>{h.style.display='block'};window.showAuto=()=>{h.style.transform='translateY(-64px)';requestAnimationFrame(()=>requestAnimationFrame(()=>{h.style.transform='translateY(0)'}))}},
+ authorChange(){fixed('header',0,56,'padding-top:3px!important;top:0!important;box-sizing:border-box','author changes');window.changeAuthor=()=>{const h=document.querySelector('#header');h.style.setProperty('top','7px','important');h.style.setProperty('padding-top','5px','important')}},
+ lifecycle(){fixed('header',0,56,'padding-top:4px!important;top:0!important;box-sizing:border-box','lifecycle')},
+ negativeMediaSidebar(){fixed('negative',-16,72,'box-sizing:border-box','negative overlay');const media=document.createElement('canvas');media.id='media';media.style.cssText='position:fixed;top:0;left:0;width:100%;height:260px;z-index:-1';document.body.append(media);const side=node('aside','sidebar','position:fixed;top:90px;right:0;width:48px;height:220px;z-index:40','');side.textContent='side'}
+};
+ if(!cases[kind])throw new Error('unknown matrix case '+kind);cases[kind]();
+</script>

@@ -512,6 +512,7 @@ fun CustomTabRoot(
                         bottomChromeInsetPx = if (isVideoFullscreen) 0 else barTotalHeightPx,
                         tabId = customTabId,
                         pageUrl = url,
+                        tabIsLoading = customTab?.content?.loading == true,
                         snapshotCache = components.tabSnapshotCache,
                         sitePermissionController = components.sitePermissionController,
                         sitePreferencesStore = components.sitePreferencesStore,

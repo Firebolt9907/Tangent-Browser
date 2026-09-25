@@ -2,14 +2,26 @@
 // same bytes that ship. Mirrors buildViewportSpacerScript's Kotlin string interpolation.
 const fs = require('fs');
 const path = require('path');
+const childProcess = require('child_process');
 
 // Resolve the shipping source relative to this tool, so the harness is portable.
 const KT = path.resolve(__dirname, '../../app/src/main/java/com/firebolt9907/tangentbrowser/ui/content/PageBottomSpacer.kt');
 
+function shippingSource() {
+  // Lets a regression run use a committed production version without copying or rewriting the
+  // source. Normal harness runs always read the working-tree file that will be built next.
+  if (process.env.TOP_INSET_GIT_REF) {
+    return childProcess.execFileSync('git', ['show', `${process.env.TOP_INSET_GIT_REF}:app/src/main/java/com/firebolt9907/tangentbrowser/ui/content/PageBottomSpacer.kt`], {
+      cwd: path.resolve(__dirname, '../..'), encoding: 'utf8',
+    });
+  }
+  return fs.readFileSync(process.env.TOP_INSET_KT || KT, 'utf8');
+}
+
 // Shared: pull the triple-quoted Kotlin template out of `marker`'s function body and flatten it
 // exactly the way Kotlin's .trimIndent().replace("\n","") does.
 function extractTemplate(marker) {
-  const src = fs.readFileSync(KT, 'utf8');
+  const src = shippingSource();
   const start = src.indexOf(marker);
   if (start < 0) throw new Error('function not found');
   const q1 = src.indexOf('"""', start);

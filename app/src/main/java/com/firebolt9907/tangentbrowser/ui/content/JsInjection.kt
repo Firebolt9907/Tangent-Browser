@@ -1,6 +1,18 @@
 package com.firebolt9907.tangentbrowser.ui.content
 
 import mozilla.components.concept.engine.EngineSession
+import java.net.URLEncoder
+
+/** javascript: URLs are percent-decoded by Gecko before evaluation. Keep source operators and
+ * literal escapes (for example `%360` and `%20`) intact across that decoding step. */
+internal fun encodeJavascriptUrl(script: String): String {
+    // Multiline builders can retain leading whitespace after interpolating shared JS.
+    // Accept the same URL spelling Gecko accepted before encoding was introduced.
+    val normalized = script.trimStart()
+    if (!normalized.startsWith("javascript:", ignoreCase = true)) return script
+    return "javascript:" + URLEncoder.encode(normalized.substring("javascript:".length), "UTF-8")
+        .replace("+", "%20")
+}
 
 /**
  * Runs an injection script in the page via a `javascript:` URL load — the single flag combination
@@ -14,7 +26,7 @@ import mozilla.components.concept.engine.EngineSession
  */
 internal fun EngineSession.loadJavascriptUrl(script: String) {
     loadUrl(
-        url = script,
+        url = encodeJavascriptUrl(script),
         flags = EngineSession.LoadUrlFlags.select(
             EngineSession.LoadUrlFlags.ALLOW_JAVASCRIPT_URL,
             EngineSession.LoadUrlFlags.LOAD_FLAGS_REPLACE_HISTORY,

@@ -150,6 +150,8 @@ fun TabGridOverlay(
     cancelFromProgress: Float = 0f,
     /** Per-index (tx, ty, scale) captured at finger release; start points for both springs. */
     releasePositions: List<Triple<Float, Float, Float>>? = null,
+    /** Extra high-and-small release path used only for a fast upward flick. */
+    flickReleaseArc: FlickReleaseArc? = null,
     /** Bumps when a snapshot lands; cards re-resolve their bitmap through [snapshotProvider]. */
     snapshotVersion: State<Int>,
     snapshotProvider: (String) -> Bitmap? = { null },
@@ -554,6 +556,7 @@ fun TabGridOverlay(
                             commitFromProgress = commitFromProgress,
                             cancelFromProgress = cancelFromProgress,
                             releasePosition = releasePositions?.getOrNull(index),
+                            flickReleaseArc = flickReleaseArc,
                             tabCount = tabs.size,
                             progress = progressFwd,
                             xProgress = xProgressFwd,
@@ -596,6 +599,7 @@ fun TabGridOverlay(
                                 commitFromProgress = commitFromProgress,
                                 cancelFromProgress = cancelFromProgress,
                                 releasePosition = releasePositions?.getOrNull(index),
+                                flickReleaseArc = flickReleaseArc,
                                 xProgress = xProgressFwd,
                                 carouselShift = carouselShiftFwd,
                                 containerW = containerW,
@@ -680,6 +684,7 @@ private fun GridTabCard(
     commitFromProgress: Float,
     cancelFromProgress: Float,
     releasePosition: Triple<Float, Float, Float>?,
+    flickReleaseArc: FlickReleaseArc?,
     tabCount: Int,
     progress: () -> Float,
     xProgress: () -> Float,
@@ -756,6 +761,7 @@ private fun GridTabCard(
                             commitFromProgress = commitFromProgress,
                             cancelFromProgress = cancelFromProgress,
                             releasePosition = releasePosition,
+                            flickReleaseArc = flickReleaseArc,
                         )
                         scale = pose.scale
                         tx = pose.tx
@@ -1110,6 +1116,7 @@ private fun GridCellChrome(
     commitFromProgress: Float,
     cancelFromProgress: Float,
     releasePosition: Triple<Float, Float, Float>?,
+    flickReleaseArc: FlickReleaseArc?,
     xProgress: () -> Float,
     carouselShift: () -> Float,
     containerW: Float,
@@ -1143,6 +1150,7 @@ private fun GridCellChrome(
                 val pose = overviewCardPose(
                     slot, tab.browseBaseX + carouselShift(), progress(), xProgress(),
                     commitFromProgress, cancelFromProgress, releasePosition,
+                    flickReleaseArc,
                 )
                 val captionScale = pose.scale / slot.scale
                 transformOrigin = TransformOrigin(0f, 0f)

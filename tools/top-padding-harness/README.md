@@ -49,6 +49,9 @@ node pairTest.js https://www.reddit.com 48 64    # BOTH spacers together, as the
 ./anchors.sh                                     # offline scroll-padding-top anchor-jump fixtures
 ./shells.sh                                      # offline viewport-locked app-shell fixtures
 ./insets.sh --seq=48,0,48                        # every header fixture, inset changing under it
+./matrix.sh                                      # deterministic geometry/lifecycle matrix
+node transportTest.js                           # real javascript: URL decoding and spacer execution
+node pinnedFillTest.js                          # conditional fill after scrolling and dropdown stability
 ```
 
 ### Offline fixtures
@@ -59,6 +62,15 @@ header inside a `transform`/`will-change` ancestor (which changes the fixed cont
 a sticky header with absolutely-positioned content, a nested-scroll (non-body) sticky header, and a
 negative-`top` header. Each fixture puts real content in the band; a PASS means the injection
 cleared it. Fast and stable — good as a first gate before the live sweeps.
+
+`matrixTest.js` is the behavioral controller gate. It starts a fresh local document for each
+pattern and injects the exact script extracted from `PageBottomSpacer.kt`. The matrix covers
+viewport and positive-offset fixed/sticky bars, stacked bars, absolute header children,
+fixed-containing blocks (`transform`, `contain`, `will-change`), narrow controls, nested scrollers
+that are already safe or unsafe, open-shadow headers, late mounts, author inline rewrites,
+disable/re-enable plus inset changes, and negative overlays/full-bleed media/off-band sidebars.
+It checks only observable geometry, one effective inset, declaration/`!important` restoration, and
+an observer quiet window; it does not assert script substrings or private controller state.
 
 ### The probes
 

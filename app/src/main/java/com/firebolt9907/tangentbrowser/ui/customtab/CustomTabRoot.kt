@@ -61,6 +61,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
@@ -328,6 +329,7 @@ fun CustomTabRoot(
     // ReaderManager.setReaderEligible (via the pending request) before the eligibility effect below
     // observes it. Only a manual bottom-bar turn-on clears the flag.
     var readerAutoActivated by remember { mutableStateOf(true) }
+    var manualReaderRequested by remember(customTabId, url) { mutableStateOf(false) }
 
     // Custom tabs opened from another app always jump straight into reader mode when the page is a
     // readable article — regardless of domain (the per-host reader opt-out that the main browser
@@ -368,6 +370,14 @@ fun CustomTabRoot(
     // [barTotalHeightPx] is the measured bar height including its navigation-bar padding.
     var barHiddenPx by remember { mutableFloatStateOf(0f) }
     var barTotalHeightPx by remember { mutableIntStateOf(barHeightPx) }
+    var persistentBannerVisible by remember { mutableStateOf(false) }
+    val currentReaderActive by rememberUpdatedState(readerActive)
+    val chromeCollapseProgress = remember {
+        {
+            if (barTotalHeightPx > 0) (barHiddenPx / barTotalHeightPx).coerceIn(0f, 1f)
+            else 0f
+        }
+    }
     // The top origin ribbon is a transient launch banner: 1 = shown, 0 = gone. It auto-dismisses a
     // few seconds after launch (see below) and on the first downward scroll, since it overlays the
     // top of the page content and would otherwise clip it. Once dismissed it stays gone.
@@ -389,12 +399,15 @@ fun CustomTabRoot(
         dismissRibbon()
     }
     val barHideSlopPx = with(density) { 6.dp.toPx() }
-    fun onPageScrollDelta(delta: Float) {
+    fun onChromeScrollDelta(delta: Float) {
         // Any decisive downward scroll also retires the launch ribbon early.
         if (delta > barHideSlopPx) dismissRibbon()
         // Scroll-linked: push the bar off by exactly the scrolled distance (down hides, up reveals),
         // clamped to its own height so it never over- or under-shoots.
         barHiddenPx = (barHiddenPx + delta).coerceIn(0f, barTotalHeightPx.toFloat())
+    }
+    fun onPageScrollDelta(delta: Float) {
+        if (!currentReaderActive) onChromeScrollDelta(delta)
     }
     // Always reveal the bar when the reader overlay opens or closes so it never gets stuck hidden.
     LaunchedEffect(readerActive) {
@@ -517,6 +530,9 @@ fun CustomTabRoot(
                         },
                         topChromeInsetPx = if (isVideoFullscreen) 0 else statusBarTopPx,
                         bottomChromeInsetPx = if (isVideoFullscreen) 0 else barTotalHeightPx,
+                        persistentBannerInsetPx = if (shouldShowUi && persistentBannerVisible) {
+                            with(density) { 72.dp.roundToPx() }
+                        } else 0,
                         tabId = customTabId,
                         pageUrl = url,
                         tabIsLoading = customTab?.content?.loading == true,
@@ -530,10 +546,7 @@ fun CustomTabRoot(
                         // clipped band). The pill hides completely, so the collapsed floor is 0 — the
                         // engine reclaims the whole reserve. Read as a lambda: per-frame clip updates
                         // via snapshotFlow, no ContentHost recomposition (invariant #10).
-                        barCollapseProgress = {
-                            if (barTotalHeightPx > 0) (barHiddenPx / barTotalHeightPx).coerceIn(0f, 1f)
-                            else 0f
-                        },
+                        barCollapseProgress = chromeCollapseProgress,
                         collapsedBottomReservePx = 0,
                         onFullScreenChange = { enabled ->
                             isVideoFullscreen = enabled
@@ -598,7 +611,7 @@ fun CustomTabRoot(
                                 bottomPadding = with(density) { barTotalHeightPx.toDp() },
                                 // Hide the bottom taskbar on scroll-down (reveal on scroll-up), same as
                                 // the web page — reader scroll deltas drive the same scroll-linked bar offset.
-                                onScrollDelta = ::onPageScrollDelta,
+                                onScrollDelta = ::onChromeScrollDelta,
                                 onLinkClick = { href ->
                                     readerManager.openReaderLink(context, customTabId, session, href)
                                 }
@@ -628,6 +641,7 @@ fun CustomTabRoot(
                         readerEligible = customTabId != null && eligibleReaderTabs.contains(customTabId),
                         onToggleReader = {
                             customTabId?.let { id ->
+                                manualReaderRequested = true
                                 // A manual turn-on means Back should dismiss the overlay rather
                                 // than exit the activity (see readerAutoActivated above).
                                 if (readerManager.toggleReader(id, url, session)) {
@@ -655,6 +669,21 @@ fun CustomTabRoot(
                             .onSizeChanged { if (it.height > 0) barTotalHeightPx = it.height }
                             .graphicsLayer { translationY = barHiddenPx },
                     )
+
+                    // Keep banner priorities local to this layer, below dialogs, link peeks and feedback.
+                    Box(Modifier.fillMaxSize()) {
+                        CustomTabBanners(
+                            components = components,
+                            tabId = customTabId,
+                            url = url,
+                            readerActive = readerActive,
+                            manualReaderRequested = manualReaderRequested,
+                            bottomPadding = with(density) { barTotalHeightPx.toDp() },
+                            collapseProgress = chromeCollapseProgress,
+                            feedback = feedback,
+                            onPersistentBannerVisibleChange = { persistentBannerVisible = it },
+                        )
+                    }
                 }
 
                 // Arc-style "open into a space": ask which tab group to drop this page into when

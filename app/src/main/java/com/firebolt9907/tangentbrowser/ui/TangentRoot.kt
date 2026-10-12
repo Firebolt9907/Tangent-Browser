@@ -121,6 +121,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.first
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.firebolt9907.tangentbrowser.TangentApplication
@@ -318,8 +319,9 @@ fun TangentRoot(
     //    TangentRequestInterceptor and relayed via AppLaunchRequests.
     //  - passive: the current site simply HAS an associated app (nativeAppFor).
     // A requested launch takes priority and, when the `autoOpenAppLinks` pref is on, auto-opens.
-    val requestedLaunch by com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.pending
+    val pendingAppLaunch by com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.pending
         .collectAsStateWithLifecycle()
+    val requestedLaunch = pendingAppLaunch?.takeIf { it.tabId == selectedTabId }
     val associatedApp by produceState<com.firebolt9907.tangentbrowser.ui.chrome.NativeApp?>(
         initialValue = null,
         selectedContent?.url,
@@ -360,7 +362,11 @@ fun TangentRoot(
 
     // A pending offer targets the previously-visible tab; drop it when the tab changes.
     LaunchedEffect(selectedTabId) {
-        com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.clear()
+        com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.pending.value?.let {
+            if (components.store.state.tabs.any { tab -> tab.id == it.tabId }) {
+                com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.clearForTab(it.tabId)
+            }
+        }
     }
     // Auto-open (pref): launch the requested app immediately, skipping the banner.
     LaunchedEffect(requestedLaunch) {
@@ -373,7 +379,7 @@ fun TangentRoot(
                 onFallback = { fb -> req.tabId?.let { components.tabRepository.loadUrl(fb, it) } },
                 onMessage = { pageFeedback.show(it) },
             )
-            com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.clear()
+            com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.clearForTab(selectedTabId)
         }
     }
     // Normalized the same way the stats/blacklist store keys hosts, so the gate below and the
@@ -592,8 +598,10 @@ fun TangentRoot(
     var readerUnavailableVisible by remember { mutableStateOf(false) }
     LaunchedEffect(readerUnavailableTab, selectedTabId) {
         val tab = readerUnavailableTab ?: return@LaunchedEffect
-        if (tab == selectedTabId) readerUnavailableVisible = true
-        readerManager.clearReaderUnavailable(tab)
+        if (tab == selectedTabId) {
+            readerUnavailableVisible = true
+            readerManager.clearReaderUnavailable(tab)
+        }
     }
     LaunchedEffect(readerUnavailableVisible) {
         if (readerUnavailableVisible) {
@@ -856,6 +864,11 @@ fun TangentRoot(
     // proportional to distance travelled. Written directly on the scroll hot-path, read only in
     // the pill's layout/draw phase, so scrolling doesn't recompose the bar.
     var readerBarHidden by remember { mutableFloatStateOf(0f) }
+    // Reader translates the pill away instead of morphing it into the web-page compact state.
+    // Banners must follow that same reader hide progress, read only in their draw phase.
+    val bannerCollapseProgressProvider = remember(isReaderActiveOnSelectedTab) {
+        { if (isReaderActiveOnSelectedTab) readerBarHidden else barCollapseProgress }
+    }
     // Tracks the settle animation launched on scroll-end so a new drag can pre-empt it.
     var readerBarSettleJob by remember { mutableStateOf<Job?>(null) }
     // Boolean gate for whether the pull-refresh line is shown. Derived so the per-frame
@@ -1486,14 +1499,21 @@ fun TangentRoot(
         onDispose { ThemeColorProbe.listener = null }
     }
     // Bind every consent result to the reporting tab, origin and captured session.
-    DisposableEffect(Unit) {
+    LifecycleResumeEffect(Unit) {
         com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.onFieldDetected = { tabId ->
             scope.launch {
+                if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                    return@launch
+                }
                 val session = components.store.state.tabs.firstOrNull { it.id == tabId }
                     ?.engineState?.engineSession ?: return@launch
                 val delivery = com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.createDelivery(
                     tabId = tabId,
-                    selectedTabId = { components.store.state.selectedTabId },
+                    selectedTabId = {
+                        components.store.state.selectedTabId.takeIf {
+                            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+                        }
+                    },
                 ) { code, origin ->
                     if (components.store.state.tabs.firstOrNull { it.id == tabId }
                             ?.engineState?.engineSession === session
@@ -1509,7 +1529,12 @@ fun TangentRoot(
                 if (clipWatcher.consumeChanged()) otpPasteVisible = true
             }
         }
-        onDispose {
+        if (otpFieldPresent) {
+            components.store.state.selectedTabId?.let {
+                com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.onFieldDetected?.invoke(it)
+            }
+        }
+        onPauseOrDispose {
             com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.codeFiller = null
             com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.onFieldDetected = null
         }
@@ -4218,8 +4243,9 @@ fun TangentRoot(
                     // Replaces the old center-screen AlertDialog.
                     com.firebolt9907.tangentbrowser.ui.SitePermissionBannerHost(
                         controller = components.sitePermissionController,
+                        tabId = selectedTabId,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
-                        collapseProgress = barCollapseProgressProvider,
+                        collapseProgress = bannerCollapseProgressProvider,
                         gridProgress = pillGridProgress,
                         horizontalOffsetX = archivePillOffsetX,
                         switchFade = archiveSwitchFade,
@@ -4232,7 +4258,7 @@ fun TangentRoot(
                         visible = sendLinkPrompt != null && recentTargetDevice != null,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                         // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
-                        collapseProgress = barCollapseProgressProvider,
+                        collapseProgress = bannerCollapseProgressProvider,
                         stack = bannerStack,
                         onSend = {
                             val prompt = sendLinkPrompt
@@ -4257,7 +4283,7 @@ fun TangentRoot(
                         visible = otpPasteVisible,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                         // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
-                        collapseProgress = barCollapseProgressProvider,
+                        collapseProgress = bannerCollapseProgressProvider,
                         stack = bannerStack,
                         onPaste = {
                             val clip = clipboardManager.getText()?.text
@@ -4299,7 +4325,7 @@ fun TangentRoot(
                         visible = currentBlobFile != null &&
                             currentBlobFile.id != blobBannerDismissedId,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
-                        collapseProgress = barCollapseProgressProvider,
+                        collapseProgress = bannerCollapseProgressProvider,
                         stack = bannerStack,
                         onSave = { blob ->
                             blobBannerDismissedId = blob.id
@@ -4314,7 +4340,7 @@ fun TangentRoot(
                         visible = zapPickerActive,
                         selection = zapSelection,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
-                        collapseProgress = barCollapseProgressProvider,
+                        collapseProgress = bannerCollapseProgressProvider,
                         stack = bannerStack,
                         onWiden = {
                             selectedEngineSession?.loadJavascriptUrl(
@@ -4337,7 +4363,7 @@ fun TangentRoot(
                     com.firebolt9907.tangentbrowser.ui.reader.ReaderUnavailableBannerHost(
                         visible = readerUnavailableVisible,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
-                        collapseProgress = barCollapseProgressProvider,
+                        collapseProgress = bannerCollapseProgressProvider,
                         stack = bannerStack,
                         onDismiss = { readerUnavailableVisible = false },
                     )
@@ -4383,7 +4409,7 @@ fun TangentRoot(
                             // Track the SAME scroll-collapse progress the pill morphs on, so scrolling
                             // down dives the bar toward the pill (intent) and scrolling up pops it
                             // back — 1:1 with the pill, read per-frame in the bar's draw phase.
-                            collapseProgress = barCollapseProgressProvider,
+                            collapseProgress = bannerCollapseProgressProvider,
                             // Fade with the pill as the tab switcher opens (anchored to the pill).
                             gridProgress = pillGridProgress,
                             // Track the pill horizontally on a tab-switch swipe; fade only as the
@@ -4432,7 +4458,7 @@ fun TangentRoot(
                         visible = receivedTab != null,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                         // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
-                        collapseProgress = barCollapseProgressProvider,
+                        collapseProgress = bannerCollapseProgressProvider,
                         stack = bannerStack,
                         onOpen = { tab ->
                             components.firefoxSyncController.dismissReceivedTab()
@@ -4454,7 +4480,7 @@ fun TangentRoot(
                         visible = openInAppActive && !barCollapseCompact,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                         // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
-                        collapseProgress = barCollapseProgressProvider,
+                        collapseProgress = bannerCollapseProgressProvider,
                         // Anchored to the pill: fade with the tab switcher, track the pill sideways on
                         // a tab-switch swipe, and fade only as the switch settles. Same as the archive
                         // scrubber so the banner stays glued to the current tab's pill.
@@ -4474,7 +4500,7 @@ fun TangentRoot(
                                     },
                                     onMessage = { pageFeedback.show(it) },
                                 )
-                                com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.clear()
+                                com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.clearForTab(selectedTabId)
                             } else {
                                 val app = associatedApp
                                 val url = selectedContent?.url
@@ -4488,7 +4514,7 @@ fun TangentRoot(
                         },
                         onDismiss = {
                             if (requestedLaunch != null) {
-                                com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.clear()
+                                com.firebolt9907.tangentbrowser.ui.content.AppLaunchRequests.clearForTab(selectedTabId)
                             } else {
                                 openInAppPassiveHost?.let { host ->
                                     dismissedAppHosts.add(host)

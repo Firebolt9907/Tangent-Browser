@@ -115,6 +115,10 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false
         }
+        bindPermissionRequests()
+    }
+
+    private fun bindPermissionRequests() {
         app.components.sitePermissionController.requestAppPermissions = { permissions, onResult ->
             val toRequest = permissions.filter {
                 checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -158,6 +162,32 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
      */
     protected open fun currentUrlForAssist(state: BrowserState): String? =
         state.selectedTab?.content?.url
+
+    // SMS one-time-code (2FA) autofill via Play Services SMS User Consent. Registered as a field so
+    // its consent ActivityResultLauncher is set up before the activity starts. Armed only while
+    // foreground (onResume/onPause) so a backgrounded browser never starts watching for SMS.
+    private val otpSmsController = OtpSmsController(this)
+
+    override fun onResume() {
+        super.onResume()
+        // Returning from a Custom Tab must restore this activity's runtime-permission launcher.
+        bindPermissionRequests()
+        // The page (OtpAutofill, via the JS detector + prompt bridge) calls this when it sees an OTP
+        // field; arm SMS User Consent then.
+        com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.smsListenStarter = { deliver ->
+            otpSmsController.startListening(deliver)
+        }
+    }
+
+    override fun onPause() {
+        com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.smsListenStarter = null
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        otpSmsController.dispose()
+        super.onDestroy()
+    }
 
     override fun onStart() {
         super.onStart()

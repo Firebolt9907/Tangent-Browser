@@ -399,8 +399,9 @@ ThemeColorProbe/LinkRectProbe) with heuristics broader than GBoard's `autocomple
 check; and a **filler** (`buildFillScript`) that types the code (handles split single-char boxes; uses
 the native value setter for React inputs). The SMS is read via Play Services **SMS User Consent**
 (`OtpSmsController`, `play-services-auth-api-phone`) — **no** SMS permission, one-tap consent dialog
-per code. `MainActivity` owns the SMS side (`smsListenStarter` set in onResume, cleared in onPause);
-`TangentRoot` owns the page side (`codeFiller` injects into the selected session) plus the manual
+per code. `TangentBrowserActivity` owns the SMS side for both browser activities (`smsListenStarter`
+set in onResume, cleared in onPause); `TangentRoot` / `CustomTabBanners` own the foreground page side
+(`codeFiller` injects into the selected session) plus the manual
 "paste code" fallback banner (`OtpPasteBannerHost`). Do NOT gate receipt on `RECEIVE_SMS`
 (intentionally avoided — Play Store restriction).
 

@@ -34,7 +34,7 @@ object OtpAutofill {
     var codeFiller: ((code: String) -> Unit)? = null
 
     /**
-     * Set by `TangentRoot`. Invoked (on the GeckoView UI thread) when the page reports an OTP field,
+     * Set by the foreground browser surface (`TangentRoot` or `CustomTabBanners`). Invoked (on the GeckoView UI thread) when the page reports an OTP field,
      * so the UI can surface the manual "paste code" fallback banner alongside arming SMS listening.
      */
     @Volatile

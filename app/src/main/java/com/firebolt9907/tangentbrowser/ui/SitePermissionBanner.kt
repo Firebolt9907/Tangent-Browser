@@ -35,8 +35,10 @@ fun SitePermissionBannerHost(
     horizontalOffsetX: () -> Float = { 0f },
     switchFade: () -> Float = { 0f },
     stack: BannerStackState? = null,
+    tabId: String? = null,
 ) {
-    val request by controller.contentRequest.collectAsStateWithLifecycle()
+    val pendingRequest by controller.contentRequest.collectAsStateWithLifecycle()
+    val request = pendingRequest?.let { controller.contentRequestFor(tabId) }
     MorphingBannerHost(
         visible = request != null,
         bottomPadding = bottomPadding,
@@ -57,8 +59,12 @@ fun SitePermissionBannerHost(
         lastRequest?.let { req ->
             SitePermissionCard(
                 request = req,
-                onAllow = { controller.grantCurrent() },
-                onBlock = { controller.rejectCurrent() },
+                onAllow = {
+                    if (controller.contentRequestFor(tabId)?.id == req.id) controller.grantCurrent(req.id)
+                },
+                onBlock = {
+                    if (controller.contentRequestFor(tabId)?.id == req.id) controller.rejectCurrent(req.id)
+                },
             )
         }
     }

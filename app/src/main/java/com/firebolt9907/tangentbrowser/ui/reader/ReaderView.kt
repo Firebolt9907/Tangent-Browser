@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.collectAsState
@@ -243,10 +244,12 @@ fun ReaderView(
     val statusBarTopPx = with(density) { statusBarTop.toPx() }
 
     // Forward scroll deltas so the host can hide the floating pill when reading downward.
+    val currentOnScrollDelta by rememberUpdatedState(onScrollDelta)
+    val currentOnScrollSettle by rememberUpdatedState(onScrollSettle)
     LaunchedEffect(scrollState) {
         var last = scrollState.value
         snapshotFlow { scrollState.value }.collect { value ->
-            onScrollDelta((value - last).toFloat())
+            currentOnScrollDelta((value - last).toFloat())
             last = value
         }
     }
@@ -257,7 +260,7 @@ fun ReaderView(
     LaunchedEffect(scrollState) {
         var wasScrolling = false
         snapshotFlow { scrollState.isScrollInProgress }.collect { inProgress ->
-            if (wasScrolling && !inProgress) onScrollSettle()
+            if (wasScrolling && !inProgress) currentOnScrollSettle()
             wasScrolling = inProgress
         }
     }

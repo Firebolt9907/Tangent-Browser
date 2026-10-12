@@ -71,6 +71,11 @@ class SitePermissionController(context: Context? = null) {
 
     private val _contentRequest = MutableStateFlow<PermissionRequest?>(null)
     val contentRequest: StateFlow<PermissionRequest?> = _contentRequest.asStateFlow()
+    var contentRequestTabId: String? = null
+        private set
+
+    fun contentRequestFor(tabId: String?): PermissionRequest? =
+        _contentRequest.value?.takeIf { contentRequestTabId == tabId }
 
     /**
      * Set by the host Activity. Given a list of Android permission strings, it must launch the OS
@@ -78,7 +83,7 @@ class SitePermissionController(context: Context? = null) {
      */
     var requestAppPermissions: ((permissions: List<String>, onResult: (granted: Boolean) -> Unit) -> Unit)? = null
 
-    fun onContentPermissionRequest(request: PermissionRequest) {
+    fun onContentPermissionRequest(request: PermissionRequest, tabId: String? = null) {
         // Autoplay default policy (applied to every site, no prompt and not remembered):
         //   • autoplay WITH audio  → always reject
         //   • autoplay WITHOUT audio → always allow
@@ -116,6 +121,7 @@ class SitePermissionController(context: Context? = null) {
             request.reject()
             return
         }
+        contentRequestTabId = tabId
         _contentRequest.value = request
     }
 
@@ -125,15 +131,17 @@ class SitePermissionController(context: Context? = null) {
         }
     }
 
-    fun grantCurrent() {
+    fun grantCurrent(requestId: String? = null) {
         val request = _contentRequest.value ?: return
+        if (requestId != null && request.id != requestId) return
         _contentRequest.value = null
         rememberDecision(request, granted = true)
         request.grant(request.permissions)
     }
 
-    fun rejectCurrent() {
+    fun rejectCurrent(requestId: String? = null) {
         val request = _contentRequest.value ?: return
+        if (requestId != null && request.id != requestId) return
         _contentRequest.value = null
         rememberDecision(request, granted = false)
         request.reject()

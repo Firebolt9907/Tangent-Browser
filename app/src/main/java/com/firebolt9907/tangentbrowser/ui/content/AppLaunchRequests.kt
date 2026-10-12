@@ -4,6 +4,7 @@ import android.content.Intent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * Process-wide relay for a site-requested native-app launch. When a page navigates to an app deep
@@ -43,5 +44,10 @@ object AppLaunchRequests {
 
     fun clear() {
         _pending.value = null
+    }
+
+    /** Consume only this page's offer; another activity may have offered a newer one. */
+    fun clearForTab(tabId: String?) {
+        _pending.update { if (it?.tabId == tabId) null else it }
     }
 }

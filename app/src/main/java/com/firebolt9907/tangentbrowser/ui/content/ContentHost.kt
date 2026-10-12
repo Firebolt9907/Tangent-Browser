@@ -747,7 +747,7 @@ fun ContentHost(
                     permissionRequest: mozilla.components.concept.engine.permission.PermissionRequest,
                 ) {
                     if (sitePermissionController != null) {
-                        sitePermissionController.onContentPermissionRequest(permissionRequest)
+                        sitePermissionController.onContentPermissionRequest(permissionRequest, tabId)
                     } else {
                         permissionRequest.reject()
                     }

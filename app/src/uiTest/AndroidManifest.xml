@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Isolated Compose host: no browser activities, data, providers or Firebase services. -->
+    <application
+        android:name="android.app.Application"
+        android:allowBackup="false"
+        android:label="Tangent UI Tests"
+        android:theme="@style/Theme.TangentBrowser"
+        tools:node="replace">
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
+        <!-- Test-core classes are in the host APK and deduplicated from the runner APK.
+             ActivityScenario must resolve its lifecycle helpers in this host too. -->
+        <activity
+            android:name="androidx.test.core.app.InstrumentationActivityInvoker$BootstrapActivity"
+            android:exported="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/WhiteBackgroundTheme" />
+        <activity
+            android:name="androidx.test.core.app.InstrumentationActivityInvoker$EmptyActivity"
+            android:exported="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/WhiteBackgroundTheme" />
+        <activity
+            android:name="androidx.test.core.app.InstrumentationActivityInvoker$EmptyFloatingActivity"
+            android:exported="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/WhiteBackgroundDialogTheme" />
+    </application>
+</manifest>

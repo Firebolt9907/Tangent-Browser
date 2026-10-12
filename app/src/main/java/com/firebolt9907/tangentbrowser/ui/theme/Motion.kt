@@ -3,6 +3,24 @@ package com.firebolt9907.tangentbrowser.ui.theme
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.SpringSpec
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
+
+/** Duration-based curves for app-owned, state-driven transitions that do not inherit a drag. */
+internal object EaseMotion {
+    private val Enter = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
+    private val Resize = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+    private val Exit = CubicBezierEasing(0.4f, 0f, 1f, 1f)
+
+    fun <T> enterSpec(durationMillis: Int = 320): FiniteAnimationSpec<T> =
+        tween(durationMillis, easing = Enter)
+
+    fun <T> resizeSpec(durationMillis: Int = 300): FiniteAnimationSpec<T> =
+        tween(durationMillis, easing = Resize)
+
+    fun <T> exitSpec(durationMillis: Int = 160): FiniteAnimationSpec<T> =
+        tween(durationMillis, easing = Exit)
+}
 
 /**
  * The **Material 3 Expressive** motion scheme, as app-side constants.

@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.firebolt9907.tangentbrowser.state.AutofillTrustStore
 import com.firebolt9907.tangentbrowser.state.SsoFlow
+import com.firebolt9907.tangentbrowser.ui.content.LoginAutofillTarget
 import com.firebolt9907.tangentbrowser.ui.content.LoginFieldProbe
 import com.firebolt9907.tangentbrowser.ui.content.SsoAutofillHold
 import com.firebolt9907.tangentbrowser.ui.content.loadJavascriptUrl
@@ -63,7 +64,7 @@ private const val AutofillHoldTailMs = 1_200L
  * An enterprise IdP splits one sign-in across two views of the same document, and asking the user to
  * pick the same credential — and re-authenticate to a biometric prompt — a second time, seconds
  * later, in the middle of a flow they already authorised, is what makes autofill feel unreliable
- * rather than secure. This is scoped to the same host, the same credential, and one continuous
+ * rather than secure. This is scoped to the same tab and origin, the same credential, and one continuous
  * sign-in; it is not a relaxation of the biometric gate, it is one gesture per sign-in instead of one
  * per field.
  */
@@ -80,11 +81,12 @@ private const val HandledTtlMs = 10 * 60_000L
  * The credential the user picked for the identifier step, carried to the password step of the same
  * sign-in. See [StageContinuationMs].
  */
-private data class StageContinuation(val host: String, val guid: String, val atMs: Long)
+private data class StageContinuation(val target: LoginAutofillTarget, val guid: String, val atMs: Long)
 
 @Composable
 internal fun ProactiveLoginAutofill(
     engineSession: EngineSession?,
+    selectedTabId: String?,
     loginsStorage: LoginsStorage,
     // Mirrors the "Login Autofill" setting — when off we never probe-offer (same as PromptHandler).
     enabled: Boolean,
@@ -93,20 +95,22 @@ internal fun ProactiveLoginAutofill(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    // rememberUpdatedState so the JS fill always targets the live session, not a stale capture from
-    // when the probe listener was first attached.
+    // Compare the live selection with the captured target; never redirect a pending fill to it.
     val fillSession by rememberUpdatedState(engineSession)
+    val currentTabId by rememberUpdatedState(selectedTabId)
+    val autofillEnabled by rememberUpdatedState(enabled)
 
-    // Stage + URL last reported by the probe, awaiting a saved-login lookup. Consumed by the
+    // Stage + trusted target last reported by the probe, awaiting a saved-login lookup. Consumed by the
     // LaunchedEffect.
-    var pending by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var pending by remember { mutableStateOf<Pair<String, LoginAutofillTarget>?>(null) }
     // Logins to offer in the sheet (null = no sheet shown).
     var offer by remember { mutableStateOf<List<Login>?>(null) }
     // The stage the visible sheet was raised for, so a selection fills (and submits) the right half,
-    // and the host it was raised on — the carry-over below binds to the page in front of the user,
+    // and the target it was raised on — the carry-over below binds to the page in front of the user,
     // never to the credential's stored origin.
     var offerStage by remember { mutableStateOf(LoginFieldProbe.Stage.Password) }
-    var offerHost by remember { mutableStateOf("") }
+    var offerTarget by remember { mutableStateOf<LoginAutofillTarget?>(null) }
+    var offerSession by remember { mutableStateOf<EngineSession?>(null) }
     // The credential (if any) that has earned the unattended-autofill offer for the sheet currently
     // being shown. Computed alongside `offer` so the sheet stays a dumb renderer.
     var alwaysAutofillCandidate by remember { mutableStateOf<Login?>(null) }
@@ -121,8 +125,8 @@ internal fun ProactiveLoginAutofill(
     // Bridge listener: the probe fires on Gecko's UI thread; marshal onto the composition scope
     // (main) before touching Compose state.
     DisposableEffect(Unit) {
-        LoginFieldProbe.onFieldDetected = { stage, url ->
-            scope.launch { pending = stage to url }
+        LoginFieldProbe.onFieldDetected = { stage, target ->
+            scope.launch { if (target.isCurrent(currentTabId)) pending = stage to target }
         }
         onDispose {
             LoginFieldProbe.onFieldDetected = null
@@ -132,10 +136,12 @@ internal fun ProactiveLoginAutofill(
         }
     }
 
-    LaunchedEffect(pending, enabled) {
-        val (stage, url) = pending ?: return@LaunchedEffect
-        pending = null
-        if (!enabled) return@LaunchedEffect
+    LaunchedEffect(pending, enabled, engineSession, selectedTabId) {
+        val (stage, target) = pending ?: return@LaunchedEffect
+        // Consume only after async work finishes; clearing an effect key here cancels its lookup.
+        if (!enabled || !target.isCurrent(currentTabId)) return@LaunchedEffect
+        val targetSession = fillSession ?: return@LaunchedEffect
+        val url = target.origin
         val host = runCatching { android.net.Uri.parse(url).host }.getOrNull()?.lowercase()
         if (host.isNullOrBlank()) return@LaunchedEffect
         val isIdp = SsoFlow.isEnterpriseIdp(url)
@@ -143,14 +149,15 @@ internal fun ProactiveLoginAutofill(
         // site an unrequested sheet over the email box would be a new nag with no SSO to justify it —
         // there, today's behaviour (offer at the password step, nothing before it) is still right.
         if (stage == LoginFieldProbe.Stage.User && !isIdp) return@LaunchedEffect
-        val key = "$host|$stage"
+        val key = "${target.tabId}|${target.origin}|$stage"
         val now = android.os.SystemClock.elapsedRealtime()
         // De-nag, but not forever: signing out and back in inside one app session used to fall back to
         // the tap-the-field path for the rest of the process, which reads as autofill giving up.
         if (handledKeys[key]?.let { now - it < HandledTtlMs } == true) return@LaunchedEffect
         val logins = withContext(Dispatchers.IO) {
             runCatching { loginsStorage.getByBaseDomain(host) }.getOrDefault(emptyList())
-        }.filter { it.password.isNotBlank() }
+        }.filter { it.password.isNotBlank() && target.acceptsCredential(it.origin) }
+        if (!target.isCurrent(currentTabId) || fillSession !== targetSession) return@LaunchedEffect
         if (logins.isEmpty()) return@LaunchedEffect
 
         val soleLogin = logins.singleOrNull()
@@ -160,7 +167,7 @@ internal fun ProactiveLoginAutofill(
         val carried = continuation?.takeIf {
             stage == LoginFieldProbe.Stage.Password &&
                 isIdp &&
-                it.host == host &&
+                it.target == target &&
                 android.os.SystemClock.elapsedRealtime() - it.atMs <= StageContinuationMs &&
                 soleLogin?.guid == it.guid
         }
@@ -184,14 +191,16 @@ internal fun ProactiveLoginAutofill(
             // be a far worse bug than a visible fill.
             SsoAutofillHold.active = true
             try {
-                fillSession?.loadJavascriptUrl(
-                    LoginFieldProbe.buildFillScript(soleLogin.username, soleLogin.password, stage),
+                targetSession.loadJavascriptUrl(
+                    LoginFieldProbe.buildFillScript(soleLogin.username, soleLogin.password, stage, target.origin),
                 )
                 withContext(Dispatchers.IO) { runCatching { loginsStorage.touch(soleLogin.guid) } }
                 // Let the fill land before submitting; buildSubmitScript only acts on a form whose
                 // visible field for this stage already holds a value, so it cannot submit a stray form.
                 delay(AutofillSubmitDelayMs)
-                fillSession?.loadJavascriptUrl(buildLoginSubmitScript(stage))
+                if (target.isCurrent(currentTabId) && fillSession === targetSession) {
+                    targetSession.loadJavascriptUrl(LoginFieldProbe.buildSubmitScript(stage, target.origin))
+                }
                 delay(AutofillHoldTailMs)
             } finally {
                 SsoAutofillHold.active = false
@@ -200,6 +209,7 @@ internal fun ProactiveLoginAutofill(
                     quietForMs = LoginPickerCoordinator.QuietAfterFillMs,
                 )
             }
+            pending = null
             return@LaunchedEffect
         }
 
@@ -210,7 +220,8 @@ internal fun ProactiveLoginAutofill(
         // Mark handled up front: whether the user picks or dismisses, we won't re-offer this stage.
         handledKeys[key] = now
         offerStage = stage
-        offerHost = host
+        offerTarget = target
+        offerSession = targetSession
         alwaysAutofillCandidate = soleLogin?.takeIf {
             AutofillTrustStore.offersAlwaysAutofill(
                 fillCount = trustStore.fillCount(it.guid),
@@ -220,10 +231,13 @@ internal fun ProactiveLoginAutofill(
             )
         }
         offer = logins
+        pending = null
     }
 
     val logins = offer ?: return
     val stage = offerStage
+    val target = offerTarget ?: return
+    val targetSession = offerSession ?: return
     // Every exit from the sheet hands the picker back. `quietForMs` differs by intent: after a fill we
     // suppress the focus-driven prompt the fill re-triggers, but a dismissal must leave it free so
     // tapping the field still summons the picker.
@@ -238,37 +252,46 @@ internal fun ProactiveLoginAutofill(
     // Fill + press the stage's button, and — on the identifier step — remember the choice so the
     // password step that follows is not a second interrogation. Submitting the identifier step is what
     // advances the IdP to the password view; without it the user is left staring at a filled email box.
-    fun fillAndSubmit(login: Login) {
-        fillSession?.loadJavascriptUrl(
-            LoginFieldProbe.buildFillScript(login.username, login.password, stage),
+    fun fillAndSubmit(login: Login): Boolean {
+        if (!autofillEnabled || !target.isCurrent(currentTabId) || fillSession !== targetSession ||
+            !target.acceptsCredential(login.origin)
+        ) {
+            closeSheet(filled = false)
+            return false
+        }
+        targetSession.loadJavascriptUrl(
+            LoginFieldProbe.buildFillScript(login.username, login.password, stage, target.origin),
         )
         scope.launch {
             delay(AutofillSubmitDelayMs)
-            fillSession?.loadJavascriptUrl(buildLoginSubmitScript(stage))
+            if (autofillEnabled && target.isCurrent(currentTabId) && fillSession === targetSession) {
+                targetSession.loadJavascriptUrl(LoginFieldProbe.buildSubmitScript(stage, target.origin))
+            }
         }
         continuation = if (stage == LoginFieldProbe.Stage.User) {
             StageContinuation(
-                host = offerHost,
+                target = target,
                 guid = login.guid,
                 atMs = android.os.SystemClock.elapsedRealtime(),
             )
         } else {
             null
         }
+        return true
     }
     SelectLoginSheet(
         logins = logins,
         alwaysAutofillCandidate = alwaysAutofillCandidate,
         onAlwaysAutofill = { login ->
+            // Only persist consent if this is still the target the user was shown.
+            if (!fillAndSubmit(login)) return@SelectLoginSheet
             trustStore.setAlwaysAutofill(login.guid, true)
-            // Honour it immediately — the user just asked for this credential to be filled here.
-            fillAndSubmit(login)
             scope.launch(Dispatchers.IO) { runCatching { loginsStorage.touch(login.guid) } }
             closeSheet(filled = true)
         },
         onSelect = { login ->
-            val fill: () -> Unit = {
-                fillAndSubmit(login)
+            val fill: () -> Unit = fill@{
+                if (!fillAndSubmit(login)) return@fill
                 // Bump usage metadata — the JS fill bypasses Gecko's onLoginUsed callback.
                 scope.launch(Dispatchers.IO) { runCatching { loginsStorage.touch(login.guid) } }
                 // A hand-fill: this is what earns the "Always autofill" offer later. Unattended

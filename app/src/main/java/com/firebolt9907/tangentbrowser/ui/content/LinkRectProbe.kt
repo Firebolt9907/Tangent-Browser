@@ -57,7 +57,7 @@ object LinkRectProbe {
             val h = parts[3].toFloat()
             if (w <= 0f || h <= 0f) null else Rect(x, y, x + w, y + h)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse link-rect payload: $payload", e)
+            Log.w(TAG, "Failed to parse link-rect payload")
             null
         }
     }

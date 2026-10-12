@@ -34,10 +34,18 @@ object ImageClipboard {
                 } ?: return@runCatching null
 
                 val dir = File(context.cacheDir, "shared").apply { mkdirs() }
-                // Reuse a stable filename per URL so repeated copies don't fill the cache.
+                // Key by bytes: recipients can retain URI grants after the next copy operation.
                 val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "jpg"
-                val file = File(dir, "img_${imageUrl.hashCode().toUInt()}.$ext")
-                file.writeBytes(bytes)
+                val file = File(dir, "${sharedImageName(bytes)}.$ext")
+                if (!file.exists()) {
+                    val temporary = File.createTempFile("image-", ".tmp", dir)
+                    try {
+                        temporary.writeBytes(bytes)
+                        if (!temporary.renameTo(file) && !file.exists()) return@runCatching null
+                    } finally {
+                        temporary.delete()
+                    }
+                }
 
                 val uri = FileProvider.getUriForFile(
                     context, "${context.packageName}.fileprovider", file,
@@ -47,7 +55,9 @@ object ImageClipboard {
         }
 
     private fun download(imageUrl: String): Pair<ByteArray, String>? {
-        val conn = (URL(imageUrl).openConnection() as HttpURLConnection).apply {
+        val url = URL(imageUrl)
+        if (url.protocol !in setOf("http", "https") || url.userInfo != null) return null
+        val conn = (url.openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 15_000
             instanceFollowRedirects = true
@@ -55,23 +65,25 @@ object ImageClipboard {
         }
         return try {
             if (conn.responseCode !in 200..299) return null
-            val mime = conn.contentType?.substringBefore(';')?.trim()
-                ?.takeIf { it.startsWith("image/") } ?: "image/jpeg"
-            val bytes = conn.inputStream.use { it.readBytes() }
-            if (bytes.isEmpty()) null else bytes to mime
+            val mime = imageTransferMime(conn.contentType) ?: return null
+            if (conn.contentLengthLong > MaxImageTransferBytes) return null
+            val bytes = conn.inputStream.use { readBoundedImage(it) } ?: return null
+            bytes to mime
         } finally {
             conn.disconnect()
         }
     }
 
     private fun decodeDataUrl(dataUrl: String): Pair<ByteArray, String>? {
+        // Bound input before substring/Base64 allocates another copy. Header has a separate budget.
+        if (dataUrl.length > ((MaxImageTransferBytes + 2L) / 3L) * 4L + 1024L) return null
         val comma = dataUrl.indexOf(',')
-        if (comma < 0) return null
+        if (comma !in 5..1024) return null
         val header = dataUrl.substring(5, comma) // strip "data:"
-        val mime = header.substringBefore(';').ifBlank { "image/png" }
-        if (!header.contains("base64")) return null
+        val mime = imageTransferMime(header) ?: return null
+        if (!header.split(';').drop(1).any { it.equals("base64", ignoreCase = true) }) return null
         val bytes = Base64.decode(dataUrl.substring(comma + 1), Base64.DEFAULT)
-        return if (bytes.isEmpty()) null else bytes to mime
+        return if (bytes.isEmpty() || bytes.size > MaxImageTransferBytes) null else bytes to mime
     }
 
     /** Puts the image on the system clipboard as an image clip. Returns true on success. */
@@ -124,7 +136,14 @@ object ImageClipboard {
     suspend fun copyTextFromImage(context: Context, imageUrl: String): OcrResult {
         val bitmap = withContext(Dispatchers.IO) {
             runCatching {
-                rawBytes(imageUrl)?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+                rawBytes(imageUrl)?.let { bytes ->
+                    val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                    val sample = ocrImageSampleSize(options.outWidth, options.outHeight) ?: return@let null
+                    options.inJustDecodeBounds = false
+                    options.inSampleSize = sample
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                }
             }.getOrNull()
         } ?: return OcrResult.Failed
 

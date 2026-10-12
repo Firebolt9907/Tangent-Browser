@@ -209,8 +209,9 @@ class PullRefreshContainer(context: Context) : FrameLayout(context), NestedScrol
             val distance = pullPx
             val travel = if (pulling) currentX - anchorX else 0f
             pulling = false
-            if (distance > 0f) onRelease(distance, travel)
-            onPull(0f, 0f)
+            // Release transfers visual ownership to Compose's inertial settle. A subsequent
+            // synthetic zero pull would cancel it and snap the menu straight home.
+            if (distance > 0f) onRelease(distance, travel) else onPull(0f, 0f)
         }
     }
 

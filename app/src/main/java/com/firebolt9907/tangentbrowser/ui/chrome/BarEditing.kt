@@ -192,8 +192,10 @@ internal fun BarEditing(
                         userText = newText
                         onEditingTextChange(newText)
                         if (grewAtEnd) {
+                            // The previous suggestion belongs to the previous query. Wait for a
+                            // fresh result before offering its suffix again.
                             suppressAutocomplete = false
-                            showValue(newText, autocompleteSuffix(newText, inlineAutocomplete))
+                            showValue(newText, null)
                         } else {
                             suppressAutocomplete = true
                             fieldValue = value

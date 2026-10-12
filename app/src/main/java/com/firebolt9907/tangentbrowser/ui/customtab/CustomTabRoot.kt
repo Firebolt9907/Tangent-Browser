@@ -424,17 +424,24 @@ fun CustomTabRoot(
                         if (backEvent.swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
                     closeTouchDy = backEvent.touchY - startTouchY
                     closeSlide = backEvent.progress.coerceIn(0f, 1f)
+                    motionEngine.track("close", closeSlide)
+                    motionEngine.track("close-y", closeTouchDy)
                 }
                 motionEngine.animate("close", closeSlide, 1f, animationSpec = TangentMotion.CustomTabCloseCommit) { v, _ -> closeSlide = v }
                 // Leave closeSlide at 1: the window's exit animation continues from this frame,
                 // resetting it would flash the full-size page before the window fades.
                 onClose()
-            } catch (_: CancellationException) {
-                val cancelSlide = closeSlide
-                val cancelDy = closeTouchDy
-                motionEngine.animate("close-cancel", 1f, 0f, animationSpec = TangentMotion.PredictiveBackCancel) { v, _ ->
-                    closeSlide = cancelSlide * v
-                    closeTouchDy = cancelDy * v
+            } catch (cancelled: CancellationException) {
+                if (cancelled is MotionInterruptedException) throw cancelled
+                kotlinx.coroutines.coroutineScope {
+                    launch {
+                        motionEngine.animate("close", closeSlide, 0f,
+                            animationSpec = TangentMotion.PredictiveBackCancel) { v, _ -> closeSlide = v }
+                    }
+                    launch {
+                        motionEngine.animate("close-y", closeTouchDy, 0f,
+                            animationSpec = TangentMotion.CardSnapBack) { v, _ -> closeTouchDy = v }
+                    }
                 }
                 closeSlide = 0f
                 closeTouchDy = 0f

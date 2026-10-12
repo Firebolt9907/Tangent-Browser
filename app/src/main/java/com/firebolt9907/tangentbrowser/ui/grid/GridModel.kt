@@ -371,3 +371,29 @@ fun deckDragScale(progress: Float, dragPx: Float, travelPx: Float): Float {
         ((dragPx - travelPx) / (travelPx * DeckDragOvershootTravelMul)).coerceIn(0f, 1f)
     return firstStage + (DeckDragMinScale - firstStage) * overshootT
 }
+
+/** Neighboring iOS cards stop shrinking at the normal pull size; only the held card over-shrinks. */
+fun deckDragCardScale(progress: Float, dragPx: Float, travelPx: Float, holdAtNormalSize: Boolean): Float =
+    deckDragScale(progress, if (holdAtNormalSize) dragPx.coerceAtMost(travelPx) else dragPx, travelPx)
+
+/** Shared draw/capture geometry, with each card bottom-aligned to the finger. */
+fun deckDragCardPose(
+    progress: Float,
+    dragPx: Float,
+    containerW: Float,
+    containerH: Float,
+    fingerX: Float,
+    pageStridePx: Float,
+    slotDelta: Int,
+    mode: TabViewMode,
+): DeckSlot {
+    val travel = containerH * DeckTravelFrac
+    val heldScale = deckDragScale(progress, dragPx, travel)
+    val scale = deckDragCardScale(progress, dragPx, travel,
+        mode == TabViewMode.DECK && slotDelta != 0)
+    return DeckSlot(
+        fingerX + slotDelta * pageStridePx * heldScale - containerW * scale / 2f,
+        containerH - dragPx - containerH * scale,
+        scale, 1f,
+    )
+}

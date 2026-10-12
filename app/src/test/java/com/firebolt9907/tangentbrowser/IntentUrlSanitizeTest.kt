@@ -79,8 +79,15 @@ class IntentUrlSanitizeTest {
     @Test fun aboutScheme_blocked() =
         assertNull(IntentUrls.sanitizeExternalUrl("about:config"))
 
-    // A token broken by an interior control char is NOT a valid scheme, so it falls through as
-    // schemeless (becomes an https/search string downstream) — it never loads as javascript.
-    @Test fun interiorTabInScheme_treatedAsSchemeless() =
-        assertEquals("java\tscript:alert(1)", IntentUrls.sanitizeExternalUrl("java\tscript:alert(1)"))
+    @Test fun embeddedControls_blockedBeforeEngineParsing() {
+        for (control in (0..31).map(Int::toChar) + '\u007f') {
+            for (url in listOf(
+                "java${control}script:alert(1)",
+                "fi${control}le:///data/data/private",
+                "https://example.com/${control}path",
+            )) {
+                assertNull("Control ${control.code} must not reach Gecko", IntentUrls.sanitizeExternalUrl(url))
+            }
+        }
+    }
 }

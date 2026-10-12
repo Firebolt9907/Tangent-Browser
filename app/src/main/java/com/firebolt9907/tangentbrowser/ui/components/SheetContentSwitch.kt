@@ -10,7 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.firebolt9907.tangentbrowser.ui.TangentMotion
-import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
+import com.firebolt9907.tangentbrowser.ui.theme.EaseMotion
 
 /** The three states every library sheet moves between while it loads its rows. */
 enum class SheetContentPhase { Loading, Empty, Content }
@@ -24,11 +24,11 @@ enum class SheetContentPhase { Loading, Empty, Content }
  * was animating right up to the frame it disappeared on, which makes the cut especially loud: a
  * moving thing stops existing.
  *
- * The transition is M3's fade-through — the outgoing branch clears out on the **fast** effects
- * spring while the incoming one arrives on the **default** one — plus a size animation, because the
+ * The outgoing branch fades away quickly while incoming content eases into view,
+ * plus a size animation, because the
  * height change is most of what the eye actually catches here.
  *
- * The size spring is [TangentMotion.RevealExpand]/[TangentMotion.RevealCollapse], not an expressive
+ * The size curve is [TangentMotion.RevealExpand]/[TangentMotion.RevealCollapse], not an expressive
  * spatial: every spatial tier is 0.8-damped, and overshoot on a container's *size* grows it past its
  * content and flashes a gap (see those specs' own note). `clip = false` because the branches fade
  * rather than slide — clipping them to the mid-animation box would chop rows off instead of
@@ -47,8 +47,8 @@ fun SheetContentSwitch(
         contentAlignment = contentAlignment,
         transitionSpec = {
             (
-                fadeIn(ExpressiveMotion.defaultEffectsSpec()) togetherWith
-                    fadeOut(ExpressiveMotion.fastEffectsSpec())
+                fadeIn(EaseMotion.enterSpec(240)) togetherWith
+                    fadeOut(EaseMotion.exitSpec(120))
                 ).using(
                 SizeTransform(clip = false) { _, _ ->
                     // Leaving the spinner is the sheet filling in; leaving anything else is it

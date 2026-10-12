@@ -1,6 +1,7 @@
 package com.firebolt9907.tangentbrowser.ui
 
 import com.firebolt9907.tangentbrowser.ui.motion.BrowserPhysics
+import com.firebolt9907.tangentbrowser.ui.theme.EaseMotion
 import android.view.animation.Interpolator
 import android.view.animation.PathInterpolator
 import androidx.compose.animation.core.CubicBezierEasing
@@ -213,14 +214,12 @@ internal object TangentMotion {
     // these specs folds the column's height into the same motion, so the surroundings move with the
     // card instead of snapping ahead of it.
     //
-    // Critically damped deliberately: an expressive spatial's 0.8 damping overshoots, and overshoot
-    // on a *size* means the container grows taller than its content and flashes a gap before
-    // settling — the same reason [TakeoverSlide] is damped flat. Both directions share the
-    // browser response so a reversal feels like the same surface changing direction.
+    // Bounded ease curves prevent the container growing past its content and flashing a gap.
+    // Expansion has a deliberate, soft landing; collapse returns the space a little sooner.
     val RevealExpand =
-        BrowserPhysics.spring(visibilityThreshold = IntSize(1, 1))
+        EaseMotion.resizeSpec<IntSize>(320)
     val RevealCollapse =
-        BrowserPhysics.spring(visibilityThreshold = IntSize(1, 1))
+        EaseMotion.resizeSpec<IntSize>(240)
 }
 
 /** Fraction of a raw drag applied at the very edge of an overscroll; falls to 0 as you pull further. */

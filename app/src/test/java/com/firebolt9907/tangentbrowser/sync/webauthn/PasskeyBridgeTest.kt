@@ -1,5 +1,7 @@
 package com.firebolt9907.tangentbrowser.sync.webauthn
 
+import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -35,6 +37,64 @@ class PasskeyBridgeTest {
         assertNull(PasskeyBridge.effectiveRpId("http://example.com", null))
         assertEquals("localhost", PasskeyBridge.effectiveRpId("http://localhost:8080", null))
         assertNull(PasskeyBridge.effectiveRpId("not a url", null))
+    }
+
+    @Test fun public_suffix_and_private_tenant_boundaries_are_rejected() {
+        for ((origin, rp) in listOf(
+            "https://example.com" to "com",
+            "https://example.co.uk" to "co.uk",
+            "https://attacker.github.io" to "github.io",
+            "https://attacker.blogspot.com" to "blogspot.com",
+            "https://foo.example.invalid" to "example.invalid",
+        )) assertNull("$origin must not claim $rp", PasskeyBridge.effectiveRpId(origin, rp))
+        assertEquals("example.co.uk", PasskeyBridge.effectiveRpId("https://login.example.co.uk", "example.co.uk"))
+        assertEquals("tenant.github.io", PasskeyBridge.effectiveRpId("https://login.tenant.github.io", "tenant.github.io"))
+    }
+
+    @Test fun malformed_origins_and_localhost_scheme_bypasses_are_rejected() {
+        for (origin in listOf(
+            "file://localhost", "ftp://localhost", "javascript://127.0.0.1",
+            "https://user@example.com", "https://example.com/path",
+            "https://example.com?query", "https://example.com#fragment", "https://example.com:65536",
+        )) assertNull(origin, PasskeyBridge.effectiveRpId(origin, null))
+        assertNull(PasskeyBridge.effectiveRpId("https://example.com", " example.com "))
+        assertNull(PasskeyBridge.effectiveRpId("http://127.0.0.1", "0.0.1"))
+    }
+
+    @Test fun providers_receive_only_the_validated_rp_in_both_representations() = runBlocking {
+        var get: PasskeyGetRequest? = null
+        var create: PasskeyCreateRequest? = null
+        val bridge = PasskeyBridge(this, object : PasskeyProvider {
+            override suspend fun getAssertion(request: PasskeyGetRequest): PasskeyOutcome {
+                get = request
+                return PasskeyOutcome.Fallback
+            }
+            override suspend fun makeCredential(request: PasskeyCreateRequest): PasskeyOutcome {
+                create = request
+                return PasskeyOutcome.Fallback
+            }
+        })
+        val message = JSONObject().put("origin", "https://login.example.com")
+            .put("rpId", "example.com").put("clientDataJSON", "synthetic-client-data")
+        bridge.handle(message.put("op", "get").put("requestJson", """{"rpId":"victim.com","challenge":"test"}"""))
+        val receivedGet = requireNotNull(get)
+        assertEquals("example.com", receivedGet.rpId)
+        assertEquals("example.com", JSONObject(receivedGet.credentialManagerRequestJson!!).getString("rpId"))
+        bridge.handle(message.put("op", "create").put("requestJson", """{"rp":{"id":"victim.com","name":"Test"}}"""))
+        val receivedCreate = requireNotNull(create)
+        assertEquals("example.com", receivedCreate.rpId)
+        val rp = JSONObject(receivedCreate.credentialManagerRequestJson!!).getJSONObject("rp")
+        assertEquals("example.com", rp.getString("id"))
+        assertEquals("Test", rp.getString("name"))
+
+        get = null
+        create = null
+        val denied = bridge.handle(message.put("rpId", "com"))
+        assertFalse(denied.getBoolean("ok"))
+        assertEquals("SecurityError", denied.getString("error"))
+        assertNull(create)
+        bridge.handle(message.put("op", "get"))
+        assertNull(get)
     }
 
     @Test fun reply_serializes_assertion() {

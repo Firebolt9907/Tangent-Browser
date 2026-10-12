@@ -5,7 +5,7 @@ Snapshot of the app's design and the rationale behind the choices that aren't ob
 ## Stack
 
 - Android Compose UI, Material 3, edge-to-edge.
-- Browser engine: Mozilla GeckoView via `org.mozilla.components` 147.0.4 (`browser-engine-gecko`, `browser-state`, `feature-session`, `feature-tabs`) plus Firefox Accounts / Sync (`service-firefox-accounts`, `browser-storage-sync`, `feature-syncedtabs`).
+- Browser engine: Mozilla GeckoView via `org.mozilla.components` 156.0.1 (`browser-engine-gecko`, `browser-state`, `feature-session`, `feature-tabs`) plus Firefox Accounts / Sync (`service-firefox-accounts`, `browser-storage-sync`, `feature-syncedtabs`).
 - Min SDK 26, target SDK 36, Kotlin 2.2.
 
 ## Components graph (`engine/Engine.kt`)
@@ -70,7 +70,7 @@ Why not two live engine views? GeckoView only supports one rendered session at a
 - Crossing 180 px of accumulated collapse flips the logical state to compact immediately and animates the visual bar to fully compact. Expanding back out uses hysteresis: once compact, the bar stays compact until collapse drops below 120 px, then previews expansion and settles back to expanded if scrolling pauses.
 - Preview progress is written with `Animatable.snapTo`, throttled by a 0.003 epsilon so tiny scroll changes do not restart work every frame while still feeling smooth on slow scrolls. Only the discrete commit transitions animate: compact-entry, compact-exit, and settle-back-to-expanded use `Animatable.animateTo` with `spring(dampingRatio = 0.6, stiffness = Medium)` for a bouncier settle, while in-between preview updates do not animate. Width, height, corner radius, and tab-count chip alpha all interpolate from the same `collapseProgress` so they animate in lockstep. When preview settles fully back to expanded, `barCollapsePx` is reset to 0 so the next scroll starts from a clean state instead of resuming from stale accumulated collapse.
 - The bar is one continuous `BarExpanded` surface, not a discrete Expanded/Compact composable switch. Width, height, corner radius, padding, side controls, and tab-count visibility interpolate from full to compact.
-- Full size is screen width minus 40 dp. Compact target width is based on the displayed domain length, clamped so short domains remain tappable and long domains cannot exceed the full bar width.
+- Full size is screen width minus 40 dp. Compact target width measures the displayed label with the same typography and accessibility font scale as the visible text, plus 24 dp of horizontal padding. It is clamped so short domains remain tappable and long domains cannot exceed the full bar width. The fading HTTP security icon collapses its layout width too, so it does not steal space from the compact label.
 - The tab-count chip fades/shrinks out before full compact. Tapping the compact domain pill expands the URL bar instead of entering text editing.
 - `BottomBarLayer` owns the read of `barCollapseProgressState.value`; `TangentRoot` passes the `Animatable` down instead of reading its value directly. This limits per-frame invalidation during pill animation to the bottom bar layer instead of recomposing the full root around Gecko.
 - `SafariBar` reports stable bottom inset heights instead of its animated height: 56 dp for normal/compact and 72 dp for Editing, plus 24 dp bottom padding. This avoids resizing the Gecko viewport on every collapse frame while still giving the address text field enough vertical room.
@@ -243,6 +243,8 @@ Add-ons use Gecko's built-in WebExtension APIs directly instead of the larger `f
 
 Known limitations:
 
+- **Bundled uBlock Origin:** `AddonController.installBundledUblock()` installs the pinned APK copy offline, after checking for a profile copy. `prepareBundledUblock` generates assets from `app/vendor/ublock/`; the EasyList and uBO cookie-notice lists are first-run defaults with offline snapshots. Saved filter choices win on later launches. Banner filtering hides/blocks notices; it does not reproduce Firefox's former automatic consent rejection.
+- **Optional uBO updates:** aA → Add-ons → Automatically update uBlock Origin persists an opt-in. Gecko built-ins cannot update through AMO, so enabling this installs the Mozilla-signed profile overlay with the same ID, without uninstalling or deleting extension storage. Checks run at startup and every 24 hours while the process runs, throttled by a persisted last-attempt time. Permission prompts remain intact. Startup never downgrades a profile overlay to the APK copy, and removal is blocked in both forms. Turning off checks keeps the installed version; uBO filter-list updates remain independent. Details and verification: `app/vendor/ublock/README.md`, `tools/ubo-defaults-harness.js`.
 - No curated/recommended AMO catalog is built yet.
 - Browser-action/page-action toolbar surfaces are not implemented. The add-ons can run, but action popups/buttons do not have first-class UI yet.
 
@@ -672,3 +674,66 @@ Background additions and page updates do not promote tabs. The shared store orde
 used by every overview mode and the pill switcher. ZenPhoneSpace reverses the public projection at
 publication, putting the most recently viewed tab first in the space children; linked desktop root
 tabs participate, while folder placement and unrelated desktop children are preserved.
+
+### Upward overview flick release
+
+During a long Deck opening pull, neighboring cards stop shrinking at the normal drag floor
+(`DeckDragFirstStageMinScale`, 0.62); only the held card continues toward 0.4. All bottom edges
+continue following the finger. `deckDragCardPose` supplies both drawing and release capture,
+so different card sizes do not pop on release. The release arc carries separate background
+scale velocity (zero after its size plateaus), while horizontal spacing follows the held
+card's scale. Pixel retains uniform drag scaling.
+
+Every Deck/Pixel swipe commit uses a shared 350 ms elapsed-time clock. All cards preserve
+their release velocity, with background inertia progressively damped by distance from the
+selected card so they follow the throw without mirroring its full excursion.
+There is no velocity threshold for this path: momentum varies continuously with release speed.
+The inertial contribution carries only the measured release velocity, without a mid-flight
+boost that would add an upward kick over the first visible frames.
+The linear release clock drives separate landing and momentum curves. Most destination travel
+happens in the first half, followed by a long ease-out with zero landing velocity and acceleration.
+The momentum curve retains an initial slope of one so the swipe velocity is preserved.
+The captured drag pose supplies the initial position; upward velocity and the local
+`deckDragScale` slope supply bottom-edge and scale tangents.
+Both arrive at the destination with zero velocity. Tracking the bottom edge preserves the
+finger anchor while shrinking. Faster swipes travel farther before returning; tracker spikes
+are capped at three screen heights per second and scale velocity is bounded to prevent collapse.
+The old fixed-height parabolic bend was disabled because a velocity-seeded spring rushed through
+its first frames. Do not feed spring progress into the new trajectory: that multiplies its initial
+velocity. Button entry and classic Grid retain their existing spring paths.
+
+Downward pill drags stop accepting horizontal deltas once collapse owns the gesture. On release,
+clear both `offsetX` and the tab-switch snapshot request before compacting: otherwise lateral
+finger drift leaves `overlayActive` true and the captured page permanently covers the engine.
+The collapse spring receives normalized release velocity. Overview predictive-back records both
+preview axes and seeds the close/cancel springs with their measured velocities (bounded to five
+progress units per second); button-driven closes continue to use the existing animation behavior.
+
+### State-driven ease curves
+
+`EaseMotion` supplies bounded duration-based curves for transitions initiated by UI state.
+The URL bar keeps its shared address bounds and AnimatedContent transition. Bounds, size,
+and toolbar lift animate over 320 ms; incoming content fades over 240 ms and outgoing
+content over 120 ms. Compose dependencies use an enforced BOM for both app and UI tests:
+transitive Material alpha versions can otherwise mix incompatible CustomStyle APIs with
+Foundation, failing when OutlinedTextField's decoration first attaches. Later detached-node
+and slot-table exceptions mask that original AbstractMethodError.
+Library sheet incoming content
+fades over 240 ms; outgoing content clears over 120 ms. Loading/empty/content transitions
+use those fades with 320 ms expansion and
+240 ms collapse, also shared by expandable controls and inline loading indicators.
+Reader block reveals slide for 480 ms with a pronounced ease-out and fade in over 280 ms.
+Gesture releases retain their measured momentum; Material sheet companions and IME-following
+surfaces retain their platform-matched specs.
+
+### Other gesture release momentum
+
+Classic-grid horizontal card releases seed both dismissal and snap-back with measured velocity;
+the distance-based close decision is unchanged. Re-grabbing cancels the previous settle.
+The pull menu tracks its rendered distance, horizontal displacement and reveal through the motion
+engine, so release inherits their velocities after rubber-band resistance. `onStopNestedScroll`
+must not send a synthetic zero pull after `onRelease`: that cancels Compose's return animation.
+Address suggestions and the manually controlled IME share a velocity-dependent monotone cubic
+curve over 200 ms, including when IME control arrives late. The curve is bounded to avoid driving
+the keyboard beyond valid insets. Custom Tab close cancellation retains momentum on both axes;
+the short committed close/window-animation handoff is unchanged.

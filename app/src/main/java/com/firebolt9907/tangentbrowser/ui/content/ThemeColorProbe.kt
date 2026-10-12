@@ -79,7 +79,7 @@ object ThemeColorProbe {
             if (a <= 0.01f) return null
             AndroidColor.rgb(r, g, b)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse theme-color payload: $raw", e)
+            Log.w(TAG, "Failed to parse theme-color payload")
             null
         }
     }

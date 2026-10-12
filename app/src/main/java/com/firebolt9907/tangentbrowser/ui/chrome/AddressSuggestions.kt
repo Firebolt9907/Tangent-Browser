@@ -74,9 +74,9 @@ import com.firebolt9907.tangentbrowser.state.RemoteTabRef
 import com.firebolt9907.tangentbrowser.state.openTabSuggestions
 import com.firebolt9907.tangentbrowser.state.syncedTabSuggestions
 import com.firebolt9907.tangentbrowser.state.searchSuggestions
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import mozilla.components.concept.storage.BookmarksStorage
 import mozilla.components.concept.storage.HistoryStorage
 import mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient
@@ -115,7 +115,7 @@ fun AddressSheet(
     // Reports the currently highlighted top suggestion (the row pressing Go/Enter will commit), or
     // null when there is no actionable suggestion. Lets the editing field submit the autoselected
     // result the way desktop browsers do, and inline-complete a matching URL into the field.
-    onTopSuggestionChange: (AddressSuggestion?) -> Unit = {},
+    onTopSuggestionChange: (String, AddressSuggestion?) -> Unit = { _, _ -> },
     onPreconnect: (String) -> Unit = {},
     onPreloadPage: (String) -> Unit = {},
     searchSuggestionsEnabled: Boolean = true,
@@ -204,37 +204,31 @@ fun AddressSheet(
     val trimmed = query.trim()
     val rowsActive = visible && trimmed.isNotEmpty() && trimmed != pageUrl.trim()
     val suggestClient = remember { HttpURLConnectionClient() }
-    var localMatches by remember { mutableStateOf<List<AddressSuggestion>>(emptyList()) }
-    var searchTerms by remember { mutableStateOf<List<String>>(emptyList()) }
-    LaunchedEffect(rowsActive, trimmed) {
-        if (!rowsActive) {
-            localMatches = emptyList()
-            searchTerms = emptyList()
-            return@LaunchedEffect
-        }
-        delay(120)
-        // Local (history/bookmark) and remote (search-engine) suggestions in parallel; each keystroke
-        // cancels the prior fetch via this LaunchedEffect's key. Remote suggestions are skipped
-        // entirely when the user has turned them off (no keystrokes leave the device).
-        val local = async { addressSuggestions(trimmed, historyStorage, bookmarksStorage, max = 4) }
-        val remote = async {
-            if (searchSuggestionsEnabled) {
-                searchSuggestions(trimmed, suggestClient, searchEngine)
-            } else {
-                emptyList()
-            }
-        }
-        localMatches = local.await()
-        searchTerms = remote.await()
+    var localResult by remember { mutableStateOf<Pair<String, List<AddressSuggestion>>?>(null) }
+    var remoteResult by remember { mutableStateOf<Pair<String, List<String>>?>(null) }
+    LaunchedEffect(rowsActive, trimmed, historyStorage, bookmarksStorage) {
+        if (!rowsActive) return@LaunchedEffect
+        // Local matches should appear as soon as Places responds, without waiting for the network.
+        val matches = addressSuggestions(trimmed, historyStorage, bookmarksStorage, max = 4)
+        if (!isActive) return@LaunchedEffect
+        localResult = trimmed to matches
         // Pre-warm connections to the likeliest destinations (the top concrete-URL suggestions) so
         // tapping one lands on an already-open connection. Search-query rows have no origin, so the
         // preconnector's URL check ignores them.
-        localMatches.take(2).forEach { onPreconnect(it.url) }
+        matches.take(2).forEach { onPreconnect(it.url) }
         // Go further for the single top hit: actually preload the page into cache so tapping it is
         // near-instant. Gated by the caller (preload policy) since this spends data. Only concrete
         // URL suggestions are preloadable — a raw search query isn't a page.
-        localMatches.firstOrNull()?.let { onPreloadPage(it.url) }
+        matches.firstOrNull()?.let { onPreloadPage(it.url) }
     }
+    LaunchedEffect(rowsActive, trimmed, searchSuggestionsEnabled, searchEngine) {
+        if (!rowsActive || !searchSuggestionsEnabled) return@LaunchedEffect
+        delay(120)
+        val terms = searchSuggestions(trimmed, suggestClient, searchEngine)
+        if (isActive) remoteResult = trimmed to terms
+    }
+    val localMatches = localResult?.takeIf { rowsActive && it.first == trimmed }?.second.orEmpty()
+    val searchTerms = remoteResult?.takeIf { rowsActive && searchSuggestionsEnabled && it.first == trimmed }?.second.orEmpty()
     // Switch-to-tab matches are computed synchronously from the in-memory open-tab list (no IO), so
     // they can be derived inline rather than in the debounced fetch effect above.
     val tabMatches = if (rowsActive) {
@@ -257,7 +251,7 @@ fun AddressSheet(
     // editing field can inline-complete a matching URL. `onSubmit`'s normalizeUrl re-decides
     // URL-vs-search, so a highlighted history URL navigates and a highlighted query searches.
     val topRow = if (visible) rows.firstOrNull() else null
-    LaunchedEffect(topRow) { onTopSuggestionChange(topRow) }
+    LaunchedEffect(trimmed, topRow) { onTopSuggestionChange(trimmed, topRow) }
 
     // Paste & Go (Safari/Arc-style): while the field is empty or still holds the untouched current
     // URL, offer the clipboard as a one-tap destination. We only probe the clip *description* for a
@@ -291,21 +285,23 @@ fun AddressSheet(
         val keepKeyboard = !dismiss && imeController.isSupported && (
             velocityY < -300f || (velocityY <= 600f && currentFrac >= 0.35f)
         )
-        // Ride the real keyboard to its resting state (preserves the frame-locked feel on release).
+        val target = if (dismiss) {
+            containerHeightPx.takeIf { it > 0f } ?: (travelPx * 3f)
+        } else 0f
+        val easing = com.firebolt9907.tangentbrowser.ui.motion.releaseEasing(
+            target - rawDragPx, velocityY, com.firebolt9907.tangentbrowser.ui.ImeSettleDurationMs,
+        )
+        // The exact same normalized curve drives both surfaces, including delayed IME control.
         if (imeController.isSupported && imeController.isActive) {
-            imeController.animateToFinish(show = keepKeyboard) {}
+            imeController.animateToFinish(show = keepKeyboard, easing = easing) {}
         }
         scope.launch {
-            val target = if (dismiss) {
-                (containerHeightPx.takeIf { it > 0f } ?: (travelPx * 3f))
-            } else {
-                0f
-            }
             val anim = Animatable(rawDragPx)
             // Same duration and curve ImeSheetController.animateToFinish settles the real keyboard
             // on. The sheet is glued to the keyboard for the whole drag; if the two settle on
             // different curves they visibly come unstuck the instant the finger lifts.
-            anim.animateTo(target, TangentMotion.ImeSettle) { rawDragPx = value }
+            anim.animateTo(target, androidx.compose.animation.core.tween(
+                com.firebolt9907.tangentbrowser.ui.ImeSettleDurationMs, easing = easing)) { rawDragPx = value }
             // Pin the post-drag resting state BEFORE clearing `dragging` so the offset doesn't snap:
             // dismissed → keep it off-screen (reveal 0); settled → keep it open (reveal 1).
             reveal.snapTo(if (dismiss) 0f else 1f)

@@ -23,7 +23,7 @@ import com.google.android.gms.common.api.Status
  *
  * Wired to the page side via [com.firebolt9907.tangentbrowser.ui.content.OtpAutofill]: the browser
  * calls [startListening] when a page reports an OTP field, and forwards the extracted code back
- * through [onCode] (→ `OtpAutofill.deliverCode`, which injects the fill script).
+ * through the destination callback captured by [startListening].
  *
  * The consent launcher is registered at construction time (an Activity field), which is a valid
  * point to call `registerForActivityResult`. The broadcast receiver is registered lazily on first
@@ -31,39 +31,32 @@ import com.google.android.gms.common.api.Status
  */
 class OtpSmsController(
     private val activity: ComponentActivity,
-    private val onCode: (String) -> Unit,
 ) {
 
     private var receiver: BroadcastReceiver? = null
 
-    // Debounce: OTP-field focus can fire repeatedly; each startSmsUserConsent resets the 5-min
-    // window, so collapse a burst into one arm.
-    private var lastStartMs = 0L
+    private val delivery = OtpConsentDelivery(SystemClock::elapsedRealtime)
 
     private val consentLauncher = activity.registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
+        val code = if (result.resultCode == Activity.RESULT_OK) {
             val message = result.data?.getStringExtra(SmsRetriever.EXTRA_SMS_MESSAGE)
-            val code = message?.let {
+            message?.let {
                 com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.extractCode(it)
             }
-            if (code != null) {
-                runCatching { onCode(code) }
-            }
-        }
+        } else null
+        runCatching { delivery.finish(code) }
     }
 
     /** Arm Play Services to watch for the next OTP SMS. Safe to call repeatedly (debounced). */
-    fun startListening() {
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastStartMs < DEBOUNCE_MS) return
-        lastStartMs = now
+    fun startListening(onCode: (String) -> Unit) {
+        if (!delivery.arm(onCode)) return
         ensureReceiver()
         // null sender → accept a message from any number. startSmsUserConsent silently no-ops if
         // Play Services is unavailable; swallow so it never crashes a normal page load.
         runCatching { SmsRetriever.getClient(activity).startSmsUserConsent(null) }
-            .onFailure { Log.d(TAG, "startSmsUserConsent failed", it) }
+            .onFailure { delivery.clear(); Log.d(TAG, "startSmsUserConsent failed", it) }
     }
 
     private fun ensureReceiver() {
@@ -81,9 +74,9 @@ class OtpSmsController(
                     @Suppress("DEPRECATION")
                     extras.getParcelable(SmsRetriever.EXTRA_CONSENT_INTENT)
                 }
-                if (consent != null) {
+                if (consent != null && delivery.beginConsent()) {
                     runCatching { consentLauncher.launch(consent) }
-                        .onFailure { Log.d(TAG, "launch consent failed", it) }
+                        .onFailure { delivery.finish(null); Log.d(TAG, "launch consent failed", it) }
                 }
             }
         }
@@ -103,12 +96,12 @@ class OtpSmsController(
 
     /** Unregister the receiver. Call from the Activity's onDestroy. */
     fun dispose() {
+        delivery.clear()
         receiver?.let { runCatching { activity.unregisterReceiver(it) } }
         receiver = null
     }
 
     companion object {
         private const val TAG = "OtpSmsController"
-        private const val DEBOUNCE_MS = 3000L
     }
 }

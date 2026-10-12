@@ -1,46 +1,20 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Backup / transfer rules for API 31+ (allowBackup="true" in the manifest).
-
-   Everything is backed up/transferred by default; we exclude the credential and Firefox-Sync
-   session material from BOTH cloud backup and direct device-to-device transfer so it is never
-   copied off the device that generated it:
-     - tangent_logins.db (+ WAL/SHM) — the encrypted PlacesLoginsStorage password database. Its AES
-       key lives in the AndroidKeyStore (device-bound, not backed up or transferred), so a copied
-       database is undecryptable anyway; excluding it avoids shipping credential ciphertext.
-     - fxaStateAC.xml — android-components' default SharedPrefAccountStorage file holding the FxA
-       account/session state (OAuth + sync keys); excluding it stops a restored/transferred copy
-       from carrying an authenticated sync session.
-     - tangent_logins_key.xml — holds the logins DB key sealed under a device-bound AndroidKeyStore
-       key. The seal is useless off-device (the wrapping key isn't backed up/transferred), but we
-       exclude the credential-key ciphertext anyway, matching the DB exclusion above.
-     - autofill.sqlite (+ WAL/SHM) — the encrypted AutofillCreditCardsAddressesStorage DB (credit-card
-       numbers encrypted at rest, plus saved addresses); its key lives in tangent_autofill_secure
-       (device-bound AndroidKeyStore), so a copied DB is undecryptable — excluded to avoid shipping
-       card ciphertext off-device.
-     - tangent_autofill_secure.xml — the SecureAbove22Preferences file holding the autofill DB key
-       (device-bound seal); useless off-device, excluded to match.
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Back up only reviewed UI preferences. Android otherwise includes app files, databases and
+    shared preferences by default, including Gecko session data and future credential stores.
+    Browsing/session data, form memory, autofill approvals, site permission grants, account state,
+    keys, screenshots and crash dumps must stay on this device. Firefox Sync is independent.
+    New stores are NOT eligible until explicitly reviewed here and in the other rules file.
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <exclude domain="database" path="tangent_logins.db" />
-        <exclude domain="database" path="tangent_logins.db-wal" />
-        <exclude domain="database" path="tangent_logins.db-shm" />
-        <exclude domain="database" path="autofill.sqlite" />
-        <exclude domain="database" path="autofill.sqlite-wal" />
-        <exclude domain="database" path="autofill.sqlite-shm" />
-        <exclude domain="sharedpref" path="fxaStateAC.xml" />
-        <exclude domain="sharedpref" path="tangent_logins_key.xml" />
-        <exclude domain="sharedpref" path="tangent_autofill_secure.xml" />
+        <include domain="sharedpref" path="tangent_global_prefs.xml" />
+        <include domain="sharedpref" path="tangent_site_prefs.xml" />
+        <include domain="sharedpref" path="tangent_zapped_elements.xml" />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="database" path="tangent_logins.db" />
-        <exclude domain="database" path="tangent_logins.db-wal" />
-        <exclude domain="database" path="tangent_logins.db-shm" />
-        <exclude domain="database" path="autofill.sqlite" />
-        <exclude domain="database" path="autofill.sqlite-wal" />
-        <exclude domain="database" path="autofill.sqlite-shm" />
-        <exclude domain="sharedpref" path="fxaStateAC.xml" />
-        <exclude domain="sharedpref" path="tangent_logins_key.xml" />
-        <exclude domain="sharedpref" path="tangent_autofill_secure.xml" />
+        <include domain="sharedpref" path="tangent_global_prefs.xml" />
+        <include domain="sharedpref" path="tangent_site_prefs.xml" />
+        <include domain="sharedpref" path="tangent_zapped_elements.xml" />
     </device-transfer>
 </data-extraction-rules>

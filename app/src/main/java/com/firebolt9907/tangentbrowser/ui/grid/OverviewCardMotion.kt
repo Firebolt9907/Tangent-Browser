@@ -1,24 +1,39 @@
 package com.firebolt9907.tangentbrowser.ui.grid
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.ui.util.lerp
 
-/**
- * Extra release trajectory reserved for a velocity-committed upward flick. The endpoints remain
- * the finger pose and the deck slot; [heightPx] and [scaleDip] only bend the middle of that path,
- * so an interrupted/re-targeted release can never pop at either end.
- */
+/** Release velocities in screen units; progress is elapsed time, never spring progress. */
 data class FlickReleaseArc(
-    val heightPx: Float,
-    val scaleDip: Float,
-)
+    val upwardVelocityPxS: Float,
+    val scaleVelocityPerSec: Float,
+    val containerWidth: Float,
+    val containerHeight: Float,
+    val backgroundScaleVelocityPerSec: Float = scaleVelocityPerSec,
+    val carouselScaleAtRelease: Float? = null,
+) {
+    // Shared clock keeps the foreground and background cards settling together.
+    val progress = Animatable(0f)
 
-/**
- * Temporary kill-switch: the velocity-commit arc wiring (trigger, intensity, [GridFlickArc]
- * storage, param threading) stays live, but this zeroes the visual bend so the release renders
- * exactly like the pre-arc path. Flip to `true` to restore the effect; a smart model should then
- * tune the arc/spread in `onPillDragEnd` (TangentRoot) and re-verify `OverviewCardMotionTest`.
- */
-internal const val FLICK_ARC_BEND_ENABLED: Boolean = false
+    companion object {
+        const val DurationMillis = 350
+    }
+}
+
+/** Early travel with a long, flat landing; position, velocity and acceleration settle together. */
+private fun landingBlend(t: Float): Float = t * t * (10f + t * (-20f + t * (15f - 4f * t)))
+
+/** Carry measured release momentum, with zero velocity and acceleration at the destination. */
+private fun coastTo(from: Float, to: Float, velocity: Float, t: Float, influence: Float): Float {
+    val smooth = landingBlend(t)
+    // Preserve every card's finger-tracked release velocity, then progressively damp the
+    // background throw. A constant velocity multiplier would introduce a release discontinuity.
+    // Do not boost the carry mid-flight: even with a matching endpoint derivative, that adds
+    // energy in the first visible frames and makes a quick release feel like another upward kick.
+    val remaining = 1f - t
+    val coast = t * remaining * remaining * remaining * remaining * lerp(1f, influence, smooth)
+    return lerp(from, to, smooth) + velocity * (FlickReleaseArc.DurationMillis / 1000f) * coast
+}
 
 /** Shared by the snapshot and its caption so their positions cannot diverge during settling. */
 internal fun overviewCardPose(
@@ -30,6 +45,8 @@ internal fun overviewCardPose(
     cancelFromProgress: Float,
     releasePosition: Triple<Float, Float, Float>?,
     flickReleaseArc: FlickReleaseArc? = null,
+    inertiaInfluence: Float = 1f,
+    isBackgroundCard: Boolean = false,
 ): DeckSlot {
     val p = progress.coerceIn(0f, 1f)
     val from = releasePosition ?: Triple(browseX, 0f, 1f)
@@ -38,16 +55,32 @@ internal fun overviewCardPose(
             // Overview progress can already be 1 after a long drag. The independent 0→1
             // release spring still has its full range, regardless of the finger's distance.
             val t = releaseProgress.coerceIn(0f, 1f)
-            // A quick upward flick otherwise has almost no visible throw: it can commit on
-            // velocity before the finger has travelled far. Bend that release into a high arc and
-            // briefly shrink below its destination size, then let it curve back and grow into the
-            // deck slot. `4t(1-t)` is zero at both endpoints, preserving seamless handoff.
-            val arcT = 4f * t * (1f - t)
-            val arc = if (FLICK_ARC_BEND_ENABLED) flickReleaseArc else null
+            flickReleaseArc?.let { arc ->
+                // Keep elapsed time linear: ease position and momentum separately so the
+                // stronger landing curve cannot multiply the finger's release velocity.
+                // Track the bottom edge, just as the drag does. Shrinking around the top-left
+                // would otherwise move the card sideways/downward the instant the finger lifts.
+                val scaleVelocity = if (isBackgroundCard) arc.backgroundScaleVelocityPerSec else arc.scaleVelocityPerSec
+                val scale = coastTo(from.third, slot.scale, scaleVelocity, t, inertiaInfluence)
+                val bottom = coastTo(
+                    from.second + arc.containerHeight * from.third,
+                    slot.ty + arc.containerHeight * slot.scale,
+                    -arc.upwardVelocityPxS, t, inertiaInfluence,
+                )
+                val center = coastTo(
+                    from.first + arc.containerWidth * from.third / 2f,
+                    slot.tx + arc.containerWidth * slot.scale / 2f,
+                    (from.first + arc.containerWidth * from.third / 2f - arc.containerWidth / 2f) /
+                        (arc.carouselScaleAtRelease ?: from.third) * arc.scaleVelocityPerSec, t, inertiaInfluence,
+                )
+                return DeckSlot(center - arc.containerWidth * scale / 2f,
+                    bottom - arc.containerHeight * scale, scale,
+                    lerp(1f, slot.alpha, landingBlend(t)))
+            }
             DeckSlot(
                 lerp(from.first, slot.tx, t),
-                lerp(from.second, slot.ty, t) - (arc?.heightPx ?: 0f) * arcT,
-                lerp(from.third, slot.scale, t) - (arc?.scaleDip ?: 0f) * arcT,
+                lerp(from.second, slot.ty, t),
+                lerp(from.third, slot.scale, t),
                 lerp(1f, slot.alpha, t),
             )
         }
@@ -60,3 +93,7 @@ internal fun overviewCardPose(
             lerp(0f, slot.ty, p), lerp(1f, slot.scale, p), lerp(1f, slot.alpha, p))
     }
 }
+
+/** Nearby cards follow most of the throw; deeper cards settle more directly into their slots. */
+internal fun overviewInertiaInfluence(slotDelta: Int): Float =
+    (1f / (1f + 0.45f * kotlin.math.abs(slotDelta))).coerceAtLeast(0.35f)

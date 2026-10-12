@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -213,7 +214,12 @@ fun ContainersSheet(
             EmptyState(
                 icon = Icons.Outlined.Shield,
                 title = "No containers yet",
-                description = "Create one for Work, Personal, Shopping, and so on.",
+                description = "Create one for Work, Shopping, or another separate identity.",
+                action = {
+                    Button(onClick = { showCreate = true }) {
+                        Text("Create container")
+                    }
+                },
             )
         }
 

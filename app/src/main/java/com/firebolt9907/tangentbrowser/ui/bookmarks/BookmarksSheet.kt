@@ -32,6 +32,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -73,6 +74,7 @@ fun BookmarksSheet(
     val scope = rememberCoroutineScope()
     val haptics = rememberTangentHaptics()
     var bookmarks by remember { mutableStateOf<List<BookmarkNode>>(emptyList()) }
+    var readingListGuids by remember { mutableStateOf<Set<String>>(emptySet()) }
     var loading by remember { mutableStateOf(true) }
     var loadFailed by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -102,13 +104,22 @@ fun BookmarksSheet(
                 ?.children
                 ?.filter { it.type == BookmarkNodeType.ITEM && !it.url.isNullOrBlank() }
                 .orEmpty()
+            readingListGuids = readingListItems.map { it.guid }.toSet()
             bookmarks = (items + readingListItems).sortedByDescending { it.dateAdded }
         }
         loading = false
+        if (tree.isFailure && bookmarks.isNotEmpty()) {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    message = "Couldn't refresh bookmarks",
+                    duration = SnackbarDuration.Short,
+                )
+            }
+        }
     }
 
     fun retry() {
-        loading = true
+        loading = bookmarks.isEmpty()
         scope.launch { reload() }
     }
 
@@ -119,18 +130,24 @@ fun BookmarksSheet(
 
     LaunchedEffect(Unit) { reload() }
 
-    val canBookmarkCurrent = currentPageUrl.isNotBlank() &&
-        currentPageUrl != "about:blank" &&
-        bookmarks.none { it.url == currentPageUrl }
+    val canSaveCurrent = !loading && !loadFailed &&
+        currentPageUrl.isNotBlank() && currentPageUrl != "about:blank"
+    val canBookmarkCurrent = canSaveCurrent && bookmarks.none {
+        it.url == currentPageUrl && it.guid !in readingListGuids
+    }
+    val canReadLaterCurrent = canSaveCurrent && bookmarks.none {
+        it.url == currentPageUrl && it.guid in readingListGuids
+    }
 
-    val filtered = remember(bookmarks, searchQuery) {
+    val filtered = remember(bookmarks, readingListGuids, searchQuery) {
         if (searchQuery.isBlank()) {
             bookmarks
         } else {
             val q = searchQuery.trim().lowercase()
             bookmarks.filter {
                 it.url.orEmpty().lowercase().contains(q) ||
-                    it.title.orEmpty().lowercase().contains(q)
+                    it.title.orEmpty().lowercase().contains(q) ||
+                    (it.guid in readingListGuids && "reading list".contains(q))
             }
         }
     }
@@ -145,7 +162,7 @@ fun BookmarksSheet(
 
                 Spacer(Modifier.height(12.dp))
 
-                if (canBookmarkCurrent) {
+                if (canBookmarkCurrent || canReadLaterCurrent) {
                     // Two save destinations for the same page, so they read as one choice on one line
                     // instead of two stacked full-width buttons pushing the list off the first screenful.
                     // "Add to Reading List" is Safari-style save-for-later, backed by a dedicated folder
@@ -155,7 +172,7 @@ fun BookmarksSheet(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        FilledTonalButton(
+                        if (canBookmarkCurrent) FilledTonalButton(
                             onClick = {
                                 haptics.create()
                                 scope.launch {
@@ -187,7 +204,7 @@ fun BookmarksSheet(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        OutlinedButton(
+                        if (canReadLaterCurrent) OutlinedButton(
                             onClick = {
                                 haptics.create()
                                 scope.launch {
@@ -278,6 +295,15 @@ fun BookmarksSheet(
                                     } else {
                                         null
                                     },
+                                    action = if (searchQuery.isNotBlank()) {
+                                        {
+                                            TextButton(onClick = { searchQuery = "" }) {
+                                                Text("Clear search")
+                                            }
+                                        }
+                                    } else {
+                                        null
+                                    },
                                 )
                             }
                         }
@@ -340,7 +366,11 @@ fun BookmarksSheet(
                                             },
                                             supportingContent = {
                                                 Text(
-                                                    text = url,
+                                                    text = if (node.guid in readingListGuids) {
+                                                        "Reading List  ·  $url"
+                                                    } else {
+                                                        url
+                                                    },
                                                     style = MaterialTheme.typography.bodySmall,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis,

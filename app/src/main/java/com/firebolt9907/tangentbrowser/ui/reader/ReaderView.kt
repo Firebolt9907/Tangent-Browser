@@ -48,6 +48,7 @@ import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.unit.em
 import com.firebolt9907.tangentbrowser.ui.components.Favicon
 import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
+import com.firebolt9907.tangentbrowser.ui.theme.EaseMotion
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -1298,7 +1299,7 @@ fun ReaderView(
 // Entrance-reveal tuning (mirrors the desktop extension's staggered fade + slide-up in reader.css).
 private const val ReaderRevealStaggerMs = 100     // per-element delay step
 private const val ReaderRevealDelayMaxMs = 500    // cap the start delay so it never drags
-private const val ReaderRevealDurationMs = 480    // approximate settle of one element's reveal
+private const val ReaderRevealDurationMs = 480    // each element's slide, including its soft landing
 private const val ReaderRevealMaxIndex = 24       // past this (well off-screen) skip animating
 private val ReaderRevealShift = 16.dp             // how far each element slides up into place
 
@@ -1308,11 +1309,8 @@ private val ReaderRevealShift = 16.dp             // how far each element slides
  * draw-phase `graphicsLayer` so it never triggers relayout while scrolling, and is a no-op when
  * [enabled] is false (reduced-motion) or the element is far enough down to be off-screen at start.
  *
- * The slide and the fade are **separate** animations on purpose: the slide is spatial (expressive
- * springs are under-damped, so the line settles into place with a touch of energy) while opacity is
- * an effect and must be critically damped — one shared progress value can only be right for one of
- * them. The shift stays normalized 0..1, which puts `spring`'s default `0.01` visibility threshold
- * at ~half a pixel of [ReaderRevealShift] — the right granularity for a translation.
+ * The slide uses a longer ease-out so text glides to rest without bouncing. Opacity arrives
+ * sooner on its own curve, keeping the article readable during the final part of the slide.
  */
 @Composable
 private fun Modifier.readerReveal(index: Int, articleKey: Any?, enabled: Boolean): Modifier {
@@ -1322,9 +1320,9 @@ private fun Modifier.readerReveal(index: Int, articleKey: Any?, enabled: Boolean
     LaunchedEffect(articleKey, index) {
         delay((index.toLong() * ReaderRevealStaggerMs).coerceAtMost(ReaderRevealDelayMaxMs.toLong()))
         launch {
-            revealAlpha.animateTo(1f, animationSpec = ExpressiveMotion.slowEffectsSpec())
+            revealAlpha.animateTo(1f, animationSpec = EaseMotion.enterSpec(280))
         }
-        revealShift.animateTo(0f, animationSpec = ExpressiveMotion.defaultSpatialSpec())
+        revealShift.animateTo(0f, animationSpec = EaseMotion.enterSpec(ReaderRevealDurationMs))
     }
     return graphicsLayer {
         alpha = revealAlpha.value
@@ -1717,4 +1715,3 @@ private fun groupBlocksForRendering(blocks: List<ReaderBlock>): List<Any> {
     flushImages()
     return result
 }
-

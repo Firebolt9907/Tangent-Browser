@@ -71,6 +71,8 @@ The stores validate and sign their respective packages; do not self-sign either 
 package deliberately omits the Firefox-only Gecko application ID and uses an MV3 service worker.
 The Firefox manifest declares `data_collection_permissions.required: ["none"]`: page extraction and
 preferences storage remain local to the browser, and the extension sends no data to an external service.
+Its minimum versions are Firefox 140 and Firefox for Android 142, the first releases that support
+Mozilla's built-in data collection declaration on each platform.
 
 ## Optional: match the Zen space colour (`zen-mod/`)
 

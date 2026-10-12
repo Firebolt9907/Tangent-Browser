@@ -23,12 +23,12 @@ object OtpAutofill {
      * Coordination hooks, wired by the two owners (globals like the other probe listeners — only one
      * browser activity is foreground at a time):
      *  - [smsListenStarter] is set by the Activity, which owns Play Services SMS User Consent; the
-     *    page reporting an OTP field ([onPayload]) invokes it to arm the SMS listener.
-     *  - [codeFiller] is set by `TangentRoot`, which holds the selected tab's engine session; the
-     *    Activity calls [deliverCode] once it has a code, and that injects the fill script.
+     *    UI captures a guarded delivery callback before arming the SMS listener.
+     *  - [codeFiller] is the guarded destination for manual paste. SMS consent retains its own
+     *    captured callback so subsequent field reports cannot redirect an in-flight code.
      */
     @Volatile
-    var smsListenStarter: (() -> Unit)? = null
+    var smsListenStarter: ((deliver: (String) -> Unit) -> Unit)? = null
 
     @Volatile
     var codeFiller: ((code: String) -> Unit)? = null
@@ -38,12 +38,23 @@ object OtpAutofill {
      * so the UI can surface the manual "paste code" fallback banner alongside arming SMS listening.
      */
     @Volatile
-    var onFieldDetected: (() -> Unit)? = null
+    var onFieldDetected: ((tabId: String) -> Unit)? = null
 
     /** Called by the prompt delegate when the page reports an OTP field. */
     fun onPayload(tabId: String, payload: String) {
-        smsListenStarter?.invoke()
-        onFieldDetected?.invoke()
+        onFieldDetected?.invoke(tabId)
+    }
+
+    /** Capture the reporting tab's trusted origin, never the URL supplied by page script. */
+    internal fun createDelivery(
+        tabId: String,
+        selectedTabId: () -> String?,
+        fill: (code: String, origin: String) -> Unit,
+    ): ((String) -> Unit)? {
+        val origin = loginAutofillOrigin(BridgeGuard.trustedOrigin(tabId)) ?: return null
+        val target = LoginAutofillTarget(tabId, origin)
+        if (!target.isCurrent(selectedTabId())) return null
+        return { code -> if (target.isCurrent(selectedTabId())) fill(code, origin) }
     }
 
     /** Called with a code (from an incoming SMS, or pasted from the clipboard) — fill it. */
@@ -149,11 +160,14 @@ object OtpAutofill {
      * single field gets the whole code. Uses the native value setter so React-controlled inputs pick
      * the change up, and dispatches input/change/keyup so validators fire.
      */
-    fun buildFillScript(code: String): String {
+    fun buildFillScript(code: String, expectedOrigin: String): String {
+        val origin = loginAutofillOrigin(expectedOrigin) ?: return "javascript:void(0)"
+        val originLiteral = org.json.JSONObject.quote(origin)
         // Keep only digits and cap length defensively; the value is interpolated into JS as a string.
         val safe = code.filter { it.isDigit() }.take(12)
         return ("""
             javascript:(function() {
+                if (location.origin !== $originLiteral) return;
                 $sharedJs
                 var code = '$safe';
                 if (!code) return;

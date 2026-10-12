@@ -1,6 +1,7 @@
 package com.firebolt9907.tangentbrowser
 
 import com.firebolt9907.tangentbrowser.ui.content.LoginFieldProbe
+import com.firebolt9907.tangentbrowser.ui.content.BridgeGuard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -16,13 +17,15 @@ import org.junit.Test
  */
 class LoginFieldProbeTest {
 
-    private fun capturePayload(payload: String): Pair<String, String>? {
+    private fun capturePayload(payload: String, trustedUrl: String? = "https://login.microsoftonline.com/common/login"): Pair<String, String>? {
+        BridgeGuard.setTrustedOrigin("tab", trustedUrl)
         var seen: Pair<String, String>? = null
-        LoginFieldProbe.onFieldDetected = { stage, url -> seen = stage to url }
+        LoginFieldProbe.onFieldDetected = { stage, target -> seen = stage to target.origin }
         try {
             LoginFieldProbe.onPayload("tab", payload)
         } finally {
             LoginFieldProbe.onFieldDetected = null
+            BridgeGuard.forget("tab")
         }
         return seen
     }
@@ -30,23 +33,23 @@ class LoginFieldProbeTest {
     @Test
     fun `payload carries the stage the page is showing`() {
         assertEquals(
-            LoginFieldProbe.Stage.Password to "https://login.microsoftonline.com/common/login",
+            LoginFieldProbe.Stage.Password to "https://login.microsoftonline.com",
             capturePayload("field|pw|https://login.microsoftonline.com/common/login"),
         )
         assertEquals(
-            LoginFieldProbe.Stage.User to "https://login.microsoftonline.com/common/login",
+            LoginFieldProbe.Stage.User to "https://login.microsoftonline.com",
             capturePayload("field|user|https://login.microsoftonline.com/common/login"),
         )
     }
 
     @Test
-    fun `a URL containing a pipe survives parsing`() {
-        // limit=3 keeps the tail intact; a naive split would truncate the URL and the host lookup
-        // would then miss every saved credential.
+    fun `payload cannot select a victim origin`() {
         assertEquals(
-            LoginFieldProbe.Stage.Password to "https://idp.purdue.edu/x?a=b|c",
-            capturePayload("field|pw|https://idp.purdue.edu/x?a=b|c"),
+            LoginFieldProbe.Stage.Password to "https://evil.example",
+            capturePayload("field|pw|https://login.microsoftonline.com/login", "https://evil.example/"),
         )
+        assertNull(capturePayload("field|pw|https://bank.example", null))
+        assertNull(capturePayload("field|pw|https://bank.example", "file:///tmp/page.html"))
     }
 
     @Test
@@ -59,12 +62,23 @@ class LoginFieldProbeTest {
     @Test
     fun `the identifier step never carries the password into the page`() {
         val secret = "hunter2-do-not-leak"
-        val userStage = LoginFieldProbe.buildFillScript("me@purdue.edu", secret, LoginFieldProbe.Stage.User)
+        val userStage = LoginFieldProbe.buildFillScript("me@purdue.edu", secret, LoginFieldProbe.Stage.User, expectedOrigin = "https://idp.example.com")
         assertFalse(userStage.contains(secret))
         assertTrue(userStage.contains("me@purdue.edu"))
 
-        val pwStage = LoginFieldProbe.buildFillScript("me@purdue.edu", secret, LoginFieldProbe.Stage.Password)
+        val pwStage = LoginFieldProbe.buildFillScript("me@purdue.edu", secret, LoginFieldProbe.Stage.Password, expectedOrigin = "https://idp.example.com")
         assertTrue(pwStage.contains(secret))
+    }
+
+    @Test
+    fun `fill and submit check origin inside their retry functions`() {
+        val fill = LoginFieldProbe.buildFillScript("u", "p", expectedOrigin = "https://IDP.example.com:443")
+        val submit = LoginFieldProbe.buildSubmitScript(expectedOrigin = "https://idp.example.com")
+        val guard = "if (location.origin !== \"https://idp.example.com\") return false;"
+        assertTrue(fill.substringAfter("function fill() {").trimStart().startsWith(guard))
+        assertTrue(submit.substringAfter("function trySubmit() {").trimStart().startsWith(guard))
+        val invalid = LoginFieldProbe.buildFillScript("u", "p", expectedOrigin = "file:///tmp/login")
+        assertTrue(invalid.substringAfter("function fill() {").trimStart().startsWith("return false;"))
     }
 
     @Test
@@ -93,17 +107,16 @@ class LoginFieldProbeTest {
     fun `scripts survive being flattened to one line`() {
         val scripts = listOf(
             LoginFieldProbe.buildDetectScript(),
-            LoginFieldProbe.buildFillScript("u", "p", LoginFieldProbe.Stage.Password),
-            LoginFieldProbe.buildFillScript("u", "p", LoginFieldProbe.Stage.User),
+            LoginFieldProbe.buildFillScript("u", "p", LoginFieldProbe.Stage.Password, expectedOrigin = "https://idp.example.com"),
+            LoginFieldProbe.buildFillScript("u", "p", LoginFieldProbe.Stage.User, expectedOrigin = "https://idp.example.com"),
             LoginFieldProbe.buildSubmitScript(LoginFieldProbe.Stage.Password),
             LoginFieldProbe.buildSubmitScript(LoginFieldProbe.Stage.User),
         )
         for (js in scripts) {
             assertTrue(js.startsWith("javascript:"))
             assertFalse("newline would truncate the payload", js.contains("\n"))
-            // A `//` comment on a flattened script swallows everything after it. `//` also appears in
-            // `https://` literals, which these scripts do not contain — so any hit is a real bug.
-            assertFalse("line comment in a flattened script", js.contains("//"))
+            // Distinguish line comments from the expected origin's https:// literal.
+            assertFalse("line comment in a flattened script", Regex("(?:^|\\s)//").containsMatchIn(js))
             assertEquals("unbalanced braces", js.count { it == '{' }, js.count { it == '}' })
             assertEquals("unbalanced parens", js.count { it == '(' }, js.count { it == ')' })
         }

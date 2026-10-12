@@ -1,6 +1,7 @@
 package com.firebolt9907.tangentbrowser.sync.webauthn
 
 import android.util.Log
+import com.google.common.net.InternetDomainName
 import java.net.URI
 import java.security.MessageDigest
 import java.util.Base64
@@ -63,7 +64,7 @@ class PasskeyBridge(
         }
     }
 
-    private suspend fun handle(obj: JSONObject): JSONObject {
+    internal suspend fun handle(obj: JSONObject): JSONObject {
         val origin = obj.optString("origin").takeIf { it.isNotEmpty() }
             ?: return failure("SecurityError", "missing origin")
         val rpId = effectiveRpId(origin, obj.optString("rpId").takeIf { it.isNotEmpty() })
@@ -81,7 +82,7 @@ class PasskeyBridge(
                     origin = origin,
                     allowCredentialIds = obj.optJSONArray("allowCredentials").toStringList(),
                     clientDataHash = sha256(clientDataJSON.toByteArray(Charsets.UTF_8)),
-                    credentialManagerRequestJson = obj.optString("requestJson").takeIf { it.isNotEmpty() },
+                    credentialManagerRequestJson = boundRequestJson(obj, rpId, create = false),
                 )
                 reply(provider.getAssertion(request))
             }
@@ -97,7 +98,7 @@ class PasskeyBridge(
                         .takeIf { it.isNotEmpty() }
                         ?.let { sha256(it.toByteArray(Charsets.UTF_8)) }
                         ?: return failure("UnknownError", "missing clientDataJSON"),
-                    credentialManagerRequestJson = obj.optString("requestJson").takeIf { it.isNotEmpty() },
+                    credentialManagerRequestJson = boundRequestJson(obj, rpId, create = true),
                 )
                 reply(provider.makeCredential(request))
             }
@@ -111,6 +112,21 @@ class PasskeyBridge(
 
         private fun sha256(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
 
+        // Providers consume requestJson rather than request.rpId. Keep that second representation
+        // bound to the checked RP, even if page-owned option getters returned different values
+        // when the isolated script read them twice. Never forward an unchecked RP to a provider.
+        private fun boundRequestJson(obj: JSONObject, rpId: String, create: Boolean): String? {
+            val raw = obj.optString("requestJson").takeIf { it.isNotEmpty() } ?: return null
+            val request = JSONObject(raw)
+            if (create) {
+                val rp = request.optJSONObject("rp") ?: JSONObject()
+                request.put("rp", rp.put("id", rpId))
+            } else {
+                request.put("rpId", rpId)
+            }
+            return request.toString()
+        }
+
         /**
          * The rpId the ceremony may use, or null if the request must be rejected. Per WebAuthn §5.1.3,
          * the rpId must equal the origin's effective domain or be a registrable parent of it
@@ -121,9 +137,17 @@ class PasskeyBridge(
             val uri = runCatching { URI(origin) }.getOrNull() ?: return null
             val host = uri.host?.lowercase() ?: return null
             val isLocalhost = host == "localhost" || host == "127.0.0.1"
-            if (uri.scheme != "https" && !isLocalhost) return null
-            val rpId = requestedRpId?.lowercase()?.trim() ?: return host
-            return if (host == rpId || host.endsWith(".$rpId")) rpId else null
+            if (uri.scheme != "https" && !(uri.scheme == "http" && isLocalhost)) return null
+            if (uri.rawUserInfo != null || !uri.rawPath.isNullOrEmpty() ||
+                uri.rawQuery != null || uri.rawFragment != null || uri.port > 65535
+            ) return null
+            val rpId = requestedRpId?.lowercase() ?: host
+            if (isLocalhost) return rpId.takeIf { it == host }
+            val domain = runCatching { InternetDomainName.from(rpId) }.getOrNull() ?: return null
+            // Exact-host RPs (including internal names) are allowed. Broadening to a parent must
+            // stop below the full PSL, including private suffixes such as github.io.
+            if (host == rpId) return rpId
+            return rpId.takeIf { host.endsWith(".$it") && domain.isUnderPublicSuffix }
         }
 
         /** Serialize a provider outcome to the wire JSON (the bridge adds the `id`). */

@@ -36,4 +36,16 @@ class AddonDownloadUrlTest {
 
     @Test fun schemelessInput_rejected() =
         assertFalse("evil.com/x.xpi".isAddonDownloadUrl())
+    @Test fun unauthenticatedTransports_rejected() {
+        for (scheme in listOf("http", "ftp", "file", "content")) {
+            assertFalse("$scheme://addons.mozilla.org/x.xpi".isAddonDownloadUrl())
+        }
+        assertFalse("//addons.mozilla.org/x.xpi".isAddonDownloadUrl())
+    }
+
+    @Test fun nonstandardAuthority_rejected() {
+        assertFalse("https://user@addons.mozilla.org/x.xpi".isAddonDownloadUrl())
+        assertFalse("https://addons.mozilla.org:8443/x.xpi".isAddonDownloadUrl())
+        assertTrue("HTTPS://addons.mozilla.org:443/x.xpi".isAddonDownloadUrl())
+    }
 }

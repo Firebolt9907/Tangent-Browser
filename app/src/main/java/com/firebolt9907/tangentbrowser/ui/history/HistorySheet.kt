@@ -22,6 +22,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -69,10 +72,11 @@ fun HistorySheet(
     var loadFailed by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var showClearConfirm by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     suspend fun reload() {
-        // Guard the read so a storage error shows an empty list instead of crashing the sheet
-        // (and never clearing the loading state). The failure is remembered rather than swallowed:
+        // Guard the read so a storage error doesn't crash the sheet or clear a previously loaded
+        // list. The failure is remembered rather than swallowed:
         // a failed read used to render as "No history yet", which is a different — and wrong —
         // statement about the user's data, with nothing to press to try again.
         val result = runCatching {
@@ -89,12 +93,20 @@ fun HistorySheet(
             ).reversed()
         }
         loadFailed = result.isFailure
-        visits = result.getOrDefault(emptyList())
+        result.getOrNull()?.let { visits = it }
         loading = false
+        if (result.isFailure && visits.isNotEmpty()) {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    message = "Couldn't refresh history",
+                    duration = SnackbarDuration.Short,
+                )
+            }
+        }
     }
 
     fun retry() {
-        loading = true
+        loading = visits.isEmpty()
         scope.launch { reload() }
     }
 
@@ -110,6 +122,17 @@ fun HistorySheet(
             }
         }
     }
+    val visibleClosed = remember(recentlyClosed, searchQuery) {
+        if (searchQuery.isBlank()) {
+            recentlyClosed.take(5)
+        } else {
+            val query = searchQuery.trim()
+            recentlyClosed.filter {
+                it.url.contains(query, ignoreCase = true) ||
+                    it.title.contains(query, ignoreCase = true)
+            }.take(5)
+        }
+    }
 
     // Group visits by calendar day (Today / Yesterday / date) for iOS-style sectioned history.
     // filtered is newest-first, so groupBy's insertion order keeps the sections newest-first too.
@@ -119,7 +142,16 @@ fun HistorySheet(
         }
     }
 
-    TangentModalSheet(onDismissRequest = onDismiss, bottomPadding = 12.dp) {
+    TangentModalSheet(
+        onDismissRequest = onDismiss,
+        bottomPadding = 12.dp,
+        overlay = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        },
+    ) {
         SheetHeader("History") {
             if (visits.isNotEmpty()) {
                 TextButton(onClick = { showClearConfirm = true }) {
@@ -138,11 +170,11 @@ fun HistorySheet(
 
         Spacer(Modifier.height(8.dp))
 
-        // Recently closed tabs (URL+title, most-recent first). Hidden while searching so the query
-        // filters history only. Tapping a row reopens the tab and dismisses the sheet.
-        if (searchQuery.isBlank() && recentlyClosed.isNotEmpty()) {
+        // Recently closed tabs participate in search too, so a matching tab can be reopened even
+        // when it no longer has a visit in the loaded history page.
+        if (visibleClosed.isNotEmpty()) {
             DateSectionHeader("Recently closed")
-            recentlyClosed.take(5).forEach { closed ->
+            visibleClosed.forEach { closed ->
                 ListItem(
                     modifier = Modifier.clickable {
                         onReopenClosed(closed)
@@ -172,7 +204,7 @@ fun HistorySheet(
         // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
         val phase = when {
             loading -> SheetContentPhase.Loading
-            filtered.isEmpty() -> SheetContentPhase.Empty
+            filtered.isEmpty() && (loadFailed || visibleClosed.isEmpty()) -> SheetContentPhase.Empty
             else -> SheetContentPhase.Content
         }
         SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
@@ -207,6 +239,15 @@ fun HistorySheet(
                             } else {
                                 null
                             },
+                            action = if (searchQuery.isNotBlank()) {
+                                {
+                                    TextButton(onClick = { searchQuery = "" }) {
+                                        Text("Clear search")
+                                    }
+                                }
+                            } else {
+                                null
+                            },
                         )
                     }
                 }
@@ -226,8 +267,16 @@ fun HistorySheet(
                                     removeLabel = "Remove from history",
                                     onRemove = {
                                         scope.launch {
-                                            runCatching { historyStorage.deleteVisitsFor(visit.url) }
+                                            val removed = runCatching {
+                                                historyStorage.deleteVisit(visit.url, visit.visitTime)
+                                            }
                                             reload()
+                                            if (removed.isFailure) {
+                                                snackbarHostState.showSnackbar(
+                                                    message = "Couldn't remove that visit",
+                                                    duration = SnackbarDuration.Short,
+                                                )
+                                            }
                                         }
                                     },
                                 ) {
@@ -268,8 +317,14 @@ fun HistorySheet(
                 TextButton(onClick = {
                     showClearConfirm = false
                     scope.launch {
-                        runCatching { historyStorage.deleteEverything() }
+                        val cleared = runCatching { historyStorage.deleteEverything() }
                         reload()
+                        if (cleared.isFailure) {
+                            snackbarHostState.showSnackbar(
+                                message = "Couldn't clear history",
+                                duration = SnackbarDuration.Short,
+                            )
+                        }
                     }
                 }) {
                     Text("Clear all", color = MaterialTheme.colorScheme.error)

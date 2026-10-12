@@ -4,9 +4,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import com.firebolt9907.tangentbrowser.ui.theme.EaseMotion
 import androidx.compose.runtime.getValue
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -83,7 +82,7 @@ fun SafariBar(
     interactive: Boolean = true,
     controlsEnabled: Boolean = true,
     // Live scroll-collapse progress (0 = expanded, 1 = compact). A lambda, not a Float, so the
-    // spring's per-frame updates are read in the layout/draw phases below and never recompose the
+    // animation's per-frame updates are read in the layout/draw phases below and never recompose the
     // bar. See BarPill.PillMorph / BarExpanded.
     collapseProgress: () -> Float = { 0f },
     isReaderEligible: Boolean = false,
@@ -120,7 +119,7 @@ fun SafariBar(
     val reserveToolbarSpace = showBottomToolbar && state.mode != BarMode.Editing
     val toolbarFraction by animateFloatAsState(
         targetValue = if (reserveToolbarSpace) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.9f, stiffness = Spring.StiffnessMediumLow),
+        animationSpec = EaseMotion.resizeSpec(320),
         label = "bottomToolbarFraction",
     )
     val barHeight = if (state.mode == BarMode.Editing) {
@@ -170,13 +169,10 @@ fun SafariBar(
                         translationX = pillTranslationX()
                     },
                 transitionSpec = {
-                    (fadeIn(spring(stiffness = Spring.StiffnessMediumLow)) togetherWith
-                        fadeOut(spring(stiffness = Spring.StiffnessMediumLow)))
+                    (fadeIn(EaseMotion.enterSpec(240)) togetherWith
+                        fadeOut(EaseMotion.exitSpec(120)))
                         .using(SizeTransform(clip = false) { _, _ ->
-                            spring(
-                                dampingRatio = Spring.DampingRatioLowBouncy,
-                                stiffness = Spring.StiffnessMediumLow,
-                            )
+                            EaseMotion.resizeSpec(320)
                         })
                 },
                 label = "SafariBarMode",
@@ -192,6 +188,7 @@ fun SafariBar(
                     Modifier.sharedBounds(
                         rememberSharedContentState(key = "addressText"),
                         animatedVisibilityScope = this,
+                        boundsTransform = { _, _ -> EaseMotion.resizeSpec(320) },
                     )
                 } else {
                     Modifier

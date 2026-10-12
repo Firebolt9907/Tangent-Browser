@@ -8,7 +8,8 @@ import android.view.WindowInsets
 import android.view.WindowInsetsAnimationControlListener
 import android.view.WindowInsetsAnimationController
 import android.view.animation.LinearInterpolator
-import com.firebolt9907.tangentbrowser.ui.EaseOutInterpolator
+import androidx.compose.animation.core.Easing
+import com.firebolt9907.tangentbrowser.ui.EaseOut
 import com.firebolt9907.tangentbrowser.ui.ImeSettleDurationMs
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
@@ -45,6 +46,7 @@ class ImeSheetController(private val view: View) {
     /** Drag delta (px, positive = up) that arrived before [controller] was ready. */
     private var pendingUp = 0f
     private var onReadyCallback: (() -> Unit)? = null
+    private var pendingFinishEasing: Easing = EaseOut
     private var pendingFinishShow: Boolean? = null
     private var pendingFinishOnEnd: (() -> Unit)? = null
 
@@ -89,7 +91,7 @@ class ImeSheetController(private val view: View) {
                     pendingFinishShow = null
                     pendingFinishOnEnd = null
                     if (finishShow != null) {
-                        animateToFinish(finishShow, finishOnEnd ?: {})
+                        animateToFinish(finishShow, pendingFinishEasing, finishOnEnd ?: {})
                     }
                 }
 
@@ -159,9 +161,10 @@ class ImeSheetController(private val view: View) {
      * fires after the settle completes (use it to flip app state, e.g. leave editing mode).
      */
     @RequiresApi(Build.VERSION_CODES.R)
-    fun animateToFinish(show: Boolean, onEnd: () -> Unit) {
+    fun animateToFinish(show: Boolean, easing: Easing = EaseOut, onEnd: () -> Unit) {
         val c = controller ?: run {
             if (requesting) {
+                pendingFinishEasing = easing
                 pendingFinishShow = show
                 pendingFinishOnEnd = onEnd
             } else {
@@ -175,13 +178,9 @@ class ImeSheetController(private val view: View) {
         val end = if (show) shown else hidden
         settleAnimator?.cancel()
         settleAnimator = ValueAnimator.ofInt(start, end).apply {
-            // Decelerate-only, NOT linear: this runs after the finger has left, and a constant
-            // velocity that stops dead at the resting inset is the one curve a gesture release must
-            // never have. (The LinearInterpolator above, on the control request, is a different
-            // thing and must stay linear — it maps the finger's own drag to the inset fraction.)
-            // The suggestion sheet rides this same duration/curve via TangentMotion.ImeSettle.
+            // Use the caller's shared release curve so sheet and keyboard settle together.
             duration = ImeSettleDurationMs.toLong()
-            interpolator = EaseOutInterpolator
+            interpolator = android.animation.TimeInterpolator { easing.transform(it) }
             addUpdateListener { anim ->
                 val ctrl = controller ?: return@addUpdateListener
                 val value = anim.animatedValue as Int

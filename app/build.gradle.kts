@@ -1,9 +1,9 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.concurrent.TimeUnit
+import java.security.MessageDigest
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
 
@@ -33,7 +33,7 @@ val uploadKeystore = releaseInput("TANGENT_KEYSTORE_FILE", "tangentKeystoreFile"
 
 android {
     namespace = "com.firebolt9907.tangentbrowser"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.firebolt9907.tangentbrowser"
@@ -72,6 +72,12 @@ android {
     }
 
     buildTypes {
+        // Instrumentation cleanup uninstalls its target. Never target the regular browser ID.
+        create("uiTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".uitest"
+            matchingFallbacks += listOf("debug")
+        }
         release {
             signingConfig = signingConfigs.getByName(if (uploadKeystore != null) "upload" else "localRelease")
             isMinifyEnabled = false
@@ -82,6 +88,7 @@ android {
             )
         }
     }
+    testBuildType = "uiTest"
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -183,7 +190,9 @@ dependencies {
     implementation(libs.play.services.auth.api.phone)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.androidx.activity.compose)
-    implementation(platform(libs.androidx.compose.bom))
+    // Keep the entire Compose stack compatible. Transitive Material alpha constraints otherwise
+    // pair an older CustomStyle implementation with Foundation's renamed applyStyle API.
+    implementation(enforcedPlatform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
@@ -198,10 +207,22 @@ dependencies {
     testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(enforcedPlatform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+
+// uiTest has a minimal application/manifest and never initializes Firebase or the browser graph.
+// Its Compose-only host needs no Gecko/appservices native libraries. Keep wireless test installs small.
+androidComponents {
+    onVariants(selector().withBuildType("uiTest")) { variant ->
+        variant.packaging.jniLibs.excludes.add("**/*.so")
+    }
+}
+// The personal google-services.json only describes the regular browser's application ID.
+tasks.matching { it.name == "processUiTestGoogleServices" }.configureEach {
+    enabled = false
 }
 
 /*
@@ -317,3 +338,49 @@ val buildReaderExtension by tasks.registering {
 /* Run both compile-time asset syncs before any variant merges assets, so the APK gets fresh copies. */
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
     .configureEach { dependsOn(syncReaderRules, buildReaderExtension) }
+
+// Pinned upstream uBO package, expanded only into build output. No network at build/startup.
+val bundledUblockAssets = layout.buildDirectory.dir("generated/ublockAssets")
+val prepareBundledUblock by tasks.registering(Sync::class) {
+    val vendor = layout.projectDirectory.dir("vendor/ublock").asFile
+    val archive = File(vendor, "uBlock0_1.75.0.firefox.signed.xpi")
+    from(zipTree(archive)) {
+        into("extensions/ublock")
+        exclude("META-INF/**") // Modified built-in package is not the signed AMO install.
+    }
+    from(vendor) {
+        include("*-cookies.txt")
+        into("extensions/ublock/assets/tangent")
+    }
+    into(bundledUblockAssets)
+    doLast {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(archive.readBytes()).joinToString("") { "%02x".format(it) }
+        check(digest == "5b74415860456370644bd80f16125e865b0e6c356bb5dfcfb84069967eaa5287") {
+            "Bundled uBlock Origin archive checksum mismatch"
+        }
+        val assetIndex = File(destinationDir, "extensions/ublock/assets/assets.json")
+        @Suppress("UNCHECKED_CAST")
+        val index = groovy.json.JsonSlurper().parse(assetIndex) as MutableMap<String, Any>
+        for ((key, local) in mapOf(
+            "fanboy-cookiemonster" to "easylist-cookies.txt",
+            "ublock-cookies-easylist" to "annoyances-cookies.txt",
+        )) {
+            @Suppress("UNCHECKED_CAST")
+            val entry = index.getValue(key) as MutableMap<String, Any>
+            entry["off"] = false
+            val urls = entry["contentURL"]
+            entry["contentURL"] = (if (urls is List<*>) urls else listOf(urls)) +
+                "assets/tangent/$local"
+        }
+        assetIndex.writeText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(index)))
+    }
+}
+android.sourceSets.getByName("main").assets.srcDir(bundledUblockAssets.get().asFile)
+// Lint analysis and report models also read source-set assets directly, before asset merging.
+// Declare their producer dependency too so release builds cannot inspect an unprepared directory.
+tasks.matching {
+    (it.name.startsWith("merge") && it.name.endsWith("Assets")) ||
+        it.name.contains("lint", ignoreCase = true)
+}
+    .configureEach { dependsOn(prepareBundledUblock) }

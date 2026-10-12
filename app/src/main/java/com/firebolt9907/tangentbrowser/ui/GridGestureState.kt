@@ -64,7 +64,7 @@ internal class GridGestureState {
 internal fun rememberGridGestureState(): GridGestureState = remember { GridGestureState() }
 
 /**
- * Non-null only for a fast upward velocity commit; bends the release into the deck.
+ * Non-null for a Deck/Pixel swipe commit; carries the cards into the deck with depth-weighted inertia.
  *
  * Held in a process-global object (match for `SsoSettledPage`) so the huge gesture/overlay lambdas in
  * [TangentRoot] reference it by NAME (a static reference adds zero captured registers) instead of

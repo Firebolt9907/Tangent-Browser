@@ -34,9 +34,12 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -104,6 +107,27 @@ internal fun BarExpanded(
     val isInsecure = !state.blankNewTabPreview &&
         state.pageUrl.startsWith("http://", ignoreCase = true)
     val blankPreview = state.blankNewTabPreview
+    val addressLabel = if (blankPreview) "+" else state.displayUrl
+    val addressStyle = if (blankPreview) {
+        MaterialTheme.typography.headlineSmall
+    } else {
+        MaterialTheme.typography.bodyMedium
+    }
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    // Use the same font, letter spacing and accessibility scale as the visible label. A fixed
+    // per-character estimate clipped ordinary hosts like github.com at larger text sizes.
+    val compactLabelWidth = with(density) {
+        val textWidthPx = textMeasurer.measure(
+            text = AnnotatedString(addressLabel),
+            style = addressStyle,
+            maxLines = 1,
+            softWrap = false,
+        ).size.width
+        // Match each padding modifier's pixel rounding at fractional display densities.
+        val paddingPx = 2 * (8.dp.roundToPx() + 4.dp.roundToPx())
+        (textWidthPx + paddingPx).toDp()
+    }
 
     // Reader mode owns the pill color; otherwise the site tint (if any) fills it, else the default
     // surface. `siteTintActive` also drives the nested content-contrast theme below.
@@ -130,7 +154,8 @@ internal fun BarExpanded(
 
     BoxWithConstraints(modifier = modifier) {
         val expandedWidth = (maxWidth - 40.dp).coerceAtLeast(0.dp)
-        val compactWidth = (((if (blankPreview) "+" else state.displayUrl).length * 8).dp + 28.dp)
+        // Outer row: 8dp per side; address row: another 4dp per side.
+        val compactWidth = compactLabelWidth
             .coerceIn(80.dp, (maxWidth - 40.dp).coerceAtLeast(80.dp))
 
         BarPill(
@@ -238,23 +263,24 @@ internal fun BarExpanded(
                     horizontalArrangement = Arrangement.Center,
                 ) {
                     if (isInsecure) {
-                        Icon(
-                            imageVector = Icons.Default.LockOpen,
-                            contentDescription = "Not secure",
-                            tint = MaterialTheme.colorScheme.error,
+                        Box(
                             modifier = Modifier
-                                .size(14.dp)
+                                .collapsingWidth(14.dp, collapseProgress)
+                                .clipToBounds()
                                 .graphicsLayer { alpha = controlsAlpha() },
-                        )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LockOpen,
+                                contentDescription = "Not secure",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
                         Spacer(Modifier.collapsingWidth(4.dp, collapseProgress))
                     }
                     Text(
-                        text = if (blankPreview) "+" else state.displayUrl,
-                        style = if (blankPreview) {
-                            MaterialTheme.typography.headlineSmall
-                        } else {
-                            MaterialTheme.typography.bodyMedium
-                        },
+                        text = addressLabel,
+                        style = addressStyle,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center,

@@ -27,7 +27,10 @@ import mozilla.components.concept.engine.webextension.WebExtensionRuntime
 class AddonController(
     private val engine: Engine,
     private val scope: CoroutineScope,
+    context: android.content.Context,
 ) {
+    private val updatePrefs = context.getSharedPreferences("tangent_ublock_updates", android.content.Context.MODE_PRIVATE)
+    private var ublockUpdateInFlight = false
     private val extensions = mutableMapOf<String, WebExtension>()
     private val promptCallbacks = mutableMapOf<Long, (Boolean) -> Unit>()
     private var nextPromptId = 1L
@@ -54,7 +57,7 @@ class AddonController(
      */
     var onActionPopupTabRequested: ((title: String, engineSession: EngineSession) -> Unit)? = null
 
-    private val _state = MutableStateFlow(AddonsUiState())
+    private val _state = MutableStateFlow(AddonsUiState(ublockAutomaticUpdates = updatePrefs.getBoolean("enabled", false)))
     val state: StateFlow<AddonsUiState> = _state.asStateFlow()
 
     private val delegate = object : WebExtensionDelegate {
@@ -155,6 +158,7 @@ class AddonController(
             engineSession: EngineSession,
             active: Boolean,
             url: String,
+            isPrivate: Boolean,
         ) {
             setStatus("${extension.displayName()} requested a new tab")
             onNewTabRequested?.invoke(url, engineSession, active)
@@ -168,6 +172,79 @@ class AddonController(
     init {
         engine.registerWebExtensionDelegate(delegate)
         refresh()
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(24 * 60 * 60 * 1000L)
+                extensions["uBlock0@raymondhill.net"]?.let { checkUblockUpdate(it) }
+            }
+        }
+    }
+
+    /** Install offline as a built-in, keeping an existing AMO installation and its settings intact. */
+    fun installBundledUblock() {
+        engine.listInstalledWebExtensions(
+            onSuccess = { list ->
+                val existing = list.firstOrNull { it.id == "uBlock0@raymondhill.net" }
+                if (existing != null && !existing.isBuiltIn()) {
+                    remember(existing)
+                    checkUblockUpdate(existing)
+                    return@listInstalledWebExtensions
+                }
+                engine.installBuiltInWebExtension(
+                    id = "uBlock0@raymondhill.net",
+                    url = "resource://android/assets/extensions/ublock/",
+                    onSuccess = { remember(it); checkUblockUpdate(it) },
+                    onError = { setError("Built-in uBlock Origin failed: ${it.readableMessage()}") },
+                )
+            },
+            onError = { setError("Could not check uBlock Origin: ${it.readableMessage()}") },
+        )
+    }
+
+    fun setUblockAutomaticUpdates(enabled: Boolean) {
+        updatePrefs.edit().putBoolean("enabled", enabled).apply()
+        _state.update { it.copy(ublockAutomaticUpdates = enabled) }
+        if (enabled) {
+            extensions["uBlock0@raymondhill.net"]?.let { checkUblockUpdate(it, force = true) }
+        }
+    }
+
+    private fun checkUblockUpdate(extension: WebExtension, force: Boolean = false) {
+        if (!state.value.ublockAutomaticUpdates || ublockUpdateInFlight) return
+        val now = System.currentTimeMillis()
+        if (!force && now - updatePrefs.getLong("lastAttempt", 0) < 24 * 60 * 60 * 1000L) return
+        updatePrefs.edit().putLong("lastAttempt", now).apply()
+        ublockUpdateInFlight = true
+        if (extension.isBuiltIn()) {
+            // A signed profile install has precedence over the APK copy and retains storage by ID.
+            // Do not uninstall first: uninstall would delete all of the user's uBO data.
+            setBusy("Enabling uBlock Origin updates...")
+            engine.installWebExtension(
+                url = "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi",
+                installationMethod = InstallationMethod.MANAGER,
+                onSuccess = {
+                    ublockUpdateInFlight = false
+                    remember(it)
+                    setStatus("uBlock Origin automatic updates enabled")
+                },
+                onError = {
+                    ublockUpdateInFlight = false
+                    setError("uBlock Origin update failed: ${it.readableMessage()}")
+                },
+            )
+        } else {
+            engine.updateWebExtension(
+                extension = extension,
+                onSuccess = {
+                    ublockUpdateInFlight = false
+                    if (it != null) remember(it)
+                },
+                onError = { _, throwable ->
+                    ublockUpdateInFlight = false
+                    setError("uBlock Origin update failed: ${throwable.readableMessage()}")
+                },
+            )
+        }
     }
 
     fun refresh() {
@@ -249,7 +326,7 @@ class AddonController(
      */
     fun uninstall(addonId: String) {
         val extension = extensions[addonId] ?: return
-        if (extension.isBuiltIn()) {
+        if (extension.isBuiltIn() || extension.id == "uBlock0@raymondhill.net") {
             setError("${extension.displayName()} is built into Tangent and can't be removed")
             return
         }
@@ -429,6 +506,7 @@ data class AddonsUiState(
     val isBusy: Boolean = false,
     val message: String? = null,
     val isError: Boolean = false,
+    val ublockAutomaticUpdates: Boolean = false,
 )
 
 data class InstalledAddon(
@@ -460,7 +538,7 @@ private fun WebExtension.toInstalledAddon(hasQuickSettings: Boolean): InstalledA
         isEnabled = isEnabled(),
         optionsPageUrl = getMetadata()?.optionsPageUrl?.takeIf { it.isNotBlank() },
         hasQuickSettings = hasQuickSettings,
-        isBuiltIn = isBuiltIn(),
+        isBuiltIn = isBuiltIn() || id == "uBlock0@raymondhill.net",
     )
 
 private fun WebExtension.displayName(): String =

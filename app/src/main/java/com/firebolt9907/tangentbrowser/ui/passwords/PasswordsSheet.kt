@@ -117,10 +117,18 @@ fun PasswordsSheet(
         loadFailed = result.isFailure
         result.getOrNull()?.let { entries = it }
         loading = false
+        if (result.isFailure && entries.isNotEmpty()) {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    message = "Couldn't refresh passwords",
+                    duration = SnackbarDuration.Short,
+                )
+            }
+        }
     }
 
     fun retry() {
-        loading = true
+        loading = entries.isEmpty()
         scope.launch { refresh() }
     }
 
@@ -181,6 +189,11 @@ fun PasswordsSheet(
                                     icon = Icons.Default.Search,
                                     title = "No matching passwords",
                                     description = "No saved logins match \"$searchQuery\".",
+                                    action = {
+                                        TextButton(onClick = { searchQuery = "" }) {
+                                            Text("Clear search")
+                                        }
+                                    },
                                 )
                             } else {
                                 EmptyState(

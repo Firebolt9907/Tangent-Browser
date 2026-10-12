@@ -576,6 +576,13 @@ Unit tests: `app/src/test/` (JVM via `./gradlew :app:test` if no Android framewo
 `app/src/androidTest/`. `normalizeUrl`/`compactHost` have JVM tests in
 `app/src/test/java/com/firebolt9907/tangentbrowser/UrlNormalizationTest.kt`.
 
+Instrumentation MUST target the isolated `uiTest` build (`:app:connectedUiTestAndroidTest`),
+whose application ID is `com.firebolt9907.tangentbrowser.uitest`. Never run device-test install,
+uninstall or cleanup against `com.firebolt9907.tangentbrowser`: that is the user's browser and data.
+The `src/uiTest/AndroidManifest.xml` minimal host deliberately excludes browser/Firebase startup.
+Do not run concurrent instrumentation commands against the same device/test package; installing
+or cleaning up one run can kill another. Coordinate device verification before starting it.
+
 ## Build notes
 
 - Default dev build filters to `arm64-v8a` (~200 MB APK). `-PsingleAbi=false` builds all ABIs.

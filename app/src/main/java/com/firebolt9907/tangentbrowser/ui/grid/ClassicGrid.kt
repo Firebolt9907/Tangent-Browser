@@ -40,6 +40,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.width
@@ -745,29 +746,34 @@ private fun GridTabCard(
             }
             .pointerInput(tabCount) {
                 if (tabCount <= 1) return@pointerInput
+                val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
+                var settleJob: kotlinx.coroutines.Job? = null
                 detectHorizontalDragGestures(
-                    onDragStart = {},
+                    onDragStart = {
+                        settleJob?.cancel()
+                        tracker.resetTracking()
+                    },
                     onDragEnd = {
-                        coroutineScope.launch {
+                        settleJob = coroutineScope.launch {
                             val targetOffset = swipeOffsets[tab.id] ?: 0f
+                            val velocity = tracker.calculateVelocity().x.coerceIn(-cell.width * 8f, cell.width * 8f)
                             val threshold = cell.width * 0.4f
                             if (abs(targetOffset) > threshold) {
                                 val endValue = if (targetOffset > 0) cell.width * 1.5f else -cell.width * 1.5f
                                 animate(
                                     initialValue = targetOffset,
                                     targetValue = endValue,
+                                    initialVelocity = velocity,
                                     animationSpec = TangentMotion.CardDismiss
                                 ) { value, _ ->
                                     swipeOffsets[tab.id] = value
                                 }
                                 onCloseTab(tab.id)
                             } else {
-                                // Unlike the deck's up-swipe this gesture keeps no VelocityTracker,
-                                // so the spring starts unseeded — it still removes the ease-in stall,
-                                // it just can't carry the flick through.
                                 animate(
                                     initialValue = targetOffset,
                                     targetValue = 0f,
+                                    initialVelocity = velocity,
                                     animationSpec = TangentMotion.CardSnapBack
                                 ) { value, _ ->
                                     swipeOffsets[tab.id] = value
@@ -776,7 +782,7 @@ private fun GridTabCard(
                         }
                     },
                     onDragCancel = {
-                        coroutineScope.launch {
+                        settleJob = coroutineScope.launch {
                             val targetOffset = swipeOffsets[tab.id] ?: 0f
                             animate(
                                 initialValue = targetOffset,
@@ -791,6 +797,7 @@ private fun GridTabCard(
                         // Checked per event (not as a pointerInput key) so the
                         // enable flip never restarts the gesture coroutine.
                         if (scrollEnabled.value) {
+                            tracker.addPointerInputChange(change)
                             change.consume()
                             val current = swipeOffsets[tab.id] ?: 0f
                             swipeOffsets[tab.id] = current + dragAmount

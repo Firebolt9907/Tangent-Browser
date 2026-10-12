@@ -28,9 +28,8 @@ import androidx.compose.ui.unit.dp
  * so every "nothing here yet" surface looks and reads consistently: a muted icon, a short
  * title, and an optional one-line hint telling the user what to do next.
  *
- * [action] is for the *error* flavour of this surface — a sheet whose load failed looks
- * identical to one that is genuinely empty, so it must be able to say what went wrong and
- * offer the way out (a retry) in the same place. Empty states proper leave it null.
+ * [action] offers a direct next step when one is useful, such as retrying a failed load or
+ * creating the first item in an empty collection.
  */
 @Composable
 fun EmptyState(

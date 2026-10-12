@@ -276,6 +276,7 @@ internal fun TangentOverlaySheets(
     // so the keyboard never appears when a credential is already saved (see ProactiveLoginAutofill).
     ProactiveLoginAutofill(
         engineSession = selectedEngineSession,
+        selectedTabId = selectedTabId,
         loginsStorage = components.loginsStorage,
         enabled = components.globalPreferencesStore.loginAutofillEnabled,
         biometricRequired = components.globalPreferencesStore.biometricAutofillEnabled,

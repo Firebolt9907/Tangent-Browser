@@ -86,7 +86,6 @@ fun SettingsSheet(
     var httpCacheSizeMb by remember { mutableStateOf(globalPrefsStore.httpCacheSizeMb) }
     var preloadMode by remember { mutableStateOf(globalPrefsStore.preloadMode) }
     var readerSiteRules by remember { mutableStateOf(globalPrefsStore.readerSiteRules) }
-    var cookieBannerHandlingMode by remember { mutableStateOf(globalPrefsStore.cookieBannerHandlingMode) }
     var queryParameterStripping by remember { mutableStateOf(globalPrefsStore.queryParameterStripping) }
     var mediaPlaybackRequiresUserGesture by remember { mutableStateOf(globalPrefsStore.mediaPlaybackRequiresUserGesture) }
     var cookieBehaviorOptInPartitioning by remember { mutableStateOf(globalPrefsStore.cookieBehaviorOptInPartitioning) }
@@ -113,7 +112,6 @@ fun SettingsSheet(
     var safeBrowsingV5Enabled by remember { mutableStateOf(globalPrefsStore.safeBrowsingV5Enabled) }
     var automaticFontSizeAdjustment by remember { mutableStateOf(globalPrefsStore.automaticFontSizeAdjustment) }
     var automaticLanguageAdjustment by remember { mutableStateOf(globalPrefsStore.automaticLanguageAdjustment) }
-    var cookieBannerHandlingGlobalRulesSubFrames by remember { mutableStateOf(globalPrefsStore.cookieBannerHandlingGlobalRulesSubFrames) }
     var emailTrackerBlockingPrivateBrowsing by remember { mutableStateOf(globalPrefsStore.emailTrackerBlockingPrivateBrowsing) }
     var dohProviderUrl by remember { mutableStateOf(globalPrefsStore.dohProviderUrl) }
     var lnaBlockingEnabled by remember { mutableStateOf(globalPrefsStore.lnaBlockingEnabled) }
@@ -204,8 +202,6 @@ fun SettingsSheet(
                 onSafeBrowsingV5EnabledChange = { safeBrowsingV5Enabled = it },
                 emailTrackerBlockingPrivateBrowsing = emailTrackerBlockingPrivateBrowsing,
                 onEmailTrackerBlockingPrivateBrowsingChange = { emailTrackerBlockingPrivateBrowsing = it },
-                cookieBannerHandlingGlobalRulesSubFrames = cookieBannerHandlingGlobalRulesSubFrames,
-                onCookieBannerHandlingGlobalRulesSubFramesChange = { cookieBannerHandlingGlobalRulesSubFrames = it },
                 lnaBlockingEnabled = lnaBlockingEnabled,
                 onLnaBlockingEnabledChange = { lnaBlockingEnabled = it },
                 bannedPorts = bannedPorts,
@@ -276,43 +272,6 @@ fun SettingsSheet(
                     globalPrefsStore.httpsOnly = it
                     onSettingChanged()
                 },
-            )
-            SheetRowDivider()
-            SettingsPicker(
-                title = "Cookie banner auto-dismiss",
-                // "Reject only" is the private choice but silently does nothing on the many banners
-                // that offer no reject control — those sites keep showing the dialog. Say so in the
-                // subtitle, so a banner that stays up doesn't read as the feature being broken.
-                // (Option labels must stay identical to selectedLabel — SettingsPicker marks the
-                // active row by string equality.)
-                subtitle = when (cookieBannerHandlingMode) {
-                    1 -> "Declines banners that offer a reject option; others stay up"
-                    2 -> "Declines banners, accepting only when there's no reject option"
-                    else -> "Automatically dismiss cookie consent banners"
-                },
-                selectedLabel = when (cookieBannerHandlingMode) {
-                    1 -> "Reject only"
-                    2 -> "Reject, else accept"
-                    else -> "Disabled"
-                },
-                options = listOf(
-                    "Disabled" to {
-                        cookieBannerHandlingMode = 0
-                        globalPrefsStore.cookieBannerHandlingMode = 0
-                        onSettingChanged()
-                    },
-                    "Reject only" to {
-                        cookieBannerHandlingMode = 1
-                        globalPrefsStore.cookieBannerHandlingMode = 1
-                        onSettingChanged()
-                    },
-                    "Reject, else accept" to {
-                        cookieBannerHandlingMode = 2
-                        globalPrefsStore.cookieBannerHandlingMode = 2
-                        onSettingChanged()
-                    }
-                ),
-                haptics = haptics,
             )
         }
 
@@ -939,8 +898,6 @@ private fun AdvancedSettingsPage(
     onSafeBrowsingV5EnabledChange: (Boolean) -> Unit,
     emailTrackerBlockingPrivateBrowsing: Boolean,
     onEmailTrackerBlockingPrivateBrowsingChange: (Boolean) -> Unit,
-    cookieBannerHandlingGlobalRulesSubFrames: Boolean,
-    onCookieBannerHandlingGlobalRulesSubFramesChange: (Boolean) -> Unit,
     lnaBlockingEnabled: Boolean,
     onLnaBlockingEnabledChange: (Boolean) -> Unit,
     bannedPorts: String,

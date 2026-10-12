@@ -48,6 +48,9 @@ internal object IntentUrls {
      */
     fun sanitizeExternalUrl(raw: String?): String? {
         val url = raw?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        // URL parsers can discard embedded controls (e.g. java\tscript:). Custom Tabs pass
+        // this value straight to Gecko, so do not rely on normalizeUrl turning it into a search.
+        if (url.any { it <= '\u001f' || it == '\u007f' }) return null
         val scheme = schemeRegex.find(url)?.groupValues?.get(1)
             ?: return url // no scheme → normalizeUrl makes it https/search
         return url.takeIf { scheme.lowercase() in SAFE_EXTERNAL_SCHEMES }

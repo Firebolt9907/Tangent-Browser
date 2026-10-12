@@ -40,23 +40,24 @@ object LoginFieldProbe {
 
     /**
      * Set by `ui/ProactiveLoginAutofill.kt`. Invoked (on the GeckoView UI thread) with the detected
-     * [Stage] and the page URL when a visible, empty login field is detected, so the host can query
+     * [Stage] and the browser-validated tab/origin when a visible, empty login field is detected, so the host can query
      * saved logins and offer the picker. Global like the other probe listeners — only one browser
      * activity is foreground at a time.
      */
     @Volatile
-    var onFieldDetected: ((stage: String, pageUrl: String) -> Unit)? = null
+    internal var onFieldDetected: ((stage: String, target: LoginAutofillTarget) -> Unit)? = null
 
     /**
      * Called by the prompt delegate when the page reports a login field. Payload is
-     * `field|<stage>|<url>`.
+     * `field|<stage>|<url>`. The page-supplied URL is deliberately ignored for credential lookup.
      */
-    fun onPayload(@Suppress("UNUSED_PARAMETER") tabId: String, payload: String) {
+    fun onPayload(tabId: String, payload: String) {
         val parts = payload.split('|', limit = 3)
-        if (parts.size < 3) return
+        if (parts.size < 3 || parts[0] != "field") return
         val stage = parts[1]
         if (stage != Stage.User && stage != Stage.Password) return
-        onFieldDetected?.invoke(stage, parts[2])
+        val origin = loginAutofillOrigin(BridgeGuard.trustedOrigin(tabId)) ?: return
+        onFieldDetected?.invoke(stage, LoginAutofillTarget(tabId, origin))
     }
 
     /**
@@ -242,7 +243,13 @@ object LoginFieldProbe {
      * value on the floor; a fill that silently lands nowhere is indistinguishable to the user from
      * autofill being broken.
      */
-    fun buildFillScript(username: String, password: String, stage: String = Stage.Password): String {
+    fun buildFillScript(
+        username: String,
+        password: String,
+        stage: String = Stage.Password,
+        expectedOrigin: String,
+    ): String {
+        val originGuard = originGuard(expectedOrigin)
         val wantPassword = stage == Stage.Password
         val u = jsString(username)
         // Never emit the secret into a script that has no password field to put it in: at the
@@ -264,6 +271,7 @@ object LoginFieldProbe {
                     } catch (e) { try { el.value = val; } catch (e2) {} }
                 }
                 function fill() {
+                    $originGuard
                     var f = tangentLoginFields();
                     if (!f) return false;
                     var wrote = false;
@@ -299,13 +307,15 @@ object LoginFieldProbe {
      * Retries for a couple of seconds: the fill is asynchronous (Gecko's own `onConfirm` path even
      * more so), and the button is frequently disabled until the framework has processed the input.
      */
-    fun buildSubmitScript(stage: String = Stage.Password): String {
+    fun buildSubmitScript(stage: String = Stage.Password, expectedOrigin: String? = null): String {
+        val originGuard = originGuard(expectedOrigin)
         val wantPassword = stage == Stage.Password
         val labels = if (wantPassword) """/log\s?in|sign\s?in|submit|continue|verify/""" else """/next|continue|sign\s?in|log\s?in|submit/"""
         return ("""
             javascript:(function() {
                 $sharedJs
                 function trySubmit() {
+                    $originGuard
                     var f = tangentLoginFields();
                     if (!f) return false;
                     var anchor = ${wantPassword} ? f.pw : f.user;
@@ -341,6 +351,13 @@ object LoginFieldProbe {
                 }, 250);
             })();
         """).trimIndent().replace("\n", " ").trim()
+    }
+
+    // Check in every retry as well as the first execution: navigation may race native dispatch.
+    private fun originGuard(expectedOrigin: String?): String {
+        if (expectedOrigin == null) return ""
+        val origin = loginAutofillOrigin(expectedOrigin) ?: return "return false;"
+        return "if (location.origin !== ${jsString(origin)}) return false;"
     }
 
     /** JSON-encode [s] into a safe double-quoted JS string literal (handles quotes, backslashes, etc.). */

@@ -40,3 +40,10 @@ LOGINPROBE_KT=/tmp/old.kt node run.js entra
 (That revision has no `buildSubmitScript` and no stage-aware `buildFillScript`, so the replay stops
 at the first extraction of a builder it doesn't have — the detector half is the part worth replaying,
 and it is the part that was broken.)
+
+## Security regressions
+
+`node security.js` checks origin-bound filling and delayed submission against locally intercepted
+synthetic HTTPS/HTTP origins. It rejects a different host, scheme, and port, and verifies that a
+matching origin still fills and submits. No requests reach those hosts. JVM tests separately check
+native tab/origin matching and ensure the Kotlin-generated scripts contain the execution guards.

@@ -5,6 +5,8 @@ import com.firebolt9907.tangentbrowser.ui.grid.DeckFrontCenterXFrac
 import com.firebolt9907.tangentbrowser.ui.grid.DeckFrontScale
 import com.firebolt9907.tangentbrowser.ui.grid.DeckMinAlpha
 import com.firebolt9907.tangentbrowser.ui.grid.DeckPixelScale
+import com.firebolt9907.tangentbrowser.ui.grid.deckDragCardPose
+import com.firebolt9907.tangentbrowser.ui.grid.TabViewMode
 import com.firebolt9907.tangentbrowser.ui.grid.deckSlot
 import com.firebolt9907.tangentbrowser.ui.grid.gridCellRect
 import com.firebolt9907.tangentbrowser.ui.grid.pixelSlot
@@ -23,6 +25,27 @@ class GridGeometryTest {
     private val h = 2000f
     // Card crop height in the card's own coordinate space; only affects ty, not the invariants below.
     private val crop = 1700f
+
+    @Test
+    fun `long deck pull holds surrounding card size while held card keeps shrinking`() {
+        fun pose(drag: Float, delta: Int, mode: TabViewMode = TabViewMode.DECK) =
+            deckDragCardPose((drag / 800f).coerceIn(0f, 1f), drag, w, h,
+                w / 2f, w + 20f, delta, mode)
+        for (delta in listOf(-2, -1, 1, 2)) {
+            val normal = pose(800f, delta)
+            val long = pose(1000f, delta)
+            val longer = pose(1400f, delta)
+            assertEquals(normal.scale, long.scale, 0.00001f)
+            assertEquals(normal.scale, longer.scale, 0.00001f)
+            // Continued pull still moves the bottom edge with the finger.
+            assertEquals(h - 1000f, long.ty + h * long.scale, 0.001f)
+            assertEquals(h - 1400f, longer.ty + h * longer.scale, 0.001f)
+        }
+        assertTrue(pose(1000f, 0).scale < pose(800f, 0).scale)
+        assertEquals(pose(1000f, 0).scale, pose(1000f, 1, TabViewMode.PIXEL).scale, 0.00001f)
+        // Normal pulls keep the cards uniform in size.
+        assertEquals(pose(400f, 0).scale, pose(400f, 1).scale, 0.00001f)
+    }
 
     private fun slot(p: Float) = deckSlot(p, w, h, crop)
 

@@ -1,6 +1,6 @@
 [versions]
-agp = "8.13.2"
-kotlin = "2.3.21"
+agp = "9.1.1"
+kotlin = "2.4.10"
 coreKtx = "1.17.0"
 coreSplashscreen = "1.0.1"
 junit = "4.13.2"
@@ -9,9 +9,10 @@ espressoCore = "3.7.0"
 lifecycleRuntimeKtx = "2.10.0"
 lifecycleViewmodelCompose = "2.10.0"
 activityCompose = "1.13.0"
-composeBom = "2026.06.01"
+composeBom = "2026.09.00"
 kotlinxCoroutines = "1.11.0"
-mozillaComponents = "153.0"
+mozillaComponents = "156.0.1"
+mozillaAppServices = "156.0"
 androidxCredentials = "1.6.0"
 androidxBiometric = "1.1.0"
 yubikit = "3.1.0"
@@ -75,7 +76,7 @@ mozilla-feature-accounts-push = { group = "org.mozilla.components", name = "feat
 mozilla-lib-push-firebase = { group = "org.mozilla.components", name = "lib-push-firebase", version.ref = "mozillaComponents" }
 mozilla-support-utils = { group = "org.mozilla.components", name = "support-utils", version.ref = "mozillaComponents" }
 mozilla-support-appservices = { group = "org.mozilla.components", name = "support-appservices", version.ref = "mozillaComponents" }
-mozilla-appservices-logins = { group = "org.mozilla.appservices", name = "logins", version.ref = "mozillaComponents" }
+mozilla-appservices-logins = { group = "org.mozilla.appservices", name = "logins", version.ref = "mozillaAppServices" }
 mozilla-service-sync-autofill = { group = "org.mozilla.components", name = "service-sync-autofill", version.ref = "mozillaComponents" }
 mozilla-telemetry-glean = { group = "org.mozilla.telemetry", name = "glean", version.ref = "glean" }
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "androidxCredentials" }
@@ -87,6 +88,5 @@ mlkit-subject-segmentation = { group = "com.google.android.gms", name = "play-se
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }

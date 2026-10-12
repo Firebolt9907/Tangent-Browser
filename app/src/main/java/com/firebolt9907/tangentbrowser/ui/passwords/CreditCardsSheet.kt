@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -84,13 +85,23 @@ fun CreditCardsSheet(
     var showDeleteConfirm by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(reloadKey) {
-        loading = true
+        loading = cards.isEmpty()
         runCatching { creditCardsStorage.getAllCreditCards() }
             .onSuccess {
                 cards = it
                 loadFailed = false
             }
-            .onFailure { loadFailed = true }
+            .onFailure {
+                loadFailed = true
+                if (cards.isNotEmpty()) {
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = "Couldn't refresh cards",
+                            duration = SnackbarDuration.Short,
+                        )
+                    }
+                }
+            }
         loading = false
     }
 

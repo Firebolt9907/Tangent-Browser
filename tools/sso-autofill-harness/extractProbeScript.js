@@ -83,13 +83,15 @@ const USER_LABELS = String.raw`/next|continue|sign\s?in|log\s?in|submit/`;
 module.exports = {
   TEST_TAG,
   detectScript: () => build('fun buildDetectScript'),
-  fillScript: (username, password, stage) => build('fun buildFillScript', {
+  fillScript: (username, password, stage, origin) => build('fun buildFillScript', {
+    originGuard: origin ? `if (location.origin !== ${JSON.stringify(origin)}) return false;` : '',
     u: JSON.stringify(username),
     p: JSON.stringify(stage === 'pw' ? password : ''),
     wantPassword: String(stage === 'pw'),
   }),
-  submitScript: (stage) => build('fun buildSubmitScript', {
+  submitScript: (stage, origin) => build('fun buildSubmitScript', {
     wantPassword: String(stage === 'pw'),
+    originGuard: origin ? `if (location.origin !== ${JSON.stringify(origin)}) return false;` : '',
     labels: stage === 'pw' ? PASSWORD_LABELS : USER_LABELS,
   }),
 };

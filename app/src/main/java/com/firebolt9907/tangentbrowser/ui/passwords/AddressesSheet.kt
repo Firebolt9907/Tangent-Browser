@@ -84,13 +84,23 @@ fun AddressesSheet(
     var showAddDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(reloadKey) {
-        loading = true
+        loading = addresses.isEmpty()
         runCatching { creditCardsStorage.getAllAddresses() }
             .onSuccess {
                 addresses = it
                 loadFailed = false
             }
-            .onFailure { loadFailed = true }
+            .onFailure {
+                loadFailed = true
+                if (addresses.isNotEmpty()) {
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = "Couldn't refresh addresses",
+                            duration = SnackbarDuration.Short,
+                        )
+                    }
+                }
+            }
         loading = false
     }
 
@@ -99,10 +109,16 @@ fun AddressesSheet(
     // confirm dialog this replaces taxed every delete to protect against a mistake we can just fix.
     // (No haptics.remove() here — SwipeToRemoveRow already plays it on the gesture that gets here.)
     suspend fun deleteWithUndo(address: Address) {
-        runCatching {
-            creditCardsStorage.deleteAddress(address.guid)
-            creditCardsStorage.getAllAddresses()
-        }.onSuccess { addresses = it }
+        val deleted = runCatching { creditCardsStorage.deleteAddress(address.guid) }
+        if (deleted.isFailure) {
+            snackbarHostState.showSnackbar(
+                message = "Couldn't remove that address",
+                duration = SnackbarDuration.Short,
+            )
+            return
+        }
+        addresses = runCatching { creditCardsStorage.getAllAddresses() }
+            .getOrElse { addresses.filterNot { it.guid == address.guid } }
         val result = snackbarHostState.showSnackbar(
             message = "Address removed",
             actionLabel = "Undo",
@@ -111,10 +127,21 @@ fun AddressesSheet(
         if (result == SnackbarResult.ActionPerformed) {
             runCatching {
                 creditCardsStorage.addAddress(address.toUpdatableFields())
-                creditCardsStorage.getAllAddresses()
             }.onSuccess {
-                addresses = it
                 haptics.create()
+                runCatching { creditCardsStorage.getAllAddresses() }
+                    .onSuccess { addresses = it }
+                    .onFailure {
+                        snackbarHostState.showSnackbar(
+                            message = "Address restored; couldn't refresh the list",
+                            duration = SnackbarDuration.Short,
+                        )
+                    }
+            }.onFailure {
+                snackbarHostState.showSnackbar(
+                    message = "Couldn't restore that address",
+                    duration = SnackbarDuration.Short,
+                )
             }
         }
     }
@@ -173,11 +200,12 @@ fun AddressesSheet(
                                 modifier = Modifier.heightIn(max = 320.dp),
                             ) {
                                 items(addresses, key = { it.guid }) { address ->
-                                    // Swipe end-to-start deletes straight away; the snackbar undo
-                                    // above is the safety net, so the row settles rather than
-                                    // springing back to wait on a dialog.
+                                    // The row springs back while the storage call runs. A failed
+                                    // delete must leave it visible; a successful one removes it
+                                    // from the list and offers Undo.
                                     SwipeToRemoveRow(
                                         onRemove = { scope.launch { deleteWithUndo(address) } },
+                                        settleOnRemove = false,
                                         removeLabel = "Remove address",
                                     ) {
                                         AddressRow(address = address)
@@ -221,12 +249,16 @@ fun AddressesSheet(
             onDismiss = { showAddDialog = false },
             onSave = { fields ->
                 scope.launch {
-                    runCatching {
-                        creditCardsStorage.addAddress(fields)
-                        creditCardsStorage.getAllAddresses()
-                    }.onSuccess {
-                        addresses = it
+                    runCatching { creditCardsStorage.addAddress(fields) }.onSuccess {
                         haptics.create()
+                        runCatching { creditCardsStorage.getAllAddresses() }
+                            .onSuccess { addresses = it }
+                            .onFailure {
+                                snackbarHostState.showSnackbar(
+                                    message = "Address saved; couldn't refresh the list",
+                                    duration = SnackbarDuration.Short,
+                                )
+                            }
                     }.onFailure {
                         // Silently dropping the save made a failed write look identical to a
                         // successful one that simply hadn't refreshed yet.

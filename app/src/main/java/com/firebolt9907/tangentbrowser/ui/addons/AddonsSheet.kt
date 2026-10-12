@@ -114,6 +114,7 @@ internal fun AddonsManagerSheetContent(
     onOpenSettings: (InstalledAddon) -> Unit,
     onOpenQuickSettings: (InstalledAddon) -> Unit,
     onUninstall: (String) -> Unit,
+    onUblockAutomaticUpdatesChange: (Boolean) -> Unit,
     // When non-null, the header's leading icon becomes a Back control (returns to the Page view).
     // Used by the aA sheet, which reaches Add-ons via a button rather than a top-level tab.
     onBack: (() -> Unit)? = null,
@@ -137,6 +138,17 @@ internal fun AddonsManagerSheetContent(
                 }
             },
             trailing = { BusyIndicator(visible = state.isBusy) },
+        )
+
+        ListItem(
+            headlineContent = { Text("Automatically update uBlock Origin") },
+            supportingContent = { Text("Use Mozilla-signed releases between Tangent updates. New permissions require approval.") },
+            trailingContent = {
+                Switch(
+                    checked = state.ublockAutomaticUpdates,
+                    onCheckedChange = onUblockAutomaticUpdatesChange,
+                )
+            },
         )
 
         Spacer(Modifier.height(16.dp))

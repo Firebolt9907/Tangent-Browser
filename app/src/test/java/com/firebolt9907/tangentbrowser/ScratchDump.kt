@@ -6,8 +6,8 @@ class ScratchDump {
     @Test fun dump() {
         mapOf(
             "detect" to LoginFieldProbe.buildDetectScript(),
-            "fillpw" to LoginFieldProbe.buildFillScript("me@purdue.edu","s3cret"),
-            "filluser" to LoginFieldProbe.buildFillScript("me@purdue.edu","s3cret", LoginFieldProbe.Stage.User),
+            "fillpw" to LoginFieldProbe.buildFillScript("me@purdue.edu","s3cret", expectedOrigin = "https://idp.example.com"),
+            "filluser" to LoginFieldProbe.buildFillScript("me@purdue.edu","s3cret", LoginFieldProbe.Stage.User, expectedOrigin = "https://idp.example.com"),
             "submitpw" to LoginFieldProbe.buildSubmitScript(),
             "submituser" to LoginFieldProbe.buildSubmitScript(LoginFieldProbe.Stage.User),
         ).forEach { (n, js) ->

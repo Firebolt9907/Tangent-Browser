@@ -309,6 +309,7 @@ fun AaSheet(
                     onOpenSettings = onOpenAddonSettings,
                     onOpenQuickSettings = onOpenAddonQuickSettings,
                     onUninstall = addonController::uninstall,
+                    onUblockAutomaticUpdatesChange = addonController::setUblockAutomaticUpdates,
                     onBack = { pane = AaPane.Page },
                 )
                 AaPane.Settings -> PageSettingsPaneContent(

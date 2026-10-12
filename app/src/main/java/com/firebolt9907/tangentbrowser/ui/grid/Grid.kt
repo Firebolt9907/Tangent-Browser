@@ -557,6 +557,7 @@ fun TabGridOverlay(
                             cancelFromProgress = cancelFromProgress,
                             releasePosition = releasePositions?.getOrNull(index),
                             flickReleaseArc = flickReleaseArc,
+                            tabViewMode = tabViewMode,
                             tabCount = tabs.size,
                             progress = progressFwd,
                             xProgress = xProgressFwd,
@@ -685,6 +686,7 @@ private fun GridTabCard(
     cancelFromProgress: Float,
     releasePosition: Triple<Float, Float, Float>?,
     flickReleaseArc: FlickReleaseArc?,
+    tabViewMode: TabViewMode,
     tabCount: Int,
     progress: () -> Float,
     xProgress: () -> Float,
@@ -742,26 +744,27 @@ private fun GridTabCard(
                 var deckAlpha = 1f
                 when {
                     isGesture -> {
-                        // Finger-tracked carousel: cards shrink together toward the drag floor and
-                        // fan into the deck only on release (commit spring).
-                        val liveScale = deckDragScale(p, dragOffsetPx(), containerH * DeckTravelFrac)
-                        val fingerX = containerW / 2f + selectedShiftBase + carouselShift()
-                        val fingerY = containerH - dragOffsetPx()
-                        scale = liveScale
-                        tx = (fingerX - containerW * liveScale / 2f) +
-                            tab.slotDelta * pageStridePx * liveScale
-                        ty = fingerY - containerH * liveScale
+                        val pose = deckDragCardPose(
+                            p, dragOffsetPx(), containerW, containerH,
+                            containerW / 2f + selectedShiftBase + carouselShift(),
+                            pageStridePx, tab.slotDelta, tabViewMode,
+                        )
+                        scale = pose.scale
+                        tx = pose.tx
+                        ty = pose.ty
                     }
                     else -> {
                         val pose = overviewCardPose(
                             slot = slotProvider(tab.recencyRank - stackScroll() + closeShift),
                             browseX = tab.browseBaseX + carouselShift(),
                             progress = p,
-                            releaseProgress = xProgress(),
+                            releaseProgress = flickReleaseArc?.progress?.value ?: xProgress(),
                             commitFromProgress = commitFromProgress,
                             cancelFromProgress = cancelFromProgress,
                             releasePosition = releasePosition,
                             flickReleaseArc = flickReleaseArc,
+                            inertiaInfluence = overviewInertiaInfluence(tab.slotDelta),
+                            isBackgroundCard = tab.slotDelta != 0,
                         )
                         scale = pose.scale
                         tx = pose.tx
@@ -1148,9 +1151,11 @@ private fun GridCellChrome(
                 // Left edge at the card's left edge; the box bottom sits a small gap above the card
                 // top so the bottom-aligned content hugs the top-left corner. Rides up on a swipe.
                 val pose = overviewCardPose(
-                    slot, tab.browseBaseX + carouselShift(), progress(), xProgress(),
+                    slot, tab.browseBaseX + carouselShift(), progress(),
+                    flickReleaseArc?.progress?.value ?: xProgress(),
                     commitFromProgress, cancelFromProgress, releasePosition,
-                    flickReleaseArc,
+                    flickReleaseArc, overviewInertiaInfluence(tab.slotDelta),
+                    isBackgroundCard = tab.slotDelta != 0,
                 )
                 val captionScale = pose.scale / slot.scale
                 transformOrigin = TransformOrigin(0f, 0f)

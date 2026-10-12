@@ -35,6 +35,11 @@ edge-to-edge under the status bar.
   roaming FIDO2 security keys connected over USB/NFC.
 - **Video fullscreen** and **per-site preferences** (page zoom, opt-in status-bar top-padding fix).
 
+Android backup and device transfer preserve only global preferences, site appearance preferences,
+and hidden-element rules. Local tabs, history, bookmarks, site sessions, credentials, remembered form
+values, and permission/autofill approvals are not included. Firefox Sync remains a separate opt-in
+way to synchronize supported data; sign in again on a new device.
+
 **Firefox account & sync** (optional; sign in via FxA)
 - **Synced tabs** from your other Firefox devices, plus **Send Tab** receipt via command polling.
 - **Passwords** — encrypted login storage (`PlacesLoginsStorage`) with a management sheet.
@@ -49,10 +54,10 @@ edge-to-edge under the status bar.
 
 ## Stack
 
-- **Kotlin** 2.2.21, **Jetpack Compose** (BOM 2024.09), **Material 3**, edge-to-edge.
-- **AGP** 8.13.2 · **compileSdk / targetSdk** 36 · **minSdk** 26.
+- **Kotlin** 2.4.10, **Jetpack Compose** (BOM 2026.06.01), **Material 3**, edge-to-edge.
+- **AGP** 9.1.1 · **compileSdk** 37 · **targetSdk** 36 · **minSdk** 26.
 - **Browser engine:** GeckoView via [`mozilla-components`](https://github.com/mozilla-mobile/firefox-android)
-  147.0.4 (`browser-engine-gecko`, `browser-state`, `feature-session`/`-tabs`/`-customtabs`/
+  156.0.1 (`browser-engine-gecko`, `browser-state`, `feature-session`/`-tabs`/`-customtabs`/
   `-downloads`/`-syncedtabs`, `service-firefox-accounts`, `browser-storage-sync`, …).
 - **Coil** for image loading, **BouncyCastle** for the Sync 1.5 crypto path.
 - Single Gradle module under `app/`.
@@ -91,6 +96,14 @@ Notes:
   build drops the Google Services plugin and sync falls back to its foreground poll (see
   [`AGENTS.md`](AGENTS.md) → *Firefox Sync*). The app builds and syncs fine with no Firebase project.
 - JVM unit tests: `./gradlew :app:test`. Instrumented tests need a device/emulator.
+
+Compose instrumentation uses a separate `uiTest` build with application ID
+`com.firebolt9907.tangentbrowser.uitest` and a minimal test host. It does not initialize Firebase
+or the browser's data/services. Run it with `./gradlew :app:connectedUiTestAndroidTest` (or
+`:app:connectedAndroidTest`). Gradle may uninstall the test host during cleanup; the regular
+browser package and its data are separate. `connectedDebugAndroidTest` is intentionally unavailable.
+Run only one instrumentation invocation per device/test package at a time: another runner's
+installation or cleanup can terminate an active suite.
 
 ## Repo layout
 

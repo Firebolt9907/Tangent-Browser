@@ -151,6 +151,8 @@ import com.firebolt9907.tangentbrowser.ui.content.linkUrlFromHitResult
 import com.firebolt9907.tangentbrowser.ui.content.imageSrcFromHitResult
 import com.firebolt9907.tangentbrowser.ui.grid.DeckTravelFrac
 import com.firebolt9907.tangentbrowser.ui.grid.deckDragScale
+import com.firebolt9907.tangentbrowser.ui.grid.deckDragCardScale
+import com.firebolt9907.tangentbrowser.ui.grid.deckDragCardPose
 import com.firebolt9907.tangentbrowser.ui.grid.GridTab
 import mozilla.components.browser.icons.IconRequest
 import com.firebolt9907.tangentbrowser.ui.containers.swatch
@@ -1483,22 +1485,26 @@ fun TangentRoot(
         }
         onDispose { ThemeColorProbe.listener = null }
     }
-    // SMS one-time-code autofill: when the Activity extracts a code from an incoming SMS (via SMS
-    // User Consent), inject the fill script into the currently-selected tab. rememberUpdatedState so
-    // the code, delivered on the main thread from the consent-result callback, always targets the
-    // live session and not a stale capture.
-    val otpFillSession by rememberUpdatedState(selectedEngineSession)
+    // Bind every consent result to the reporting tab, origin and captured session.
     DisposableEffect(Unit) {
-        com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.codeFiller = { code ->
-            otpFillSession?.loadJavascriptUrl(
-                com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.buildFillScript(code),
-            )
-        }
-        // Page reported an OTP field: arm the fallback, but only *show* the banner if the clipboard
-        // also looks freshly changed (a code was likely just copied). Fires on Gecko's thread, so
-        // marshal the state write back to main. consumeChanged() reads only clip metadata.
-        com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.onFieldDetected = {
+        com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.onFieldDetected = { tabId ->
             scope.launch {
+                val session = components.store.state.tabs.firstOrNull { it.id == tabId }
+                    ?.engineState?.engineSession ?: return@launch
+                val delivery = com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.createDelivery(
+                    tabId = tabId,
+                    selectedTabId = { components.store.state.selectedTabId },
+                ) { code, origin ->
+                    if (components.store.state.tabs.firstOrNull { it.id == tabId }
+                            ?.engineState?.engineSession === session
+                    ) {
+                        session.loadJavascriptUrl(
+                            com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.buildFillScript(code, origin),
+                        )
+                    }
+                } ?: return@launch
+                com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.codeFiller = delivery
+                com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.smsListenStarter?.invoke(delivery)
                 otpFieldPresent = true
                 if (clipWatcher.consumeChanged()) otpPasteVisible = true
             }
@@ -1522,7 +1528,7 @@ fun TangentRoot(
     }
     // Retire the paste banner when switching tabs, and clear the armed field flag (the new page may
     // have no OTP field; it re-arms if the detector fires again).
-    LaunchedEffect(actualSelectedTabId) {
+    LaunchedEffect(actualSelectedTabId, currentUrl) {
         otpPasteVisible = false
         otpFieldPresent = false
     }
@@ -1591,6 +1597,7 @@ fun TangentRoot(
     // The address sheet's currently highlighted top suggestion (see AddressSheet.onTopSuggestionChange).
     // Held as a plain MutableState so the memoized callbacks below read its latest value at Go time.
     val topSuggestion = remember { mutableStateOf<String?>(null) }
+    val topSuggestionQuery = remember { mutableStateOf<String?>(null) }
     // The top suggestion's URL when it is a concrete page (History/Bookmark) — fed to the editing
     // field for inline autocomplete. Search and switch-to-tab rows are excluded: there is no URL to
     // complete toward (a tab row switches rather than navigates).
@@ -1619,8 +1626,10 @@ fun TangentRoot(
                 // Commit the autoselected top suggestion when one is present (desktop-browser
                 // behavior); fall back to the raw typed text otherwise. onSubmitText and
                 // onEditingSubmit both run the same normalizeUrl path.
-                val switchTab = topSuggestionTabId.value
-                val top = topSuggestion.value
+                val currentText = viewModel.state.value.editingText.trim()
+                val currentSuggestion = topSuggestionQuery.value == currentText
+                val switchTab = topSuggestionTabId.value.takeIf { currentSuggestion }
+                val top = topSuggestion.value.takeIf { currentSuggestion }
                 if (switchTab != null) {
                     // Top row is an already-open tab — switch to it instead of navigating.
                     viewModel.onEditingCancel()
@@ -1737,8 +1746,8 @@ fun TangentRoot(
         barCollapseProgress = target
     }
 
-    fun animateBarCollapseProgress(target: Float) {
-        if (abs(barCollapseProgressTarget - target) < 0.003f) return
+    fun animateBarCollapseProgress(target: Float, releaseVelocity: Float? = null) {
+        if (releaseVelocity == null && abs(barCollapseProgressTarget - target) < 0.003f) return
         barCollapseProgressTarget = target
         barCollapseAnimationJob?.cancel()
         barCollapseAnimationJob = scope.launch {
@@ -1746,6 +1755,7 @@ fun TangentRoot(
             motionEngine.animate(barCollapseProgressState,
                 targetValue = target,
                 animationSpec = TangentMotion.BarCollapse,
+                initialVelocity = releaseVelocity,
             ) {
                 barCollapseProgress = value
             }
@@ -2186,7 +2196,7 @@ fun TangentRoot(
         return newTabId
     }
 
-    fun closeGrid(animateBack: Boolean, afterClose: () -> Unit = {}) {
+    fun closeGrid(animateBack: Boolean, releaseVelocity: Offset? = null, afterClose: () -> Unit = {}) {
         gridAnimationJob?.cancel()
         gridGestureActive = false
         gridDragPx = 0f
@@ -2207,8 +2217,8 @@ fun TangentRoot(
                 // so carousel→columns stays locked to the vertical progress, same as openGrid.
                 val anim = TangentMotion.GridClose
                 coroutineScope {
-                    launch { motionEngine.animate(gridProgressState, 0f, animationSpec = anim) }
-                    launch { motionEngine.animate(gridXProgressState, 0f, animationSpec = anim) }
+                    launch { motionEngine.animate(gridProgressState, 0f, animationSpec = anim, initialVelocity = releaseVelocity?.y) }
+                    launch { motionEngine.animate(gridXProgressState, 0f, animationSpec = anim, initialVelocity = releaseVelocity?.x) }
                 }
             } else {
                 gridProgressState.snapTo(0f)
@@ -2289,6 +2299,18 @@ fun TangentRoot(
                         initialVelocity = if (buttonEntry) 0f else launchVelocity?.let { it / (1f - fromProgress!!).coerceAtLeast(0.0001f) },
                         animationSpec = s,
                     )
+                }
+                GridFlickArc.arc?.let { arc ->
+                    launch {
+                        // All cards share elapsed time; background cards damp their throw by depth.
+                        motionEngine.animate(arc.progress, 1f,
+                            animationSpec = tween(
+                                com.firebolt9907.tangentbrowser.ui.grid.FlickReleaseArc.DurationMillis,
+                                easing = LinearEasing,
+                            ),
+                            initialVelocity = 0f,
+                        )
+                    }
                 }
             }
             gridDragProgress = 0f
@@ -2388,7 +2410,7 @@ fun TangentRoot(
     }
 
     val onPillDragDelta: (androidx.compose.ui.geometry.Offset) -> Unit = { delta ->
-        if (tabSwitchingEnabled || gridGestureActive) {
+        if (!barCollapseDragActive && (tabSwitchingEnabled || gridGestureActive)) {
             applyHorizontalDelta(delta.x)
         }
         if (barCollapseDragActive) {
@@ -2451,14 +2473,19 @@ fun TangentRoot(
     val onPillDragEnd: (androidx.compose.ui.geometry.Offset, androidx.compose.ui.geometry.Offset) -> Unit = onPillDragEnd@{ _, velocity ->
         if (barCollapseDragActive) {
             val downwardVelocity = velocity.y
+            // A vertical chrome gesture owns the release. Discard lateral drift and invalidate
+            // the pending capture purpose so a late thumbnail cannot restore the drag cover.
+            offsetX = 0f
+            snap.resetTabSwitchSnapshot()
+            val releaseVelocity = (downwardVelocity / BarCollapseSnapThresholdPx).coerceIn(-8f, 8f)
             val commit = barCollapseDragPx >= BarCollapseSnapThresholdPx * 0.5f || downwardVelocity >= 800f
             if (commit) {
                 barCollapseCompact = true
-                animateBarCollapseProgress(1f)
+                animateBarCollapseProgress(1f, releaseVelocity)
                 barCollapsePx = BarCollapseSnapThresholdPx
             } else {
                 barCollapseCompact = false
-                animateBarCollapseProgress(0f)
+                animateBarCollapseProgress(0f, releaseVelocity)
                 barCollapsePx = 0f
             }
             barCollapseDragActive = false
@@ -2478,23 +2505,17 @@ fun TangentRoot(
             val containerW = contentSize.width.toFloat()
             val containerH = contentSize.height.toFloat()
             if (containerW <= 0f || containerH <= 0f) return null
-            // Must match the finger-tracked drag scale drawn in TabGridOverlay's isGesture branch,
-            // or the commit spring would start from a different scale than the drag showed.
-            val releaseScale =
-                deckDragScale(gridDragProgress, gridDragPx, containerH * DeckTravelFrac)
             val captureCarouselShift = if (gridHandoffSelectedTabId != null) {
                 gridHandoffSelectedOffsetX + offsetX
             } else {
                 offsetX
             }
             val fingerX = containerW / 2f + captureCarouselShift
-            val fingerY = containerH - gridDragPx
-            val selectedTx = fingerX - containerW * releaseScale / 2f
-            val selectedTy = fingerY - containerH * releaseScale
-            val stride = (containerW + tabSwitchGapPx) * releaseScale
             val selIdx = tabsList.indexOfFirst { it.id == selectedTabId }.coerceAtLeast(0)
             return tabsList.mapIndexed { i, _ ->
-                Triple(selectedTx + (i - selIdx) * stride, selectedTy, releaseScale)
+                val pose = deckDragCardPose(gridDragProgress, gridDragPx, containerW, containerH,
+                    fingerX, containerW + tabSwitchGapPx, i - selIdx, tabViewMode)
+                Triple(pose.tx, pose.ty, pose.scale)
             }
         }
         if (gridWantsCommit) {
@@ -2509,21 +2530,36 @@ fun TangentRoot(
             // These seed the commit animation so tabs spring from wherever they were
             // under the finger to their grid cells, rather than from carousel positions.
             gridCommitFromPositions = captureGridReleasePositions()
-            gridCommitFromProgress = gridDragProgress
+            gridCommitFromProgress = gridDragProgress.coerceAtLeast(0.0001f)
             gridCancelFromProgress = 0f
-            // A velocity-only commit used to travel in a nearly straight line from a barely-lifted
-            // card. Make a quick flick visibly throw higher, shrink below the resting deck size,
-            // then curve and grow into its slot. The release curve itself stays in Grid.kt so the
-            // gesture hot path remains direct-state only (invariant #4).
-            GridFlickArc.arc = if (pastGridVelocity) {
-                val intensity = ((upwardVelocity - GridCommitVelocityPxS) / 2_200f).coerceIn(0f, 1f)
-                com.firebolt9907.tangentbrowser.ui.grid.FlickReleaseArc(
-                    heightPx = contentSize.height * (0.28f + 0.18f * intensity),
-                    scaleDip = 0.15f + 0.12f * intensity,
+            // Match the drag's bottom-edge and scale velocities, then coast into the slot.
+            // Bound pathological tracker spikes by screen size, not a fixed pixel distance.
+            GridFlickArc.arc = if (tabViewMode != TabViewMode.GRID &&
+                contentSize.height > 0 && gridCommitFromPositions != null) {
+                val speed = upwardVelocity.coerceIn(-contentSize.height * 3f, contentSize.height * 3f)
+                val scale = deckDragScale(gridDragProgress, gridDragPx, contentSize.height * DeckTravelFrac)
+                val nextScale = deckDragScale(
+                    ((gridDragPx + 1f) / travelPx).coerceIn(0f, 1f),
+                    gridDragPx + 1f, contentSize.height * DeckTravelFrac,
                 )
-            } else {
-                null
-            }
+                com.firebolt9907.tangentbrowser.ui.grid.FlickReleaseArc(
+                    upwardVelocityPxS = speed,
+                    scaleVelocityPerSec = ((nextScale - scale) * speed)
+                        .coerceAtLeast(-(scale - 0.22f).coerceAtLeast(0f) / 0.15f),
+                    containerWidth = contentSize.width.toFloat(),
+                    containerHeight = contentSize.height.toFloat(),
+                    carouselScaleAtRelease = scale,
+                    backgroundScaleVelocityPerSec = if (tabViewMode == TabViewMode.DECK) {
+                        val travel = contentSize.height * DeckTravelFrac
+                        val current = deckDragCardScale(gridDragProgress, gridDragPx, travel, true)
+                        val next = deckDragCardScale(((gridDragPx + 1f) / travelPx).coerceIn(0f, 1f),
+                            gridDragPx + 1f, travel, true)
+                        ((next - current) * speed)
+                            .coerceAtLeast(-(current - 0.22f).coerceAtLeast(0f) / 0.15f)
+                    } else ((nextScale - scale) * speed)
+                        .coerceAtLeast(-(scale - 0.22f).coerceAtLeast(0f) / 0.15f),
+                )
+            } else null
             // Vertical wins: open grid. Snap any horizontal carousel motion back to 0 so the
             // selected tab stays selected — Safari's behavior.
             offsetX = 0f
@@ -2909,6 +2945,11 @@ fun TangentRoot(
             // How far the preview zoom goes at full drag: not all the way to 0 (a committed close),
             // so cancel still has somewhere to spring back from and the selected card stays legible.
             val gridBackPreviewFloor = 0.12f
+            val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
+            fun releaseVelocity(): Offset {
+                val velocity = tracker.calculateVelocity()
+                return Offset(velocity.x.coerceIn(-5f, 5f), velocity.y.coerceIn(-5f, 5f))
+            }
             try {
                 gridAnimationJob?.cancel()
                 gridAnimationJob = null
@@ -2916,25 +2957,30 @@ fun TangentRoot(
                 motionEngine.interrupt(gridXProgressState)
                 val startY = gridProgressState.value
                 val startX = gridXProgressState.value
+                tracker.addPosition(android.os.SystemClock.uptimeMillis(), Offset(startX, startY))
                 progress.collect { backEvent ->
                     val p = backEvent.progress.coerceIn(0f, 1f)
                     // A back gesture can start while overview opening is still settling.
                     val remaining = 1f - (1f - gridBackPreviewFloor) * p
                     gridProgressState.snapTo(startY * remaining)
                     gridXProgressState.snapTo(startX * remaining)
+                    tracker.addPosition(android.os.SystemClock.uptimeMillis(),
+                        Offset(startX * remaining, startY * remaining))
                 }
                 // Committed: finish the zoom into the selected card (closeGrid springs from the
                 // current preview position down to 0 and re-selects the live tab).
                 tangentHaptics.gridEngage()
-                closeGrid(animateBack = true)
-            } catch (_: CancellationException) {
+                closeGrid(animateBack = true, releaseVelocity = releaseVelocity())
+            } catch (cancelled: CancellationException) {
+                if (cancelled is MotionInterruptedException) throw cancelled
+                val velocity = releaseVelocity()
                 // Cancelled: spring the deck back fully open from wherever the preview left it.
                 gridAnimationJob?.cancel()
                 gridAnimationJob = scope.launch {
                     val s = TangentMotion.GridOpen
                     coroutineScope {
-                        launch { motionEngine.animate(gridProgressState, 1f, animationSpec = s) }
-                        launch { motionEngine.animate(gridXProgressState, 1f, animationSpec = s) }
+                        launch { motionEngine.animate(gridProgressState, 1f, animationSpec = s, initialVelocity = velocity.y) }
+                        launch { motionEngine.animate(gridXProgressState, 1f, animationSpec = s, initialVelocity = velocity.x) }
                     }
                     gridAnimationJob = null
                 }
@@ -3114,6 +3160,7 @@ fun TangentRoot(
                             pullRetractJob = null
                         }
                         pullRefreshDistancePx = distance.coerceIn(0f, pullRefreshMaxDistancePx)
+                        motionEngine.track("pull-distance", pullRefreshDistancePx)
                         if (pullMenuEnabled) {
                             // Same ownership rule as the vertical retract above: a live pull owns
                             // the value outright, so kill any recentre still running from the last
@@ -3127,7 +3174,9 @@ fun TangentRoot(
                                 pullMenuCollapseJob = null
                             }
                             pullMenuDxPx = dx
+                            motionEngine.track("pull-x", pullMenuDxPx)
                             pullMenuPresence = pullMenuRevealFor(pullRefreshDistancePx)
+                            motionEngine.track("pull-presence", pullMenuPresence)
                             if (pullMenuPresence > 0f) pullMenuComposed = true
                             val picked = nextPullAction(
                                 current = pullMenuSelection,
@@ -3941,7 +3990,8 @@ fun TangentRoot(
                     onSubmit = { text ->
                         viewModel.onSubmitText(text)
                     },
-                    onTopSuggestionChange = { row ->
+                    onTopSuggestionChange = { query, row ->
+                        topSuggestionQuery.value = query
                         topSuggestion.value = row?.url
                         topSuggestionTabId.value = row
                             ?.takeIf { it.kind == com.firebolt9907.tangentbrowser.state.AddressSuggestionKind.Tab }
@@ -4089,7 +4139,9 @@ fun TangentRoot(
                         tabCount = tabCount,
                         activeState = effectiveBarState,
                         callbacks = callbacks,
-                        inlineAutocomplete = autocompleteSource.value,
+                        inlineAutocomplete = autocompleteSource.value.takeIf {
+                            topSuggestionQuery.value == state.editingText.trim()
+                        },
                         onVoiceInput = onVoiceInput,
                         onPrimaryUrlTap = onPrimaryUrlTap,
                         onDragStart = onPillDragStart,

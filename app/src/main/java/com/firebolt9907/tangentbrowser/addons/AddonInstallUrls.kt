@@ -12,7 +12,7 @@ import androidx.core.net.toUri
 internal fun String.toAddonInstallUrl(): String? {
     val trimmed = trim()
     if (trimmed.isEmpty()) return null
-    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
         val uri = trimmed.toUri()
         val path = uri.path.orEmpty()
         if (path.endsWith(".xpi")) return trimmed
@@ -44,6 +44,9 @@ internal fun String.isAddonDownloadUrl(): Boolean {
     // Parse with java.net.URI (not android.net.Uri) so the host check is a real, JVM-testable
     // authority parse and a lookalike host like "addons.mozilla.org.evil.com" can't slip through.
     val uri = runCatching { java.net.URI(trim()) }.getOrNull() ?: return false
+    // An AMO-shaped authority alone does not authenticate the download source.
+    if (!uri.scheme.equals("https", ignoreCase = true)) return false
+    if (uri.rawUserInfo != null || uri.port !in listOf(-1, 443)) return false
     val host = uri.host?.lowercase() ?: return false
     if (host != "addons.mozilla.org" && !host.endsWith(".addons.mozilla.org")) return false
     val path = uri.path.orEmpty()

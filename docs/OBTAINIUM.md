@@ -1,124 +1,102 @@
-# Installing & updating Tangent Browser with Obtainium
+# Installing and updating Tangent Browser with Obtainium
 
-[Obtainium](https://github.com/ImranR98/Obtainium) installs Android apps straight from a project's
-release feed and checks for updates itself. Tangent's feed is its **GitHub Releases** page: every
-tag matching `v*` builds a signed `arm64-v8a` APK and attaches it to a release
-(`.github/workflows/release.yml`).
+Release feed: **https://github.com/Firebolt9907/LuminaBrowser/releases**.
 
-Repository URL used throughout this doc — if you host the repo under a different name, change it
-here, in `obtainium.json`, in `scripts/obtainium_link.py`, and regenerate the README link:
+## On your phone
 
-```
-https://github.com/Firebolt9907/TangentBrowser
-```
+1. Install [Obtainium](https://github.com/ImranR98/Obtainium/releases).
+2. Add `https://github.com/Firebolt9907/LuminaBrowser` as a GitHub source.
+3. Enable **Include prereleases** to receive builds from `codex/beta`.
+4. Enable Obtainium's background update checks and, if desired, automatic installation in its settings.
+   Android may require permission to install apps and confirmation for an update; Obtainium controls
+   this, rather than the browser itself.
 
-## For users
+The [README badge](../README.md) and [import file](obtainium.json) configure the beta feed and select
+only `arm64-v8a.apk` assets. Stable-only users can turn prereleases off. Android 8.0 or newer and an
+arm64 phone are required.
 
-1. Install Obtainium (F-Droid, or its own GitHub releases).
-2. **Add App** → paste the repository URL above → **Add**.
-3. Obtainium reads the latest release, installs the APK, and polls for later tags.
+**This repository is private.** Obtainium needs authenticated GitHub access to private releases.
+Configure a personal GitHub token in Obtainium's GitHub source settings on your phone, scoped to this
+repository with read access to its contents. Do not put that token in this repository or share it in
+chat. Alternatively, the owner can make the repository public if that is intentional.
 
-### One-tap install link
+Android accepts an update only when the signing key matches the installed APK. The new permanent
+release key will differ from an earlier locally built APK: back up any important browser data before
+the first migration. A reinstall may be necessary once; subsequent releases retain the same key.
+Never uninstall the existing browser until its data is backed up and the new release is available.
 
-Obtainium accepts an entire app config in a deep link — `obtainium://app/<url-encoded JSON>` — so
-tapping it on a phone opens Obtainium with the source, name and settings already filled in; the user
-only confirms. Custom schemes aren't clickable in GitHub Markdown or most messengers, so the link is
-wrapped in Obtainium's own https redirect, which bounces to the app (and, if Obtainium isn't
-installed, just shows its page):
+## One-time signing setup
 
-```
-https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/<url-encoded JSON>
-```
+A permanent keystore has been generated outside the checkout during setup. Keep its backup securely;
+losing or regenerating the key breaks updates for existing installs. Never commit the keystore,
+passwords, or their Base64 representations.
 
-The rendered badge/link lives in the [README](../README.md). Regenerate it after any repo rename or
-app-id change — the URL embeds both:
-
-```sh
-python3 scripts/obtainium_link.py                       # uses the default repo URL
-python3 scripts/obtainium_link.py https://github.com/you/YourFork
-```
-
-The JSON keys (`id`, `url`, `author`, `name`, `preferredApkIndex`, `additionalSettings` — itself a
-JSON *string* — and `overrideSource`) mirror what Obtainium's own "share app" action emits; don't
-hand-edit the encoded blob, re-run the script.
-
-Alternatively import [`obtainium.json`](obtainium.json) (Obtainium → **Import/Export** → *Import from
-file*), which sets up the same source.
-
-Notes:
-- **arm64-v8a only.** The published APK excludes 32-bit and x86 ABIs. Practically every phone from
-  the last several years is arm64; an emulator likely is not.
-- **minSdk 26** (Android 8.0).
-- The APK is ~250 MB (GeckoView ships a full browser engine — `libxul.so` alone is 150 MB), so the
-  first install and each update are a sizeable download.
-- The first Obtainium install must be a fresh install if you previously side-loaded a locally built
-  APK — the debug-keystore build and the release build are signed with different keys, and Android
-  refuses to update across signing keys. Uninstall the old one first (it will lose local data).
-
-## For the maintainer — one-time setup
-
-### 1. Create the upload keystore
-
-This key identifies the app forever. Regenerating it means every existing install has to be
-uninstalled and re-installed by hand, so back the file up somewhere durable (password manager,
-encrypted backup) — **not** in the repo.
-
-```sh
-keytool -genkeypair -v \
-  -keystore tangent-upload.jks \
-  -alias tangent \
-  -keyalg RSA -keysize 4096 -validity 10000
-```
-
-### 2. Add the repository secrets
-
-`gh secret set …` from the repo root, or Settings → Secrets and variables → Actions:
+Add these **repository Actions secrets** in
+[Settings → Secrets and variables → Actions](https://github.com/Firebolt9907/LuminaBrowser/settings/secrets/actions):
 
 | Secret | Value |
 | --- | --- |
-| `TANGENT_KEYSTORE_BASE64` | `base64 -i tangent-upload.jks` (macOS) / `base64 -w0` (Linux) |
-| `TANGENT_KEYSTORE_PASSWORD` | keystore password |
+| `TANGENT_KEYSTORE_BASE64` | Base64 encoding of the complete permanent keystore file |
+| `TANGENT_KEYSTORE_PASSWORD` | Keystore password |
 | `TANGENT_KEY_ALIAS` | `tangent` |
-| `TANGENT_KEY_PASSWORD` | key password (same as the store password unless you set another) |
+| `TANGENT_KEY_PASSWORD` | Key password (same as the generated keystore password) |
+
+The signing backup includes files named after those four secrets, ready to copy into GitHub's secure
+secret editor. When repository secret-management access is available to `gh`, they can instead be
+uploaded without printing their values:
 
 ```sh
-gh secret set TANGENT_KEYSTORE_BASE64 < <(base64 -i tangent-upload.jks)
-gh secret set TANGENT_KEYSTORE_PASSWORD
-gh secret set TANGENT_KEY_ALIAS
-gh secret set TANGENT_KEY_PASSWORD
+gh secret set TANGENT_KEYSTORE_BASE64 --repo Firebolt9907/LuminaBrowser < TANGENT_KEYSTORE_BASE64.txt
+gh secret set TANGENT_KEYSTORE_PASSWORD --repo Firebolt9907/LuminaBrowser < TANGENT_KEYSTORE_PASSWORD.txt
+gh secret set TANGENT_KEY_ALIAS --repo Firebolt9907/LuminaBrowser < TANGENT_KEY_ALIAS.txt
+gh secret set TANGENT_KEY_PASSWORD --repo Firebolt9907/LuminaBrowser < TANGENT_KEY_PASSWORD.txt
 ```
 
-The workflow fails fast if `TANGENT_KEYSTORE_BASE64` is missing, and runs `apksigner verify
---print-certs` on the built APK before publishing — an unsigned or wrongly signed APK never reaches
-a release.
+The workflow checks all four secrets before building, requires explicit upload signing, and checks
+the APK's signing certificate against the configured keystore before publication. A missing or invalid
+key fails the job; it does not fall back to a disposable debug key.
 
-### 3. Cut a release
+## Publishing updates
+
+The [Release workflow](../.github/workflows/release.yml) publishes:
+
+- **Beta:** every push to `codex/beta` creates a prerelease named `beta-RUN_NUMBER`.
+- **Stable:** pushing `vMAJOR.MINOR.PATCH` creates a stable release, for example `v1.0.0`.
+- **Manual:** Actions → Release → Run workflow; leave the version empty for a beta, or enter a new
+  stable version such as `1.0.0`. Select the branch containing the changes to release.
+
+Each run tests the app and builds a signed arm64 release APK with JDK 21, Gradle's pinned wrapper,
+Android API 37.0, and build-tools 36.0.0. Publication happens only after those checks and signature
+verification pass. Releases contain the APK and `SHA256SUMS`. Existing published APKs are never
+replaced by a rerun: use a new push/version for an update.
+
+`versionName` matches the release tag (without `v` for stable releases). Both feeds share one
+increasing Android `versionCode`: **1,000,000 + the Release workflow's run number**. This lets a phone
+move between stable and beta builds without resetting its version counter. An optional repository
+variable `TANGENT_VERSION_CODE_BASE` can raise the baseline if an existing install has a higher code.
+Never lower that value. If the workflow is deleted/recreated, raise the baseline before publishing.
+The maximum supported Android version code is 2,100,000,000.
+
+After adding the secrets, rerun any first build that failed because they were absent. If Actions are
+disabled, enable them in the repository settings. The default branch is `codex/beta`, so manual runs
+are available there too.
+
+## Local distribution build
+
+Supply the same permanent key securely through the `TANGENT_KEYSTORE_FILE`,
+`TANGENT_KEYSTORE_PASSWORD`, `TANGENT_KEY_ALIAS`, and `TANGENT_KEY_PASSWORD` environment variables,
+plus `TANGENT_VERSION_NAME` and an increasing `TANGENT_VERSION_CODE`:
 
 ```sh
-git tag v1.0.0 && git push origin v1.0.0
+TANGENT_REQUIRE_RELEASE_SIGNING=true ./gradlew :app:assembleRelease
 ```
 
-or **Actions → Release → Run workflow** and type `1.0.0` (that path creates the tag for you).
+In the cloud environment, first source `/workspace/.lumina-setup/env.sh` and pass
+`-Dorg.gradle.java.home="$JAVA_HOME"`; the tracked Gradle configuration contains a Mac-specific Java
+path. Firebase is optional and release builds do not need `google-services.json`.
 
-Versioning rules baked into the workflow:
-- The tag must be `vMAJOR.MINOR.PATCH`; `versionName` is the tag without the `v`.
-- `versionCode` is derived as `MAJOR*10000 + MINOR*100 + PATCH`, so **every release must bump at
-  least the patch number** — Android rejects an update whose `versionCode` did not increase, and
-  Obtainium would report the update as perpetually available.
-- `MINOR` and `PATCH` are capped at 99 by that encoding.
-
-`versionCode`/`versionName` are injected via `TANGENT_VERSION_CODE`/`TANGENT_VERSION_NAME` (also
-accepted as `-PtangentVersionCode=` / `-PtangentVersionName=`); a plain local build still reports
-`1.0`.
-
-### Building a distribution APK locally
+Regenerate the one-tap link after changing the repository URL or application ID:
 
 ```sh
-TANGENT_VERSION_NAME=1.0.0 TANGENT_VERSION_CODE=10000 \
-TANGENT_KEYSTORE_FILE=$PWD/tangent-upload.jks \
-TANGENT_KEYSTORE_PASSWORD=… TANGENT_KEY_ALIAS=tangent TANGENT_KEY_PASSWORD=… \
-./gradlew :app:assembleRelease
+python3 scripts/obtainium_link.py
 ```
-
-Without `TANGENT_KEYSTORE_FILE` the release build falls back to the local debug keystore (the
-existing dev behaviour) — fine for testing, **never** for something you publish.

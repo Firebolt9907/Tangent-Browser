@@ -15,7 +15,7 @@ import json
 import sys
 import urllib.parse
 
-DEFAULT_REPO = "https://github.com/Firebolt9907/TangentBrowser"
+DEFAULT_REPO = "https://github.com/Firebolt9907/LuminaBrowser"
 
 APP_ID = "com.firebolt9907.tangentbrowser"
 APP_NAME = "Tangent Browser"
@@ -32,9 +32,10 @@ def build_link(repo_url: str) -> str:
         # Nested JSON *string*, not an object — that is how Obtainium serializes it.
         "additionalSettings": json.dumps(
             {
-                "includePrereleases": False,
+                "includePrereleases": True,
                 "fallbackToOlderReleases": True,
                 "autoApkFilterByArch": True,
+                "apkFilterRegEx": r"arm64-v8a\.apk$",
             },
             separators=(",", ":"),
         ),

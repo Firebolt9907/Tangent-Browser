@@ -30,6 +30,17 @@ val tangentVersionCode =
 val uploadKeystore = releaseInput("TANGENT_KEYSTORE_FILE", "tangentKeystoreFile")
     ?.let(::file)
     ?.takeIf { it.exists() }
+// CI must never silently publish an APK signed with a newly generated debug key.
+if (releaseInput("TANGENT_REQUIRE_RELEASE_SIGNING", "tangentRequireReleaseSigning") == "true") {
+    check(uploadKeystore != null) { "A release upload keystore is required" }
+    for ((env, prop) in listOf(
+        "TANGENT_KEYSTORE_PASSWORD" to "tangentKeystorePassword",
+        "TANGENT_KEY_ALIAS" to "tangentKeyAlias",
+        "TANGENT_KEY_PASSWORD" to "tangentKeyPassword",
+    )) {
+        check(!releaseInput(env, prop).isNullOrBlank()) { "Missing release signing input: $env" }
+    }
+}
 
 android {
     namespace = "com.firebolt9907.tangentbrowser"

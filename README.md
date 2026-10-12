@@ -5,8 +5,7 @@ GeckoView. Single-window, Jetpack-Compose-only, no chrome at the top of the scre
 edge-to-edge under the status bar.
 
 > **Status:** personal project, released as open source under the [GPL-3.0](LICENSE). It builds and
-> runs, but it is not on any app store and the release build is signed with a local debug keystore
-> (not distribution-ready). Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+> runs, but it is not on any app store and GitHub releases use a permanent signing key; local builds use a debug keystore. Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 >
 > **Naming note:** the app is *Tangent Browser* throughout — package
 > `com.firebolt9907.tangentbrowser`, classes like `TangentRoot`, `TangentApplication`. It was
@@ -64,13 +63,13 @@ way to synchronize supported data; sign in again on a new device.
 
 ## Install (Obtainium)
 
-Tangent isn't on any app store. Tagged releases publish a signed `arm64-v8a` APK to
-[GitHub Releases](https://github.com/Firebolt9907/TangentBrowser/releases), which
+Tangent isn't on any app store. Pushes to `codex/beta` publish beta releases; version tags publish stable releases. Both attach a signed `arm64-v8a` APK to
+[GitHub Releases](https://github.com/Firebolt9907/LuminaBrowser/releases), which
 [Obtainium](https://github.com/ImranR98/Obtainium) can install and keep updated.
 
 With Obtainium already installed, one tap adds it with the source pre-filled:
 
-[<img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="54">](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22com.firebolt9907.tangentbrowser%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FFirebolt9907%2FTangentBrowser%22%2C%22author%22%3A%22Firebolt9907%22%2C%22name%22%3A%22Tangent%20Browser%22%2C%22preferredApkIndex%22%3A0%2C%22additionalSettings%22%3A%22%7B%5C%22includePrereleases%5C%22%3Afalse%2C%5C%22fallbackToOlderReleases%5C%22%3Atrue%2C%5C%22autoApkFilterByArch%5C%22%3Atrue%7D%22%2C%22overrideSource%22%3A%22GitHub%22%7D)
+[<img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="54">](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22com.firebolt9907.tangentbrowser%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FFirebolt9907%2FLuminaBrowser%22%2C%22author%22%3A%22Firebolt9907%22%2C%22name%22%3A%22Tangent%20Browser%22%2C%22preferredApkIndex%22%3A0%2C%22additionalSettings%22%3A%22%7B%5C%22includePrereleases%5C%22%3Atrue%2C%5C%22fallbackToOlderReleases%5C%22%3Atrue%2C%5C%22autoApkFilterByArch%5C%22%3Atrue%2C%5C%22apkFilterRegEx%5C%22%3A%5C%22arm64-v8a%5C%5C%5C%5C.apk%24%5C%22%7D%22%2C%22overrideSource%22%3A%22GitHub%22%7D)
 
 Otherwise: **Add App** → paste the repo URL. Full setup (keystore, secrets, cutting a release):
 [`docs/OBTAINIUM.md`](docs/OBTAINIUM.md).

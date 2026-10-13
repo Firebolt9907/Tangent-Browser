@@ -79,6 +79,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Remove
@@ -430,6 +433,8 @@ private fun PageTabContent(
     var showBrowserPicker by remember { mutableStateOf(false) }
     var showContainerPicker by remember { mutableStateOf(false) }
     var showSpacePicker by remember { mutableStateOf(false) }
+    var showPageTools by rememberSaveable(pageUrl) { mutableStateOf(false) }
+    var showSiteOptions by rememberSaveable(pageUrl) { mutableStateOf(false) }
 
     // Zoom is the only site pref the Page view writes; read-modify-write so it never clobbers the
     // top-padding / desktop-mode fields the Page Settings pane owns.
@@ -954,171 +959,201 @@ private fun PageTabContent(
             }
         }
 
-        // ---------- 4b. Element zap: tap a page element to hide it, for good, on this site ----------
-        if (hasRealUrl && isWebPage && onZapElement != null && canEdit) {
+        if (hasRealUrl) {
             Spacer(Modifier.height(12.dp))
-            SectionCard {
-                TextButton(
-                    onClick = { haptics.softClick(); onZapElement(); onDismiss() },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    ActionRowContent(
-                        icon = Icons.Outlined.HideSource,
-                        text = "Hide an element",
-                    )
-                }
-                // Only offered once there's something to undo — the row is meaningless otherwise.
-                if (zappedCount > 0) {
-                    TextButton(
-                        onClick = { haptics.softClick(); onRestoreZapped() },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        ActionRowContent(
-                            icon = Icons.Default.Restore,
-                            text = if (zappedCount == 1) {
-                                "Restore 1 hidden element"
-                            } else {
-                                "Restore $zappedCount hidden elements"
-                            },
-                        )
+            AaDisclosureRow("Page tools", showPageTools) { showPageTools = !showPageTools }
+            AnimatedVisibility(visible = showPageTools) {
+                Column {
+                    // ---------- 4b. Element zap: tap a page element to hide it, for good, on this site ----------
+                    if (hasRealUrl && isWebPage && onZapElement != null && canEdit) {
+                        Spacer(Modifier.height(12.dp))
+                        SectionCard {
+                            TextButton(
+                                onClick = { haptics.softClick(); onZapElement(); onDismiss() },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                ActionRowContent(
+                                    icon = Icons.Outlined.HideSource,
+                                    text = "Hide an element",
+                                )
+                            }
+                            // Only offered once there's something to undo — the row is meaningless otherwise.
+                            if (zappedCount > 0) {
+                                TextButton(
+                                    onClick = { haptics.softClick(); onRestoreZapped() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    ActionRowContent(
+                                        icon = Icons.Default.Restore,
+                                        text = if (zappedCount == 1) {
+                                            "Restore 1 hidden element"
+                                        } else {
+                                            "Restore $zappedCount hidden elements"
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // ---------- 5. Secondary actions: open-in ----------
+                    if (hasRealUrl) {
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(4.dp))
+
+                        // View this page on the Internet Archive (Wayback Machine) — enters an in-app time-travel
+                        // mode with a bottom date scrubber. Web pages only.
+                        if (isWebPage && onOpenArchive != null) {
+                            TextButton(
+                                onClick = { haptics.softClick(); onOpenArchive(); onDismiss() },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                ActionRowContent(
+                                    icon = Icons.Default.History,
+                                    text = "View on Internet Archive",
+                                )
+                            }
+                        }
+
+                        // Print / Save as PDF — routes through GeckoView's print flow, which opens the Android
+                        // print dialog (physical printers plus the system "Save as PDF" printer).
+                        if (isWebPage) {
+                            TextButton(
+                                onClick = { haptics.softClick(); onPrint(); onDismiss() },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                ActionRowContent(icon = Icons.Default.Print, text = "Print / Save as PDF")
+                            }
+                        }
+
+                        // "Open in <app>" for a site's associated native app now surfaces automatically as a
+                        // banner above the pill (see OpenInAppBannerHost / nativeAppFor), so it's no longer a
+                        // buried row here.
+
+                        // Open in browser row — label + Change button
+                        val pm = context.packageManager
+                        val preferredLabel = remember(preferredBrowserPkg) {
+                            val pkg = preferredBrowserPkg
+                            when {
+                                pkg == null -> null
+                                pkg.isEmpty() -> "default browser"
+                                else -> runCatching {
+                                    pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+                                }.getOrNull()
+                            }
+                        }
+                        val openLabel = if (preferredLabel != null) "Open in $preferredLabel" else "Open in browser"
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    haptics.softClick()
+                                    val uri = shareableUrl.toUri()
+                                    val pkg = preferredBrowserPkg
+                                    val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                                        if (!pkg.isNullOrEmpty()) setPackage(pkg)
+                                    }
+                                    try {
+                                        context.startActivity(intent)
+                                    } catch (_: ActivityNotFoundException) {
+                                        // Preferred browser gone; fall back to a plain VIEW, still guarded in
+                                        // case nothing handles the URL.
+                                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                                    }
+                                    onDismiss()
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                ActionRowContent(icon = Icons.Default.Public, text = openLabel)
+                            }
+                            TextButton(onClick = { haptics.select(); showBrowserPicker = true }) {
+                                Text(
+                                    text = "Change",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
+        AaDisclosureRow("Site options", showSiteOptions) { showSiteOptions = !showSiteOptions }
+        AnimatedVisibility(visible = showSiteOptions) {
+            Column {
+                // ---------- 6. Sub-views: Container · Site permissions · Page Settings · Add-ons ----------
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(4.dp))
 
-        // ---------- 5. Secondary actions: open-in ----------
-        if (hasRealUrl) {
-            Spacer(Modifier.height(8.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(4.dp))
+                // Container (cookie jar) for this tab. Tapping opens a picker; choosing a different jar
+                // reopens the tab in it (see reopenTabInContainer). The current container is shown as a
+                // trailing value with its color swatch.
+                AaNavRow(
+                    icon = Icons.Outlined.Shield,
+                    label = "Container",
+                    value = com.firebolt9907.tangentbrowser.ui.containers.containerNameFor(currentContextId, containers),
+                    valueColor = com.firebolt9907.tangentbrowser.ui.containers.containerSwatchFor(currentContextId, containers),
+                    onClick = { showContainerPicker = true },
+                )
 
-            // View this page on the Internet Archive (Wayback Machine) — enters an in-app time-travel
-            // mode with a bottom date scrubber. Web pages only.
-            if (isWebPage && onOpenArchive != null) {
-                TextButton(
-                    onClick = { haptics.softClick(); onOpenArchive(); onDismiss() },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    ActionRowContent(
-                        icon = Icons.Default.History,
-                        text = "View on Internet Archive",
+                // Move the current tab to another Space (tab group), or back to Personal. Hidden when there
+                // are no Spaces to move between.
+                if (spaces.isNotEmpty()) {
+                    AaNavRow(
+                        icon = Icons.Outlined.Workspaces,
+                        label = "Move to Space",
+                        value = spaces.firstOrNull { it.id == currentSpaceId }?.name?.ifBlank { "Space" }
+                            ?: DefaultSpaceName,
+                        valueColor = spaces.firstOrNull { it.id == currentSpaceId }?.color?.swatch(),
+                        onClick = { showSpacePicker = true },
                     )
                 }
-            }
 
-            // Print / Save as PDF — routes through GeckoView's print flow, which opens the Android
-            // print dialog (physical printers plus the system "Save as PDF" printer).
-            if (isWebPage) {
-                TextButton(
-                    onClick = { haptics.softClick(); onPrint(); onDismiss() },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    ActionRowContent(icon = Icons.Default.Print, text = "Print / Save as PDF")
-                }
-            }
-
-            // "Open in <app>" for a site's associated native app now surfaces automatically as a
-            // banner above the pill (see OpenInAppBannerHost / nativeAppFor), so it's no longer a
-            // buried row here.
-
-            // Open in browser row — label + Change button
-            val pm = context.packageManager
-            val preferredLabel = remember(preferredBrowserPkg) {
-                val pkg = preferredBrowserPkg
-                when {
-                    pkg == null -> null
-                    pkg.isEmpty() -> "default browser"
-                    else -> runCatching {
-                        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-                    }.getOrNull()
-                }
-            }
-            val openLabel = if (preferredLabel != null) "Open in $preferredLabel" else "Open in browser"
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(
-                    onClick = {
-                        haptics.softClick()
-                        val uri = shareableUrl.toUri()
-                        val pkg = preferredBrowserPkg
-                        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                            if (!pkg.isNullOrEmpty()) setPackage(pkg)
-                        }
-                        try {
-                            context.startActivity(intent)
-                        } catch (_: ActivityNotFoundException) {
-                            // Preferred browser gone; fall back to a plain VIEW, still guarded in
-                            // case nothing handles the URL.
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
-                        }
-                        onDismiss()
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    ActionRowContent(icon = Icons.Default.Public, text = openLabel)
-                }
-                TextButton(onClick = { haptics.select(); showBrowserPicker = true }) {
-                    Text(
-                        text = "Change",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // Site permissions (camera/mic/location/notifications/…) for the current origin. Hidden when
+                // there's no controller or no real origin to scope decisions to.
+                if (onOpenPermissions != null && host.isNotEmpty()) {
+                    AaNavRow(
+                        icon = Icons.Default.Lock,
+                        label = "Site permissions",
+                        onClick = onOpenPermissions,
                     )
                 }
+
+                AaNavRow(
+                    icon = Icons.Default.Tune,
+                    label = "Page Settings",
+                    onClick = onOpenPageSettings,
+                )
+                AaNavRow(
+                    icon = Icons.Default.Extension,
+                    label = "Add-ons",
+                    badge = addonCount.takeIf { it > 0 }?.toString(),
+                    onClick = onOpenAddons,
+                )
             }
         }
+    }
+}
 
-        // ---------- 6. Sub-views: Container · Site permissions · Page Settings · Add-ons ----------
-        Spacer(Modifier.height(8.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(4.dp))
-
-        // Container (cookie jar) for this tab. Tapping opens a picker; choosing a different jar
-        // reopens the tab in it (see reopenTabInContainer). The current container is shown as a
-        // trailing value with its color swatch.
-        AaNavRow(
-            icon = Icons.Outlined.Shield,
-            label = "Container",
-            value = com.firebolt9907.tangentbrowser.ui.containers.containerNameFor(currentContextId, containers),
-            valueColor = com.firebolt9907.tangentbrowser.ui.containers.containerSwatchFor(currentContextId, containers),
-            onClick = { showContainerPicker = true },
-        )
-
-        // Move the current tab to another Space (tab group), or back to Personal. Hidden when there
-        // are no Spaces to move between.
-        if (spaces.isNotEmpty()) {
-            AaNavRow(
-                icon = Icons.Outlined.Workspaces,
-                label = "Move to Space",
-                value = spaces.firstOrNull { it.id == currentSpaceId }?.name?.ifBlank { "Space" }
-                    ?: DefaultSpaceName,
-                valueColor = spaces.firstOrNull { it.id == currentSpaceId }?.color?.swatch(),
-                onClick = { showSpacePicker = true },
-            )
-        }
-
-        // Site permissions (camera/mic/location/notifications/…) for the current origin. Hidden when
-        // there's no controller or no real origin to scope decisions to.
-        if (onOpenPermissions != null && host.isNotEmpty()) {
-            AaNavRow(
-                icon = Icons.Default.Lock,
-                label = "Site permissions",
-                onClick = onOpenPermissions,
-            )
-        }
-
-        AaNavRow(
-            icon = Icons.Default.Tune,
-            label = "Page Settings",
-            onClick = onOpenPageSettings,
-        )
-        AaNavRow(
-            icon = Icons.Default.Extension,
-            label = "Add-ons",
-            badge = addonCount.takeIf { it > 0 }?.toString(),
-            onClick = onOpenAddons,
+/** Less-used actions stay available without filling the first screen with buttons. */
+@Composable
+private fun AaDisclosureRow(label: String, expanded: Boolean, onClick: () -> Unit) {
+    val haptics = rememberTangentHaptics()
+    TextButton(
+        onClick = { haptics.select(); onClick() },
+        modifier = Modifier.fillMaxWidth().semantics {
+            stateDescription = if (expanded) "Expanded" else "Collapsed"
+        },
+    ) {
+        Text(label, modifier = Modifier.weight(1f))
+        Icon(
+            if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+            contentDescription = null,
         )
     }
 }

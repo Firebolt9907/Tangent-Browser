@@ -34,6 +34,7 @@ class CustomTabActivity : TangentBrowserActivity() {
 
     /** The custom-tab session id currently shown, or null before an intent has been handled. */
     private var customTabId by mutableStateOf<String?>(null)
+    override val downloadSessionId: String? get() = customTabId
 
     /** Set when the tab is migrated into the main browser so [cleanUp] won't delete the migrated tab. */
     private var migratedAway = false
@@ -146,6 +147,7 @@ class CustomTabActivity : TangentBrowserActivity() {
         // A second external link replaces the current preview (single custom-tab policy).
         removeCurrentCustomTab()
         openCustomTabFor(intent)
+        restartDownloadsFeature()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

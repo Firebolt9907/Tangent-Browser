@@ -16,7 +16,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,9 +37,9 @@ import com.firebolt9907.tangentbrowser.ui.theme.ExpressiveMotion
  * The Space switcher — a horizontal strip of chips at the bottom of the tab overview (above the
  * overview toolbar) that changes which local Space the switcher shows. The first chip is the default
  * **Personal** space (tabs in no group); each remaining chip is a [TangentTabGroup] elevated to a
- * Space, showing its colour, name and live tab count. A trailing "＋" chip creates a new Space.
+ * Space, showing its colour, name and live tab count.
  *
- * Tapping a chip selects that space (via [onSelectSpace]; null = Personal); long-pressing a named
+ * Tapping a chip selects that space (via [onSelectSpace]; null = Personal); long-pressing any
  * space opens Space management ([onManageSpaces]) to rename / recolour / set a default container /
  * delete. The active chip is filled with the primary colour, cross-fading between states so that
  * switching spaces reads as one chip changing rather than two chips repainting.
@@ -53,7 +52,6 @@ internal fun SpaceSwitcherStrip(
     personalCount: Int,
     countFor: (spaceId: String) -> Int,
     onSelectSpace: (spaceId: String?) -> Unit,
-    onNewSpace: () -> Unit,
     onManageSpaces: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -77,7 +75,7 @@ internal fun SpaceSwitcherStrip(
                 dotColor = null,
                 selected = activeSpaceId == null,
                 onClick = { onSelectSpace(null) },
-                onLongClick = null,
+                onLongClick = onManageSpaces,
             )
             spaces.forEach { space ->
                 SpaceChip(
@@ -89,22 +87,7 @@ internal fun SpaceSwitcherStrip(
                     onLongClick = onManageSpaces,
                 )
             }
-            // New-space affordance.
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                    .combinedClickable(onClick = onNewSpace, onLongClick = onManageSpaces),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Default.Add,
-                    contentDescription = "New space",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+
         }
     }
 }

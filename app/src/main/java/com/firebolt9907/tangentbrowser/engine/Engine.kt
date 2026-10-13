@@ -58,6 +58,7 @@ class TangentBrowserComponents(application: Application) {
     // Held as a field (not inlined into GeckoEngine) so we can attach the autocomplete storage
     // delegate to it below, once the logins / credit-card stores exist.
     private val runtime = buildRuntime(application, globalPreferencesStore)
+    val downloadHttpClient by lazy { mozilla.components.browser.engine.gecko.fetch.GeckoViewFetchClient(application, runtime) }
     val engine = GeckoEngine(
         application,
         buildDefaultSettings(
@@ -84,9 +85,19 @@ class TangentBrowserComponents(application: Application) {
             onError = { error -> Log.w("TangentPasskeys", "Could not read live Gecko prefs", error) },
         )
     }
+    val downloadFileUtils: mozilla.components.support.utils.DownloadFileUtils =
+        mozilla.components.support.utils.DefaultDownloadFileUtils(application)
+    val downloadNotifications = mozilla.components.support.base.android.NotificationsDelegate(
+        androidx.core.app.NotificationManagerCompat.from(application),
+    )
     val store = BrowserStore(
         initialState = BrowserState(),
-        middleware = EngineMiddleware.create(engine, scope),
+        middleware = EngineMiddleware.create(engine, scope) + mozilla.components.feature.downloads.DownloadMiddleware(
+            application,
+            com.firebolt9907.tangentbrowser.service.TangentDownloadService::class.java,
+            deleteFileFromStorage = { false },
+            downloadFileUtils = downloadFileUtils,
+        ),
     )
     val sessionUseCases = SessionUseCases(store)
     val tabsUseCases = TabsUseCases(store)
@@ -106,10 +117,6 @@ class TangentBrowserComponents(application: Application) {
     // launch us through CustomTabsIntent (session token + enter-animation options bundle + first-
     // class custom-tab treatment) instead of a plain ACTION_VIEW that carries no animation.
     val customTabsServiceStore = CustomTabsServiceStore()
-    // File-system side of downloads (naming, opening, dedup). MC 148+ takes this as an explicit
-    // collaborator instead of a Context, and the same instance is handed to DownloadsFeature.
-    val downloadFileUtils: mozilla.components.support.utils.DownloadFileUtils =
-        mozilla.components.support.utils.DefaultDownloadFileUtils(application)
     val downloadsUseCases = DownloadsUseCases(store, downloadFileUtils)
     val tabPersistence = com.firebolt9907.tangentbrowser.state.TabPersistence(application)
     // Organizational tab groups (Chrome/Arc-style labels over open tabs). Constructed before the tab
@@ -409,6 +416,7 @@ class TangentBrowserComponents(application: Application) {
         applyEngineSettings()
         runtime.autocompleteStorageDelegate = autocompleteStorageDelegate
         storeSubscription.resume()
+        downloadsUseCases.restoreDownloads()
         backgroundTabSuspender.start()
         tabRepository.restoreOrSeedBlank(tabMaxAgeMillis(globalPreferencesStore))
         // Get a head start on the first navigation of the session: spin up a content process now so

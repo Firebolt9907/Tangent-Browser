@@ -13,9 +13,17 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.abs
+
+/** Ease the new page's arrival continuously, including the existing commit/cancel spring. */
+internal fun newTabRevealProgress(offsetX: Float, pageStride: Float): Float {
+    if (pageStride <= 0f) return 0f
+    val p = (-offsetX / pageStride).coerceIn(0f, 1f)
+    return p * p * (3f - 2f * p)
+}
 
 /**
  * The horizontal tab-switch drag overlay (invariant #5) — the sliding leaving/incoming page panes
@@ -85,7 +93,14 @@ internal fun HorizontalSwitchOverlay(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    translationX = offsetXProvider() + pageStride
+                    val offset = offsetXProvider()
+                    val reveal = newTabRevealProgress(offset, pageStride)
+                    translationX = offset + pageStride
+                    transformOrigin = TransformOrigin(0f, 0.5f)
+                    scaleX = 0.84f + 0.16f * reveal
+                    scaleY = scaleX
+                    alpha = 0.15f + 0.85f * reveal
+                    shadowElevation = 18f * reveal
                 }
                 .clip(switchPaneShape)
                 .background(MaterialTheme.colorScheme.surface),

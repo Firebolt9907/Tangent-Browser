@@ -151,30 +151,36 @@ fun TabGroupsSheet(
         }
 
         if (ungrouped.isNotEmpty()) {
-            SheetSectionHeader("Ungrouped")
-            Spacer(Modifier.size(6.dp))
-            ungrouped.forEach { tab ->
-                TabRow(
-                    tab = tab,
-                    accent = null,
-                    onOpen = { onOpenTab(tab.id); onDismiss() },
-                    trailing = {
-                        if (groups.isEmpty()) {
-                            // Nothing to add to yet — offer a one-tap "create group with this tab".
-                            IconButton(onClick = {
-                                val id = repository.createGroup("New Group", TabGroupColor.BLUE)
-                                repository.addTabToGroup(tab.id, id)
-                            }) {
-                                Icon(Icons.Default.Add, contentDescription = "Add to a new group")
+            Column(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                SheetSectionHeader("Personal")
+                Spacer(Modifier.size(6.dp))
+                ungrouped.forEach { tab ->
+                    TabRow(
+                        tab = tab,
+                        accent = null,
+                        onOpen = { onOpenTab(tab.id); onDismiss() },
+                        trailing = {
+                            if (groups.isEmpty()) {
+                                // Nothing to add to yet — offer a one-tap "create group with this tab".
+                                IconButton(onClick = {
+                                    val id = repository.createGroup("New Group", TabGroupColor.BLUE)
+                                    repository.addTabToGroup(tab.id, id)
+                                }) {
+                                    Icon(Icons.Default.Add, contentDescription = "Add to a new group")
+                                }
+                            } else {
+                                AddToGroupButton(
+                                    groups = groups,
+                                    onPick = { repository.addTabToGroup(tab.id, it) },
+                                )
                             }
-                        } else {
-                            AddToGroupButton(
-                                groups = groups,
-                                onPick = { repository.addTabToGroup(tab.id, it) },
-                            )
-                        }
-                    },
-                )
+                        },
+                    )
+                }
             }
         }
     }
@@ -288,7 +294,7 @@ private fun GroupCard(
         }
         if (group.tabIds.isEmpty()) {
             Text(
-                text = "No tabs — add some from Ungrouped below.",
+                text = "No tabs — add some from Personal below.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 24.dp, top = 4.dp, bottom = 2.dp),

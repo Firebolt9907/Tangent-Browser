@@ -51,6 +51,8 @@
         </intent>
     </queries>
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <application
         android:name=".TangentApplication"
         android:allowBackup="true"
@@ -187,6 +189,9 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+
+        <service android:name=".service.TangentDownloadService"
+            android:exported="false" android:foregroundServiceType="dataSync" />
 
         <service
             android:name=".service.BrowsingKeepAliveService"

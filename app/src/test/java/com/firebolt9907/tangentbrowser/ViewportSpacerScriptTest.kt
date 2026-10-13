@@ -228,8 +228,8 @@ class ViewportSpacerScriptTest {
         // its bottom edge (elementFromPoint) and paints itself that element's first opaque bg, so a
         // colored nav bar reads as continuous to the screen top. Falls back to body/html base color.
         val s = script()
-        assertTrue("samples just below the strip", s.contains("var ys=[topPx+2,topPx+6,topPx+12]"))
-        assertTrue("computes a fill for the strip", s.contains("function topBg(sp)"))
+        assertTrue("samples just below the strip", s.contains("var ys=[y+2,y+6,y+12]"))
+        assertTrue("computes a fill for the strip", s.contains("function topBg(sp,yBase)"))
         assertTrue("reads a solid or gradient bg per element", s.contains("function topPick(n)"))
         assertTrue("walks up to the first opaque background", s.contains("function topOpaque(c)"))
         assertTrue("applies the sampled bg to the spacer", s.contains("function paintStrip(el)"))
@@ -796,7 +796,7 @@ class ViewportSpacerScriptTest {
         )
         assertTrue(
             "the observer's all-ours early-return yields to the clobber check",
-            s.contains("if(allOurs&&!insetsClobbered())return;schedule()"),
+            s.contains("if(allOurs&&!insetsClobbered())return;if(window.__tangentQueueTopPaint)window.__tangentQueueTopPaint();schedule()"),
         )
         assertTrue(
             "the walk's cooldown also yields to the clobber check",

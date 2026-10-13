@@ -116,6 +116,13 @@ External links open in `CustomTabActivity` (own task); its close has two paths �
 - **Resolved close animation** — used when the CCT caller supplied `EXTRA_EXIT_ANIMATION_BUNDLE`, or via our `R.anim.custom_tab_exit` fallback for Google-app-referrer launches (the home-screen Discover panel sends plain VIEW intents). `CustomTabRoot` registers a lowest-priority `PredictiveBackHandler` that shrinks the whole UI into an opaque rounded-corner card tracking the gesture (`closeSlide`, M3 predictive-back style) and routes the commit through `Activity.finish()`, which plays the animation via `overridePendingTransition` with a temporary `getPackageName()` override so client-APK anim resources resolve against the *client's* package (Chrome's technique; keys `android:activity.packageName`/`animEnterRes`/`animExitRes`). This intercept is required for home-screen Discover launches: their close is a cross-task transition down to the embedded "-1 screen", and the launcher animates nothing for this icon-less, recents-excluded task. **Do not** try to get the *system* predictive preview here by pre-registering the animation with `overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE)` and dropping the callback — tried on Android 16/Pixel: the close then plays nothing at all (no drag preview, and the override suppresses even the canned animation). The in-app predictive drag + `finish()` animation is the working combination.
 - **Plain ACTION_VIEW** (no exit bundle, non-Google referrer) — when the page has no web history `CustomTabRoot` registers **no** back callback, so Back finishes the activity and Android plays its native predictive-back animation straight back to the calling app.
 
+Custom Tab in-page Back uses the main browser's `PredictiveBackOverlay` and URL-keyed snapshot cache.
+`CustomTabBackPreview` freezes the previous/current pixels per gesture and rejects captures from an
+older gesture or a different tab. After commit, the previous-page snapshot covers Gecko until the
+matching tab and URL paint (with the shared bounded timeout fallback); URL changes alone do not
+retire it. The history target and SSO-chain jump use the same helpers as the main browser. This does
+not change the two activity-close paths above or add another EngineView.
+
 ## Edge-to-edge & status-bar area
 
 - `MainActivity` calls `enableEdgeToEdge(SystemBarStyle.auto(TRANSPARENT, TRANSPARENT), …)`. The default no-arg overload applies a translucent scrim — that's why the bar wasn't actually transparent before.
@@ -395,35 +402,26 @@ Both `triggerInitialReaderCheck` (per-load, in `ContentHost`) and `toggleReader`
 - **Multi-window**. Activity is single-window only.
 - **Per-session engine settings** (e.g. per-tab JavaScript toggle). `applyEngineSettings()` mutates the shared `GeckoEngine.settings` object; changes apply to subsequent page loads across all tabs, not retroactively to already-loaded sessions.
 
-## Downloads (`MainActivity.kt`, `engine/Engine.kt`, `ui/downloads/DownloadsSheet.kt`)
+## Downloads (`TangentBrowserActivity.kt`, `service/TangentDownloadService.kt`)
 
-File downloads are captured by mozilla-components and handed off to the **platform**
-`android.app.DownloadManager`:
+New page downloads use `FetchDownloadManager` and a shared `AbstractFetchDownloadService`,
+with `DownloadMiddleware` / `DownloadStorage` restoring non-private history. Each activity starts
+and stops its own listener; Custom Tabs supply their session ID and replace the listener on a new
+external intent. Gecko's fetch client handles retries; its engine response supplies the first stream.
+The service uses the dataSync foreground type and keeps running when the caller closes a Custom Tab.
 
-- `TangentBrowserComponents.downloadsUseCases = DownloadsUseCases(store, application)`.
-- `MainActivity.downloadsFeature` is a `DownloadsFeature` wired with `AndroidDownloadManager`,
-  started in `onStart` / stopped in `onStop`. It observes the selected tab's `content.download`,
-  consumes it, and enqueues into the system DownloadManager (OS owns the notification, storage,
-  and persistence). No `fragmentManager` is given, so there is no pre-download confirm dialog —
-  downloads start immediately. On API ≤ 28 it requests `WRITE_EXTERNAL_STORAGE` via
-  `onNeedToRequestPermissions` → `REQUEST_CODE_DOWNLOAD_PERMISSIONS`, resolved in
-  `onRequestPermissionsResult` → `downloadsFeature.onPermissionsResult`.
+Both surfaces show a stacked download banner with filename, copied bytes, known-size progress
+(or an indeterminate indicator), Pause, Resume, retry and Open. Dismissal hides the banner without
+cancelling the transfer. Live paused jobs resume through the upstream service's broadcast action,
+which retains the actual byte offset. After service/process loss, the button explicitly says Restart;
+servers ignoring range requests may also restart transfers. Private downloads are excluded from
+normal browsing banners and the managed library and are never persisted by the middleware.
 
-The in-app **Downloads list** (`DownloadsSheet`) does not read `BrowserStore.state.downloads`
-(no `DownloadMiddleware`/`DownloadStorage` is installed, so that map stays empty with the
-AndroidDownloadManager path). Instead it queries the platform `DownloadManager.query()` directly —
-that API only returns downloads owned by this app, and the OS keeps them across process death,
-so it is the source of truth that matches what AndroidDownloadManager enqueued.
-
-- Reached from a **Downloads button** in the tab-grid toolbar (alongside Synced Tabs, Passwords,
-  History, Bookmarks, Settings).
-- Rows show file name, status (Pending / Downloading / Paused / Failed / size + time when done),
-  and a live `LinearProgressIndicator` for active downloads. The sheet polls `queryDownloads`
-  every 1.2 s **only while** an active (running/pending/paused) download exists, then stops.
-- Tapping a completed row opens the file via `ACTION_VIEW` on
-  `DownloadManager.getUriForDownloadedFile(id)` with `FLAG_GRANT_READ_URI_PERMISSION`.
-- Trailing trash icon calls `DownloadManager.remove(id)` (removes entry + file); "Clear all"
-  removes every entry.
+The Downloads sheet combines the managed queue with legacy system DownloadManager entries,
+so switching backends does not hide old files. Opening uses the upstream download file utilities
+and their content-URI provider; legacy files keep the system URI path. Removing managed transfers
+requests cancellation and removes their entries/files. POST_NOTIFICATIONS remains optional for the
+in-page banner; the existing MainActivity permission prompt governs system notification visibility.
 
 ## GeckoView background color
 
@@ -737,3 +735,12 @@ Address suggestions and the manually controlled IME share a velocity-dependent m
 curve over 200 ms, including when IME control arrives late. The curve is bounded to avoid driving
 the keyboard beyond valid insets. Custom Tab close cancellation retains momentum on both axes;
 the short committed close/window-animation handoff is unchanged.
+
+## Compact page appearance controls
+
+The aA sheet keeps the page header, quick actions, Reader and page zoom visible. Less common
+commands (hide/restore elements, Archive, Print, open in another browser) live under Page tools;
+container, Space, permissions, Page Settings and add-ons live under Site options. Both sections
+start collapsed, expose their expanded state to accessibility, and reset for a new page URL.
+Personal denotes the default ungrouped tabs in both the selector and groups sheet. The selector
+has no trailing create button; long-pressing Personal or any named Space opens group management.

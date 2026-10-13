@@ -34,6 +34,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.firebolt9907.tangentbrowser.TangentApplication
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -64,7 +66,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * In-app downloads list. The app routes file downloads to the platform [DownloadManager]
+ * In-app downloads list. New downloads use the resumable service; legacy platform [DownloadManager] entries remain available. Previously the app routed downloads to [DownloadManager]
  * (see `MainActivity.downloadsFeature` / `AndroidDownloadManager`), so this sheet reads back
  * from that same queue — `DownloadManager.query` only returns downloads owned by this app, and
  * the OS keeps the list across process death. We poll while running downloads exist so progress
@@ -92,6 +94,10 @@ fun DownloadsSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+    val components = (context.applicationContext as TangentApplication).components
+    val browserState by components.browserState.collectAsStateWithLifecycle()
+    val managedDownloads = visibleDownloads(browserState.downloads.values, private = false)
+
     val scope = rememberCoroutineScope()
     val haptics = rememberTangentHaptics()
     // Failures used to be android.widget.Toast — an unthemed platform surface that draws *outside*
@@ -116,6 +122,10 @@ fun DownloadsSheet(
     var searchQuery by remember { mutableStateOf("") }
     val visibleDownloads = downloads.filter {
         it.title.ifBlank { "Download" }.contains(searchQuery.trim(), ignoreCase = true)
+    }
+
+    val visibleManaged = managedDownloads.filter {
+        (it.fileName ?: "Download").contains(searchQuery.trim(), ignoreCase = true)
     }
 
     // Initial load + poll while anything is still in flight so progress updates live.
@@ -182,7 +192,7 @@ fun DownloadsSheet(
                     IconButton(onClick = { reloadKey++ }, enabled = !loading) {
                         Icon(Icons.Default.Refresh, contentDescription = "Refresh downloads")
                     }
-                    if (downloads.isNotEmpty() || clearing) {
+                    if (downloads.isNotEmpty() || managedDownloads.isNotEmpty() || clearing) {
                         TextButton(
                             onClick = { showClearConfirm = true },
                             enabled = !clearing,
@@ -192,7 +202,7 @@ fun DownloadsSheet(
                     }
                 }
 
-                if (downloads.isNotEmpty()) {
+                if (downloads.isNotEmpty() || managedDownloads.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     SheetSearchField(
                         query = searchQuery,
@@ -205,8 +215,8 @@ fun DownloadsSheet(
 
                 // Spinner → empty/list is a cross-fade, not a swap: see SheetContentSwitch.
                 val phase = when {
-                    loading -> SheetContentPhase.Loading
-                    visibleDownloads.isEmpty() -> SheetContentPhase.Empty
+                    loading && managedDownloads.isEmpty() -> SheetContentPhase.Loading
+                    visibleDownloads.isEmpty() && visibleManaged.isEmpty() -> SheetContentPhase.Empty
                     else -> SheetContentPhase.Content
                 }
                 SheetContentSwitch(phase, modifier = Modifier.fillMaxWidth()) { current ->
@@ -257,6 +267,19 @@ fun DownloadsSheet(
 
                         SheetContentPhase.Content -> {
                             LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                                items(visibleManaged, key = { "managed:${it.id}" }) { download ->
+                                    SwipeToRemoveRow(
+                                        onRemove = {
+                                            context.sendBroadcast(Intent(mozilla.components.feature.downloads.AbstractFetchDownloadService.ACTION_CANCEL)
+                                                .setPackage(context.packageName)
+                                                .putExtra(mozilla.components.feature.downloads.INTENT_EXTRA_DOWNLOAD_ID, download.id))
+                                            components.downloadsUseCases.removeDownload(download.id, true)
+                                        },
+                                        settleOnRemove = false,
+                                        removeLabel = "Remove download",
+                                    ) { ManagedDownloadCard(download, components) }
+                                    Spacer(Modifier.height(8.dp))
+                                }
                                 items(visibleDownloads, key = { it.id }) { entry ->
                                     // Swipe end-to-start to remove — no per-row trash icon.
                                     // See SwipeToRemoveRow.
@@ -318,6 +341,12 @@ fun DownloadsSheet(
                 TextButton(onClick = {
                     showClearConfirm = false
                     haptics.remove()
+                    managedDownloads.forEach {
+                        context.sendBroadcast(Intent(mozilla.components.feature.downloads.AbstractFetchDownloadService.ACTION_CANCEL)
+                            .setPackage(context.packageName)
+                            .putExtra(mozilla.components.feature.downloads.INTENT_EXTRA_DOWNLOAD_ID, it.id))
+                        components.downloadsUseCases.removeDownload(it.id, true)
+                    }
                     val ids = downloads.map { it.id }
                     clearing = true
                     scope.launch {

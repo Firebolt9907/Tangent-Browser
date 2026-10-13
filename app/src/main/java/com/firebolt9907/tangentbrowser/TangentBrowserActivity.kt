@@ -24,7 +24,7 @@ import mozilla.components.browser.state.selector.selectedTab
 import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.concept.engine.activity.ActivityDelegate
 import mozilla.components.feature.downloads.DownloadsFeature
-import mozilla.components.feature.downloads.manager.AndroidDownloadManager
+import mozilla.components.feature.downloads.manager.FetchDownloadManager
 
 /**
  * The engine-hosting plumbing shared by both browser activities ([MainActivity] and
@@ -33,7 +33,7 @@ import mozilla.components.feature.downloads.manager.AndroidDownloadManager
  *
  *  - the engine [ActivityDelegate] (WebAuthn/passkeys — GeckoView hands us a PendingIntent for the
  *    system passkey sheet), registered in [onStart]/[onStop] per AGENTS.md invariant #12;
- *  - [DownloadsFeature] routing page downloads to the system DownloadManager;
+ *  - [DownloadsFeature] routing page downloads to the resumable download service;
  *  - the Gecko app-permission bridge (camera/mic/location runtime dialogs);
  *  - edge-to-edge + transparent system bars + splash screen;
  *  - picture-in-picture entry and state, and fullscreen-video volume keys.
@@ -54,23 +54,27 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
         com.yubico.yubikit.fido.android.ui.FidoClient(this)
     }
 
-    // Captures file downloads from the engine and hands them to the system DownloadManager
-    // (notification + storage handled by the OS). Started/stopped with the activity lifecycle.
-    private val downloadsFeature by lazy {
-        DownloadsFeature(
+    protected open val downloadSessionId: String? get() = null
+    private var downloadsFeature: DownloadsFeature? = null
+
+    protected fun restartDownloadsFeature() {
+        downloadsFeature?.stop()
+        downloadsFeature = DownloadsFeature(
             applicationContext = applicationContext,
             store = app.components.store,
             useCases = app.components.downloadsUseCases,
+            tabId = downloadSessionId,
             downloadFileUtils = app.components.downloadFileUtils,
-            downloadManager = AndroidDownloadManager(
+            downloadManager = FetchDownloadManager(
                 applicationContext,
                 app.components.store,
-                app.components.downloadFileUtils,
+                com.firebolt9907.tangentbrowser.service.TangentDownloadService::class,
+                notificationsDelegate = app.components.downloadNotifications,
             ),
             onNeedToRequestPermissions = { permissions ->
                 requestPermissions(permissions, REQUEST_CODE_DOWNLOAD_PERMISSIONS)
             },
-        )
+        ).also { it.start() }
     }
 
     private var pendingIntentSenderResult: ((Intent?) -> Unit)? = null
@@ -202,7 +206,7 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
         }
         app.components.engine.registerActivityDelegate(this)
         Log.i("TangentPasskeys", "Registered activity delegate: ${javaClass.simpleName}")
-        downloadsFeature.start()
+        restartDownloadsFeature()
     }
 
     override fun onStop() {
@@ -210,7 +214,7 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
         com.firebolt9907.tangentbrowser.sync.webauthn.SystemPasskeyActivityRegistry.detach(this)
         com.firebolt9907.tangentbrowser.sync.webauthn.HardwareSecurityKeyClientRegistry.detach(this)
         app.components.engine.unregisterActivityDelegate()
-        downloadsFeature.stop()
+        downloadsFeature?.stop()
     }
 
     override fun onRequestPermissionsResult(
@@ -220,7 +224,7 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_DOWNLOAD_PERMISSIONS) {
-            downloadsFeature.onPermissionsResult(permissions, grantResults)
+            downloadsFeature?.onPermissionsResult(permissions, grantResults)
         }
     }
 

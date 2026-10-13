@@ -653,3 +653,16 @@ Notes per site:
   page-patchable function — this is what would let reader work on anti-adblock sites like TechCrunch
   without tripping their traps. Note: a single FCP extraction can still trip TechCrunch's wall once
   per load until that lands; reader on such sites remains a known limitation for now.
+
+
+## 2026-10-13 — fast-return top-strip paint
+
+Reproduced the stale fill above a non-fixed, short colored header while forcing the adaptive
+layout cooldown to 2000ms. The initial fixture failed on its first return scroll: the spacer retained
+the previous color. Separated visible in-flow paint from layout repair: scroll/transition frames and
+page mutations queue a cheap paint, sampling below the spacer's actual viewport bottom. Identical
+paint styles are not rewritten, and offscreen strips are skipped. No fixed fill is created for a
+static header. The bounded regression loop now passes eight fast returns, partially scrolled fill,
+color-only mutation and changed-inset reinjection (within 60ms); pinnedFillTest also passes sticky,
+fixed and static screenshot checks. These are Chromium synthetic fixtures; Gecko/device testing
+is still needed for the reported phone behavior.

@@ -64,6 +64,13 @@ internal fun CustomTabBanners(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val stack = rememberBannerStackState()
+    com.firebolt9907.tangentbrowser.ui.downloads.DownloadBannerHost(
+        components = components,
+        private = components.store.state.customTabs.firstOrNull { it.id == tabId }?.content?.private == true,
+        bottomPadding = bottomPadding,
+        collapseProgress = collapseProgress,
+        stack = stack,
+    )
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val currentTabId by rememberUpdatedState(tabId)
     val clipboard = LocalClipboardManager.current

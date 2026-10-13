@@ -3867,14 +3867,6 @@ fun TangentRoot(
                                     activeSpaceId = spaceId
                                     components.globalPreferencesStore.activeSpaceId = spaceId
                                 },
-                                onNewSpace = {
-                                    tangentHaptics.create()
-                                    val palette = com.firebolt9907.tangentbrowser.state.TabGroupColor.entries
-                                    val color = palette[spaceGroups.size % palette.size]
-                                    val id = components.tabGroupsRepository.createGroup("New Space", color)
-                                    activeSpaceId = id
-                                    components.globalPreferencesStore.activeSpaceId = id
-                                },
                                 onManageSpaces = {
                                     tangentHaptics.select()
                                     showTabGroups = true
@@ -4237,6 +4229,13 @@ fun TangentRoot(
                     // send-to-device, received tab) registers here so simultaneous banners pile up
                     // instead of overlapping. Lower stackPriority sits nearer the pill.
                     val bannerStack = com.firebolt9907.tangentbrowser.ui.rememberBannerStackState()
+                    com.firebolt9907.tangentbrowser.ui.downloads.DownloadBannerHost(
+                        components = components,
+                        private = selectedContent?.private == true,
+                        bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
+                        collapseProgress = bannerCollapseProgressProvider,
+                        stack = bannerStack,
+                    )
 
                     // Site content-permission request (camera/mic/location/notifications…) — an
                     // interactive banner the user must answer, so it sits front-most in the stack.

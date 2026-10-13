@@ -7,6 +7,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.runtime.derivedStateOf
+import com.firebolt9907.tangentbrowser.ui.PredictiveBackOverlay
+import com.firebolt9907.tangentbrowser.ui.SnapshotImage
+import com.firebolt9907.tangentbrowser.ui.SnapshotRequestPurpose
+import com.firebolt9907.tangentbrowser.ui.predictiveBackTargetUrl
+import com.firebolt9907.tangentbrowser.ui.ssoCollapsedBackIndex
+import com.firebolt9907.tangentbrowser.ui.PredictiveBackCoverFallbackMs
+import com.firebolt9907.tangentbrowser.ui.PredictiveBackCoverMaxMs
 import com.firebolt9907.tangentbrowser.ui.motion.MotionInterruptedException
 import com.firebolt9907.tangentbrowser.ui.motion.rememberBrowserMotionEngine
 import androidx.compose.animation.core.spring
@@ -230,6 +239,41 @@ fun CustomTabRoot(
     var peekElementBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     // Bumped to ask ContentHost to capture exactly what's on screen right now (invariant #6 path).
     var currentSnapshotRequestId by remember { mutableIntStateOf(0) }
+    var snapshotRequestPurpose by remember(customTabId, session) { mutableStateOf<SnapshotRequestPurpose?>(null) }
+    val backPreviewState = remember(customTabId, session) { CustomTabBackPreview<android.graphics.Bitmap>() }
+    val backPreview by backPreviewState.preview.collectAsStateWithLifecycle()
+    val snapshotCache = components.tabSnapshotCache
+    val snapshotVersion by snapshotCache.version.collectAsStateWithLifecycle()
+    val previousHistoryUrl = customTab?.content?.takeIf { it.canGoBack }?.let { content ->
+        predictiveBackTargetUrl(content.history, content.url, content.loading)
+    }
+    val previousSnapshot = remember(customTabId, previousHistoryUrl, snapshotVersion) {
+        if (customTabId != null && previousHistoryUrl != null) {
+            snapshotCache.get(customTabId, previousHistoryUrl)
+        } else null
+    }
+    val currentPageSnapshot = remember(customTabId, url, snapshotVersion) {
+        customTabId?.let { snapshotCache.get(it, url) }
+    }
+    LaunchedEffect(backPreviewState, previousSnapshot, previousHistoryUrl) {
+        customTabId?.let { backPreviewState.loadPrevious(it, previousHistoryUrl, previousSnapshot) }
+    }
+    // URL state alone precedes Gecko's paint: retain the destination across that gap.
+    LaunchedEffect(backPreview?.committed, backPreview?.generation, url, customTab?.content?.loading) {
+        val cover = backPreview?.takeIf { it.committed } ?: return@LaunchedEffect
+        if (url == cover.targetUrl && customTab?.content?.loading == false) {
+            delay(PredictiveBackCoverFallbackMs)
+            if (backPreviewState.preview.value == cover) backPreviewState.clear()
+        }
+    }
+    LaunchedEffect(backPreview?.committed, backPreview?.generation) {
+        val cover = backPreview?.takeIf { it.committed } ?: return@LaunchedEffect
+        delay(PredictiveBackCoverMaxMs)
+        if (backPreviewState.preview.value == cover) backPreviewState.clear()
+    }
+    // Capture callbacks close over the request identity, rather than a later gesture's state.
+    val snapshotPurposeForCapture = snapshotRequestPurpose
+    val backCaptureToken = backPreviewState.preview.value?.generation
 
     fun deviceLowOnMemory(): Boolean {
         val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE)
@@ -259,6 +303,7 @@ fun CustomTabRoot(
         customTabId?.let { components.store.dispatch(ContentAction.ConsumeHitResultAction(it)) }
         // Grab the current on-screen pixels of the page (routed back via onCurrentSnapshotCaptured)
         // and ask the page for the pressed link's rect so the card can morph out of the element.
+        snapshotRequestPurpose = SnapshotRequestPurpose.LinkPeek
         currentSnapshotRequestId += 1
         LinkRectProbe.pending = { rect -> peekSourceRect = rect }
         session?.loadJavascriptUrl(LinkRectProbe.buildScript(link, origin.x, origin.y))
@@ -353,7 +398,9 @@ fun CustomTabRoot(
 
     // In-page predictive back: 0 at rest, 1 fully committed. Drives a translate of the content so
     // the page slides away as the gesture progresses.
-    var backSlide by remember { mutableFloatStateOf(0f) }
+    var backSlide by remember(customTabId, session) { mutableFloatStateOf(0f) }
+    val backGestureActive by remember(customTabId, session) { derivedStateOf { backSlide > 0f } }
+    val backEasing = remember { CubicBezierEasing(0.22f, 1f, 0.36f, 1f) }
 
     // Activity-close predictive back: 0 at rest, 1 fully committed. Drives the Material 3
     // predictive-back treatment (opaque card shrinking to 90% with rounded corners, shifted in the
@@ -470,18 +517,35 @@ fun CustomTabRoot(
         // In-page history back with a predictive slide. Disabled at the first page (no history) and
         // while reader is up, so Back there falls through to the system → native exit to the caller.
         PredictiveBackHandler(enabled = canGoBack && !readerActive && !isVideoFullscreen) { progress ->
+            var gestureToken: Long? = null
             try {
+                val id = customTabId ?: return@PredictiveBackHandler
+                val gestureSession = session ?: return@PredictiveBackHandler
+                val token = backPreviewState.start(id, previousHistoryUrl, previousSnapshot, currentPageSnapshot)
+                gestureToken = token
+                snapshotRequestPurpose = SnapshotRequestPurpose.PredictiveBack
+                currentSnapshotRequestId += 1
                 progress.collect { backEvent ->
                     backSlide = backEvent.progress.coerceIn(0f, 1f)
                     motionEngine.track("back", backSlide)
                 }
                 motionEngine.animate("back", backSlide, 1f, animationSpec = TangentMotion.PredictiveBackCommit) { v, _ -> backSlide = v }
-                customTabId?.let { components.sessionUseCases.goBack.invoke(it) }
-                backSlide = 0f
+                val liveTab = components.store.state.customTabs.firstOrNull { it.id == id }
+                if (liveTab?.engineState?.engineSession === gestureSession && liveTab?.content?.canGoBack == true) {
+                    backPreviewState.commit(token)
+                    val collapsedIndex = ssoCollapsedBackIndex(liveTab.content.history)
+                    if (collapsedIndex != null) components.sessionUseCases.goToHistoryIndex(collapsedIndex, id)
+                    else components.sessionUseCases.goBack.invoke(id)
+                }
             } catch (cancelled: CancellationException) {
                 if (cancelled is MotionInterruptedException) throw cancelled
                 motionEngine.animate("back", backSlide, 0f, animationSpec = TangentMotion.PredictiveBackCancel) { v, _ -> backSlide = v }
-                backSlide = 0f
+            } finally {
+                if (backPreviewState.isCurrent(gestureToken)) {
+                    backSlide = 0f
+                    gestureToken?.let(backPreviewState::cancel)
+                    if (snapshotRequestPurpose == SnapshotRequestPurpose.PredictiveBack) snapshotRequestPurpose = null
+                }
             }
         }
 
@@ -520,13 +584,17 @@ fun CustomTabRoot(
                         }
                     },
             ) {
+                // While a fresh outgoing capture is pending, the previous page still sits behind
+                // the translated live EngineView. Never label the current page as its predecessor.
+                backPreview?.takeIf { !it.committed }?.previous?.let { bitmap ->
+                    SnapshotImage(bitmap, Modifier.fillMaxSize())
+                }
                 if (session != null && customTabId != null) {
                     com.firebolt9907.tangentbrowser.ui.content.ContentHost(
                         engine = components.engine,
                         engineSession = session,
                         modifier = Modifier.graphicsLayer {
-                            translationX = backSlide * size.width * 0.5f
-                            alpha = 1f - backSlide * 0.2f
+                            translationX = backSlide * size.width
                         },
                         topChromeInsetPx = if (isVideoFullscreen) 0 else statusBarTopPx,
                         bottomChromeInsetPx = if (isVideoFullscreen) 0 else barTotalHeightPx,
@@ -537,6 +605,11 @@ fun CustomTabRoot(
                         pageUrl = url,
                         tabIsLoading = customTab?.content?.loading == true,
                         snapshotCache = components.tabSnapshotCache,
+                        onTabPainted = { paintedId ->
+                            val paintedUrl = components.store.state.customTabs.firstOrNull { it.id == paintedId }
+                                ?.content?.url
+                            if (paintedUrl != null) backPreviewState.painted(paintedId, paintedUrl)
+                        },
                         sitePermissionController = components.sitePermissionController,
                         sitePreferencesStore = components.sitePreferencesStore,
                         onFirefoxAuthRedirect = components.firefoxSyncController::handleOAuthRedirect,
@@ -563,9 +636,29 @@ fun CustomTabRoot(
                         // the live page, cropped to the pressed link's rect for the morph.
                         currentSnapshotRequestId = currentSnapshotRequestId,
                         onCurrentSnapshotCaptured = { capturedTabId, bitmap ->
-                            if (capturedTabId == customTabId) peekCaptureBitmap = bitmap
+                            if (capturedTabId == customTabId) {
+                                when (snapshotPurposeForCapture) {
+                                    SnapshotRequestPurpose.PredictiveBack ->
+                                        backPreviewState.captureCurrent(backCaptureToken, capturedTabId, bitmap)
+                                    SnapshotRequestPurpose.LinkPeek -> peekCaptureBitmap = bitmap
+                                    else -> Unit
+                                }
+                            }
                         },
                     )
+                }
+
+                if (backGestureActive && backPreview?.current != null) {
+                    PredictiveBackOverlay(
+                        predictiveBackOffsetPxProvider = { backSlide * contentSize.width },
+                        contentWidth = contentSize.width.toFloat(),
+                        easing = backEasing,
+                        primarySnapshot = backPreview?.previous,
+                        gestureCurrentSnapshot = backPreview?.current,
+                    )
+                }
+                backPreview?.takeIf { it.committed }?.previous?.let { bitmap ->
+                    SnapshotImage(bitmap, Modifier.fillMaxSize())
                 }
 
                 // Crashed content-process recovery (Fenix parity), mirroring MainActivity. A killed

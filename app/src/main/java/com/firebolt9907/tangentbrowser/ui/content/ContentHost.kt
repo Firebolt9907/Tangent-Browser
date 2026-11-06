@@ -534,6 +534,8 @@ fun ContentHost(
                 if (loginDetectorInjectedForCurrentLoad) return
                 loginDetectorInjectedForCurrentLoad = true
                 suppressJavascriptLoadCallback = true
+                engineSession.loadJavascriptUrl(AddressFieldProbe.buildDetectScript())
+                suppressJavascriptLoadCallback = true
                 engineSession.loadJavascriptUrl(LoginFieldProbe.buildDetectScript())
             }
             fun injectZaps() {
@@ -635,6 +637,7 @@ fun ContentHost(
                         currentUrl = url
                         // Keep the form-memory origin binding in step with client-side (pushState)
                         // navigations: the already-injected script survives them and keeps querying.
+                        AddressFieldProbe.forget(tabId)
                         BridgeGuard.setTrustedOrigin(tabId, url)
                         capturedLeavingUrl = null
                         injectedForCurrentLoad = false
@@ -857,6 +860,7 @@ fun ContentHost(
             onDispose {
                 spaSettleRunnable?.let(hostView::removeCallbacks)
                 engineSession.unregister(observer)
+                AddressFieldProbe.forget(tabId)
                 BridgeGuard.forget(tabId)
             }
         }

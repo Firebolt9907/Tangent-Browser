@@ -69,8 +69,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -193,7 +191,11 @@ fun ReaderView(
     val svgContext = LocalContext.current
     val svgImageLoader = remember(svgContext) {
         ImageLoader.Builder(svgContext)
-            .components { add(SvgDecoder.Factory()) }
+            .components {
+                add(SvgDecoder.Factory())
+                if (android.os.Build.VERSION.SDK_INT >= 28) add(coil.decode.ImageDecoderDecoder.Factory())
+                else add(coil.decode.GifDecoder.Factory())
+            }
             .build()
     }
     // A GIF-capable loader for social media images so animated GIFs actually animate (the singleton
@@ -316,7 +318,19 @@ fun ReaderView(
     }
 
     // Tapping an article image opens it fullscreen (Safari-parity); null = no overlay.
-    var zoomedImage by remember { mutableStateOf<String?>(null) }
+    var zoomedImage by remember(article) { mutableStateOf<String?>(null) }
+    val galleryImages = remember(article) { readerGalleryImages(article) }
+    // Reflow once at gesture end rather than relaying out the entire article on each pointer event.
+    val currentFontSize by rememberUpdatedState(fontSizePercent)
+    var pinchSize by remember(article) { mutableStateOf<Int?>(null) }
+    var pinchFactor by remember(article) { mutableStateOf(1f) }
+    var pinchStartSize by remember(article) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(pinchSize, pinchStartSize) {
+        if (pinchStartSize == null && pinchSize != null) {
+            delay(1400)
+            pinchSize = null
+        }
+    }
     LaunchedEffect(article, theme, fontName, fontSizePercent) {
         captureArmed = true
         withFrameNanos {}
@@ -378,6 +392,24 @@ fun ReaderView(
         modifier = modifier
             .background(backgroundColor)
             .fillMaxSize()
+            .readerPinch(article,
+                onZoom = { _, _, factor ->
+                    if (pinchStartSize == null) pinchStartSize = currentFontSize
+                    pinchFactor *= factor
+                    pinchSize = ((pinchStartSize ?: currentFontSize) * pinchFactor).toInt().coerceIn(50, 200)
+                },
+                onEnd = {
+                    val fraction = if (scrollState.maxValue > 0) scrollState.value.toFloat() / scrollState.maxValue else 0f
+                    pinchSize?.let { ReaderManager.instance.setFontSize(it) }
+                    pinchStartSize = null
+                    pinchFactor = 1f
+                    captureScope.launch {
+                        withFrameNanos {}
+                        withFrameNanos {}
+                        scrollState.scrollTo((fraction * scrollState.maxValue).toInt())
+                    }
+                },
+            )
             .drawWithContent {
                 if (captureArmed || capturing) {
                     captureLayer.record { this@drawWithContent.drawContent() }
@@ -1231,33 +1263,25 @@ fun ReaderView(
         }
         } // SelectionContainer
 
-        // Fullscreen image viewer. A Dialog handles the system Back press for dismissal; tap
-        // anywhere dismisses. usePlatformDefaultWidth=false lets it fill the screen.
         zoomedImage?.let { src ->
-            val context = LocalContext.current
-            Dialog(
-                onDismissRequest = { zoomedImage = null },
-                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ReaderImageViewer(
+                images = galleryImages.ifEmpty { listOf(ReaderGalleryImage(src)) },
+                initialSrc = src,
+                sourceUrl = article.sourceUrl,
+                imageLoader = svgImageLoader,
+                onOpenImage = onLinkClick,
+                onDismiss = { zoomedImage = null },
+            )
+        }
+
+        if (pinchSize != null && !capturing) {
+            androidx.compose.material3.Surface(
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = statusBarTop + 12.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = textColor,
+                contentColor = backgroundColor,
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.96f))
-                        .clickable { zoomedImage = null },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    AsyncImage(
-                        // The SVG-capable loader also decodes ordinary bitmaps, so charts (SVG data
-                        // URIs) and photos both zoom correctly through it.
-                        model = readerImageRequest(context, src, article.sourceUrl),
-                        imageLoader = svgImageLoader,
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(12.dp),
-                    )
-                }
+                Text("Text size ${pinchSize}%", modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
             }
         }
 

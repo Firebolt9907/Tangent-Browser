@@ -22,11 +22,29 @@ internal fun readerImageRequest(
     sourceUrl: String?,
 ): ImageRequest =
     ImageRequest.Builder(context)
-        .data(src)
+        .data(readerImageData(src))
+        .memoryCacheKey(src)
         .crossfade(true)
         .setHeader("User-Agent", READER_IMAGE_USER_AGENT)
         .apply { refererFor(sourceUrl, src)?.let { setHeader("Referer", it) } }
         .build()
+
+/** Coil 2 has no data-URI fetcher. Decode embedded extractor graphics before handing them to Coil.
+ * Preserve literal + signs in SVG (URLDecoder otherwise treats them as form-encoded spaces). */
+internal fun readerImageData(src: String): Any {
+    if (!src.startsWith("data:image/", ignoreCase = true)) return src
+    val comma = src.indexOf(',')
+    if (comma < 0) return src
+    return runCatching {
+        val metadata = src.substring(0, comma)
+        val payload = src.substring(comma + 1)
+        if (metadata.endsWith(";base64", ignoreCase = true)) {
+            java.util.Base64.getDecoder().decode(payload)
+        } else {
+            java.net.URLDecoder.decode(payload.replace("+", "%2B"), "UTF-8").toByteArray(Charsets.UTF_8)
+        }
+    }.getOrDefault(src)
+}
 
 /** A desktop-Chrome UA. Some CDNs 403 non-browser user agents; a realistic one avoids that. */
 private const val READER_IMAGE_USER_AGENT =

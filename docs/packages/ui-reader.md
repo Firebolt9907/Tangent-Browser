@@ -31,6 +31,13 @@ work where a web page can't.
   schemes** a reader-content link may never be handed to `startActivity` (a reader tap fires an
   implicit intent directly, unlike an in-browser navigation, so `file:`/`content:`/`intent:` links in
   a hostile article are a real threat — this is a security boundary).
+- **`ReaderImageViewer.kt`** — fullscreen gallery with focal-point pinch zoom (1–6×),
+  bounded panning, swipe/arrow navigation, captions, retry, share-link and open-original actions.
+  Entrance/exit and gallery paging animate; tapping the image toggles controls. Zoom uses pinch
+  gestures only, with a read-only percentage indicator.
+- **`ReaderZoom.kt`** — shared pinch arbitration and fitted-image pan geometry. Article pinches commit
+  the existing persisted text-size preference (50–200%) at gesture end, reflow text and retain the
+  approximate reading position. Single-finger scroll and text selection stay available.
 - **`ReaderTableOfContents.kt`** — the floating TOC button + its bottom-sheet dialog; tapping a heading
   smooth-scrolls the article to that heading's captured offset.
 

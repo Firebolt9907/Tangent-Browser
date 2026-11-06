@@ -123,6 +123,25 @@ matching tab and URL paint (with the shared bounded timeout fallback); URL chang
 retire it. The history target and SSO-chain jump use the same helpers as the main browser. This does
 not change the two activity-close paths above or add another EngineView.
 
+## Android 17 Continue on (`TangentBrowserActivity.kt`, `ContinueOn.kt`)
+
+On API 37+, both browser activities enable handoff only while showing an eligible non-private
+HTTP(S) page. `currentSessionForHandoff` resolves the selected normal tab in MainActivity and the
+activity-owned custom-tab session in CustomTabActivity. A lifecycle-owned observer updates
+eligibility after navigation/tab changes; it stops at onStop without disabling the system's final
+background snapshot. Older Android versions never call the handoff APIs.
+
+`onHandoffActivityDataRequested` re-reads the session and returns
+`HandoffActivityData.createWebHandoff(Uri.parse(url))`. This is direct-to-web: there is no Tangent
+component, app-specific extras, or requirement to install Tangent on the destination. The receiving
+device opens the address in its browser. Preserve the original URL (including query/fragment), but
+reject embedded HTTP credentials, malformed addresses, private tabs and non-web schemes such as
+about/file/content/blob. This transfers a URL only, not cookies, login state or scroll position.
+
+Manual verification needs two Continue on-capable Android 17 devices: navigate and switch tabs,
+continue a page with a different default browser on the receiver (also with Tangent installed),
+repeat from a Custom Tab, then verify private/local pages are not offered.
+
 ## Edge-to-edge & status-bar area
 
 - `MainActivity` calls `enableEdgeToEdge(SystemBarStyle.auto(TRANSPARENT, TRANSPARENT), …)`. The default no-arg overload applies a translucent scrim — that's why the bar wasn't actually transparent before.
@@ -394,6 +413,24 @@ Both `triggerInitialReaderCheck` (per-load, in `ContentHost`) and `toggleReader`
 ### JS injection guard
 
 `extractReaderContent` loads a `javascript:` URL via `engineSession.loadUrl(..., ALLOW_JAVASCRIPT_URL | LOAD_FLAGS_REPLACE_HISTORY)`. `ContentHost` sets `suppressJavascriptLoadCallback = true` before calling it (same guard used by the viewport spacer injection) so the JS URL load does not re-trigger extraction or spacer injection in `onLoadingStateChange` / `onFirstContentfulPaint`. Reader state (`ReaderManager.clearReaderState`) is cleared in `onLocationChange` only for non-`javascript:` URLs.
+
+### Reader zoom and image gallery
+
+`ReaderZoom.readerPinch` observes pointer input at the Initial pass and claims only pinches or
+zoomed-image pans; ordinary article scrolling, text selection and fit-size gallery swipes remain
+with their existing handlers. Article pinches commit `ReaderManager.setFontSize` once on release
+(50–200%, using the existing persisted appearance) and restore the approximate scroll fraction
+after reflow. The live percentage badge previews the requested size without relaying out every block
+on every pointer delta.
+
+`ReaderImageViewer` is a fullscreen dialog used by both reader surfaces. It gathers images, figures
+and social media in article order, deduplicates sources, and supports 1–6× focal-point pinch zoom,
+bounded pan and gallery navigation. Zoom has no dedicated buttons or double-tap shortcut. Pan limits use the fitted intrinsic image dimensions,
+including letterboxing; all-up pointer events have no centroid and must never enter transform math.
+The viewer requests up to 4096px images, retains article Referer/UA headers, and uses SVG/GIF-capable
+loading. Figures retain a white backing so transparent black diagrams stay visible. Loading/retry,
+captions, image count, hideable controls, HTTP(S)-only share-link/open-original actions and animated
+entry/exit/paging live entirely in Compose; no engine view or extraction changes are involved.
 
 ## What's intentionally not built
 

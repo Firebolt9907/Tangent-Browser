@@ -139,6 +139,9 @@ fun ArchiveTimelineBarHost(
     // the address pill morphs on. Read per-frame in the draw phase so the bar tracks the scroll
     // "intent" 1:1 with the pill: scrolling down dives it toward the pill, scrolling up pops it back.
     collapseProgress: () -> Float = { 0f },
+    // True while the tab switcher is open: this banner belongs to the current tab's page, so it
+    // must neither show nor take taps over the overview (see MorphingBannerHost.suppressed).
+    suppressed: Boolean = false,
     // Shared Now-Bar stack so this bar piles up with the sync/OTP banners instead of overlapping.
     stack: com.firebolt9907.tangentbrowser.ui.BannerStackState? = null,
     onSelectYear: (Int) -> Unit,
@@ -163,6 +166,7 @@ fun ArchiveTimelineBarHost(
         stackId = "archive",
         stackPriority = BannerPriority.Archive,
         collapseProgress = collapseProgress,
+        suppressed = suppressed,
         gridProgress = gridProgress,
         horizontalOffsetX = horizontalOffsetX,
         switchFade = switchFade,

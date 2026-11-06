@@ -984,6 +984,10 @@ object ReaderExtractor {
                             } ?: "[]"
                             return GeckoResult.fromValue(prompt.confirm(res))
                         }
+                        com.firebolt9907.tangentbrowser.ui.content.AddressFieldProbe.BRIDGE_MESSAGE -> {
+                            com.firebolt9907.tangentbrowser.ui.content.AddressFieldProbe.onPayload(tabId, prompt.defaultValue.orEmpty())
+                            return GeckoResult.fromValue(prompt.confirm("ok"))
+                        }
                         com.firebolt9907.tangentbrowser.ui.content.LoginFieldProbe.BRIDGE_MESSAGE -> {
                             prompt.defaultValue?.let {
                                 com.firebolt9907.tangentbrowser.ui.content.LoginFieldProbe.onPayload(tabId, it)

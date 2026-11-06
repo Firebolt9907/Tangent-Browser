@@ -44,6 +44,9 @@ class CustomTabActivity : TangentBrowserActivity() {
     override fun currentUrlForAssist(state: BrowserState): String? =
         customTabId?.let { state.findCustomTab(it)?.content?.url }
 
+    override fun currentSessionForHandoff(state: BrowserState): SessionState? =
+        customTabId?.let { state.findCustomTab(it) }
+
     /**
      * The close animation [finish] plays, resolved per launch by [resolveCloseAnimation], or null
      * to leave the close transition entirely to the system. [resPackage] is non-null when the anim

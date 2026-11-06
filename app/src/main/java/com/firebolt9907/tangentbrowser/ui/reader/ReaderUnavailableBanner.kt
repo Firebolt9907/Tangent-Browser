@@ -26,6 +26,10 @@ fun ReaderUnavailableBannerHost(
     visible: Boolean,
     bottomPadding: Dp,
     collapseProgress: () -> Float = { 0f },
+    gridProgress: () -> Float = { 0f },
+    // True while the tab switcher is open: this banner belongs to the current tab's page, so it
+    // must neither show nor take taps over the overview (see MorphingBannerHost.suppressed).
+    suppressed: Boolean = false,
     stack: BannerStackState? = null,
     onDismiss: () -> Unit,
 ) {
@@ -33,6 +37,8 @@ fun ReaderUnavailableBannerHost(
         visible = visible,
         bottomPadding = bottomPadding,
         collapseProgress = collapseProgress,
+        gridProgress = gridProgress,
+        suppressed = suppressed,
         stack = stack,
         stackId = "readerUnavailable",
         stackPriority = BannerPriority.ReaderUnavailable,

@@ -265,6 +265,7 @@ internal fun TangentOverlaySheets(
     // mounted with the other banners in TangentRoot — not as a dialog here.
 
     PromptHandler(
+        tabId = selectedTabId,
         engineSession = selectedEngineSession,
         loginAutofillEnabled = components.globalPreferencesStore.loginAutofillEnabled,
         biometricAutofillRequired = components.globalPreferencesStore.biometricAutofillEnabled,

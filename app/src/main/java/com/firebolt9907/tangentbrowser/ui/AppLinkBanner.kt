@@ -69,6 +69,9 @@ fun OpenInAppBannerHost(
     visible: Boolean,
     bottomPadding: Dp,
     collapseProgress: () -> Float = { 0f },
+    // True while the tab switcher is open: this banner belongs to the current tab's page, so it
+    // must neither show nor take taps over the overview (see MorphingBannerHost.suppressed).
+    suppressed: Boolean = false,
     // Grid-open progress (0..1): fade out with the pill as the tab switcher opens.
     gridProgress: () -> Float = { 0f },
     // Horizontal pill offset (px) during a tab-switch swipe — the banner tracks it so it slides with
@@ -85,6 +88,7 @@ fun OpenInAppBannerHost(
         visible = visible && appName != null,
         bottomPadding = bottomPadding,
         collapseProgress = collapseProgress,
+        suppressed = suppressed,
         gridProgress = gridProgress,
         horizontalOffsetX = horizontalOffsetX,
         switchFade = switchFade,

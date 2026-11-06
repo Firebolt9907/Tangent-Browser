@@ -31,6 +31,9 @@ fun SitePermissionBannerHost(
     controller: SitePermissionController,
     bottomPadding: Dp,
     collapseProgress: () -> Float = { 0f },
+    // True while the tab switcher is open: this banner belongs to the current tab's page, so it
+    // must neither show nor take taps over the overview (see MorphingBannerHost.suppressed).
+    suppressed: Boolean = false,
     gridProgress: () -> Float = { 0f },
     horizontalOffsetX: () -> Float = { 0f },
     switchFade: () -> Float = { 0f },
@@ -45,6 +48,7 @@ fun SitePermissionBannerHost(
         // Replay the spring-out when a different request arrives while one is still on screen.
         enterKey = request?.id,
         collapseProgress = collapseProgress,
+        suppressed = suppressed,
         gridProgress = gridProgress,
         horizontalOffsetX = horizontalOffsetX,
         switchFade = switchFade,

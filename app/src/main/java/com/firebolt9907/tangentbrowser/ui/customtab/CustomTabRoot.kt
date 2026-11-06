@@ -403,12 +403,16 @@ fun CustomTabRoot(
     val backEasing = remember { CubicBezierEasing(0.22f, 1f, 0.36f, 1f) }
 
     // Activity-close predictive back: 0 at rest, 1 fully committed. Drives the Material 3
-    // predictive-back treatment (opaque card shrinking to 90% with rounded corners, shifted in the
+    // predictive-back treatment (opaque card shrinking to 80% with rounded corners, shifted in the
     // swipe direction, gently following the finger vertically); CustomTabActivity.finish() then
     // plays R.anim.custom_tab_exit from that frame once the gesture commits.
     var closeSlide by remember { mutableFloatStateOf(0f) }
     var closeSwipeDir by remember { mutableFloatStateOf(1f) } // +1 left-edge swipe, -1 right-edge
     var closeTouchDy by remember { mutableFloatStateOf(0f) }
+    // Largest progress reached this gesture. When the user lets go to cancel, the system animates
+    // progress back to 0 but keeps reporting the last touchY, so the vertical offset is scaled by
+    // closeSlide / closeSlidePeak to return to centre in lockstep with scale and X.
+    var closeSlidePeak by remember { mutableFloatStateOf(0f) }
 
     // Bottom-bar scroll linking: how many pixels the bar is currently pushed off the bottom edge
     // (0 = fully shown, [barTotalHeightPx] = fully hidden). This tracks the page scroll 1:1 rather
@@ -479,11 +483,12 @@ fun CustomTabRoot(
             var startTouchY = Float.NaN
             try {
                 progress.collect { backEvent ->
-                    if (startTouchY.isNaN()) startTouchY = backEvent.touchY
+                    if (startTouchY.isNaN()) { startTouchY = backEvent.touchY; closeSlidePeak = 0f }
                     closeSwipeDir =
                         if (backEvent.swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
                     closeTouchDy = backEvent.touchY - startTouchY
                     closeSlide = backEvent.progress.coerceIn(0f, 1f)
+                    if (closeSlide > closeSlidePeak) closeSlidePeak = closeSlide
                     motionEngine.track("close", closeSlide)
                     motionEngine.track("close-y", closeTouchDy)
                 }
@@ -493,7 +498,9 @@ fun CustomTabRoot(
                 onClose()
             } catch (cancelled: CancellationException) {
                 if (cancelled is MotionInterruptedException) throw cancelled
-                kotlinx.coroutines.coroutineScope {
+                // The handler's job is already cancelled here; without NonCancellable these
+                // springs throw immediately and the final resets below never run.
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                     launch {
                         motionEngine.animate("close", closeSlide, 0f,
                             animationSpec = TangentMotion.PredictiveBackCancel) { v, _ -> closeSlide = v }
@@ -505,6 +512,7 @@ fun CustomTabRoot(
                 }
                 closeSlide = 0f
                 closeTouchDy = 0f
+                closeSlidePeak = 0f
             }
         }
         // Reader takes priority — but only when the user opened it manually. Back then dismisses the
@@ -559,14 +567,15 @@ fun CustomTabRoot(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        // M3 predictive-back preview: opaque card at 100→90% scale with rounded
+                        // M3 predictive-back preview: opaque card at 100→80% scale with rounded
                         // corners, nudged in the swipe direction and trailing the finger's Y.
                         // Kept fully opaque — custom_tab_exit does the fading after commit.
-                        val closeScale = 1f - closeSlide * 0.1f
+                        val closeScale = 1f - closeSlide * 0.2f
                         scaleX = closeScale
                         scaleY = closeScale
                         translationX = closeSwipeDir * closeSlide * size.width * 0.05f
-                        translationY = closeTouchDy * 0.1f
+                        val yEnvelope = if (closeSlidePeak > 0f) (closeSlide / closeSlidePeak).coerceIn(0f, 1f) else 0f
+                        translationY = closeTouchDy * 0.1f * yEnvelope
                         if (closeSlide > 0f) {
                             clip = true
                             // Corners round in over the first ~20% of the drag, like the system's.
@@ -676,6 +685,7 @@ fun CustomTabRoot(
                 }
 
                 PromptHandler(
+                    tabId = customTabId,
                     engineSession = session,
                     loginAutofillEnabled = components.globalPreferencesStore.loginAutofillEnabled,
                     biometricAutofillRequired = components.globalPreferencesStore.biometricAutofillEnabled,

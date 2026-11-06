@@ -4087,6 +4087,14 @@ fun TangentRoot(
                     val pillGridProgress = remember {
                         { if (gridGestureActive) gridDragProgress else gridProgressState.value }
                     }
+                    // Tab-scoped banners (OTP paste, site permission, archive, open-in-app, …) belong to
+                    // the page, not the overview. They fade with the pill via gridProgress, then drop
+                    // out entirely once that fade is complete (alpha 1 - 1.5p hits 0 at p = 2/3) — an
+                    // alpha-0 card still takes taps, and would swallow the handoff card / space strip
+                    // beneath it. Derived so per-frame progress only recomposes on the flip.
+                    val tabBannersSuppressed by remember {
+                        derivedStateOf { gridOpen || pillGridProgress() >= 2f / 3f }
+                    }
                     // Horizontal offset the archive bar follows so it stays glued to the current
                     // tab's pill during a tab-switch swipe: the active pill while dragging (offsetX),
                     // then the leaving-tab ghost as the commit spring carries it off-screen.
@@ -4241,6 +4249,7 @@ fun TangentRoot(
                     // interactive banner the user must answer, so it sits front-most in the stack.
                     // Replaces the old center-screen AlertDialog.
                     com.firebolt9907.tangentbrowser.ui.SitePermissionBannerHost(
+                        suppressed = tabBannersSuppressed,
                         controller = components.sitePermissionController,
                         tabId = selectedTabId,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
@@ -4279,6 +4288,8 @@ fun TangentRoot(
                         }
                     }
                     com.firebolt9907.tangentbrowser.ui.sync.OtpPasteBannerHost(
+                        gridProgress = pillGridProgress,
+                        suppressed = tabBannersSuppressed,
                         visible = otpPasteVisible,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                         // Dive toward the pill on scroll-down, pop back on scroll-up — like the pill.
@@ -4320,6 +4331,8 @@ fun TangentRoot(
                         }
                     }
                     com.firebolt9907.tangentbrowser.ui.content.BlobFileBannerHost(
+                        gridProgress = pillGridProgress,
+                        suppressed = tabBannersSuppressed,
                         file = currentBlobFile,
                         visible = currentBlobFile != null &&
                             currentBlobFile.id != blobBannerDismissedId,
@@ -4336,6 +4349,8 @@ fun TangentRoot(
                     // Element-zap picker controls. The highlight itself is drawn in the page (only it
                     // can hit-test its own DOM); this is the Widen/Hide/Cancel half.
                     com.firebolt9907.tangentbrowser.ui.content.ZapPickerBannerHost(
+                        gridProgress = pillGridProgress,
+                        suppressed = tabBannersSuppressed,
                         visible = zapPickerActive,
                         selection = zapSelection,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
@@ -4360,6 +4375,8 @@ fun TangentRoot(
                     // "Reader mode unavailable" feedback for a manual reader request that found no
                     // article — same bottom-anchored morphing banner as the OTP/handoff cards.
                     com.firebolt9907.tangentbrowser.ui.reader.ReaderUnavailableBannerHost(
+                        gridProgress = pillGridProgress,
+                        suppressed = tabBannersSuppressed,
                         visible = readerUnavailableVisible,
                         bottomPadding = with(density) { bottomChromeInsetPx.toDp() },
                         collapseProgress = bannerCollapseProgressProvider,
@@ -4401,6 +4418,7 @@ fun TangentRoot(
                             }
                         }
                         com.firebolt9907.tangentbrowser.ui.archive.ArchiveTimelineBarHost(
+                            suppressed = tabBannersSuppressed,
                             session = archiveSession,
                             // Hide the bar once the pill collapses to compact (matches other banners).
                             visible = !barCollapseCompact,
@@ -4471,6 +4489,7 @@ fun TangentRoot(
                     // composable (so the dvh inset is reserved before ContentHost binds); this only
                     // renders it.
                     com.firebolt9907.tangentbrowser.ui.OpenInAppBannerHost(
+                        suppressed = tabBannersSuppressed,
                         appName = openInAppName,
                         packageName = openInAppPackage,
                         requested = openInAppRequested,

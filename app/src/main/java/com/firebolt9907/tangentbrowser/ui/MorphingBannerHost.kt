@@ -261,6 +261,11 @@ fun MorphingBannerHost(
     gridProgress: () -> Float = { 0f },
     horizontalOffsetX: () -> Float = { 0f },
     switchFade: () -> Float = { 0f },
+    // Tab-scoped banners pass true while the tab switcher is open. A suppressed banner keeps its
+    // morph state (so it's back, settled, when the switcher closes) but leaves the Z-stack and is not
+    // composed at all — [gridProgress]'s alpha fade alone would leave an invisible card that still
+    // eats taps meant for the overview (the handoff card, the space strip).
+    suppressed: Boolean = false,
     content: @Composable (contentReveal: () -> Float) -> Unit,
 ) {
     // Enter/exit progress: 0 hidden, 1 shown. Both directions ride the *exact* spring the pill morphs
@@ -292,10 +297,12 @@ fun MorphingBannerHost(
     // on `visible` (intent) so a banner relinquishes the front the instant it starts leaving, letting
     // the one behind animate forward without waiting for the exit morph to finish.
     if (stack != null) {
-        LaunchedEffect(visible) { stack.report(stackId, stackPriority, visible) }
+        val inStack = visible && !suppressed
+        LaunchedEffect(inStack) { stack.report(stackId, stackPriority, inStack) }
         DisposableEffect(stack, stackId) { onDispose { stack.remove(stackId) } }
     }
 
+    if (suppressed) return
     if (!mounted && morph.value <= 0.001f) return
 
     // Card-stack geometry: depth 0 = front (full size), deeper = smaller + lifted so it peeks above

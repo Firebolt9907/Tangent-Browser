@@ -109,6 +109,10 @@ fun OtpPasteBannerHost(
     visible: Boolean,
     bottomPadding: Dp,
     collapseProgress: () -> Float = { 0f },
+    gridProgress: () -> Float = { 0f },
+    // True while the tab switcher is open: the code belongs to the current tab's sign-in page, so
+    // the banner must neither show nor take taps over the overview (MorphingBannerHost.suppressed).
+    suppressed: Boolean = false,
     stack: BannerStackState? = null,
     onPaste: () -> Unit,
     onDismiss: () -> Unit,
@@ -117,6 +121,8 @@ fun OtpPasteBannerHost(
         visible = visible,
         bottomPadding = bottomPadding,
         collapseProgress = collapseProgress,
+        gridProgress = gridProgress,
+        suppressed = suppressed,
         stack = stack,
         stackId = "otpPaste",
         stackPriority = BannerPriority.OtpPaste,

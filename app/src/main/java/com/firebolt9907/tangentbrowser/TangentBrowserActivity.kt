@@ -1,6 +1,8 @@
 package com.firebolt9907.tangentbrowser
 
 import android.app.Activity
+import android.app.HandoffActivityData
+import android.app.HandoffActivityDataRequestInfo
 import android.app.PictureInPictureParams
 import android.app.assist.AssistContent
 import android.content.Intent
@@ -9,6 +11,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.util.Rational
 import android.util.Log
 import androidx.activity.SystemBarStyle
@@ -20,8 +23,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.fragment.app.FragmentActivity
+import androidx.annotation.RequiresApi
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import mozilla.components.browser.state.selector.selectedTab
 import mozilla.components.browser.state.state.BrowserState
+import mozilla.components.browser.state.state.SessionState
 import mozilla.components.concept.engine.activity.ActivityDelegate
 import mozilla.components.feature.downloads.DownloadsFeature
 import mozilla.components.feature.downloads.manager.FetchDownloadManager
@@ -56,6 +66,7 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
 
     protected open val downloadSessionId: String? get() = null
     private var downloadsFeature: DownloadsFeature? = null
+    private var handoffObservation: Job? = null
 
     protected fun restartDownloadsFeature() {
         downloadsFeature?.stop()
@@ -167,6 +178,30 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
     protected open fun currentUrlForAssist(state: BrowserState): String? =
         state.selectedTab?.content?.url
 
+    /** Custom Tabs must hand off their own session, never the selected normal tab. */
+    protected open fun currentSessionForHandoff(state: BrowserState): SessionState? = state.selectedTab
+
+    private fun currentHandoffUrl(state: BrowserState): String? {
+        val content = currentSessionForHandoff(state)?.content ?: return null
+        return ContinueOn.webUrl(content.url, content.private)
+    }
+
+    @RequiresApi(37)
+    private fun updateHandoffEligibility() {
+        val enabled = currentHandoffUrl(app.components.store.state) != null
+        if (isHandoffEnabled != enabled) setHandoffEnabled(enabled, null)
+    }
+
+    @RequiresApi(37)
+    override fun onHandoffActivityDataRequested(
+        requestInfo: HandoffActivityDataRequestInfo,
+    ): HandoffActivityData? {
+        // Re-read the actual session: never return an older public URL after a private/local tab
+        // switch. Direct-to-web intentionally supplies no Tangent component or session extras.
+        val url = currentHandoffUrl(app.components.store.state) ?: return null
+        return HandoffActivityData.createWebHandoff(Uri.parse(url))
+    }
+
     // SMS one-time-code (2FA) autofill via Play Services SMS User Consent. Registered as a field so
     // its consent ActivityResultLauncher is set up before the activity starts. Armed only while
     // foreground (onResume/onPause) so a backgrounded browser never starts watching for SMS.
@@ -195,6 +230,15 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
 
     override fun onStart() {
         super.onStart()
+        if (Build.VERSION.SDK_INT >= 37) {
+            updateHandoffEligibility()
+            handoffObservation = lifecycleScope.launch {
+                app.components.browserState
+                    .map { currentHandoffUrl(it) != null }
+                    .distinctUntilChanged()
+                    .collect { updateHandoffEligibility() }
+            }
+        }
         com.firebolt9907.tangentbrowser.sync.webauthn.SystemPasskeyActivityRegistry.attach(this)
         if (app.components.globalPreferencesStore.passkeyMode ==
             com.firebolt9907.tangentbrowser.state.PasskeyMode.SecurityKey
@@ -210,6 +254,11 @@ abstract class TangentBrowserActivity : FragmentActivity(), ActivityDelegate {
     }
 
     override fun onStop() {
+        // The framework can request a final handoff snapshot during super.onStop(). Keep handoff
+        // enabled for that cache, but stop observing other activities' browsing once stopped.
+        handoffObservation?.cancel()
+        handoffObservation = null
+        if (Build.VERSION.SDK_INT >= 37) updateHandoffEligibility()
         super.onStop()
         com.firebolt9907.tangentbrowser.sync.webauthn.SystemPasskeyActivityRegistry.detach(this)
         com.firebolt9907.tangentbrowser.sync.webauthn.HardwareSecurityKeyClientRegistry.detach(this)

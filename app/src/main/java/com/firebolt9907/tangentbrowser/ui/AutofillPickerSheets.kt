@@ -18,6 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CreditCard
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Phone
+import androidx.compose.material.icons.rounded.Email
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -81,20 +84,27 @@ internal fun SelectCreditCardSheet(
 @Composable
 internal fun SelectAddressSheet(
     addresses: List<Address>,
+    field: String = "",
     onSelect: (Address) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val choices = remember(addresses, field) { addressPickerChoices(addresses, field) }
     AutofillPickerScaffold(
-        title = "Fill address",
-        subtitle = "Choose a saved address",
+        title = addressPickerTitle(field),
+        subtitle = if (choices.isEmpty()) "No saved details for this field" else "Choose saved details to fill this form",
         onDismiss = onDismiss,
     ) {
-        items(addresses, key = { it.guid }) { address ->
+        items(choices, key = { it.address.guid }) { choice ->
             AutofillPickerRow(
-                icon = Icons.Rounded.LocationOn,
-                primary = address.addressLabel.ifBlank { address.name }.ifBlank { "Saved address" },
-                secondary = addressSummaryLine(address),
-                onClick = { onSelect(address) },
+                icon = when {
+                    field.startsWith("tel") -> Icons.Rounded.Phone
+                    field == "email" -> Icons.Rounded.Email
+                    field.endsWith("name") -> Icons.Rounded.Person
+                    else -> Icons.Rounded.LocationOn
+                },
+                primary = choice.primary,
+                secondary = choice.secondary,
+                onClick = { onSelect(choice.address) },
             )
         }
     }
@@ -184,7 +194,7 @@ private fun AutofillPickerRow(
                 Text(
                     text = primary,
                     style = MaterialTheme.typography.titleMediumEmphasized,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (secondary.isNotBlank()) {

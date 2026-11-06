@@ -22,6 +22,8 @@ edge-to-edge under the status bar.
 - **Past-last-tab swipe** creates a new tab.
 
 **Browsing**
+- **Continue on** (Android 17+) — hand off the current web URL to the destination device's browser,
+  without requiring Tangent there. Private tabs and local/non-web pages are excluded.
 - **Predictive back** — the system back gesture animates the previous-page snapshot in over the
   live engine view.
 - **Per-tab snapshots** cached in memory + JPEG on disk, so tab switches stay visually continuous

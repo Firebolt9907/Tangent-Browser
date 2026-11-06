@@ -17,6 +17,7 @@ import mozilla.components.concept.engine.prompt.PromptRequest
 @Composable
 fun PromptHandler(
     engineSession: EngineSession?,
+    tabId: String? = null,
     // Mirrors the user's "Login Autofill" setting. Gecko's silent page-load autofill is forced off
     // (see Engine.kt), so this toggle now gates whether the biometric-gated login picker is offered
     // at all: when false we dismiss SelectLoginPrompt without showing any fill UI.
@@ -386,6 +387,7 @@ fun PromptHandler(
             }
             SelectAddressSheet(
                 addresses = request.addresses,
+                field = com.firebolt9907.tangentbrowser.ui.content.AddressFieldProbe.field(tabId),
                 onSelect = { address ->
                     request.onConfirm(address)
                     promptRequest = null

@@ -5,13 +5,23 @@ Mozilla's Gecko engine. Swipe between pages, keep tabs in Spaces, and pick up yo
 Zen Browser tabs on your phone.
 
 Tangent is a personal open-source project under the [GPL-3.0](LICENSE). It is available
-through GitHub Releases and is not on an app store.
+through GitHub Releases.
+
+---
+
+<img width="270" height="600" alt="Screenshot_20261106-134714" src="https://github.com/user-attachments/assets/8a3ed115-ceb1-44d1-8914-573bc61c5264" />
+
+<img width="270" height="600" alt="Screenshot_20261106-134823" src="https://github.com/user-attachments/assets/bb4f1676-a3b8-4150-9e3c-ecd160086e0e" />
+
+<img width="270" height="600" alt="Screenshot_20261106-134853" src="https://github.com/user-attachments/assets/2442c31c-9373-41d1-9635-43c285009cd1" />
+
+<img width="326" height="635" alt="image" src="https://github.com/user-attachments/assets/05bc319e-e658-41be-80ef-19cc3c5002ac" />
 
 ---
 
 ## Installation
 
-Tangent isn't on any app store. Pushes to `codex/beta` publish beta releases; version tags publish stable releases. Both attach a signed `arm64-v8a` APK to
+Tangent isn't on any app store (but it will be added to the Play Store when deemed ready). Pushes to `codex/beta` publish beta releases; version tags publish stable releases. Both attach a signed `arm64-v8a` APK to
 [GitHub Releases](https://github.com/Firebolt9907/Tangent-Browser/releases), which
 [Obtainium](https://github.com/ImranR98/Obtainium) can install and keep updated.
 

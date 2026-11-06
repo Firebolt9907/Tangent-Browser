@@ -35,8 +35,8 @@ using the button below. Enable **Include prereleases** for beta updates.
   synced tabs and passwords.
 - **Reader mode and element hiding** — read without clutter, or hide individual
   page elements across visits through the aA menu.
-- **Passkeys and security keys** — Android credential providers and USB/NFC FIDO2 keys.
-- **Continue on** — hand a page to another device's browser on Android 17+.
+- **Passkeys and security keys** — USB/NFC FIDO2 keys and Android credential providers (not trusted on most providers, [can add to Bitwarden](https://github.com/bitwarden/android/issues/4620#issuecomment-3298806031))
+- **Continue on** — hand a page to another device's browser via Firefox Sync (Any Android Version) or [Continue On](https://developer.android.com/develop/better-together/continue-on) (Android 17+).
 
 Also includes bookmarks, history, downloads, fullscreen video, and per-site page zoom.
 

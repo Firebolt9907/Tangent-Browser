@@ -1,61 +1,119 @@
 # Tangent Browser
 
-An Android web browser with an iOS Safari–style bottom URL/tab pill, powered by Mozilla
-GeckoView. Single-window, Jetpack-Compose-only, no chrome at the top of the screen — pages render
-edge-to-edge under the status bar.
+An Android browser that brings Safari-style gestures and a bottom address pill to
+Mozilla's Gecko engine. Swipe between pages, keep tabs in Spaces, and pick up your
+Zen Browser tabs on your phone.
 
-> **Status:** personal project, released as open source under the [GPL-3.0](LICENSE). It builds and
-> runs, but it is not on any app store and GitHub releases use a permanent signing key; local builds use a debug keystore. Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
->
-> **Naming note:** the app is *Tangent Browser* throughout — package
-> `com.firebolt9907.tangentbrowser`, classes like `TangentRoot`, `TangentApplication`. It was
-> formerly named *Lumina* and briefly *Expedition*; the `firebolt9907` package segment is the
-> original author handle and is kept.
+Tangent is a personal open-source project under the [GPL-3.0](LICENSE). It is available
+through GitHub Releases and is not on an app store.
 
-## What it does
+---
 
-**The bottom pill (`SafariBar`)** is the URL field, tab switcher, and action surface in one.
-- **Expanded** at rest, **compact** when scrolling, **editing** with a full-width field + keyboard.
-- **Horizontal swipe** on the pill switches to the adjacent tab; the live page slides with it.
-- **Swipe up** opens the tab overview, which has three selectable layouts (`TabViewMode`): an iOS
-  app-switcher **deck**, a constant-scale **pixel** filmstrip, and a classic 2-column **grid**.
-- **Past-last-tab swipe** creates a new tab.
+## Installation
 
-**Browsing**
-- **Continue on** (Android 17+) — hand off the current web URL to the destination device's browser,
-  without requiring Tangent there. Private tabs and local/non-web pages are excluded.
-- **Predictive back** — the system back gesture animates the previous-page snapshot in over the
-  live engine view.
-- **Per-tab snapshots** cached in memory + JPEG on disk, so tab switches stay visually continuous
-  while GeckoView rebinds its single surface.
-- **Reader mode** — content extraction with a per-site include/strip rules engine.
-- **Custom Tabs** — links opened from other apps land in a separate slim surface
-  (`CustomTabActivity`), not your main tab set; "Open in Tangent" migrates them to a real tab.
-- **Downloads, history, bookmarks** with their own Compose sheets.
-- **Passkeys / WebAuthn** via Android Credential Manager, a local authenticator, or genuine
-  roaming FIDO2 security keys connected over USB/NFC.
-- **Video fullscreen** and **per-site preferences** (page zoom, opt-in status-bar top-padding fix).
+Tangent isn't on any app store. Pushes to `codex/beta` publish beta releases; version tags publish stable releases. Both attach a signed `arm64-v8a` APK to
+[GitHub Releases](https://github.com/Firebolt9907/Tangent-Browser/releases), which
+[Obtainium](https://github.com/ImranR98/Obtainium) can install and keep updated.
 
-Android backup and device transfer preserve only global preferences, site appearance preferences,
-and hidden-element rules. Local tabs, history, bookmarks, site sessions, credentials, remembered form
-values, and permission/autofill approvals are not included. Firefox Sync remains a separate opt-in
-way to synchronize supported data; sign in again on a new device.
+With Obtainium already installed, one tap adds it with the source pre-filled:
 
-**Firefox account & sync** (optional; sign in via FxA)
-- **Synced tabs** from your other Firefox devices, plus **Send Tab** receipt via command polling.
-- **Passwords** — encrypted login storage (`PlacesLoginsStorage`) with a management sheet.
-- **Zen Spaces** sync from Zen 1.22.1b: spaces, pinned and unpinned tabs, Essentials,
-  and tabs inside folders/splits (enable normal tab syncing in Zen; encrypted through Mozilla Sync).
-  Phone tabs are mirrored into a dedicated **Tangent · device** space on desktop. A near-full-screen
-  Spaces view replaces the legacy device list when Zen spaces are detected.
+[<img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="54">](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22com.firebolt9907.tangentbrowser%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FFirebolt9907%2FTangent-Browser%22%2C%22author%22%3A%22Firebolt9907%22%2C%22name%22%3A%22Tangent%20Browser%22%2C%22preferredApkIndex%22%3A0%2C%22additionalSettings%22%3A%22%7B%5C%22includePrereleases%5C%22%3Atrue%2C%5C%22fallbackToOlderReleases%5C%22%3Atrue%2C%5C%22autoApkFilterByArch%5C%22%3Atrue%2C%5C%22apkFilterRegEx%5C%22%3A%5C%22arm64-v8a%5C%5C%5C%5C.apk%24%5C%22%7D%22%2C%22overrideSource%22%3A%22GitHub%22%7D)
 
-**Extensions**
-- Install **Firefox add-ons** from an AMO slug, AMO page URL, direct `.xpi` URL, or the "Add to
-  Firefox" button on AMO detail pages.
+### With Obtainium
 
-## Stack
+1. Install [Obtainium](https://github.com/ImranR98/Obtainium/releases), then tap the badge above,
+   or choose **Add App** and paste `https://github.com/Firebolt9907/Tangent-Browser`.
+2. Enable **Include prereleases** for the beta feed.
+3. Install Tangent and enable update checks in Obtainium.
 
-- **Kotlin** 2.4.10, **Jetpack Compose** (BOM 2026.06.01), **Material 3**, edge-to-edge.
+### Install the APK directly
+
+1. Open [GitHub Releases](https://github.com/Firebolt9907/Tangent-Browser/releases) and choose
+   the release you want, including a prerelease for the latest beta.
+2. Download the asset ending in `arm64-v8a.apk`.
+3. Open it on your phone and allow installation from that source when Android asks.
+
+**Requirements:** Android 8.0 or newer and an arm64 device for the published APK.
+Updates must use the same signing key as the installed app; a local debug build and
+a GitHub release may not be compatible as an in-place update.
+
+Signing and release setup for maintainers: [`docs/OBTAINIUM.md`](docs/OBTAINIUM.md).
+
+
+---
+
+## What makes it different?
+
+If you're coming from Chrome or Firefox on Android, these are the reasons to try Tangent:
+
+| Feature | What you get |
+| --- | --- |
+| **Safari-style bottom pill** | The address field, tab switching, and actions share one control at the bottom. It shrinks as you scroll, leaving the page visible edge-to-edge. |
+| **Three tab overviews** | Choose a stacked app-switcher deck, a horizontal filmstrip, or a classic two-column grid. Swipe up from the pill to open it. |
+| **Spaces on your phone** | Keep separate sets of tabs; both the overview and sideways tab switching follow your active Space. |
+| **Zen Spaces sync** | Bring over Zen spaces, pinned tabs, Essentials, and tabs inside folders or splits through Mozilla Sync. Phone tabs appear in a dedicated **Tangent · device** space on desktop. |
+| **Hide parts of a site** | Choose **Hide an element** from the aA menu, select the unwanted element, and keep it hidden on later visits. Use **Restore hidden elements** to undo it. |
+| **Reader mode with site rules** | Read extracted content with per-site rules for what to include or strip. |
+
+Tangent uses GeckoView, the same engine family as Firefox. Firefox add-on support and
+Firefox Sync are shared strengths with Firefox on Android; Tangent combines them with
+its own interface and Zen integration. Chrome on Android does not support Firefox add-ons.
+
+---
+
+## Usage
+
+| Action | Result |
+| --- | --- |
+| Tap the address pill | Edit the URL or enter a search. |
+| Swipe sideways on the expanded pill | Switch to an adjacent tab in the active Space; swiping past the last tab creates a new one. |
+| Swipe up from the expanded pill | Open the tab overview. |
+| Tap the compact pill | Expand it before switching tabs or opening the overview. |
+| Change the overview layout | Switch between deck, filmstrip, and grid. |
+| Open a link from another app | Browse in a separate Custom Tab; **Open in Tangent** moves it into your main tabs. |
+
+### Firefox and Zen sync
+
+Sign in with a Firefox account to access synced tabs and encrypted password storage.
+Send Tab receipt uses polling, so delivery may wait until Tangent is opened or refreshed.
+
+For Zen Spaces, enable normal tab syncing in Zen (integration built for Zen 1.22.1b).
+When spaces are detected, Tangent shows a Spaces view in place of the device list.
+Sync is optional; browsing does not require an account.
+
+### Add-ons and everyday browsing
+
+Install Firefox add-ons using an AMO slug, an AMO page URL, a direct `.xpi` URL, or
+the **Add to Firefox** button on AMO detail pages. Compatibility depends on the add-on.
+
+Tangent also includes downloads, history, bookmarks, fullscreen video, page zoom,
+and per-site appearance preferences. Passkeys work through Android Credential Manager
+(subject to the provider's trusted-browser policy), a local authenticator, or USB/NFC
+FIDO2 security keys. **Continue on** can hand a web URL to another device's browser on
+Android 17 or newer; private tabs and local/non-web pages are excluded.
+
+### Backup and device transfer
+
+Android backup preserves global preferences, site appearance preferences, and hidden-element
+rules. It does **not** include local tabs, history, bookmarks, site sessions, credentials,
+remembered form values, or permission/autofill approvals. Firefox Sync is a separate
+opt-in route for supported data; sign in again on a new device.
+
+---
+
+## The technical stuff
+
+The interface is built in Jetpack Compose. Each foreground activity uses a single live
+Gecko engine view. Per-tab snapshots in memory and on disk cover the surface while it
+rebinds during tab switches, and provide the previous-page preview for predictive back.
+
+External links use a separate `CustomTabActivity` and custom-tab session, keeping them out
+of the main tab set until the user chooses **Open in Tangent**. Firefox accounts, encrypted
+logins, and sync use Mozilla components; Zen Spaces adds a layer over Mozilla Sync.
+
+### Stack
+
+- **Kotlin** 2.4.10, **Jetpack Compose** (BOM 2026.09.00), **Material 3**, edge-to-edge.
 - **AGP** 9.1.1 · **compileSdk** 37 · **targetSdk** 36 · **minSdk** 26.
 - **Browser engine:** GeckoView via [`mozilla-components`](https://github.com/mozilla-mobile/firefox-android)
   156.0.1 (`browser-engine-gecko`, `browser-state`, `feature-session`/`-tabs`/`-customtabs`/
@@ -63,20 +121,8 @@ way to synchronize supported data; sign in again on a new device.
 - **Coil** for image loading, **BouncyCastle** for the Sync 1.5 crypto path.
 - Single Gradle module under `app/`.
 
-## Install (Obtainium)
 
-Tangent isn't on any app store. Pushes to `codex/beta` publish beta releases; version tags publish stable releases. Both attach a signed `arm64-v8a` APK to
-[GitHub Releases](https://github.com/Firebolt9907/LuminaBrowser/releases), which
-[Obtainium](https://github.com/ImranR98/Obtainium) can install and keep updated.
-
-With Obtainium already installed, one tap adds it with the source pre-filled:
-
-[<img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="54">](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22com.firebolt9907.tangentbrowser%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FFirebolt9907%2FLuminaBrowser%22%2C%22author%22%3A%22Firebolt9907%22%2C%22name%22%3A%22Tangent%20Browser%22%2C%22preferredApkIndex%22%3A0%2C%22additionalSettings%22%3A%22%7B%5C%22includePrereleases%5C%22%3Atrue%2C%5C%22fallbackToOlderReleases%5C%22%3Atrue%2C%5C%22autoApkFilterByArch%5C%22%3Atrue%2C%5C%22apkFilterRegEx%5C%22%3A%5C%22arm64-v8a%5C%5C%5C%5C.apk%24%5C%22%7D%22%2C%22overrideSource%22%3A%22GitHub%22%7D)
-
-Otherwise: **Add App** → paste the repo URL. Full setup (keystore, secrets, cutting a release):
-[`docs/OBTAINIUM.md`](docs/OBTAINIUM.md).
-
-## Build & run
+### Build & run
 
 ```sh
 ./gradlew :app:installDebug
@@ -106,7 +152,7 @@ browser package and its data are separate. `connectedDebugAndroidTest` is intent
 Run only one instrumentation invocation per device/test package at a time: another runner's
 installation or cleanup can terminate an active suite.
 
-## Repo layout
+### Repo layout
 
 ```
 app/src/main/java/com/firebolt9907/tangentbrowser/
@@ -155,4 +201,3 @@ gesture, and sync regressions.
 [GPL-3.0](LICENSE). Tangent builds on Mozilla GeckoView and `mozilla-components` (MPL-2.0), which
 remain under their own licenses. You are free to use, study, modify, and redistribute Tangent; if
 you distribute a modified version, it must stay open under the GPL.
-```

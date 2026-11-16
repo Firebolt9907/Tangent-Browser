@@ -52,6 +52,9 @@ node pairTest.js https://www.reddit.com 48 64    # BOTH spacers together, as the
 ./matrix.sh                                      # deterministic geometry/lifecycle matrix
 node transportTest.js                           # real javascript: URL decoding and spacer execution
 node pinnedFillTest.js                          # conditional fill after scrolling and dropdown stability
+node photoBandTest.js https://drxbox.com 48      # strip above a PHOTO surface reads as that photo
+./photobg.sh                                     # offline photo-background fixtures (+ controls)
+node stripDiff.js 48                             # before/after blast radius of a strip change vs HEAD
 ```
 
 ### Offline fixtures
@@ -168,6 +171,24 @@ an observer quiet window; it does not assert script substrings or private contro
   showing up as a wrong pixel, which is exactly how one survived: the bottom spacer was re-running
   ~120x/second because writing `style.textContent` is a childList mutation its own observer treated
   as page churn.
+
+- **`photoBandTest.js`** / **`photobg.sh`** — the strip above a PHOTO. `bandFill.js` reports N/A
+  whenever the surface under the strip is not a flat colour, which is exactly where the strip looked
+  worst: a cover photo's `background-color` is only its load fallback (drxbox.com: `#44b244` under a
+  dark textured green), and the photo itself is cross-origin so it cannot be sampled. Compares the
+  strip's painted pixels with the same-height band below it, and checks content moved exactly
+  `flowTopPx`. `fixtures/photobg.html` covers the shapes: an in-flow cover photo box / hero / an
+  absolutely-positioned cover `<img>` (padded so the photo runs to the bezel — the **bleed** path),
+  a `body` cover photo, and negative-z fixed backdrops as an element (linktr.ee) or a
+  `body::before` (carrd.co), which leave the strip transparent. Controls (`headerFirst`,
+  `tiledTexture` = quora's translucent noise over a real colour with an over-strip decorative PNG,
+  `narrowCard`, `contentClip`) are judged on the mechanism, not the colour.
+
+- **`stripDiff.js`** — blast radius of a heuristic change. Loads each URL once, injects the script at
+  a git ref (default `HEAD`), screenshots, re-injects the working-tree script into the same document
+  and screenshots again, then lists only sites whose mechanism or strip colour changed (`--all` for
+  every site, `--shots=DIR` to keep the screenshots). Same-document on purpose: comparing two
+  separate loads was swamped by carousels, ads and consent sheets.
 
 ## Known limitation — scroll-dependent headers with a custom smooth-scroll
 

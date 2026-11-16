@@ -803,4 +803,54 @@ class ViewportSpacerScriptTest {
             s.contains("if(since<cd&&!bandChanged(now)&&!insetsClobbered()&&"),
         )
     }
+
+    @Test
+    fun `a full-bleed photo surface is padded instead of capped by a flat strip (drxbox)`() {
+        // drxbox.com: the surface under the strip is a cover photo whose background-color is only
+        // a load fallback (#44b244 under a dark textured green). Copying that colour drew a flat
+        // band across the photo; the photo is cross-origin, so it cannot be sampled either.
+        val s = script()
+        assertTrue(
+            "a covering raster's background-color is never copied onto the strip",
+            s.contains("if(rasterCovers(cs)&&!/gradient/i.test(img))return null;"),
+        )
+        assertTrue(
+            "the in-flow path pads the photo box and hides the spacer",
+            s.contains("const bleed=bleedTarget(el);"),
+        )
+        assertTrue(
+            "the bleed box must span the strip at three sample points (no narrow cards)",
+            s.contains("bleedAt(sp,Math.floor(w*0.12),base+2)!==t||bleedAt(sp,Math.floor(w*0.88),base+2)!==t"),
+        )
+        assertTrue(
+            "a solid or gradient surface stacked above the photo keeps the matched strip",
+            s.contains("if(bleedRaster(cs))return n;if(topPick(n))return null"),
+        )
+        assertTrue(
+            "content-box clipped photos are excluded: padding would add an unpainted band",
+            s.contains("cs.backgroundClip!=='content-box'&&cs.backgroundOrigin!=='content-box'"),
+        )
+        assertTrue(
+            "the shell and host-padding paths drop any bleed padding",
+            s.contains("if(shell){if(window.__tangentBleedEl)unpadBleed();") &&
+                s.contains("if(flexRow||isGrid){if(window.__tangentBleedEl)unpadBleed();"),
+        )
+        assertTrue(
+            "a site rewriting the padded box's padding is detected as a clobber",
+            s.contains("bl.style.getPropertyValue('padding-top')!==bl.__tangentBleedPad"),
+        )
+    }
+
+    @Test
+    fun `a photo backdrop already behind the strip leaves the strip transparent (linktree, carrd)`() {
+        val s = script()
+        assertTrue(
+            "a fixed photo/video layer spanning the strip area makes the strip transparent",
+            s.contains("if(rect&&topUnderStrip(n,rect,sp,y))return {c:'transparent'};if(rect&&topOccluder(n,rect))return null;"),
+        )
+        assertTrue(
+            "html/body ::before/::after fixed backdrops are checked after the stack, before the ancestor walk",
+            s.contains("var pb=topPseudoBackdrop();if(pb)return pb;"),
+        )
+    }
 }

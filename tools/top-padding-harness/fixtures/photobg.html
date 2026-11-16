@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>photo-background top fixtures</title>
+<!--
+  Pages whose top surface is a PHOTO (a raster background-image, or an <img> filling a hero),
+  with no header bar above it. The strip above such a surface cannot be matched by a flat colour:
+  the photo's pixels are usually cross-origin (unreadable), and the element's background-color is
+  only the fallback for when the photo fails to load, often a very different shade (drxbox.com:
+  #44b244 behind a dark textured green). The fix pads the photo's box so the photo itself runs up
+  under the status bar. Controls (header-first, narrow card, content-clip) must keep the strip.
+  Usage: photobg.html?case=<name>
+-->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; font: 16px/1.4 sans-serif; }
+  h1 { margin: 0; font-size: 22px; }
+  p { margin: 12px 0; }
+  .photo {
+    background-color: #44b244;
+    /* stand-in for a cross-origin photo: dark green with a texture, nothing like the fallback */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Crect width='120' height='120' fill='%231b6e1b'/%3E%3Ccircle cx='30' cy='30' r='18' fill='%23237d23'/%3E%3Ccircle cx='90' cy='80' r='26' fill='%23176417'/%3E%3C/svg%3E");
+    background-size: cover; background-position: center;
+    color: #fff;
+  }
+  .tiled { background-size: 120px 120px; background-repeat: repeat; }
+  .content { padding: 16px; background: #fff; color: #222; }
+</style>
+</head>
+<body>
+<script>
+const c = new URLSearchParams(location.search).get('case') || 'cover';
+const filler = '<p>' + 'Body copy that makes the page scroll. '.repeat(30) + '</p>';
+const img = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect width='400' height='400' fill='%23203a6b'/%3E%3Ccircle cx='120' cy='140' r='80' fill='%232c4f8f'/%3E%3C/svg%3E";
+// Transparent line art (mostly empty pixels), like quora's decorative header illustration.
+const art = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='200'%3E%3Cpath d='M0 60 C120 10 220 120 400 40' stroke='%23e8a33c' stroke-width='14' fill='none'/%3E%3C/svg%3E";
+const cases = {
+  // drxbox.com: an app root whose first in-flow child is a full-height cover-photo wrapper.
+  cover: `<div id="app"><div class="photo" style="min-height:100vh;display:flex;flex-direction:column">
+            <section style="padding:48px 20px 32px"><h1 class="probe">Are you suffering from Vitamin G deficiency?</h1>${filler}</section></div></div>`,
+  // A finite hero section with a tiled raster background, followed by ordinary white content.
+  hero: `<main><section class="photo tiled" style="height:420px;padding:24px 20px"><h1 class="probe">Hero headline</h1></section>
+         <section class="content">${filler}</section></main>`,
+  // Next.js <Image fill> style: an absolutely-positioned <img> covering a relative hero.
+  absImg: `<section style="position:relative;height:420px;background:#dddddd;color:#fff">
+             <img src="${img}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
+             <div style="position:relative;padding:24px 20px"><h1 class="probe">Image hero</h1></div></section>
+           <section class="content">${filler}</section>`,
+  // The photo is on <body> itself (cover-sized): it paints the canvas, so the strip only has to get
+  // out of the way. A TILED body texture deliberately keeps body's colour (quora: translucent noise).
+  bodyBg: `<div style="padding:24px 20px;color:#fff"><h1 class="probe">Body background photo</h1>${filler}</div>`,
+  // The photo box is pinned to the viewport (background-attachment:fixed).
+  fixedAttach: `<div class="photo" style="min-height:100vh;background-attachment:fixed;padding:24px 20px"><h1 class="probe">Fixed attachment</h1>${filler}</div>`,
+  // linktr.ee profiles: a position:fixed, z-index:-1 cover photo behind the whole page, html black.
+  fixedBackdrop: `<div class="photo" style="position:fixed;inset:0;z-index:-1;background-color:#000"></div>
+                  <div style="padding:24px 20px;color:#fff"><h1 class="probe">Fixed backdrop</h1>${filler}</div>`,
+  // carrd.co: the backdrop is body::before (position:fixed, z-index:-1), invisible to elementsFromPoint.
+  pseudoBackdrop: `<div style="padding:24px 20px;color:#fff"><h1 class="probe">Pseudo backdrop</h1>${filler}</div>`,
+  // CONTROL (quora.com): a translucent tiled noise texture over a real colour, with a transparent
+  // decorative PNG in an absolute layer at y=0 that paints OVER the strip. The strip must take the
+  // grey, not go transparent (that exposed body's dark base) and not pad the box.
+  tiledTexture: `<div style="background:#91a2a8 url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect width='1' height='1' fill='%23ffffff' fill-opacity='.08'/%3E%3C/svg%3E&quot;) repeat;background-size:8px 8px;min-height:100vh;color:#fff;position:relative">
+                   <div style="position:absolute;top:0;left:0;right:0;z-index:1"><img src="${art}" alt="" style="display:block;width:100%;height:200px"></div>
+                   <div style="position:relative;z-index:2;padding:220px 20px 24px"><h1 class="probe">Tiled texture</h1>${filler}</div></div>`,
+  // CONTROL: a solid header comes first; the strip must keep matching the header, photo untouched.
+  headerFirst: `<header style="background:#ffffff;color:#111;height:56px;padding:16px 20px"><h1 class="probe">Site</h1></header>
+                <section class="photo" style="height:420px;padding:24px 20px"><p>Hero below the header</p></section>
+                <section class="content">${filler}</section>`,
+  // CONTROL: a narrow centred photo card is not a full-bleed surface; keep the strip.
+  narrowCard: `<div style="padding:0 0 0 0;background:#f4efe6"><div class="photo" style="width:260px;height:300px;margin:0 auto;padding:24px"><h1 class="probe">Card</h1></div>${filler}</div>`,
+  // CONTROL: the photo only paints the content box, so padding it would add an unpainted band.
+  contentClip: `<div class="photo" style="min-height:100vh;background-clip:content-box;background-origin:content-box;padding:24px 0"><h1 class="probe" style="padding:0 20px">Content clip</h1>${filler}</div>`,
+};
+if (c === 'tiledTexture') document.body.style.background = '#181818';
+if (c === 'fixedBackdrop') document.documentElement.style.background = '#000';
+if (c === 'pseudoBackdrop') {
+  document.body.style.background = '#24252d';
+  const st = document.createElement('style');
+  st.textContent = "body::before{content:'';position:fixed;top:-40px;left:-20px;width:110vw;height:110vh;z-index:-1;" +
+    "background:url(\"" + img + "\") center/cover, linear-gradient(45deg,#6e4378,#2b4a8f)}";
+  document.head.appendChild(st);
+}
+if (c === 'bodyBg') {
+  document.body.classList.add('photo');
+}
+document.body.insertAdjacentHTML('beforeend', cases[c] || '<p>unknown case</p>');
+</script>
+</body>
+</html>

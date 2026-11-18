@@ -72,4 +72,8 @@ class SsoChainStats(context: Context) {
         if (hops < MinRecordableHops) return
         prefs.edit { putFloat("hops:$key", updatedEstimate(expectedHops(key), hops)) }
     }
+
+    fun clear() {
+        prefs.edit { clear() }
+    }
 }

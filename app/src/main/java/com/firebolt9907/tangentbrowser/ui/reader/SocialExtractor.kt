@@ -391,7 +391,7 @@ object SocialExtractor {
                     window.__tangentSocialBest = { url: location.href, len: m };
                     r.url = location.href;
                     r.mode = 'social';
-                    tangentBridge('tangent-reader', JSON.stringify(r));
+                    tangentBridge('${com.firebolt9907.tangentbrowser.ui.content.BridgeGuard.tag(ReaderExtractor.BRIDGE_MESSAGE)}', JSON.stringify(r));
                 }
                 run();
                 if (!window.__tangentSocialObserverInstalled) {
@@ -408,7 +408,7 @@ object SocialExtractor {
                             try { obs.disconnect(); } catch (e) {}
                             if (!window.__tangentSocialBest && !window.__tangentSocialSentNone) {
                                 window.__tangentSocialSentNone = true;
-                                tangentBridge('tangent-reader', '');
+                                tangentBridge('${com.firebolt9907.tangentbrowser.ui.content.BridgeGuard.tag(ReaderExtractor.BRIDGE_MESSAGE)}', '');
                             }
                         }
                     }, 800);

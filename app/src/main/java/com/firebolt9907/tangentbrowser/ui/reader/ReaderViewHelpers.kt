@@ -56,14 +56,29 @@ private const val READER_IMAGE_USER_AGENT =
  * most hotlink checks allowlist); falls back to the image's own origin so we still send *something*
  * plausible when the source URL is unknown. Returns null only if neither yields a usable origin.
  */
-private fun refererFor(sourceUrl: String?, imageSrc: String): String? {
-    sourceUrl?.let { if (it.startsWith("http")) return it }
-    return runCatching {
-        val uri = android.net.Uri.parse(imageSrc)
-        val scheme = uri.scheme
-        val host = uri.host
-        if (scheme != null && host != null) "$scheme://$host/" else null
-    }.getOrNull()
+/**
+ * The Referer to send when fetching an article image. Trims to the origin (`scheme://host[:port]/`)
+ * — never the full URL path or query string — matching Gecko's `XOriginTrimmingPolicy = 2`
+ * (`strict-origin-when-cross-origin`), so reader-mode image loads never leak article paths or query
+ * tokens to third-party CDNs while still satisfying origin-based hotlink checks.
+ */
+internal fun refererFor(sourceUrl: String?, imageSrc: String): String? {
+    originReferer(sourceUrl)?.let { return it }
+    return originReferer(imageSrc)
+}
+
+private fun originReferer(url: String?): String? {
+    if (url.isNullOrBlank()) return null
+    val parsed = runCatching { java.net.URI(url.trim()) }.getOrNull() ?: return null
+    val scheme = parsed.scheme?.lowercase()?.takeIf { it == "http" || it == "https" } ?: return null
+    if (parsed.rawUserInfo != null) return null
+    val host = parsed.host?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+    val port = parsed.port
+    return if (port > 0 && !((scheme == "http" && port == 80) || (scheme == "https" && port == 443))) {
+        "$scheme://$host:$port/"
+    } else {
+        "$scheme://$host/"
+    }
 }
 
 /**

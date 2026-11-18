@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
@@ -104,7 +105,8 @@ internal fun BarExpanded(
     val splashShape = remember { SquircleShape(radius = 16.dp, exponent = 3f) }
     // Flag plain-HTTP pages as not secure (modern-browser convention). https / internal pages
     // (about:, blank new tab) show nothing — only http:// is called out.
-    val isInsecure = !state.blankNewTabPreview &&
+    val isArchive = !state.blankNewTabPreview && state.isArchive
+    val isInsecure = !state.blankNewTabPreview && !isArchive &&
         state.pageUrl.startsWith("http://", ignoreCase = true)
     val blankPreview = state.blankNewTabPreview
     val addressLabel = if (blankPreview) "+" else state.displayUrl
@@ -124,9 +126,10 @@ internal fun BarExpanded(
             maxLines = 1,
             softWrap = false,
         ).size.width
+        val archiveBadgePx = if (isArchive) (15.dp.roundToPx() + 5.dp.roundToPx()) else 0
         // Match each padding modifier's pixel rounding at fractional display densities.
         val paddingPx = 2 * (8.dp.roundToPx() + 4.dp.roundToPx())
-        (textWidthPx + paddingPx).toDp()
+        (textWidthPx + archiveBadgePx + paddingPx).toDp()
     }
 
     // Reader mode owns the pill color; otherwise the site tint (if any) fills it, else the default
@@ -262,7 +265,15 @@ internal fun BarExpanded(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
                 ) {
-                    if (isInsecure) {
+                    if (isArchive) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = "Archived snapshot on web.archive.org",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(15.dp),
+                        )
+                        Spacer(Modifier.width(5.dp))
+                    } else if (isInsecure) {
                         Box(
                             modifier = Modifier
                                 .collapsingWidth(14.dp, collapseProgress)
@@ -281,6 +292,7 @@ internal fun BarExpanded(
                     Text(
                         text = addressLabel,
                         style = addressStyle,
+                        color = if (isArchive) MaterialTheme.colorScheme.primary else Color.Unspecified,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center,

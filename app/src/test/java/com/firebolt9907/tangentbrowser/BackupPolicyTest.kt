@@ -26,15 +26,18 @@ class BackupPolicyTest {
     }
 
     @Test fun allBackupTransportsAllowOnlyReviewedPreferences() {
-        val approved = setOf(
+        val cloudApproved = setOf(
+            "sharedpref" to "tangent_global_prefs.xml",
+        )
+        val transferApproved = setOf(
             "sharedpref" to "tangent_global_prefs.xml",
             "sharedpref" to "tangent_site_prefs.xml",
             "sharedpref" to "tangent_zapped_elements.xml",
         )
-        for ((name, section) in listOf(
-            "backup_rules" to "full-backup-content",
-            "data_extraction_rules" to "cloud-backup",
-            "data_extraction_rules" to "device-transfer",
+        for ((name, section, approved) in listOf(
+            Triple("backup_rules", "full-backup-content", cloudApproved),
+            Triple("data_extraction_rules", "cloud-backup", cloudApproved),
+            Triple("data_extraction_rules", "device-transfer", transferApproved),
         )) {
             val included = rules(name, section)
             // An empty include set means Android defaults back to backing up everything.
@@ -50,9 +53,15 @@ class BackupPolicyTest {
                 "sharedpref" to "tangent_form_memory.xml",
                 "sharedpref" to "tangent_autofill_trust.xml",
                 "sharedpref" to "tangent_site_permissions.xml",
+                "sharedpref" to "tangent_https_exceptions.xml",
                 "sharedpref" to "future_credential_store.xml",
             )) {
                 assertFalse("$section must not copy $sensitive", sensitive in included)
+            }
+            if (section != "device-transfer") {
+                // Host-keyed preferences leak visited domains and must stay out of cloud backups.
+                assertFalse("sharedpref" to "tangent_site_prefs.xml" in included)
+                assertFalse("sharedpref" to "tangent_zapped_elements.xml" in included)
             }
         }
     }

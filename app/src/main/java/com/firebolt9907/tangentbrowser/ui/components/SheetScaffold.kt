@@ -23,8 +23,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
@@ -75,12 +77,17 @@ fun TangentModalSheet(
     onDismissRequest: () -> Unit,
     bottomPadding: Dp = 28.dp,
     scrollable: Boolean = false,
+    secureWindow: Boolean = false,
     overlay: @Composable BoxScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    SecureWindowEffect(enabled = secureWindow)
     ModalBottomSheet(
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         onDismissRequest = onDismissRequest,
+        properties = ModalBottomSheetProperties(
+            securePolicy = if (secureWindow) SecureFlagPolicy.SecureOn else SecureFlagPolicy.Inherit,
+        ),
         contentWindowInsets = { WindowInsets(0.dp) },
     ) {
         Box {

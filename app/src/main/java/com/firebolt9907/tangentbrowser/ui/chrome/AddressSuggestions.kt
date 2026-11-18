@@ -118,6 +118,7 @@ fun AddressSheet(
     onTopSuggestionChange: (String, AddressSuggestion?) -> Unit = { _, _ -> },
     onPreconnect: (String) -> Unit = {},
     onPreloadPage: (String) -> Unit = {},
+    fetchClient: mozilla.components.concept.fetch.Client? = null,
     searchSuggestionsEnabled: Boolean = true,
     searchEngine: SearchEngine = SearchEngine.DEFAULT,
     // Open tabs (excluding the current one) offered as switch-to-tab suggestions, plus the callback
@@ -203,7 +204,7 @@ fun AddressSheet(
     // Suggestions: skip while the field still holds the untouched current-page URL (Safari-style).
     val trimmed = query.trim()
     val rowsActive = visible && trimmed.isNotEmpty() && trimmed != pageUrl.trim()
-    val suggestClient = remember { HttpURLConnectionClient() }
+    val suggestClient = remember(fetchClient) { fetchClient ?: HttpURLConnectionClient() }
     var localResult by remember { mutableStateOf<Pair<String, List<AddressSuggestion>>?>(null) }
     var remoteResult by remember { mutableStateOf<Pair<String, List<String>>?>(null) }
     LaunchedEffect(rowsActive, trimmed, historyStorage, bookmarksStorage) {

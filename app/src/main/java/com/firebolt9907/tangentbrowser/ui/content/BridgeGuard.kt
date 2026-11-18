@@ -88,19 +88,32 @@ object BridgeGuard {
     // ---- Trusted-origin registry -------------------------------------------------------------
 
     private val originByTab = ConcurrentHashMap<String, String>()
+    private val urlByTab = ConcurrentHashMap<String, String>()
 
     /** Record the real current URL for [tabId]; a non-web/blank URL clears any prior origin. */
     fun setTrustedOrigin(tabId: String?, url: String?) {
         if (tabId.isNullOrBlank()) return
         val origin = bridgeTrustedOrigin(url)
-        if (origin != null) originByTab[tabId] = origin else originByTab.remove(tabId)
+        if (origin != null && !url.isNullOrBlank()) {
+            originByTab[tabId] = origin
+            urlByTab[tabId] = url
+        } else {
+            originByTab.remove(tabId)
+            urlByTab.remove(tabId)
+        }
     }
 
     /** The trusted origin for [tabId], or null if none recorded (handlers must fail closed). */
     fun trustedOrigin(tabId: String): String? = originByTab[tabId]
 
+    /** The trusted web URL last recorded for [tabId], or null if none recorded. */
+    fun trustedUrl(tabId: String): String? = urlByTab[tabId]
+
     fun forget(tabId: String?) {
-        if (!tabId.isNullOrBlank()) originByTab.remove(tabId)
+        if (!tabId.isNullOrBlank()) {
+            originByTab.remove(tabId)
+            urlByTab.remove(tabId)
+        }
     }
 
     /** Full origin (`scheme://host[:port]`) of a web [url]; see [bridgeTrustedOrigin]. */

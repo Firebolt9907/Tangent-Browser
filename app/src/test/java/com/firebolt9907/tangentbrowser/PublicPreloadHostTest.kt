@@ -55,6 +55,18 @@ class PublicPreloadHostTest {
         assertFalse(isPublicPreloadHost("http://[fc00::1]/"))
     }
 
+    @Test fun ipv4MappedAndAlternateIpFormsRejected() {
+        assertFalse(isPublicPreloadHost("http://[::ffff:127.0.0.1]/"))
+        assertFalse(isPublicPreloadHost("http://[::ffff:7f00:1]/"))
+        assertFalse(isPublicPreloadHost("http://[::ffff:192.168.1.1]/"))
+        assertFalse(isPublicPreloadHost("http://[::ffff:169.254.169.254]/"))
+        assertFalse(isPublicPreloadHost("http://[0:0:0:0:0:0:0:1]/"))
+        assertFalse(isPublicPreloadHost("http://[64:ff9b::127.0.0.1]/"))
+        assertFalse(isPublicPreloadHost("http://127.1/"))
+        assertFalse(isPublicPreloadHost("http://0x7f.0.0.1/"))
+        assertTrue(isPublicPreloadHost("https://[2606:4700:4700::1111]/"))
+    }
+
     @Test fun bareSingleLabelAndMdnsRejected() {
         assertFalse(isPublicPreloadHost("http://router/"))
         assertFalse(isPublicPreloadHost("http://intranet/dashboard"))

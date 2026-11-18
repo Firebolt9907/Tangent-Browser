@@ -71,6 +71,10 @@ class AppLinkBannerStats(context: Context) {
         }
     }
 
+    fun clear() {
+        prefs.edit { clear() }
+    }
+
     companion object {
         const val MIN_DISMISS = 5
         const val MIN_REJECT_RATE = 0.8

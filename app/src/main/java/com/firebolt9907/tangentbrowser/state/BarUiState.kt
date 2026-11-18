@@ -8,6 +8,7 @@ data class BarUiState(
     val compactDisplayUrl: String = displayUrl,
     val pageUrl: String = displayUrl,
     val blankNewTabPreview: Boolean = false,
+    val isArchive: Boolean = false,
 )
 
 enum class BarMode { Expanded, Compact, Editing }

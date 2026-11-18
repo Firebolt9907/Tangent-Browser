@@ -146,6 +146,21 @@ class TabSnapshotCache(
         }
     }
 
+    @Synchronized
+    fun clear() {
+        pendingDiskLoads.clear()
+        missedDiskKeys.clear()
+        lastVersionBumpKey = null
+        lastVersionBumpBitmap = null
+        if (memoryCache.isNotEmpty()) {
+            memoryCache.clear()
+        }
+        _version.value = _version.value + 1
+        ioScope.launch {
+            directory.listFiles()?.forEach { runCatching { it.delete() } }
+        }
+    }
+
     /**
      * Release in-memory thumbnails on system memory pressure. Every cached bitmap has already been
      * (or is being) written to disk, so a later [get] transparently reloads it via the disk-decode

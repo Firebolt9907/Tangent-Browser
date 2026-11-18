@@ -845,6 +845,7 @@ fun ContentHost(
                     tabId?.let(onTabPainted)
                 }
             }
+            BridgeGuard.setTrustedOrigin(tabId, currentUrl)
             engineSession.register(observer)
             injectSpacer(force = true)
             // Sample the top color at bind time ONLY when the page has already finished loading (tab

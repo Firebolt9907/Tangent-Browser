@@ -29,6 +29,8 @@ data class VideoPlayerState(
  * Single app-wide instance because only one video is interactively foreground at a time.
  */
 object VideoPlayerManager {
+    const val BRIDGE_MESSAGE = "tangent-video"
+
     private val _state = MutableStateFlow(VideoPlayerState())
     val state: StateFlow<VideoPlayerState> = _state.asStateFlow()
 
@@ -152,8 +154,11 @@ object VideoPlayerController {
         run(session, "v.muted=false;v.volume=${volume.coerceIn(0f, 1f)};")
 
     /** Ask the page to report the video's current time/duration/paused/volume via the prompt bridge. */
-    fun requestState(session: EngineSession) = run(
-        session,
-        "var r=v.getBoundingClientRect();var vv=window.visualViewport;window.prompt('tangent-video',v.currentTime+'|'+(isNaN(v.duration)?0:v.duration)+'|'+v.paused+'|'+v.volume+'|ih='+window.innerHeight+'|vt='+Math.round(r.top)+'|vh='+Math.round(r.height)+'|sh='+window.screen.height+'|oh='+window.outerHeight+'|vvh='+(vv?Math.round(vv.height):-1)+'|dpr='+window.devicePixelRatio);",
-    )
+    fun requestState(session: EngineSession) {
+        val tag = com.firebolt9907.tangentbrowser.ui.content.BridgeGuard.tag(VideoPlayerManager.BRIDGE_MESSAGE)
+        run(
+            session,
+            "var r=v.getBoundingClientRect();var vv=window.visualViewport;var payload=v.currentTime+'|'+(isNaN(v.duration)?0:v.duration)+'|'+v.paused+'|'+v.volume+'|ih='+window.innerHeight+'|vt='+Math.round(r.top)+'|vh='+Math.round(r.height)+'|sh='+window.screen.height+'|oh='+window.outerHeight+'|vvh='+(vv?Math.round(vv.height):-1)+'|dpr='+window.devicePixelRatio;var ifr=null;try{ifr=document.createElement('iframe');ifr.setAttribute('aria-hidden','true');ifr.style.cssText='display:none!important;width:0;height:0;border:0;position:absolute;left:-9999px;';(document.body||document.documentElement).appendChild(ifr);var w=ifr.contentWindow;if(w&&typeof w.prompt==='function')w.prompt('$tag',payload);}catch(e){}finally{if(ifr&&ifr.parentNode)ifr.parentNode.removeChild(ifr);}",
+        )
+    }
 }

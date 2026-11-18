@@ -283,11 +283,25 @@ internal fun ProactiveLoginAutofill(
         logins = logins,
         alwaysAutofillCandidate = alwaysAutofillCandidate,
         onAlwaysAutofill = { login ->
-            // Only persist consent if this is still the target the user was shown.
-            if (!fillAndSubmit(login)) return@SelectLoginSheet
-            trustStore.setAlwaysAutofill(login.guid, true)
-            scope.launch(Dispatchers.IO) { runCatching { loginsStorage.touch(login.guid) } }
-            closeSheet(filled = true)
+            val enrollAndFill: () -> Unit = enroll@{
+                // Only persist consent if this is still the target the user was shown.
+                if (!fillAndSubmit(login)) return@enroll
+                trustStore.setAlwaysAutofill(login.guid, true)
+                scope.launch(Dispatchers.IO) { runCatching { loginsStorage.touch(login.guid) } }
+                closeSheet(filled = true)
+            }
+            if (biometricRequired) {
+                val displayHost = com.firebolt9907.tangentbrowser.state.compactHost(login.origin)
+                BiometricGate.authenticate(
+                    context = context,
+                    title = "Always autofill password",
+                    subtitle = if (displayHost.isNotBlank()) "for $displayHost" else "for this site",
+                    onSuccess = enrollAndFill,
+                    onFailure = { closeSheet(filled = false) },
+                )
+            } else {
+                enrollAndFill()
+            }
         },
         onSelect = { login ->
             val fill: () -> Unit = fill@{

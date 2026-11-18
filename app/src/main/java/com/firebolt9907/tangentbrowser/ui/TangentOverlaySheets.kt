@@ -158,6 +158,8 @@ internal fun TangentOverlaySheets(
             onSettingChanged = onSettingChanged,
             onClearSitePermissions = {
                 components.sitePermissionController.clearRememberedDecisions()
+                components.globalPreferencesStore.clearHttpsExceptions()
+                components.httpsOnlyExceptionController.recompute()
             },
             onReplayOnboarding = onReplayOnboarding,
             onClearBrowsingData = { history, cookiesAndSiteData, cache ->
@@ -181,10 +183,26 @@ internal fun TangentOverlaySheets(
                         )
                     )
                 }
+                if (cookiesAndSiteData) {
+                    com.firebolt9907.tangentbrowser.ui.content.FormFieldMemory.clear()
+                }
+                if (cache || history) {
+                    components.tabSnapshotCache.clear()
+                    com.firebolt9907.tangentbrowser.state.BlobFileStore.clear()
+                }
                 if (history) {
+                    components.readerHostEvidence.clear()
+                    components.dataSaverController.recompute()
+                    com.firebolt9907.tangentbrowser.state.SsoChainStats(appContext).clear()
+                    com.firebolt9907.tangentbrowser.state.AppLinkBannerStats(appContext).clear()
                     // PlacesHistoryStorage.deleteEverything is suspend and manages its own IO.
                     scope.launch {
                         runCatching { components.historyStorage.deleteEverything() }
+                        com.firebolt9907.tangentbrowser.state.BrowserSearchIndex.refresh(
+                            context = appContext,
+                            historyStorage = components.historyStorage,
+                            bookmarksStorage = components.bookmarksStorage,
+                        )
                     }
                 }
             },
@@ -287,6 +305,7 @@ internal fun TangentOverlaySheets(
         PasswordsSheet(
             loginsStorage = components.loginsStorage,
             onDismiss = onDismissPasswords,
+            biometricRequired = components.globalPreferencesStore.biometricAutofillEnabled,
         )
     }
 

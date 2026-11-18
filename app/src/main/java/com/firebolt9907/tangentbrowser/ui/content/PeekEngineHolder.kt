@@ -23,12 +23,18 @@ class PeekEngineHolder(private val engine: Engine) {
     var view: EngineView? = null
         private set
     private var isPrivate: Boolean = false
+    private var currentContextId: String? = null
 
-    /** Ensure a session + view exist for the requested privacy, recreating if privacy changed. */
-    fun ensure(context: Context, private: Boolean): Pair<EngineSession, EngineView> {
-        if (session != null && isPrivate != private) release()
+    /** Ensure a session + view exist for the requested privacy and container, recreating if changed. */
+    fun ensure(
+        context: Context,
+        private: Boolean,
+        contextId: String? = null,
+    ): Pair<EngineSession, EngineView> {
+        if (session != null && (isPrivate != private || currentContextId != contextId)) release()
         isPrivate = private
-        val s = session ?: engine.createSession(private, null).also { session = it }
+        currentContextId = contextId
+        val s = session ?: engine.createSession(private, contextId).also { session = it }
         val v = view ?: engine.createView(context).also {
             it.setActivityContext(context)
             view = it
@@ -49,13 +55,15 @@ class PeekEngineHolder(private val engine: Engine) {
      * (peek URL cleared and the card removed), so the view isn't released out from under a live
      * `AndroidView` — the same rule the deferred [release] path in `TangentRoot` observes.
      */
-    fun detachSessionForAdoption(): EngineSession? {
+    fun detachSessionForAdoption(): Pair<EngineSession, String?>? {
         val s = session ?: return null
+        val ctxId = currentContextId
         view?.let { runCatching { it.release() } }
         view = null
         session = null
         isPrivate = false
-        return s
+        currentContextId = null
+        return s to ctxId
     }
 
     /** Tear down the session + view (frees the content process). Safe to call when already empty. */
@@ -64,5 +72,6 @@ class PeekEngineHolder(private val engine: Engine) {
         session?.let { runCatching { it.close() } }
         view = null
         session = null
+        currentContextId = null
     }
 }

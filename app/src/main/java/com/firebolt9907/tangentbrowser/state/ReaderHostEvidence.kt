@@ -93,6 +93,11 @@ class ReaderHostEvidence(context: Context) {
         failed = if (current.size >= MAX_FAILED) current.drop(1).toSet() + host else current + host
     }
 
+    /** Forget all learned/failed visited-host evidence (called from Clear Browsing Data). */
+    fun clear() {
+        prefs.edit { clear() }
+    }
+
     private companion object {
         const val KEY_LEARNED = "learnedHosts"
         const val KEY_FAILED = "failedHosts"

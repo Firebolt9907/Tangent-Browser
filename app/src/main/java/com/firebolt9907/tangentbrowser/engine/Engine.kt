@@ -105,9 +105,9 @@ class TangentBrowserComponents(application: Application) {
     // single site when it breaks the page, without turning protection off globally.
     val trackingProtectionUseCases =
         mozilla.components.feature.session.TrackingProtectionUseCases(store, engine)
-    // Loads real site favicons (memory + disk cached) for the tab overview captions, via the
-    // HttpURLConnection fetch client. Falls back to a letter tile in the UI when a site has none.
-    val icons = BrowserIcons(application, mozilla.components.lib.fetch.httpurlconnection.HttpURLConnectionClient())
+    // Loads real site favicons (memory + disk cached) for the tab overview captions through Gecko's
+    // own network stack so DoH, TLS policy, and tracking protection apply uniformly.
+    val icons = BrowserIcons(application, downloadHttpClient)
     // Owns add/remove/migrate for custom-tab sessions (external-link "Custom Tab" surface hosted by
     // CustomTabActivity). Custom tabs live in store.state.customTabs, separate from the normal tab
     // list, so they never touch the grid, persistence, or Firefox Sync.

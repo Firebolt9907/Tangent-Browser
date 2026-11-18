@@ -5,6 +5,21 @@ import androidx.core.content.edit
 
 class GlobalPreferencesStore(context: Context) {
     private val prefs = context.getSharedPreferences("tangent_global_prefs", Context.MODE_PRIVATE)
+    // Kept in a separate, non-backed-up file so internal/LAN hostnames never leave the device.
+    private val httpsExceptionPrefs =
+        context.getSharedPreferences("tangent_https_exceptions", Context.MODE_PRIVATE)
+
+    init {
+        if (prefs.contains("httpsOnlyAllowedHosts")) {
+            val legacy = prefs.getStringSet("httpsOnlyAllowedHosts", emptySet())?.toSet().orEmpty()
+            if (legacy.isNotEmpty()) {
+                val existing = httpsExceptionPrefs.getStringSet("httpsOnlyAllowedHosts", emptySet())
+                    ?.toSet().orEmpty()
+                httpsExceptionPrefs.edit { putStringSet("httpsOnlyAllowedHosts", existing + legacy) }
+            }
+            prefs.edit { remove("httpsOnlyAllowedHosts") }
+        }
+    }
 
     // null = not set, "" = Default browser, "com.foo" = specific app
     var preferredBrowserPackage: String?
@@ -56,8 +71,8 @@ class GlobalPreferencesStore(context: Context) {
     // tab is on one of these hosts; everything else still gets upgraded. Stored lowercased.
     var httpsOnlyAllowedHosts: Set<String>
         // Defensive copy: SharedPreferences forbids mutating the returned Set instance.
-        get() = prefs.getStringSet("httpsOnlyAllowedHosts", emptySet())?.toSet().orEmpty()
-        set(value) { prefs.edit { putStringSet("httpsOnlyAllowedHosts", value) } }
+        get() = httpsExceptionPrefs.getStringSet("httpsOnlyAllowedHosts", emptySet())?.toSet().orEmpty()
+        set(value) { httpsExceptionPrefs.edit { putStringSet("httpsOnlyAllowedHosts", value) } }
 
     fun allowHttpForHost(host: String) {
         val h = host.trim().lowercase()
@@ -67,6 +82,10 @@ class GlobalPreferencesStore(context: Context) {
 
     fun isHttpAllowedForHost(host: String): Boolean =
         host.trim().lowercase() in httpsOnlyAllowedHosts
+
+    fun clearHttpsExceptions() {
+        httpsExceptionPrefs.edit { clear() }
+    }
 
     var globalPrivacyControl: Boolean
         get() = prefs.getBoolean("globalPrivacyControl", false)
@@ -244,6 +263,12 @@ class GlobalPreferencesStore(context: Context) {
     var searchSuggestionsEnabled: Boolean
         get() = prefs.getBoolean("searchSuggestionsEnabled", true)
         set(value) { prefs.edit { putBoolean("searchSuggestionsEnabled", value) } }
+
+    // When off (the privacy-safe default), visited pages and bookmarks are NOT published to
+    // Android's global system/launcher AppSearch index.
+    var systemSearchIndexEnabled: Boolean
+        get() = prefs.getBoolean("systemSearchIndexEnabled", false)
+        set(value) { prefs.edit { putBoolean("systemSearchIndexEnabled", value) } }
 
     // How aggressively to preload pages the user is likely to open next (external Discover/Search
     // links and the address-bar top hit). Stored by enum name; defaults to unmetered-only.

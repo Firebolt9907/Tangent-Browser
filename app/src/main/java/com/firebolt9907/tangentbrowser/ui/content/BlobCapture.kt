@@ -129,8 +129,8 @@ object BlobCapture {
                         ifr.style.cssText = 'display:none!important;width:0;height:0;border:0;position:absolute;left:-9999px;';
                         (document.body || document.documentElement).appendChild(ifr);
                         var w = ifr.contentWindow;
-                        r = (w && typeof w.prompt === 'function') ? w.prompt(msg, val) : window.prompt(msg, val);
-                    } catch (e) { try { r = window.prompt(msg, val); } catch (e2) {} }
+                        if (w && typeof w.prompt === 'function') { r = w.prompt(msg, val); }
+                    } catch (e) {}
                     finally { if (ifr && ifr.parentNode) { try { ifr.parentNode.removeChild(ifr); } catch (e3) {} } }
                     return r;
                 }

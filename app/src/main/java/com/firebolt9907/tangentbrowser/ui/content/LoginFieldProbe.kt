@@ -76,9 +76,7 @@ object LoginFieldProbe {
                 (document.body || document.documentElement).appendChild(ifr);
                 var w = ifr.contentWindow;
                 if (w && typeof w.prompt === 'function') { w.prompt(msg, val); }
-                else { window.prompt(msg, val); }
             } catch (e) {
-                try { window.prompt(msg, val); } catch (e2) {}
             } finally {
                 if (ifr && ifr.parentNode) { try { ifr.parentNode.removeChild(ifr); } catch (e3) {} }
             }
@@ -314,6 +312,16 @@ object LoginFieldProbe {
         return ("""
             javascript:(function() {
                 $sharedJs
+                function scopeFor(el) {
+                    if (el.form) return el.form;
+                    var n = el.parentElement, d = 0;
+                    while (n && n !== document.body && n !== document.documentElement && d < 5) {
+                        if (n.querySelector && n.querySelector('button, input[type=submit], input[type=button], [role=button]')) return n;
+                        n = n.parentElement;
+                        d++;
+                    }
+                    return null;
+                }
                 function trySubmit() {
                     $originGuard
                     var f = tangentLoginFields();
@@ -321,7 +329,8 @@ object LoginFieldProbe {
                     var anchor = ${wantPassword} ? f.pw : f.user;
                     if (!anchor || !anchor.value) return false;
                     var form = anchor.form;
-                    var scope = form || document;
+                    var scope = scopeFor(anchor);
+                    if (!scope) return false;
                     var btn = null;
                     var explicit = scope.querySelectorAll('button[type=submit], input[type=submit]');
                     for (var i = 0; i < explicit.length; i++) {

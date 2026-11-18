@@ -65,8 +65,11 @@ class TangentCustomTabsService : AbstractCustomTabsService() {
         // This service is exported: ANY app can drive mayLaunchUrl. The preloader does a full cookied
         // headless load, so only auto-preload plausibly-public hosts — never internal/localhost/private
         // targets an app could weaponize into an unattended SSRF fetch. See isPublicPreloadHost.
-        if (allowed && com.firebolt9907.tangentbrowser.state.isPublicPreloadHost(url?.toString())) {
-            app.components.externalLinkPreloader.preload(url.toString())
+        val targetUrl = url?.toString()
+        val httpsOk = !app.components.globalPreferencesStore.httpsOnly ||
+            targetUrl?.startsWith("https://", ignoreCase = true) == true
+        if (allowed && httpsOk && com.firebolt9907.tangentbrowser.state.isPublicPreloadHost(targetUrl)) {
+            app.components.externalLinkPreloader.preload(targetUrl!!)
         }
         return handled
     }

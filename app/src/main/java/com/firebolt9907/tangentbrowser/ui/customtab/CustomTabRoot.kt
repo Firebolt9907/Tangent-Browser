@@ -273,7 +273,7 @@ fun CustomTabRoot(
     }
     // Capture callbacks close over the request identity, rather than a later gesture's state.
     val snapshotPurposeForCapture = snapshotRequestPurpose
-    val backCaptureToken = backPreviewState.preview.value?.generation
+    val backCaptureToken = backPreview?.generation
 
     fun deviceLowOnMemory(): Boolean {
         val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE)
@@ -295,7 +295,7 @@ fun CustomTabRoot(
             peekView = null
             peekEngine.release()
         } else {
-            val (s, v) = peekEngine.ensure(context, customTab?.content?.private == true)
+            val (s, v) = peekEngine.ensure(context, customTab?.content?.private == true, customTab?.contextId)
             peekSession = s
             peekView = v
         }

@@ -464,7 +464,13 @@ fun TangentRoot(
             peekView = null
             peekEngine.release()
         } else {
-            val (s, v) = peekEngine.ensure(activityContext, selectedContent?.private == true)
+            val targetContextId = selectedTab?.contextId
+                ?: components.tabGroupsRepository.defaultContainerFor(currentSpaceId.value)
+            val (s, v) = peekEngine.ensure(
+                activityContext,
+                selectedContent?.private == true,
+                targetContextId,
+            )
             peekSession = s
             peekView = v
         }
@@ -511,12 +517,14 @@ fun TangentRoot(
         peekSession = null
         peekView = null
         if (adopted != null) {
+            val (adoptedSession, adoptedContextId) = adopted
             // Reuse the live, fully-loaded peek session — no network reload. createTab(engineSession=)
             // links with skipLoading=true and seeds correct initial content state from the url.
             components.tabRepository.addPreparedTab(
                 url = url,
-                engineSession = adopted,
+                engineSession = adoptedSession,
                 selectTab = foreground,
+                contextId = adoptedContextId,
                 groupId = currentSpaceId.value,
             )
         } else {
@@ -4022,7 +4030,9 @@ fun TangentRoot(
                     },
                     onPreconnect = { components.speculativePreconnector.preconnect(it) },
                     onPreloadPage = { url ->
-                        if (com.firebolt9907.tangentbrowser.state.isPreloadAllowed(
+                        val httpsOk = !components.globalPreferencesStore.httpsOnly ||
+                            url.startsWith("https://", ignoreCase = true)
+                        if (httpsOk && com.firebolt9907.tangentbrowser.state.isPreloadAllowed(
                                 appContext,
                                 components.globalPreferencesStore.preloadMode,
                             )
@@ -4030,6 +4040,7 @@ fun TangentRoot(
                             components.externalLinkPreloader.preload(url)
                         }
                     },
+                    fetchClient = components.downloadHttpClient,
                     searchSuggestionsEnabled = components.globalPreferencesStore.searchSuggestionsEnabled,
                     searchEngine = components.globalPreferencesStore.searchEngine,
                     openTabs = remember(tabsList) {
@@ -4151,7 +4162,7 @@ fun TangentRoot(
                         } else null
                         if (original != null) {
                             val label = addressBarLabel(original, barSearchEngine, showSearchTermsInBar)
-                            base.copy(displayUrl = label, compactDisplayUrl = label)
+                            base.copy(displayUrl = label, compactDisplayUrl = label, isArchive = true)
                         } else {
                             base
                         }

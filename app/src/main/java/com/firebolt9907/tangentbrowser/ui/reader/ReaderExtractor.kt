@@ -10,6 +10,8 @@ import org.json.JSONObject
 import org.json.JSONArray
 
 object ReaderExtractor {
+    const val BRIDGE_MESSAGE = "tangent-reader"
+
     private fun getGeckoSession(engineSession: EngineSession): GeckoSession? {
         if (engineSession !is GeckoEngineSession) return null
         try {
@@ -897,14 +899,14 @@ object ReaderExtractor {
                         return;
                     }
                     window.__tangentReaderBest = { url: tangentUrl, len: tangentMeasure };
-                    tangentBridge("tangent-reader", JSON.stringify(articleData));
+                    tangentBridge("${com.firebolt9907.tangentbrowser.ui.content.BridgeGuard.tag(BRIDGE_MESSAGE)}", JSON.stringify(articleData));
                 } else if (!window.__tangentReaderNoneSent) {
                     /* No article on this page. Signal it ONCE (empty payload) so a manual reader
                        request gets feedback via the no-port bridge fallback; the app parses this as
                        "unavailable" and shows the banner only if an activation is pending. Guarded so
                        the re-extract observer doesn't spam prompt() on every tick for non-articles. */
                     window.__tangentReaderNoneSent = true;
-                    tangentBridge("tangent-reader", "");
+                    tangentBridge("${com.firebolt9907.tangentbrowser.ui.content.BridgeGuard.tag(BRIDGE_MESSAGE)}", "");
                 }
                 }
                 tangentExtract();
@@ -1008,33 +1010,39 @@ object ReaderExtractor {
                             }
                             return GeckoResult.fromValue(prompt.confirm("ok"))
                         }
+                        com.firebolt9907.tangentbrowser.ui.video.VideoPlayerManager.BRIDGE_MESSAGE -> {
+                            prompt.defaultValue?.let {
+                                com.firebolt9907.tangentbrowser.ui.video.VideoPlayerManager.onStatePayload(it)
+                            }
+                            return GeckoResult.fromValue(prompt.confirm("ok"))
+                        }
+                        BRIDGE_MESSAGE -> {
+                            val defaultValue = prompt.defaultValue
+                            if (defaultValue != null) {
+                                try {
+                                    val parsed = parseArticleJson(defaultValue)
+                                    val trustedUrl = com.firebolt9907.tangentbrowser.ui.content.BridgeGuard.trustedUrl(tabId)
+                                    val article = if (parsed != null && trustedUrl != null) {
+                                        parsed.copy(sourceUrl = trustedUrl)
+                                    } else {
+                                        parsed
+                                    }
+                                    if (article != null) {
+                                        ReaderManager.instance.setReaderEligible(tabId, article)
+                                    } else {
+                                        ReaderManager.instance.reportReaderUnavailable(tabId)
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w("ReaderExtractor", "Failed to parse reader article JSON", e)
+                                    ReaderManager.instance.reportReaderUnavailable(tabId)
+                                }
+                            }
+                            return GeckoResult.fromValue(prompt.confirm("ok"))
+                        }
                         else -> return GeckoResult.fromValue(prompt.dismiss())
                     }
                 }
                 is com.firebolt9907.tangentbrowser.ui.content.BridgeGuard.Resolved.Foreign -> Unit /* fall through */
-            }
-            if (prompt.message == "tangent-video") {
-                prompt.defaultValue?.let {
-                    com.firebolt9907.tangentbrowser.ui.video.VideoPlayerManager.onStatePayload(it)
-                }
-                return GeckoResult.fromValue(prompt.confirm("ok"))
-            }
-            if (prompt.message == "tangent-reader") {
-                val defaultValue = prompt.defaultValue
-                if (defaultValue != null) {
-                    try {
-                        val article = parseArticleJson(defaultValue)
-                        if (article != null) {
-                            ReaderManager.instance.setReaderEligible(tabId, article)
-                        } else {
-                            ReaderManager.instance.reportReaderUnavailable(tabId)
-                        }
-                    } catch (e: Exception) {
-                        Log.w("ReaderExtractor", "Failed to parse reader article JSON", e)
-                        ReaderManager.instance.reportReaderUnavailable(tabId)
-                    }
-                }
-                return GeckoResult.fromValue(prompt.confirm("ok"))
             }
             return oldDelegate?.onTextPrompt(session, prompt) ?: GeckoResult.fromValue(prompt.dismiss())
         }

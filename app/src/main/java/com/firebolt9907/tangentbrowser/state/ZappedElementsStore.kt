@@ -32,14 +32,25 @@ private val SafeSelectorChars = Regex("^[A-Za-z0-9_\\-#.>:()\\[\\]=\"' *,]+$")
  * JVM tests can exercise it without an Android context. See [SafeSelectorChars] for why this is an
  * allowlist rather than a blocklist.
  */
+private val SelectorSubParts = Regex("[\\s>+~]+")
+
 internal fun isSafeZapSelector(selector: String): Boolean {
     val s = selector.trim()
     if (s.isEmpty() || s.length > MaxSelectorLength) return false
     if (!SafeSelectorChars.matches(s)) return false
-    // Never let a rule target the whole document — a stored `html`/`body`/`*` would blank the site
-    // with no obvious way back for a user who doesn't know where "Restore hidden elements" lives.
-    val head = s.substringBefore(' ').trim()
-    if (head == "html" || head == "body" || head == "*" || head == ":root") return false
+    // Check every comma-separated branch's target (final compound selector) as well as its leading
+    // token so `html>body`, `body[class]`, `*`, or `:root` can never blank the whole document.
+    for (branch in s.split(',')) {
+        val b = branch.trim()
+        if (b.isEmpty()) return false
+        val compounds = b.split(SelectorSubParts).filter { it.isNotEmpty() }
+        if (compounds.isEmpty()) return false
+        val firstTag = compounds.first().lowercase()
+        val target = compounds.last().lowercase()
+        if (firstTag == "html" || firstTag == "body" || firstTag == "*" || firstTag == ":root") return false
+        val targetTag = target.takeWhile { it.isLetterOrDigit() || it == '*' || it == '-' || it == '_' }
+        if (target == ":root" || targetTag == "html" || targetTag == "body" || target == "*") return false
+    }
     return true
 }
 

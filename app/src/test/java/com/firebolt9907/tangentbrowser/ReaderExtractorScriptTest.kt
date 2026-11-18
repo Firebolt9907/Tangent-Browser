@@ -33,8 +33,14 @@ class ReaderExtractorScriptTest {
     }
 
     @Test
-    fun `hands the article back over the tangent-reader channel`() {
-        assertTrue("bridge carries the tangent-reader channel", script.contains("tangentBridge(\"tangent-reader\""))
+    fun `hands the article back over the nonce-guarded tangent-reader channel`() {
+        val tagged = com.firebolt9907.tangentbrowser.ui.content.BridgeGuard.tag(
+            ReaderExtractor.BRIDGE_MESSAGE,
+        )
+        assertTrue(
+            "bridge carries the nonce-tagged tangent-reader channel",
+            script.contains("tangentBridge(\"$tagged\""),
+        )
     }
 
     @Test

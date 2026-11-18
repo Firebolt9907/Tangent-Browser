@@ -6,6 +6,7 @@ import androidx.appsearch.app.AppSearchSchema
 import androidx.appsearch.app.AppSearchSession
 import androidx.appsearch.app.GenericDocument
 import androidx.appsearch.app.PutDocumentsRequest
+import androidx.appsearch.app.SearchSpec
 import androidx.appsearch.app.SetSchemaRequest
 import androidx.appsearch.localstorage.LocalStorage
 import androidx.appsearch.platformstorage.PlatformStorage
@@ -88,10 +89,15 @@ object BrowserSearchIndex {
         historyStorage: HistoryStorage,
         bookmarksStorage: BookmarksStorage,
     ) {
+        val appCtx = context.applicationContext
+        if (!GlobalPreferencesStore(appCtx).systemSearchIndexEnabled) {
+            clear(appCtx)
+            return
+        }
         val entries = runCatching { collectEntries(historyStorage, bookmarksStorage) }
             .getOrNull()
             ?: return
-        reindex(context.applicationContext, entries)
+        reindex(appCtx, entries, displayedBySystem = true)
     }
 
     private suspend fun collectEntries(
@@ -136,13 +142,27 @@ object BrowserSearchIndex {
     }
 
     /** Replace the whole index with [entries]. Runs on IO; never throws. */
-    suspend fun reindex(context: Context, entries: List<Entry>): Unit = withContext(Dispatchers.IO) {
+    suspend fun reindex(
+        context: Context,
+        entries: List<Entry>,
+        displayedBySystem: Boolean = false,
+    ): Unit = withContext(Dispatchers.IO) {
         runCatching {
             openSession(context).use { session ->
                 // setForceOverride so an (unlikely) incompatible schema change can't hard-fail; on an
                 // unchanged schema this is a no-op.
                 session.setSchemaAsync(
-                    SetSchemaRequest.Builder().addSchemas(schema).setForceOverride(true).build(),
+                    SetSchemaRequest.Builder()
+                        .addSchemas(schema)
+                        .setSchemaTypeDisplayedBySystem(SCHEMA_TYPE, displayedBySystem)
+                        .setForceOverride(true)
+                        .build(),
+                ).await()
+                // Drop previously indexed documents first so deleted history/bookmark entries never
+                // linger in system search.
+                session.removeAsync(
+                    "",
+                    SearchSpec.Builder().addFilterNamespaces(NAMESPACE).build(),
                 ).await()
 
                 entries.chunked(100).forEach { chunk ->
@@ -166,6 +186,19 @@ object BrowserSearchIndex {
                         ).await()
                     }
                 }
+                session.requestFlushAsync().await()
+            }
+        }
+        Unit
+    }
+
+    /** Wipe every indexed browsing document and withdraw system visibility. */
+    suspend fun clear(context: Context): Unit = withContext(Dispatchers.IO) {
+        runCatching {
+            openSession(context.applicationContext).use { session ->
+                session.setSchemaAsync(
+                    SetSchemaRequest.Builder().setForceOverride(true).build(),
+                ).await()
                 session.requestFlushAsync().await()
             }
         }

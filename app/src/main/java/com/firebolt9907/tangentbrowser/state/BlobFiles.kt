@@ -348,6 +348,21 @@ object BlobFileStore {
         }
     }
 
+    /** Wipe all cached blob files and in-flight captures (called from Clear Browsing Data). */
+    fun clear() {
+        synchronized(lock) {
+            val open = pending.values.toList()
+            pending.clear()
+            open.forEach {
+                runCatching { it.out.close() }
+                runCatching { it.target.delete() }
+            }
+            _files.value.forEach { runCatching { File(it.path).delete() } }
+            _files.value = emptyList()
+            dir()?.listFiles()?.forEach { runCatching { it.delete() } }
+        }
+    }
+
     /** Drop entries past the size/count budget, and any whose file has been cleared by the OS. */
     private fun prune(list: List<BlobFile>): List<BlobFile> {
         val kept = ArrayList<BlobFile>(list.size)

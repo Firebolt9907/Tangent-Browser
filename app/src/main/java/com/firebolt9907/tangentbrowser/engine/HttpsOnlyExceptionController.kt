@@ -37,10 +37,17 @@ class HttpsOnlyExceptionController(
     // Tracks what we last wrote so we don't hammer the runtime setting on every unrelated store emission.
     private var lastApplied: Engine.HttpsOnlyMode? = null
 
+    // Temporarily holds the just-approved host across the window between user confirmation and the
+    // reload landing on `http://<host>` (while `selectedTab.content.url` may still show `https://`).
+    @Volatile private var pendingAllowedHost: String? = null
+
     fun start() {
         scope.launch {
             store.flow()
-                .map { it.selectedTab?.content?.url }
+                .map {
+                    val tab = it.selectedTab
+                    Triple(tab?.id, tab?.content?.url, tab?.content?.loading)
+                }
                 .distinctUntilChanged()
                 .collect { recompute() }
         }
@@ -49,14 +56,31 @@ class HttpsOnlyExceptionController(
     /**
      * Re-derive and apply the effective HTTPS-Only mode. Idempotent — safe to call from
      * `applyEngineSettings()` (the single owner of the runtime setting now) and after [allow].
+     *
+     * Only drops HTTPS-Only while the foreground tab is actively loading an `http://` page on an
+     * approved host (or immediately after [allow] before the reload commits), then restores
+     * `ENABLED` once the load settles so background tabs, link peeks, and preloads stay protected.
      */
     fun recompute() {
         val base =
             if (prefs.httpsOnly) Engine.HttpsOnlyMode.ENABLED else Engine.HttpsOnlyMode.DISABLED
-        val selectedHost = store.state.selectedTab?.content?.url?.let { hostOf(it) }
+        val selectedContent = store.state.selectedTab?.content
+        val selectedUrl = selectedContent?.url
+        val selectedHost = selectedUrl?.let { hostOf(it) }
+        val isHttpLoad = selectedUrl?.startsWith("http://", ignoreCase = true) == true &&
+            selectedContent.loading
+        if (selectedContent != null && selectedHost != null && selectedHost == pendingAllowedHost &&
+            !selectedContent.loading && selectedUrl.startsWith("http://", ignoreCase = true)
+        ) {
+            pendingAllowedHost = null
+        } else if (selectedHost != null && pendingAllowedHost != null && selectedHost != pendingAllowedHost) {
+            pendingAllowedHost = null
+        }
         val desired = when {
             base == Engine.HttpsOnlyMode.DISABLED -> base
-            selectedHost != null && prefs.isHttpAllowedForHost(selectedHost) ->
+            pendingAllowedHost != null && (selectedHost == null || selectedHost == pendingAllowedHost) ->
+                Engine.HttpsOnlyMode.DISABLED
+            selectedHost != null && isHttpLoad && prefs.isHttpAllowedForHost(selectedHost) ->
                 Engine.HttpsOnlyMode.DISABLED
             else -> base
         }
@@ -68,7 +92,9 @@ class HttpsOnlyExceptionController(
 
     /** Approve [host] for HTTP and immediately drop HTTPS-Only so a pending reload can succeed. */
     fun allow(host: String) {
-        prefs.allowHttpForHost(host)
+        val normalized = host.trim().lowercase()
+        prefs.allowHttpForHost(normalized)
+        pendingAllowedHost = normalized.ifEmpty { null }
         // Force a re-apply even if the selected-tab url hasn't changed yet.
         lastApplied = null
         recompute()

@@ -9,8 +9,6 @@
 <data-extraction-rules>
     <cloud-backup>
         <include domain="sharedpref" path="tangent_global_prefs.xml" />
-        <include domain="sharedpref" path="tangent_site_prefs.xml" />
-        <include domain="sharedpref" path="tangent_zapped_elements.xml" />
     </cloud-backup>
     <device-transfer>
         <include domain="sharedpref" path="tangent_global_prefs.xml" />

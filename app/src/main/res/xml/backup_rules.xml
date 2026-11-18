@@ -8,6 +8,4 @@
 -->
 <full-backup-content>
     <include domain="sharedpref" path="tangent_global_prefs.xml" />
-    <include domain="sharedpref" path="tangent_site_prefs.xml" />
-    <include domain="sharedpref" path="tangent_zapped_elements.xml" />
 </full-backup-content>

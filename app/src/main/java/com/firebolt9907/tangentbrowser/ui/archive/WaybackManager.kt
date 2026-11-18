@@ -131,19 +131,38 @@ class WaybackManager {
         "https://web.archive.org/web/${timestamp}if_/$originalUrl"
 
     /** True for any `web.archive.org/web/...` URL (used to gate the mobilify injection). */
-    fun isArchiveUrl(url: String?): Boolean =
-        url != null && ARCHIVE_PREFIX.containsMatchIn(url)
+    fun isArchiveUrl(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        val trimmed = url.trim()
+        if (!ARCHIVE_PREFIX.containsMatchIn(trimmed)) return false
+        val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return false
+        val scheme = uri.scheme?.lowercase()
+        return (scheme == "http" || scheme == "https") &&
+            uri.rawUserInfo == null &&
+            uri.host?.equals("web.archive.org", ignoreCase = true) == true
+    }
 
     /**
      * The original (non-archived) URL embedded in a `web.archive.org/web/<ts>[modifier]/<url>` URL,
      * so navigation *within* the archive keeps a stable original for the selector and Close.
      */
-    fun originalFromArchiveUrl(url: String): String? =
-        ARCHIVE_PREFIX.find(url)?.let { url.substring(it.range.last + 1) }
+    fun originalFromArchiveUrl(url: String): String? {
+        val trimmed = url.trim()
+        if (!isArchiveUrl(trimmed)) return null
+        val match = ARCHIVE_PREFIX.find(trimmed) ?: return null
+        val rawOriginal = trimmed.substring(match.range.last + 1).trim()
+        val parsed = runCatching { java.net.URI(rawOriginal) }.getOrNull() ?: return null
+        val scheme = parsed.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") return null
+        if (parsed.rawUserInfo != null || parsed.host.isNullOrBlank()) return null
+        return rawOriginal
+    }
 
     /** The 14-digit capture timestamp embedded in a `web.archive.org/web/<ts>…` URL. */
-    fun timestampFromArchiveUrl(url: String): String? =
-        TIMESTAMP_IN_URL.find(url)?.groupValues?.getOrNull(1)
+    fun timestampFromArchiveUrl(url: String): String? {
+        if (!isArchiveUrl(url)) return null
+        return TIMESTAMP_IN_URL.find(url.trim())?.groupValues?.getOrNull(1)
+    }
 
     // ---- Networking ----
 
@@ -257,9 +276,9 @@ class WaybackManager {
         private const val NET_TIMEOUT_MS = 15000
         private const val SAVE_TIMEOUT_MS = 90000
         private val ARCHIVE_PREFIX =
-            Regex("""https?://web\.archive\.org/web/\d{14}(?:\w{2}_)?/""")
+            Regex("""^https?://web\.archive\.org/web/\d{14}(?:\w{2}_)?/""", RegexOption.IGNORE_CASE)
         private val TIMESTAMP_IN_URL =
-            Regex("""web\.archive\.org/web/(\d{14})""")
+            Regex("""^https?://web\.archive\.org/web/(\d{14})""", RegexOption.IGNORE_CASE)
 
         /**
          * Force the archived document to lay out at device width. Old (pre-responsive) captures ship

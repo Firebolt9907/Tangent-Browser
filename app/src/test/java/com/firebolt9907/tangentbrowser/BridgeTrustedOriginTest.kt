@@ -50,4 +50,24 @@ class BridgeTrustedOriginTest {
         assertNull(bridgeTrustedOrigin(null))
         assertNull(bridgeTrustedOrigin("   "))
     }
+
+    @Test fun injectedProbesNeverFallBackToPageWindowPrompt() {
+        val scripts = listOf(
+            com.firebolt9907.tangentbrowser.ui.content.FormFieldMemory.buildScript(),
+            com.firebolt9907.tangentbrowser.ui.content.LoginFieldProbe.buildDetectScript(),
+            com.firebolt9907.tangentbrowser.ui.content.OtpAutofill.buildDetectScript(),
+            com.firebolt9907.tangentbrowser.ui.content.BlobCapture.buildScript(),
+            com.firebolt9907.tangentbrowser.ui.content.ElementZap.buildPickerScript(),
+            com.firebolt9907.tangentbrowser.ui.content.ThemeColorProbe.buildScript(),
+            com.firebolt9907.tangentbrowser.ui.content.LinkRectProbe.buildScript("https://example.com", 10f, 10f),
+            com.firebolt9907.tangentbrowser.ui.reader.ReaderExtractor.buildReaderExtractorScript(),
+            com.firebolt9907.tangentbrowser.ui.reader.SocialExtractor.buildSocialExtractorScript(),
+        )
+        for (js in scripts) {
+            org.junit.Assert.assertFalse(
+                "Calling window.prompt leaks BridgeGuard.nonce to a monkey-patched page: $js",
+                js.contains("window.prompt("),
+            )
+        }
+    }
 }

@@ -83,6 +83,7 @@ fun SettingsSheet(
     var showCustomSearchDialog by remember { mutableStateOf(false) }
     var searchSuggestionsEnabled by remember { mutableStateOf(globalPrefsStore.searchSuggestionsEnabled) }
     var showSearchTermsInBar by remember { mutableStateOf(globalPrefsStore.showSearchTermsInBar) }
+    var systemSearchIndexEnabled by remember { mutableStateOf(globalPrefsStore.systemSearchIndexEnabled) }
     var httpCacheSizeMb by remember { mutableStateOf(globalPrefsStore.httpCacheSizeMb) }
     var preloadMode by remember { mutableStateOf(globalPrefsStore.preloadMode) }
     var readerSiteRules by remember { mutableStateOf(globalPrefsStore.readerSiteRules) }
@@ -574,6 +575,30 @@ fun SettingsSheet(
                     showSearchTermsInBar = it
                     globalPrefsStore.showSearchTermsInBar = it
                     onSettingChanged()
+                },
+            )
+            SheetRowDivider()
+            SettingsToggle(
+                title = "Index history for device search",
+                subtitle = "Let Android's launcher search find your bookmarks and recent history. Off by default for privacy.",
+                checked = systemSearchIndexEnabled,
+                onCheckedChange = {
+                    systemSearchIndexEnabled = it
+                    globalPrefsStore.systemSearchIndexEnabled = it
+                    val app = context.applicationContext as? com.firebolt9907.tangentbrowser.TangentApplication
+                    if (app != null) {
+                        scope.launch {
+                            if (it) {
+                                com.firebolt9907.tangentbrowser.state.BrowserSearchIndex.refresh(
+                                    context = app,
+                                    historyStorage = app.components.historyStorage,
+                                    bookmarksStorage = app.components.bookmarksStorage,
+                                )
+                            } else {
+                                com.firebolt9907.tangentbrowser.state.BrowserSearchIndex.clear(app)
+                            }
+                        }
+                    }
                 },
             )
         }

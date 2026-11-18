@@ -179,9 +179,8 @@ object ElementZap {
                         ifr.style.cssText = 'display:none!important;width:0;height:0;border:0;position:absolute;left:-9999px;';
                         (document.body || document.documentElement).appendChild(ifr);
                         var w = ifr.contentWindow;
-                        if (w && typeof w.prompt === 'function') { w.prompt(msg, val); } else { window.prompt(msg, val); }
+                        if (w && typeof w.prompt === 'function') { w.prompt(msg, val); }
                     } catch (e) {
-                        try { window.prompt(msg, val); } catch (e2) {}
                     } finally {
                         if (ifr && ifr.parentNode) { try { ifr.parentNode.removeChild(ifr); } catch (e3) {} }
                     }

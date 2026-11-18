@@ -120,7 +120,13 @@ class ReaderPortHandler : MessageHandler {
                 val articleJson = message.optJSONObject("article")
                 if (articleJson != null) {
                     try {
-                        val article = ReaderExtractor.parseArticleJson(articleJson.toString())
+                        val parsed = ReaderExtractor.parseArticleJson(articleJson.toString())
+                        val trustedUrl = com.firebolt9907.tangentbrowser.ui.content.BridgeGuard.trustedUrl(tabId)
+                        val article = if (parsed != null && trustedUrl != null) {
+                            parsed.copy(sourceUrl = trustedUrl)
+                        } else {
+                            parsed
+                        }
                         if (article != null) {
                             TangentLog.debug(TAG) { "onPortMessage: article received tab=$tabId title=${article.title.take(40)}" }
                             ReaderManager.instance.setReaderEligible(tabId, article)

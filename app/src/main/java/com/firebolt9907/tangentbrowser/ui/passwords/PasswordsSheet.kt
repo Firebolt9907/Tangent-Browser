@@ -55,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import com.firebolt9907.tangentbrowser.ui.BiometricGate
 import com.firebolt9907.tangentbrowser.ui.rememberTangentHaptics
 import com.firebolt9907.tangentbrowser.ui.components.SheetSearchField
 import com.firebolt9907.tangentbrowser.ui.components.TangentFullScreenPage
@@ -81,6 +82,7 @@ import mozilla.components.concept.storage.LoginsStorage
 fun PasswordsSheet(
     loginsStorage: LoginsStorage,
     onDismiss: () -> Unit,
+    biometricRequired: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     val haptics = rememberTangentHaptics()
@@ -138,9 +140,31 @@ fun PasswordsSheet(
         }
     }
 
+    // Session-scoped unlock for this sheet: once the user passes BiometricGate to reveal or copy
+    // one credential, subsequent reveals/copies while the sheet stays open don't re-prompt; closing
+    // the sheet tears this state down so re-opening requires authentication again.
+    var sessionUnlocked by remember(biometricRequired) { mutableStateOf(!biometricRequired) }
+    val context = LocalContext.current
+    fun withVaultUnlock(origin: String, action: () -> Unit) {
+        if (sessionUnlocked) {
+            action()
+            return
+        }
+        val host = origin.takeLastWhile { it != '/' }.ifEmpty { origin }.removePrefix("www.")
+        BiometricGate.authenticate(
+            context = context,
+            title = "Unlock saved passwords",
+            subtitle = if (host.isNotBlank()) "to view password for $host" else "to view saved passwords",
+            onSuccess = {
+                sessionUnlocked = true
+                action()
+            },
+        )
+    }
+
     LaunchedEffect(Unit) { refresh() }
 
-    TangentFullScreenPage(title = "Passwords", onBack = onDismiss, scrollable = true) {
+    TangentFullScreenPage(title = "Passwords", onBack = onDismiss, scrollable = true, secureWindow = true) {
         // The snackbar overlays the sheet's content rather than sitting after it in the column, so a
         // message doesn't shove the list and the Add button around as it comes and goes.
         Box(modifier = Modifier.fillMaxWidth()) {
@@ -221,6 +245,9 @@ fun PasswordsSheet(
                                     ) {
                                         PasswordRow(
                                             meta = meta,
+                                            authorizeAccess = { action ->
+                                                withVaultUnlock(meta.origin, action)
+                                            },
                                             // On-demand, transient decryption: fetch this one
                                             // record's password only when the row needs it
                                             // (reveal/copy), never for the whole list.
@@ -331,6 +358,7 @@ private data class LoginMeta(
 @Composable
 private fun PasswordRow(
     meta: LoginMeta,
+    authorizeAccess: ((() -> Unit) -> Unit),
     fetchPassword: suspend () -> String?,
     onNotify: (String) -> Unit,
 ) {
@@ -385,10 +413,12 @@ private fun PasswordRow(
                         if (!wantVisible) {
                             revealed = null
                         } else {
-                            scope.launch {
-                                val password = fetchPassword()
-                                if (password != null) revealed = password
-                                else onNotify("Couldn't unlock that password")
+                            authorizeAccess {
+                                scope.launch {
+                                    val password = fetchPassword()
+                                    if (password != null) revealed = password
+                                    else onNotify("Couldn't unlock that password")
+                                }
                             }
                         }
                     },
@@ -399,15 +429,17 @@ private fun PasswordRow(
                     )
                 }
                 IconButton(onClick = {
-                    // Decrypt transiently just for the copy; don't retain it in state.
-                    scope.launch {
-                        val password = fetchPassword()
-                        if (password != null) {
-                            copyPasswordToClipboard(context, password)
-                            haptics.softClick()
-                            onNotify("Password copied")
-                        } else {
-                            onNotify("Couldn't unlock that password")
+                    // Gate behind biometrics and decrypt transiently just for the copy.
+                    authorizeAccess {
+                        scope.launch {
+                            val password = fetchPassword()
+                            if (password != null) {
+                                copyPasswordToClipboard(context, password)
+                                haptics.softClick()
+                                onNotify("Password copied")
+                            } else {
+                                onNotify("Couldn't unlock that password")
+                            }
                         }
                     }
                 }) {

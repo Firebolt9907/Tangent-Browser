@@ -105,7 +105,7 @@ fun CreditCardsSheet(
         loading = false
     }
 
-    TangentModalSheet(onDismissRequest = onDismiss) {
+    TangentModalSheet(onDismissRequest = onDismiss, secureWindow = true) {
         // The snackbar overlays the sheet's content rather than sitting after it in the column, so
         // a message doesn't shove the list around as it comes and goes.
         Box(modifier = Modifier.fillMaxWidth()) {

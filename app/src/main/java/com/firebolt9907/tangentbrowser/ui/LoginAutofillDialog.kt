@@ -208,4 +208,5 @@ private fun LetterTile(label: String) {
  */
 internal fun buildLoginSubmitScript(
     stage: String = LoginFieldProbe.Stage.Password,
-): String = LoginFieldProbe.buildSubmitScript(stage)
+    expectedOrigin: String? = null,
+): String = LoginFieldProbe.buildSubmitScript(stage, expectedOrigin)

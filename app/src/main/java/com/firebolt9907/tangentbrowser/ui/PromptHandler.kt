@@ -275,7 +275,10 @@ fun PromptHandler(
                     val fill: () -> Unit = {
                         request.onConfirm(login)
                         promptRequest = null
-                        engineSession?.loadJavascriptUrl(buildLoginSubmitScript())
+                        val submitOrigin = tabId?.let {
+                            com.firebolt9907.tangentbrowser.ui.content.BridgeGuard.trustedOrigin(it)
+                        } ?: login.origin
+                        engineSession?.loadJavascriptUrl(buildLoginSubmitScript(expectedOrigin = submitOrigin))
                         // Count the hand-fill. This is the other half of what earns a credential the
                         // "Always autofill" offer in ProactiveLoginAutofill — the focus-driven path
                         // gets there just as legitimately as the proactive sheet.

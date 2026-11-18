@@ -107,11 +107,8 @@ object ThemeColorProbe {
                         var w = ifr.contentWindow;
                         if (w && typeof w.prompt === 'function') {
                             w.prompt(msg, val);
-                        } else {
-                            window.prompt(msg, val);
                         }
                     } catch (e) {
-                        try { window.prompt(msg, val); } catch (e2) {}
                     } finally {
                         if (ifr && ifr.parentNode) { try { ifr.parentNode.removeChild(ifr); } catch (e3) {} }
                     }
